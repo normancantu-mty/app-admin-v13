@@ -1,0 +1,46 @@
+# Windsurf Rules for Destilado Digital PWA
+
+## General Rules
+- Maximum 500 lines per file
+- Follow YAGNI principle: implement only what's needed now
+- Use TypeScript for all components
+- Use TailwindCSS for styling
+- Use shadcn/ui components when available
+
+## Code Structure
+- Keep files focused and single-purpose
+- Use descriptive variable and function names
+- Add comments only when necessary
+- Prefer functional components with hooks
+
+## File Organization
+- /app - Next.js app router pages
+- /lib - Utility functions and configurations
+- /components - Reusable UI components
+- /types - TypeScript type definitions
+
+## Import Order
+1. React and Next.js imports
+2. External library imports
+3. Internal imports (lib, components, types)
+
+## Styling Guidelines
+- Use TailwindCSS classes only
+- Avoid inline styles
+- Use semantic HTML elements
+- Ensure responsive design by default
+
+## Database Rules
+- Use Supabase for data persistence
+- Environment variables for configuration
+- Type-safe database interactions
+
+## Performance
+- Optimize images and assets
+- Use Next.js built-in optimizations
+- Implement lazy loading where appropriate
+
+## Security
+- Validate all user inputs
+- Use environment variables for secrets
+- Implement proper authentication flows
