@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import type { CurrentUser } from '@/lib/auth-utils'
+import type { EstadoFinanzaLedger } from '@/types/database'
 
 interface CuentaFinanciera {
   id: string
@@ -107,7 +108,15 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
         return
       }
 
-      const movimientos: any[] = []
+      const movimientos: Array<{
+        tipo_movimiento: string;
+        categoria: string;
+        monto: number;
+        id_cuenta_destino: string;
+        id_entidad_relacionada: string;
+        categoria_gasto: string | null;
+        status: EstadoFinanzaLedger;
+      }> = []
       const statusMovimiento: EstadoFinanzaLedger = currentUser.rol === 'DST' ? 'PENDING' : 'APPROVED'
       const aplicarFugaFiscal = currentUser.rol === 'ADMIN' && tipoMovimiento === 'ABONO'
 
@@ -169,7 +178,7 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
       alert(mensaje)
       router.push(`/dashboard/distribuidores/${resolvedParams.id}`)
       router.refresh()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error details:', error?.message, error?.details, error?.hint)
       alert('Error al registrar el movimiento. Inténtalo de nuevo.')
     } finally {
