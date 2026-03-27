@@ -14,7 +14,7 @@
 - **Archivos a Modificar:** `app/dashboard/finanzas/page.tsx`, `app/actions/audit.ts`
 - **Criterio de Aceptación (Promesa de Finalización):** Ejecutar `npm run lint`. Playwright assertion: Al eliminar, verificar en base de datos: `const log = await supabase.from('auditoria_logs').select().eq('accion', 'DELETE'); expect(log.data.length).toBeGreaterThan(0);`
 
-### [ ] TKT-003: Motor de Gastos Recurrentes (Configuración UI)
+### [x] TKT-003: Motor de Gastos Recurrentes (Configuración UI)
 - **Objetivo Estratégico:** Crear la interfaz para registrar pagos fijos (ej. Contador $800, Renta, Servicios) automatizados.
 - **Reglas de Negocio (Context):** En el formulario de "Nuevo Movimiento" (`/dashboard/finanzas/nuevo`), si se selecciona "Egreso", mostrar un checkbox "Gasto Recurrente". Si se activa, desplegar inputs para "Frecuencia (Mensual/Quincenal)" y "Duración en Meses (o Indefinido)". Esto guardará el movimiento con `es_recurrente: true` en `finanzas_ledger`.
 - **Archivos a Modificar:** `app/dashboard/finanzas/nuevo/page.tsx`, `types/database.ts`

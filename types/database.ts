@@ -44,4 +44,7 @@ export interface FinanzaLedger {
   id_entidad_relacionada: string | null
   fecha_movimiento: string
   status: EstadoFinanzaLedger
+  es_recurrente: boolean
+  frecuencia: 'MENSUAL' | 'QUINCENAL' | null
+  duracion_meses: number | null
 }

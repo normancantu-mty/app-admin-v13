@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import RecurrenceFields from './RecurrenceFields'
 import { bulkDeleteMovements } from '@/app/actions/audit'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -182,6 +183,9 @@ export default function NuevoMovimientoPage() {
                 ¿Tiene Marbete?
               </label>
             </div>
+
+            {/* Campos de Recurrencia */}
+            {tipoMovimiento === 'egreso' && <RecurrenceFields />}
 
             {/* Descripción */}
             <div>
