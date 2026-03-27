@@ -2,6 +2,8 @@ import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getCurrentUser } from '@/lib/auth-utils'
+import { cookies } from 'next/headers'
+import { calcularFechasPorRango } from '@/lib/dashboard-utils'
 
 interface Entidad {
   id: string
@@ -55,13 +57,15 @@ async function getEntidad(id: string): Promise<Entidad | null> {
   }
 }
 
-async function getTransaccionesTickets(idEntidad: string): Promise<TransaccionTicket[]> {
+async function getTransaccionesTickets(idEntidad: string, fechaInicio?: string, fechaFin?: string): Promise<TransaccionTicket[]> {
   try {
     const { data, error } = await supabase
       .from('transacciones_tickets')
       .select('id, fecha_transaccion, monto_base_ingreso, total_cobrado_real, id_vendedor, id_comprador')
       .or(`id_vendedor.eq.${idEntidad},id_comprador.eq.${idEntidad}`)
       .order('fecha_transaccion', { ascending: false })
+      .gte('fecha_transaccion', fechaInicio || '')
+      .lte('fecha_transaccion', fechaFin || '')
 
     if (error) {
       console.error('Error fetching transacciones_tickets:', error)
@@ -75,7 +79,7 @@ async function getTransaccionesTickets(idEntidad: string): Promise<TransaccionTi
   }
 }
 
-async function getFinanzasLedger(idEntidad: string): Promise<FinanzaLedger[]> {
+async function getFinanzasLedger(idEntidad: string, fechaInicio?: string, fechaFin?: string): Promise<FinanzaLedger[]> {
   try {
     const { data, error } = await supabase
       .from('finanzas_ledger')
@@ -83,6 +87,8 @@ async function getFinanzasLedger(idEntidad: string): Promise<FinanzaLedger[]> {
       .eq('id_entidad_relacionada', idEntidad)
       .eq('status', 'APPROVED')
       .order('fecha_movimiento', { ascending: false })
+      .gte('fecha_movimiento', fechaInicio || '')
+      .lte('fecha_movimiento', fechaFin || '')
 
     if (error) {
       console.error('Error fetching finanzas_ledger:', error)
@@ -167,9 +173,13 @@ export default async function EstadoCuentaPage({ params }: { params: Promise<{ i
     notFound()
   }
 
+  const cookieStore = await cookies()
+  const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
+  const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
+
   const [tickets, finanzas, currentUser] = await Promise.all([
-    getTransaccionesTickets(resolvedParams.id),
-    getFinanzasLedger(resolvedParams.id),
+    getTransaccionesTickets(resolvedParams.id, fechaInicio, fechaFin),
+    getFinanzasLedger(resolvedParams.id, fechaInicio, fechaFin),
     getCurrentUser()
   ])
 
