@@ -8,7 +8,7 @@
 - **Archivos a Modificar:** `types/database.ts`, `app/dashboard/finanzas/PendingApprovalsPanel.tsx`, `app/api/finanzas/aprobaciones/route.ts`
 - **Criterio de Aceptación (Promesa de Finalización):** `npm run lint && npx tsc` pasa sin errores de tipado. Playwright assertion: `await expect(page.locator('button:has-text("Aprobar")')).not.toBeVisible()` al iniciar sesión como SUB-ADMIN.
 
-### [ ] TKT-002: Borrado Múltiple con Registro de Auditoría (Admin-Only)
+### [x] TKT-002: Borrado Múltiple con Registro de Auditoría (Admin-Only)
 - **Objetivo Estratégico:** Permitir al ADMIN borrar movimientos erróneos de Finanzas e Inventario de forma masiva, dejando un rastro inmutable en la tabla de auditoría.
 - **Reglas de Negocio (Context):** Al seleccionar múltiples filas en `/dashboard/finanzas` y presionar "Eliminar", se ejecuta una Server Action que: 1) Registra el `json_estado_anterior` en `auditoria_logs` con `accion: 'DELETE'` y el `usuario_id` del ADMIN. 2) Elimina los registros de `finanzas_ledger` o `transacciones_tickets`.
 - **Archivos a Modificar:** `app/dashboard/finanzas/page.tsx`, `app/actions/audit.ts`
