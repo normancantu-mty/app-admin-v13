@@ -97,7 +97,10 @@ export default function PendingApprovalsPanel() {
   const isSubAdmin = currentUser?.rol === 'SUB-ADMIN'
 
   const onAction = async (id: string, action: 'APPROVE' | 'REJECT') => {
-    if (isSubAdmin) return
+    if (isSubAdmin) {
+      alert('Acceso denegado: SUB-ADMIN no puede aprobar/rechazar abonos.')
+      return
+    }
     
     setProcessingId(id)
     try {
