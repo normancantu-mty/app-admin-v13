@@ -22,7 +22,7 @@
 
 ## EPIC 2: Ojo de Dios - Global "Power BI" Filters (Inteligencia de Negocio)
 
-### [ ] TKT-004: Contexto Global de Fechas (Layout Wrapper)
+### [x] TKT-004: Contexto Global de Fechas (Layout Wrapper)
 - **Objetivo Estratégico:** Implementar un selector de fechas de nivel superior (Top Bar) que envuelva la aplicación e inyecte el rango de tiempo seleccionado a todos los dashboards.
 - **Reglas de Negocio (Context):** Crear un React Context (`DateFilterContext`) con opciones: "Hoy", "Este Mes", "Trimestre", "Personalizado". El `TopBar` actualizará este estado.
 - **Archivos a Modificar:** `app/dashboard/layout.tsx`, `components/providers/DateFilterProvider.tsx`, `components/ui/TopBar.tsx`

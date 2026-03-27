@@ -5,6 +5,8 @@ import { usePathname, useRouter } from 'next/navigation'
 import { ReactNode, useEffect, useState } from 'react'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { supabase } from '@/lib/supabase'
+import { DateFilterProvider } from '@/components/providers/DateFilterProvider'
+import { TopBar } from '@/components/ui/TopBar'
 
 export default function DashboardLayout({
   children,
@@ -140,8 +142,13 @@ export default function DashboardLayout({
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto">
-          {children}
+        <main className="flex-1 overflow-auto flex flex-col">
+          <DateFilterProvider>
+            <TopBar />
+            <div className="flex-1 overflow-auto">
+              {children}
+            </div>
+          </DateFilterProvider>
         </main>
       </div>
     </ProtectedRoute>
