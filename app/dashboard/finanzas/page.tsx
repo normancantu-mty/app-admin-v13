@@ -1,5 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { supabase } from '@/lib/supabase'
+import { cookies } from 'next/headers'
+import { calcularFechasPorRango } from '@/lib/dashboard-utils'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import PendingApprovalsPanel from './PendingApprovalsPanel'
@@ -29,11 +31,19 @@ const TIPOS_EGRESO = ['GASTO_OPERATIVO', 'SUBSIDIO_FISCAL', 'COMISION_PASIVA']
 
 async function getMovimientos(): Promise<MovimientoFinanciero[]> {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('finanzas_ledger')
       .select('*, cuenta_destino:cuentas_financieras!id_cuenta_destino(nombre)')
       .eq('status', 'APPROVED')
       .order('fecha_movimiento', { ascending: false })
+
+    if (fechaInicio && fechaFin) {
+      query = query
+        .gte('fecha_movimiento', fechaInicio)
+        .lte('fecha_movimiento', fechaFin)
+    }
+
+    const { data, error } = await query
 
     if (error) {
       console.error('Error fetching movimientos:', error)
@@ -94,8 +104,12 @@ function EmptyState() {
 }
 
 export default async function FinanzasPage() {
+  const cookieStore = await cookies()
+  const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
+  const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
+
   const [movimientos, currentUser] = await Promise.all([
-    getMovimientos(),
+    getMovimientos(fechaInicio, fechaFin),
     getCurrentUser()
   ])
   const resumen = calcularResumen(movimientos)
