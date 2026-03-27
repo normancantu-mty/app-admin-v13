@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getCurrentUser } from '@/lib/auth-utils'
+import { getCurrentUser } from '@/lib/auth'
 
 type AprobacionAction = 'APPROVE' | 'REJECT'
 
@@ -46,7 +46,7 @@ function calcularFugaFiscal(
 export async function GET() {
   try {
     const currentUser = await getCurrentUser()
-    if (!currentUser || currentUser.rol !== 'ADMIN') {
+    if (currentUser?.rol !== 'ADMIN') {
       return NextResponse.json({ error: 'Solo ADMIN puede ver aprobaciones pendientes.' }, { status: 403 })
     }
 
@@ -80,7 +80,7 @@ export async function GET() {
 export async function PATCH(request: Request) {
   try {
     const currentUser = await getCurrentUser()
-    if (!currentUser || currentUser.rol !== 'ADMIN') {
+    if (currentUser?.rol !== 'ADMIN') {
       return NextResponse.json({ error: 'Solo ADMIN puede aprobar/rechazar abonos.' }, { status: 403 })
     }
 
