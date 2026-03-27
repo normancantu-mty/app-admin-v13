@@ -2,7 +2,7 @@
 
 ## EPIC 1: Recurrent Billing & Sub-Admin Security (Fase Beta - Core Operativo)
 
-### [ ] TKT-001: Implementación del Rol SUB-ADMIN y Prevención de Borrado
+### [x] TKT-001: Implementación del Rol SUB-ADMIN y Prevención de Borrado
 - **Objetivo Estratégico:** Habilitar un rol de supervisión ("SUB-ADMIN") con acceso de lectura global que no pueda confirmar abonos pendientes ni eliminar registros.
 - **Reglas de Negocio (Context):** La tabla `entidades` debe aceptar el rol `SUB-ADMIN`. A diferencia del `SOCIO` (que está atrapado en el Muro de Niebla), el `SUB-ADMIN` puede navegar todos los dashboards pero el botón "Aprobar/Rechazar" en `PendingApprovalsPanel.tsx` y la capacidad de borrar tickets deben estar ocultos. El backend (`app/api/finanzas/aprobaciones/route.ts`) debe rechazar peticiones de `SUB-ADMIN`.
 - **Archivos a Modificar:** `types/database.ts`, `app/dashboard/finanzas/PendingApprovalsPanel.tsx`, `app/api/finanzas/aprobaciones/route.ts`
