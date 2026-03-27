@@ -49,13 +49,11 @@ function calcularFechasPorRango(rango: string) {
 
 export const dynamic = 'force-dynamic'
 
-export default async function DashboardGeneralPage({
-  searchParams
-}: {
-  searchParams: Promise<{ rango?: string }>
-}) {
-  const params = await searchParams
-  const rango = params?.rango || 'ESTE_MES'
+import { cookies } from 'next/headers'
+
+export default async function DashboardGeneralPage() {
+  const cookieStore = await cookies()
+  const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
   const [finanzas, liderazgo, urgentes, currentUser] = await Promise.all([

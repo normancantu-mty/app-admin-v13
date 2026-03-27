@@ -144,7 +144,7 @@ export default function DashboardLayout({
         {/* Main Content */}
         <main className="flex-1 overflow-auto flex flex-col">
           <DateFilterProvider>
-            <TopBar />
+            <TopBar initialRango={rango} />
             <div className="flex-1 overflow-auto">
               {children}
             </div>

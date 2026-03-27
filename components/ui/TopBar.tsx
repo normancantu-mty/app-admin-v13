@@ -1,11 +1,10 @@
 'use client'
 
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 
-export function TopBar() {
+export function TopBar({ initialRango }: { initialRango: string }) {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const rango = searchParams.get('rango') || 'ESTE_MES'
+  const rango = initialRango
 
   const getDisplayText = () => {
     switch (rango) {
@@ -18,9 +17,8 @@ export function TopBar() {
   }
 
   const handleChange = (value: string) => {
-    const params = new URLSearchParams(searchParams)
-    params.set('rango', value)
-    router.push(`?${params.toString()}`)
+    document.cookie = `global_rango=${value}; path=/; max-age=2592000`
+    router.refresh()
   }
 
   return (
