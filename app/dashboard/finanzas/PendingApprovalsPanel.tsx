@@ -62,7 +62,11 @@ function formatCurrency(amount: number): string {
   }).format(amount)
 }
 
-export default function PendingApprovalsPanel() {
+interface PendingApprovalsPanelProps {
+  isSubAdmin: boolean
+}
+
+export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps) {
   const router = useRouter()
   const [approvals, setApprovals] = useState<PendingApproval[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -93,11 +97,8 @@ export default function PendingApprovalsPanel() {
     void loadApprovals()
   }, [])
 
-  const currentUser = useCurrentUser()
-  const isSubAdmin = currentUser?.rol === 'SUB-ADMIN'
-
   const onAction = async (id: string, action: 'APPROVE' | 'REJECT') => {
-    if (isSubAdmin) {
+    if (props.isSubAdmin) {
       alert('Acceso denegado: SUB-ADMIN no puede aprobar/rechazar abonos.')
       return
     }

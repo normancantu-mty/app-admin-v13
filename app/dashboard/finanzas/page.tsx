@@ -125,7 +125,7 @@ const isAdmin = true
       </div>
 
       {/* Panel de aprobación visible solo para ADMIN, justo debajo del título */}
-      {isAdmin && <PendingApprovalsPanel />}
+      {isAdmin && <PendingApprovalsPanel isSubAdmin={currentUser?.rol === 'SUB-ADMIN'} />}
 
       {movimientos.length === 0 ? (
         <EmptyState />
