@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import DateFilter from '@/components/dashboard/DateFilter'
 import AuditFeed from '@/components/dashboard/AuditFeed'
-import { getFinanzasDashboard, getLiderazgoRed, getAspectosUrgentes } from '@/lib/dashboard-utils'
+import { getFinanzasDashboard, getLiderazgoRed, getAspectosUrgentes, calcularFechasPorRango } from '@/lib/dashboard-utils'
 import { getCurrentUser } from '@/lib/auth-utils'
 
 function formatCurrency(amount: number): string {
