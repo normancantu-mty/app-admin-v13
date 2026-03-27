@@ -2,8 +2,7 @@ import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import PendingApprovalsPanel from './PendingApprovalsPanel'
-import { bulkDeleteMovements } from '@/app/actions/audit'
-import { useState, useTransition } from 'react'
+import MovimientosTable from './MovimientosTable'
 
 interface MovimientoFinanciero {
   id: string
@@ -153,55 +152,7 @@ export default async function FinanzasPage() {
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-800">Movimientos Financieros</h2>
             </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Fecha
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Concepto
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Cuenta
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Monto
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {movimientos.map((movimiento: MovimientoFinanciero) => {
-                    const esIngreso = TIPOS_INGRESO.includes(movimiento.tipo_movimiento)
-                    
-                    return (
-                      <tr key={movimiento.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {new Date(movimiento.fecha_movimiento).toLocaleDateString('es-MX', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric'
-                          })}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          <div className="font-medium">{movimiento.tipo_movimiento}</div>
-                          <div className="text-gray-500 text-xs">{movimiento.categoria}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {movimiento.cuenta_destino?.nombre || 'N/A'}
-                        </td>
-                        <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold ${
-                          esIngreso ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {esIngreso ? '+' : '-'}{formatCurrency(movimiento.monto)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <MovimientosTable movimientos={movimientos} isAdmin={isAdmin} />
           </div>
         </>
       )}
