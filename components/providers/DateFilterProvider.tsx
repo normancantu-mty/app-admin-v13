@@ -30,3 +30,4 @@ export function useDateFilter() {
     throw new Error('useDateFilter must be used within a DateFilterProvider')
   }
   return context
+}
