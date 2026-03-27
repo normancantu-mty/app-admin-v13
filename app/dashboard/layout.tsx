@@ -2,18 +2,21 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { cookies } from 'next/headers'
 import { ReactNode, useEffect, useState } from 'react'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { supabase } from '@/lib/supabase'
 import { DateFilterProvider } from '@/components/providers/DateFilterProvider'
 import { TopBar } from '@/components/ui/TopBar'
 
-export default function DashboardLayout({
+export default async function DashboardLayout({
   children,
 }: {
   children: ReactNode
 }) {
   const pathname = usePathname()
+  const cookieStore = await cookies()
+  const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const router = useRouter()
   const [userRole, setUserRole] = useState<string | null>(null)
   const [entidadId, setEntidadId] = useState<string | null>(null)
