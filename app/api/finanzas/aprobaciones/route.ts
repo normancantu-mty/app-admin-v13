@@ -45,10 +45,6 @@ function calcularFugaFiscal(
 
 export async function GET() {
   try {
-    const currentUser = await getCurrentUser()
-    if (currentUser?.rol !== 'ADMIN') {
-      return NextResponse.json({ error: 'Solo ADMIN puede ver aprobaciones pendientes.' }, { status: 403 })
-    }
 
     const { data, error } = await supabase
       .from('finanzas_ledger')
