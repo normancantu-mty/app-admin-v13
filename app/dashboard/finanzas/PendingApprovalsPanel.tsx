@@ -12,6 +12,49 @@ interface PendingApproval {
   cuenta_destino: { nombre: string } | null
 }
 
+export interface FiscalLeakResult {
+  montoBase: number
+  ieps: number
+  iva: number
+  gastoOperativo: number
+}
+
+export function calculateFiscalLeak(
+  monto: number,
+  tipoCuentaDestino: TipoCuentaDestino
+): FiscalLeakResult {
+  let base: number
+  let ieps: number
+  let iva: number
+  let gastoOperativo = 0
+
+  switch(tipoCuentaDestino) {
+    case 'CUENTA_FRESNILLO':
+      base = monto / FACTOR_FRESNILLO
+      ieps = base * TASA_IEPS
+      iva = (base + ieps) * TASA_IVA
+      break
+    case 'CUENTA_PERSONAL':
+      base = monto / (1 + TASA_IVA)
+      ieps = 0
+      iva = base * TASA_IVA
+      break
+    case 'EFECTIVO':
+      base = monto
+      ieps = 0
+      iva = 0
+      // Fuga fiscal: empresa absorbe el IVA
+      gastoOperativo = monto * TASA_IVA / (1 + TASA_IVA)
+  }
+
+  return {
+    montoBase: parseFloat(base.toFixed(2)),
+    ieps: parseFloat(ieps.toFixed(2)),
+    iva: parseFloat(iva.toFixed(2)),
+    gastoOperativo: parseFloat(gastoOperativo.toFixed(2))
+  }
+}
+
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',

@@ -62,9 +62,15 @@ export default function NuevoMovimientoPage() {
 
       router.push('/dashboard/finanzas')
       router.refresh()
-    } catch (error: any) {
+    } catch (error: unknown) {
+      let errorMessage = 'Error al guardar el movimiento. Inténtalo de nuevo.'
+      if (error instanceof Error) {
+        errorMessage = error.message
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      }
       console.error('Error in handleSubmit:', error)
-      alert(error?.message || 'Error al guardar el movimiento. Inténtalo de nuevo.')
+      alert(errorMessage)
     } finally {
       setIsLoading(false)
     }

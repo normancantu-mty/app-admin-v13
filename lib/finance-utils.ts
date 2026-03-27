@@ -1,9 +1,11 @@
 /**
- * Constantes del negocio
+ * Constantes del negocio (Actualizado para Fresnillo IEPS 53% + IVA)
  */
 const TASA_IEPS = 0.53
 const TASA_IVA = 0.16
-const FACTOR_RECONSTRUCCION = 1.69
+const FACTOR_FRESNILLO = 1.7748 // (1 + 0.53) * 1.16
+
+export type TipoCuentaDestino = 'EFECTIVO' | 'CUENTA_PERSONAL' | 'CUENTA_FRESNILLO'
 
 /**
  * Tipo de fiscalidad para cálculo de impuestos
