@@ -1,10 +1,16 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 
-export function TopBar({ initialRango }: { initialRango: string }) {
+export function TopBar() {
   const router = useRouter()
-  const rango = initialRango
+  const [rango, setRango] = useState('ESTE_MES')
+
+  useEffect(() => {
+    const match = document.cookie.match(new RegExp('(^| )global_rango=([^;]+)'))
+    if (match) setRango(match[2])
+  }, [])
 
   const getDisplayText = () => {
     switch (rango) {
@@ -17,6 +23,7 @@ export function TopBar({ initialRango }: { initialRango: string }) {
   }
 
   const handleChange = (value: string) => {
+    setRango(value)
     document.cookie = `global_rango=${value}; path=/; max-age=2592000`
     router.refresh()
   }
