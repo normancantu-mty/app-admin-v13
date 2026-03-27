@@ -70,13 +70,14 @@ export async function getFinanzasDashboard(
   fechaFin?: string
 ): Promise<FinanzasDashboard> {
   try {
-    let query = supabase.from('finanzas_ledger').select('tipo_movimiento, monto, categoria').eq('status', 'APPROVED')
+    let query = supabase.from('finanzas_ledger')
+      .select('tipo_movimiento, monto, categoria, fecha_movimiento')
+      .eq('status', 'APPROVED')
 
-    if (fechaInicio) {
-      query = query.gte('fecha_movimiento', fechaInicio)
-    }
-    if (fechaFin) {
-      query = query.lte('fecha_movimiento', fechaFin)
+    if (fechaInicio && fechaFin) {
+      query = query
+        .gte('fecha_movimiento', fechaInicio)
+        .lte('fecha_movimiento', fechaFin)
     }
 
     const { data: movimientos, error } = await query
@@ -164,11 +165,10 @@ export async function getLiderazgoRed(
       .from('transacciones_tickets')
       .select('id_comprador, monto_base_ingreso, total_cobrado_real, fecha_transaccion')
 
-    if (fechaInicio) {
-      ticketsQuery = ticketsQuery.gte('fecha_transaccion', fechaInicio)
-    }
-    if (fechaFin) {
-      ticketsQuery = ticketsQuery.lte('fecha_transaccion', fechaFin)
+    if (fechaInicio && fechaFin) {
+      ticketsQuery = ticketsQuery
+        .gte('fecha_transaccion', fechaInicio)
+        .lte('fecha_transaccion', fechaFin)
     }
 
     const { data: tickets, error: ticketsError } = await ticketsQuery

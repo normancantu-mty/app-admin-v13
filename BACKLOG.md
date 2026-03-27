@@ -28,7 +28,7 @@
 - **Archivos a Modificar:** `app/dashboard/layout.tsx`, `components/providers/DateFilterProvider.tsx`, `components/ui/TopBar.tsx`
 - **Criterio de Aceptación (Promesa de Finalización):** `npm run lint`. Playwright assertion: Seleccionar "Este Mes" en el Header asegura que la URL o el estado global se actualiza, `expect(await page.locator('#date-filter-display').innerText()).toContain('Este Mes');`.
 
-### [ ] TKT-005: Recálculo Dinámico de Analíticas (Dashboard Utils)
+### [x] TKT-005: Recálculo Dinámico de Analíticas (Dashboard Utils)
 - **Objetivo Estratégico:** Conectar el filtro de fechas global con las funciones matemáticas del servidor para recalcular ingresos, egresos y deudas al vuelo.
 - **Reglas de Negocio (Context):** Las funciones `getMovimientos()`, `getTransaccionesTickets()` y `calcularKPIs()` en `lib/dashboard-utils.ts` deben aceptar opcionalmente `fechaInicio` y `fechaFin`. Las consultas a Supabase usarán `.gte('fecha_movimiento', fechaInicio).lte('fecha_movimiento', fechaFin)`.
 - **Archivos a Modificar:** `lib/dashboard-utils.ts`, `app/dashboard/general/page.tsx`

@@ -18,10 +18,46 @@ function getTrafficLightColor(dias: number): string {
 }
 
 
-export default async function DashboardGeneralPage() {
+function calcularFechasPorRango(rango: string) {
+  const hoy = new Date()
+  const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+  
+  switch (rango) {
+    case 'HOY':
+      return {
+        fechaInicio: hoy.toISOString().split('T')[0],
+        fechaFin: hoy.toISOString().split('T')[0]
+      }
+    case 'ESTE_MES':
+      return {
+        fechaInicio: inicioMes.toISOString().split('T')[0],
+        fechaFin: hoy.toISOString().split('T')[0]
+      }
+    case 'TRIMESTRE':
+      const inicioTrimestre = new Date(hoy.getFullYear(), hoy.getMonth() - 2, 1)
+      return {
+        fechaInicio: inicioTrimestre.toISOString().split('T')[0],
+        fechaFin: hoy.toISOString().split('T')[0]
+      }
+    default:
+      return {
+        fechaInicio: inicioMes.toISOString().split('T')[0],
+        fechaFin: hoy.toISOString().split('T')[0]
+      }
+  }
+}
+
+export default async function DashboardGeneralPage({
+  searchParams
+}: {
+  searchParams: { rango?: string }
+}) {
+  const rango = searchParams?.rango || 'ESTE_MES'
+  const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
+
   const [finanzas, liderazgo, urgentes, currentUser] = await Promise.all([
-    getFinanzasDashboard(),
-    getLiderazgoRed(),
+    getFinanzasDashboard(fechaInicio, fechaFin),
+    getLiderazgoRed(fechaInicio, fechaFin),
     getAspectosUrgentes(),
     getCurrentUser()
   ])

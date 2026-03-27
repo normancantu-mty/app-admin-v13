@@ -1,12 +1,14 @@
 'use client'
 
-import { useDateFilter } from '@/components/providers/DateFilterProvider'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 export function TopBar() {
-  const { dateRange, setDateRange } = useDateFilter()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const rango = searchParams.get('rango') || 'ESTE_MES'
 
   const getDisplayText = () => {
-    switch (dateRange) {
+    switch (rango) {
       case 'HOY': return 'Hoy'
       case 'ESTE_MES': return 'Este Mes'
       case 'TRIMESTRE': return 'Trimestre'
@@ -15,12 +17,18 @@ export function TopBar() {
     }
   }
 
+  const handleChange = (value: string) => {
+    const params = new URLSearchParams(searchParams)
+    params.set('rango', value)
+    router.push(`?${params.toString()}`)
+  }
+
   return (
     <div className="bg-white border-b border-gray-200 p-4 flex justify-between items-center">
       <div id="date-filter-display">{getDisplayText()}</div>
       <select
-        value={dateRange}
-        onChange={(e) => setDateRange(e.target.value as DateRange)}
+        value={rango}
+        onChange={(e) => handleChange(e.target.value)}
         className="px-3 py-2 border border-gray-300 rounded-md text-sm"
       >
         <option value="HOY">Hoy</option>
