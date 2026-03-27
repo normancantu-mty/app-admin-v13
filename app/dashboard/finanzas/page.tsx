@@ -29,7 +29,7 @@ interface ResumenFinanciero {
 const TIPOS_INGRESO = ['INGRESO_VENTA', 'ABONO_DEUDA']
 const TIPOS_EGRESO = ['GASTO_OPERATIVO', 'SUBSIDIO_FISCAL', 'COMISION_PASIVA']
 
-async function getMovimientos(): Promise<MovimientoFinanciero[]> {
+async function getMovimientos(fechaInicio?: string, fechaFin?: string): Promise<MovimientoFinanciero[]> {
   try {
     let query = supabase
       .from('finanzas_ledger')
