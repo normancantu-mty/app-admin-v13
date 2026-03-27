@@ -75,7 +75,7 @@ export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps)
   const loadApprovals = async () => {
     setIsLoading(true)
     try {
-      const res = await fetch('/api/finanzas/aprobaciones', { method: 'GET' })
+      const res = await fetch('/api/finanzas/aprobaciones', { cache: 'no-store' })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         console.error(data?.error || 'No se pudieron cargar los pendientes.')
