@@ -78,7 +78,7 @@ export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps)
       const res = await fetch('/api/finanzas/aprobaciones', { method: 'GET' })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        alert(data?.error || 'No se pudieron cargar los pendientes.')
+        console.error(data?.error || 'No se pudieron cargar los pendientes.')
         setApprovals([])
         return
       }
@@ -86,7 +86,7 @@ export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps)
       const data = await res.json()
       setApprovals(data?.approvals || [])
     } catch {
-      alert('Error de red al cargar pendientes.')
+      console.error('Error de red al cargar pendientes.')
       setApprovals([])
     } finally {
       setIsLoading(false)
