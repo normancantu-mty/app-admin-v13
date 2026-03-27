@@ -47,12 +47,15 @@ function calcularFechasPorRango(rango: string) {
   }
 }
 
+export const dynamic = 'force-dynamic'
+
 export default async function DashboardGeneralPage({
   searchParams
 }: {
-  searchParams: { rango?: string }
+  searchParams: Promise<{ rango?: string }>
 }) {
-  const rango = searchParams?.rango || 'ESTE_MES'
+  const params = await searchParams
+  const rango = params?.rango || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
   const [finanzas, liderazgo, urgentes, currentUser] = await Promise.all([
@@ -102,8 +105,6 @@ export default async function DashboardGeneralPage({
         {/* COLUMNA IZQUIERDA - 75% (3 de 4 columnas) */}
         <div className="md:col-span-3 space-y-6">
           
-          {/* TOP BAR - Selector de Período */}
-          <DateFilter />
 
           {/* FINANZAS - 2 Tarjetas con Mini-Barras */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
