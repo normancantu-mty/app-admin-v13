@@ -1,6 +1,8 @@
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
+import { cookies } from 'next/headers'
+import { calcularFechasPorRango } from '@/lib/dashboard-utils'
 
 interface Producto {
   id: string
@@ -51,12 +53,23 @@ async function getCatalogoProductos(): Promise<Producto[]> {
   }
 }
 
-async function getInventarioLedger(): Promise<MovimientoInventario[]> {
+async function getInventarioLedger(
+  fechaInicio?: string,
+  fechaFin?: string
+): Promise<MovimientoInventario[]> {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('inventario_ledger')
       .select('*')
       .order('fecha_movimiento', { ascending: false })
+
+    if (fechaInicio && fechaFin) {
+      query = query
+        .gte('fecha_movimiento', fechaInicio)
+        .lte('fecha_movimiento', fechaFin)
+    }
+
+    const { data, error } = await query
 
     if (error) {
       console.error('Error fetching inventario_ledger:', error)
@@ -129,9 +142,13 @@ function EmptyState() {
 }
 
 export default async function InventarioPage() {
+  const cookieStore = await cookies()
+  const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
+  const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
+  
   const [productos, movimientos, currentUser] = await Promise.all([
     getCatalogoProductos(),
-    getInventarioLedger(),
+    getInventarioLedger(fechaInicio, fechaFin),
     getCurrentUser()
   ])
   

@@ -1,5 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import { cookies } from 'next/headers'
+import { calcularFechasPorRango } from '@/lib/dashboard-utils'
 import {
   getMovimientosFinanzas,
   getMovimientosInventario,
@@ -58,12 +60,23 @@ async function getEntidades(): Promise<Entidad[]> {
   }
 }
 
-async function getFinanzasLedger(): Promise<FinanzaLedger[]> {
+async function getFinanzasLedger(
+  fechaInicio?: string,
+  fechaFin?: string
+): Promise<FinanzaLedger[]> {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('finanzas_ledger')
       .select('id_entidad_relacionada, tipo_movimiento, monto')
       .eq('status', 'APPROVED')
+
+    if (fechaInicio && fechaFin) {
+      query = query
+        .gte('fecha_movimiento', fechaInicio)
+        .lte('fecha_movimiento', fechaFin)
+    }
+
+    const { data, error } = await query
 
     if (error) {
       console.error('Error fetching finanzas_ledger:', error)
@@ -77,11 +90,22 @@ async function getFinanzasLedger(): Promise<FinanzaLedger[]> {
   }
 }
 
-async function getTickets(): Promise<{ id_comprador: string; total_cobrado_real: number }[]> {
+async function getTickets(
+  fechaInicio?: string,
+  fechaFin?: string
+): Promise<{ id_comprador: string; total_cobrado_real: number }[]> {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('transacciones_tickets')
       .select('id_comprador, total_cobrado_real')
+
+    if (fechaInicio && fechaFin) {
+      query = query
+        .gte('fecha_transaccion', fechaInicio)
+        .lte('fecha_transaccion', fechaFin)
+    }
+
+    const { data, error } = await query
 
     if (error) {
       console.error('Error fetching tickets:', error)
@@ -150,6 +174,10 @@ function EmptyState() {
 
 export default async function DistribuidoresPage() {
   // Fetch all data in parallel for maximum performance
+  const cookieStore = await cookies()
+  const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
+  const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
+  
   const [
     entidades,
     finanzas,
@@ -161,10 +189,10 @@ export default async function DistribuidoresPage() {
     currentUser
   ] = await Promise.all([
     getEntidades(),
-    getFinanzasLedger(),
-    getTickets(),
-    getMovimientosFinanzas(),
-    getMovimientosInventario(),
+    getFinanzasLedger(fechaInicio, fechaFin),
+    getTickets(fechaInicio, fechaFin),
+    getMovimientosFinanzas(fechaInicio, fechaFin),
+    getMovimientosInventario(fechaInicio, fechaFin),
     getInventarioLedger(),
     getProductos(),
     getCurrentUser()
