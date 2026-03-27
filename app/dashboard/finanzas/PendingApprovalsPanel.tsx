@@ -93,7 +93,12 @@ export default function PendingApprovalsPanel() {
     void loadApprovals()
   }, [])
 
+  const currentUser = useCurrentUser()
+  const isSubAdmin = currentUser?.rol === 'SUB-ADMIN'
+
   const onAction = async (id: string, action: 'APPROVE' | 'REJECT') => {
+    if (isSubAdmin) return
+    
     setProcessingId(id)
     try {
       const res = await fetch('/api/finanzas/aprobaciones', {
@@ -183,20 +188,24 @@ export default function PendingApprovalsPanel() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
                     <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => onAction(item.id, 'REJECT')}
-                        disabled={processingId === item.id}
-                        className="px-3 py-1.5 text-xs font-medium rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Rechazar
-                      </button>
-                      <button
-                        onClick={() => onAction(item.id, 'APPROVE')}
-                        disabled={processingId === item.id}
-                        className="px-3 py-1.5 text-xs font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Aprobar
-                      </button>
+                      {!isSubAdmin && (
+                        <>
+                          <button
+                            onClick={() => onAction(item.id, 'REJECT')}
+                            disabled={processingId === item.id}
+                            className="px-3 py-1.5 text-xs font-medium rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Rechazar
+                          </button>
+                          <button
+                            onClick={() => onAction(item.id, 'APPROVE')}
+                            disabled={processingId === item.id}
+                            className="px-3 py-1.5 text-xs font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Aprobar
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

@@ -1,7 +1,7 @@
 export interface Entidad {
   id: string
   nombre: string
-  rol: 'ADMIN' | 'DST' | 'LOC' | 'SOCIO'
+  rol: 'ADMIN' | 'DST' | 'LOC' | 'SOCIO' | 'SUB-ADMIN'
   id_padre: string | null
   zona: string
   comisiones: {
