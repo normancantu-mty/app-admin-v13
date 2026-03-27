@@ -192,7 +192,7 @@ export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps)
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
                     <div className="flex justify-end gap-2">
-                      {!isSubAdmin && (
+                      {!props.isSubAdmin && (
                         <>
                           <button
                             onClick={() => onAction(item.id, 'REJECT')}
