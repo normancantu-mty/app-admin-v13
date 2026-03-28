@@ -115,8 +115,8 @@ export default async function FinanzasPage() {
     getDesgloseCategorias(fechaInicio, fechaFin)
   ])
   const resumen = calcularResumen(movimientos)
-  const canMutate = true
-  const isAdmin = true
+  const isAdmin = currentUser?.rol === 'ADMIN'
+  const canMutate = isAdmin || currentUser?.rol === 'SUB-ADMIN'
 
   return (
     <div className="p-8 space-y-8">
