@@ -115,8 +115,11 @@ export default async function FinanzasPage() {
     getDesgloseCategorias(fechaInicio, fechaFin)
   ])
   const resumen = calcularResumen(movimientos)
-  const isAdmin = currentUser?.rol === 'ADMIN'
-  const canMutate = isAdmin || currentUser?.rol === 'SUB-ADMIN'
+  const userRole = currentUser?.rol?.toUpperCase() || 'INVITADO'
+  const isAdmin = userRole === 'ADMIN' || userRole === 'ADMINISTRADOR'
+  const canMutate = isAdmin || userRole === 'SUB-ADMIN'
+  
+  console.log('🕵️‍♂️ [OJO DE DIOS] Usuario actual detectado:', currentUser?.email, '| Rol:', userRole)
 
   return (
     <div className="p-8 space-y-8">
