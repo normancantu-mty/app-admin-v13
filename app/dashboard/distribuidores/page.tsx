@@ -12,6 +12,7 @@ import {
   calcularValorFisicoInventario,
   calcularRiesgoJineteo
 } from '@/lib/risk-utils'
+import { calcularSemaforoDeuda } from '@/lib/network-utils'
 import { getCurrentUser } from '@/lib/auth-utils'
 
 interface Entidad {
