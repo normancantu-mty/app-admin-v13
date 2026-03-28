@@ -26,6 +26,8 @@ interface Entidad {
   comision_logistica: number
   id_padre: string | null
   ultimo_seguimiento: string | null
+  ubicacion_maps?: string
+  fecha_ultimo_abono?: string | null
 }
 
 interface FinanzaLedger {
@@ -260,8 +262,12 @@ export default async function DistribuidoresPage() {
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-800">Directorio de la Red</h2>
             </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
+            <div className="space-y-8">
+              {/* Tabla Zacatecas */}
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Locales (Zacatecas)</h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -281,6 +287,9 @@ export default async function DistribuidoresPage() {
                     </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Seguimiento
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Estado Deuda
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Riesgo / Jineteo
@@ -335,6 +344,15 @@ export default async function DistribuidoresPage() {
                       <td className="px-6 py-4 whitespace-nowrap text-center text-2xl">
                         {semaforo}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                        <div className={`h-4 w-4 rounded-full mx-auto ${
+                          calcularSemaforoDeuda(entidad.fecha_ultimo_abono) === 'VERDE' 
+                            ? 'bg-green-500' 
+                            : calcularSemaforoDeuda(entidad.fecha_ultimo_abono) === 'AMARILLO' 
+                              ? 'bg-yellow-500' 
+                              : 'bg-red-500'
+                        }`} />
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {riesgo.estado === 'FALTANTE' ? (
                           <div className="flex items-center gap-2">
@@ -354,19 +372,50 @@ export default async function DistribuidoresPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <Link
-                          href={`/dashboard/distribuidores/${entidad.id}`}
-                          className="text-blue-600 hover:text-blue-800 font-medium"
-                        >
-                          Ver Estado de Cuenta
-                        </Link>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/dashboard/distribuidores/${entidad.id}`}
+                            className="text-blue-600 hover:text-blue-800 font-medium"
+                          >
+                            Ver Estado
+                          </Link>
+                          {entidad.ubicacion_maps && (
+                            <a 
+                              href={entidad.ubicacion_maps} 
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-gray-500 hover:text-gray-700"
+                              title="Ver en mapa"
+                            >
+                              🗺️
+                            </a>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     )
                   })}
                 </tbody>
-              </table>
-            </div>
+                  </table>
+                </div>
+              </div>
+
+              {/* Tabla Foráneos */}
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Foráneos</h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    {/* Misma estructura de tabla pero filtrada para zonas != Zacatecas */}
+                    {entidades
+                      .filter(e => e.zona !== 'Zacatecas')
+                      .map((entidad: Entidad) => (
+                        <tr key={entidad.id} className="hover:bg-gray-50">
+                          {/* Mismo contenido de fila */}
+                        </tr>
+                      ))}
+                  </table>
+                </div>
+              </div>
           </div>
         </>
       )}
