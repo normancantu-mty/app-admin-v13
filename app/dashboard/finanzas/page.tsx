@@ -1,11 +1,12 @@
 export const dynamic = 'force-dynamic'
 import { supabase } from '@/lib/supabase'
 import { cookies } from 'next/headers'
-import { calcularFechasPorRango } from '@/lib/dashboard-utils'
+import { calcularFechasPorRango, getDesgloseCategorias } from '@/lib/dashboard-utils'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import PendingApprovalsPanel from './PendingApprovalsPanel'
 import MovimientosTable from './MovimientosTable'
+import { CategoryBreakdown } from '@/components/dashboard/CategoryBreakdown'
 
 interface MovimientoFinanciero {
   id: string
