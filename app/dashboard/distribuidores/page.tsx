@@ -416,6 +416,7 @@ export default async function DistribuidoresPage() {
                   </table>
                 </div>
               </div>
+            </div>
           </div>
         </>
       )}
