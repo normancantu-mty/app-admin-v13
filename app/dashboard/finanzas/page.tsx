@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic'
-import { supabase } from '@/lib/supabase'
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { calcularFechasPorRango, getDesgloseCategorias } from '@/lib/dashboard-utils'
 import type { CurrentUser } from '@/lib/auth-utils'
@@ -33,6 +33,18 @@ const TIPOS_EGRESO = ['GASTO_OPERATIVO', 'SUBSIDIO_FISCAL', 'COMISION_PASIVA']
 
 async function getMovimientos(fechaInicio?: string, fechaFin?: string): Promise<MovimientoFinanciero[]> {
   try {
+    const cookieStore = await cookies()
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() { return cookieStore.getAll() },
+          setAll() { /* No hacer nada en server components */ }
+        }
+      }
+    )
+    
     let query = supabase
       .from('finanzas_ledger')
       .select('*, cuenta_destino:cuentas_financieras!id_cuenta_destino(nombre)')
