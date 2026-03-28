@@ -108,13 +108,14 @@ export default async function FinanzasPage() {
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
-  const [movimientos, currentUser] = await Promise.all([
+  const [movimientos, currentUser, categorias] = await Promise.all([
     getMovimientos(fechaInicio, fechaFin),
-    getCurrentUser()
+    getCurrentUser(),
+    getDesgloseCategorias(fechaInicio, fechaFin)
   ])
   const resumen = calcularResumen(movimientos)
-const canMutate = true
-const isAdmin = true
+  const canMutate = true
+  const isAdmin = true
 
   return (
     <div className="p-8 space-y-8">
@@ -162,6 +163,8 @@ const isAdmin = true
               color={resumen.balance >= 0 ? 'blue' : 'red'}
             />
           </div>
+
+          <CategoryBreakdown categorias={categorias} />
 
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="px-6 py-4 border-b border-gray-200">

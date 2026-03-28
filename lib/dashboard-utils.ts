@@ -370,6 +370,46 @@ export function calcularFechasPorRango(rango: string) {
   }
 }
 
+export async function getDesgloseCategorias(fechaInicio?: string, fechaFin?: string) {
+  try {
+    let query = supabase
+      .from('finanzas_ledger')
+      .select('categoria, monto')
+      .eq('status', 'APPROVED')
+
+    if (fechaInicio && fechaFin) {
+      query = query
+        .gte('fecha_movimiento', fechaInicio)
+        .lte('fecha_movimiento', fechaFin)
+    }
+
+    const { data, error } = await query
+
+    if (error || !data) {
+      console.error('Error fetching categorias:', error)
+      return []
+    }
+
+    const total = data.reduce((sum, item) => sum + item.monto, 0)
+    const categoriasMap = new Map<string, number>()
+
+    data.forEach(item => {
+      const categoria = item.categoria || 'Sin Categoría'
+      const current = categoriasMap.get(categoria) || 0
+      categoriasMap.set(categoria, current + item.monto)
+    })
+
+    return Array.from(categoriasMap.entries()).map(([categoria, monto]) => ({
+      categoria,
+      monto,
+      porcentaje: total > 0 ? Math.round((monto / total) * 100) : 0
+    }))
+  } catch (error) {
+    console.error('Error in getDesgloseCategorias:', error)
+    return []
+  }
+}
+
 export async function getFeedGlobal(): Promise<EventoFeed[]> {
   try {
     const { data: tickets, error: ticketsError } = await supabase
