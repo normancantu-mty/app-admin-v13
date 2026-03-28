@@ -107,6 +107,7 @@ function EmptyState() {
 
 export default async function FinanzasPage() {
   const cookieStore = await cookies()
+  console.log('🔑 [AUTH DEBUG] Cookie store accesible:', !!cookieStore)
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
@@ -115,11 +116,19 @@ export default async function FinanzasPage() {
   let currentUser: CurrentUser | null = null;
   
   try {
-    [movimientos, currentUser, categorias] = await Promise.all([
+    [movimientos, currentUser, categorias] = await Promise.allSettled([
       getMovimientos(fechaInicio, fechaFin),
       getCurrentUser(),
       getDesgloseCategorias(fechaInicio, fechaFin)
-    ]);
+    ]).then((results) => {
+      return results.map(result => 
+        result.status === 'fulfilled' ? result.value : null
+      )
+    });
+    
+    if (!currentUser) {
+      console.error('🔑 [AUTH DEBUG] No se pudo obtener usuario actual');
+    }
   } catch (error) {
     console.error('🕵️‍♂️ [OJO DE DIOS] Error obteniendo datos:', error);
     currentUser = null;
