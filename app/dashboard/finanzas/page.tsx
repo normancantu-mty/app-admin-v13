@@ -109,17 +109,24 @@ export default async function FinanzasPage() {
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
-  const [movimientos, currentUser, categorias] = await Promise.all([
-    getMovimientos(fechaInicio, fechaFin),
-    getCurrentUser(),
-    getDesgloseCategorias(fechaInicio, fechaFin)
-  ])
-  const resumen = calcularResumen(movimientos)
-  const userRole = currentUser?.rol?.toUpperCase() || 'INVITADO'
-  const isAdmin = userRole === 'ADMIN' || userRole === 'ADMINISTRADOR'
-  const canMutate = isAdmin || userRole === 'SUB-ADMIN'
+  let currentUser;
+  try {
+    [movimientos, currentUser, categorias] = await Promise.all([
+      getMovimientos(fechaInicio, fechaFin),
+      getCurrentUser(),
+      getDesgloseCategorias(fechaInicio, fechaFin)
+    ]);
+  } catch (error) {
+    console.error('🕵️‍♂️ [OJO DE DIOS] Error obteniendo datos:', error);
+    currentUser = null;
+  }
   
-  console.log('🕵️‍♂️ [OJO DE DIOS] Usuario actual detectado:', currentUser?.email, '| Rol:', userRole)
+  const resumen = calcularResumen(movimientos);
+  const userRole = currentUser?.rol?.toUpperCase() || 'INVITADO';
+  const isAdmin = userRole === 'ADMIN' || userRole === 'ADMINISTRADOR';
+  const canMutate = isAdmin || userRole === 'SUB-ADMIN';
+  
+  console.log('🕵️‍♂️ [OJO DE DIOS] Usuario actual detectado:', currentUser?.email || 'No autenticado', '| Rol:', userRole);
 
   return (
     <div className="p-8 space-y-8">
