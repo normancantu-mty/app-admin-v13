@@ -269,8 +269,8 @@ export default async function DistribuidoresPage() {
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Locales (Zacatecas)</h3>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
+                    <thead className="bg-gray-50">
+                      <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Nombre
                     </th>
@@ -299,8 +299,8 @@ export default async function DistribuidoresPage() {
                       Acciones
                     </th>
                   </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
                   {entidades.map((entidad: Entidad) => {
                     const padre = entidades.find(e => e.id === entidad.id_padre)
                     const saldoPendiente = calcularSaldoPendiente(entidad.id, tickets, finanzas)
@@ -396,7 +396,7 @@ export default async function DistribuidoresPage() {
                     </tr>
                     )
                   })}
-                </tbody>
+                    </tbody>
                   </table>
                 </div>
               </div>
@@ -406,14 +406,46 @@ export default async function DistribuidoresPage() {
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Foráneos</h3>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
-                    {/* Misma estructura de tabla pero filtrada para zonas != Zacatecas */}
-                    {entidades
-                      .filter(e => e.zona !== 'Zacatecas')
-                      .map((entidad: Entidad) => (
-                        <tr key={entidad.id} className="hover:bg-gray-50">
-                          {/* Mismo contenido de fila */}
-                        </tr>
-                      ))}
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Nombre
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Rol
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Zona
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Patrocinador
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Saldo Pendiente
+                        </th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Seguimiento
+                        </th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Estado Deuda
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Riesgo / Jineteo
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Acciones
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {entidades
+                        .filter(e => e.zona !== 'Zacatecas')
+                        .map((entidad: Entidad) => (
+                          <tr key={entidad.id} className="hover:bg-gray-50">
+                            {/* Mismo contenido de fila */}
+                          </tr>
+                        ))}
+                    </tbody>
                   </table>
                 </div>
               </div>
