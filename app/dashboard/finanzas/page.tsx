@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { supabase } from '@/lib/supabase'
 import { cookies } from 'next/headers'
 import { calcularFechasPorRango, getDesgloseCategorias } from '@/lib/dashboard-utils'
+import type { CurrentUser } from '@/lib/auth-utils'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import PendingApprovalsPanel from './PendingApprovalsPanel'
@@ -109,7 +110,10 @@ export default async function FinanzasPage() {
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
-  let currentUser;
+  let movimientos: MovimientoFinanciero[] = [];
+  let categorias: any[] = [];
+  let currentUser: CurrentUser | null = null;
+  
   try {
     [movimientos, currentUser, categorias] = await Promise.all([
       getMovimientos(fechaInicio, fechaFin),
