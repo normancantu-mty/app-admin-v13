@@ -26,7 +26,8 @@ interface ProductoConStock extends Producto {
 }
 
 interface KPIsInventario {
-  totalTerminados: number
+  totalBotellas: number
+  totalPastas: number
   totalInsumos: number
   totalMermas: number
 }
@@ -105,8 +106,14 @@ function calcularStockActual(productos: Producto[], movimientos: MovimientoInven
 }
 
 function calcularKPIs(productosConStock: ProductoConStock[], movimientos: MovimientoInventario[]): KPIsInventario {
-  const totalTerminados = productosConStock
-    .filter(p => p.tipo === 'TERMINADO')
+  const totalBotellas = productosConStock
+    .filter(p => p.tipo === 'TERMINADO' && p.unidad_medida.toLowerCase().includes('ml'))
+    .reduce((sum, p) => sum + p.stock_actual, 0)
+  
+  const totalPastas = productosConStock
+    .filter(p => p.tipo === 'TERMINADO' && 
+      (p.unidad_medida.toLowerCase().includes('kg') || 
+       p.unidad_medida.toLowerCase().includes('gr')))
     .reduce((sum, p) => sum + p.stock_actual, 0)
   
   const totalInsumos = productosConStock
@@ -118,7 +125,8 @@ function calcularKPIs(productosConStock: ProductoConStock[], movimientos: Movimi
     .reduce((sum, mov) => sum + mov.cantidad, 0)
   
   return {
-    totalTerminados,
+    totalBotellas,
+    totalPastas,
     totalInsumos,
     totalMermas
   }
@@ -175,6 +183,11 @@ export default async function InventarioPage() {
             >
               Comprar Insumos
             </Link>
+            <button
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            >
+              Registrar Merma
+            </button>
           </div>
         )}
       </div>
@@ -187,11 +200,23 @@ export default async function InventarioPage() {
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Total Terminados</p>
-                  <p className="text-3xl font-bold text-blue-600 mt-2">{Number(kpis.totalTerminados).toFixed(2)}</p>
+                  <p className="text-sm font-medium text-gray-600">Stock Botellas</p>
+                  <p className="text-3xl font-bold text-blue-600 mt-2">{Number(kpis.totalBotellas).toFixed(2)}</p>
                 </div>
                 <div className="bg-blue-100 p-3 rounded-full">
-                  <span className="text-2xl">📦</span>
+                  <span className="text-2xl">🍾</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Stock Pastas</p>
+                  <p className="text-3xl font-bold text-purple-600 mt-2">{Number(kpis.totalPastas).toFixed(2)}</p>
+                </div>
+                <div className="bg-purple-100 p-3 rounded-full">
+                  <span className="text-2xl">🧴</span>
                 </div>
               </div>
             </div>
