@@ -14,6 +14,7 @@ import {
 } from '@/lib/risk-utils'
 import { calcularSemaforoDeuda } from '@/lib/network-utils'
 import { getCurrentUser } from '@/lib/auth-utils'
+import RegistrarSeguimientoButton from './RegistrarSeguimientoButton'
 
 interface Entidad {
   id: string
@@ -29,6 +30,7 @@ interface Entidad {
   ultimo_seguimiento: string | null
   ubicacion_maps?: string
   fecha_ultimo_abono?: string | null
+  fecha_ultimo_seguimiento?: string | null
 }
 
 interface FinanzaLedger {
@@ -157,6 +159,31 @@ function formatCurrency(amount: number): string {
   }).format(amount)
 }
 
+function getFechaActividadComercial(
+  ultimoMovimientoFinanciero: Date | null,
+  fechaUltimoSeguimiento?: string | null
+): Date | null {
+  const fechaSeguimiento = fechaUltimoSeguimiento ? new Date(fechaUltimoSeguimiento) : null
+
+  if (ultimoMovimientoFinanciero && fechaSeguimiento) {
+    return ultimoMovimientoFinanciero.getTime() >= fechaSeguimiento.getTime()
+      ? ultimoMovimientoFinanciero
+      : fechaSeguimiento
+  }
+
+  return ultimoMovimientoFinanciero || fechaSeguimiento
+}
+
+function getEstadoComercial(diasSinActividad: number) {
+  if (diasSinActividad < 12) {
+    return { label: 'Activo', classes: 'bg-green-100 text-green-800' }
+  }
+  if (diasSinActividad <= 15) {
+    return { label: 'Alerta', classes: 'bg-yellow-100 text-yellow-800' }
+  }
+  return { label: 'En Riesgo', classes: 'bg-red-100 text-red-800' }
+}
+
 function calcularKPIs(entidades: Entidad[]): KPIsRed {
   const totalRed = entidades.length
   const distribuidores = entidades.filter(e => e.rol === 'DST').length
@@ -281,6 +308,9 @@ export default async function DistribuidoresPage() {
                       Zona
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Ubicación
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Patrocinador
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -291,6 +321,9 @@ export default async function DistribuidoresPage() {
                     </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Estado Deuda
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Estado Comercial
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Riesgo / Jineteo
@@ -309,9 +342,17 @@ export default async function DistribuidoresPage() {
                     const ultimoMovimiento = calcularUltimoMovimiento(
                       entidad.id,
                       movimientosFinanzas,
-                      movimientosInventario
+                      []
                     )
-                    const semaforo = getSemaforoMovimiento(ultimoMovimiento)
+                    const ultimaActividadComercial = getFechaActividadComercial(
+                      ultimoMovimiento,
+                      entidad.fecha_ultimo_seguimiento ?? entidad.ultimo_seguimiento
+                    )
+                    const semaforo = getSemaforoMovimiento(ultimaActividadComercial)
+                    const diasSinActividad = ultimaActividadComercial
+                      ? Math.floor((Date.now() - ultimaActividadComercial.getTime()) / (1000 * 60 * 60 * 24))
+                      : Number.POSITIVE_INFINITY
+                    const estadoComercial = getEstadoComercial(diasSinActividad)
                     
                     // ANTI-FRAUD: Calculate physical inventory value and fraud risk
                     const valorFisico = calcularValorFisicoInventario(entidad.id, inventario, productos)
@@ -334,6 +375,20 @@ export default async function DistribuidoresPage() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {entidad.zona}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {entidad.ubicacion_maps ? (
+                          <a
+                            href={entidad.ubicacion_maps}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 font-medium"
+                          >
+                            Ver Mapa
+                          </a>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {padre ? padre.nombre : 'Línea Directa'}
                       </td>
@@ -353,6 +408,11 @@ export default async function DistribuidoresPage() {
                               ? 'bg-yellow-500' 
                               : 'bg-red-500'
                         }`} />
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${estadoComercial.classes}`}>
+                          {estadoComercial.label}
+                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {riesgo.estado === 'FALTANTE' ? (
@@ -380,17 +440,7 @@ export default async function DistribuidoresPage() {
                           >
                             Ver Estado
                           </Link>
-                          {entidad.ubicacion_maps && (
-                            <a 
-                              href={entidad.ubicacion_maps} 
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-gray-500 hover:text-gray-700"
-                              title="Ver en mapa"
-                            >
-                              🗺️
-                            </a>
-                          )}
+                          <RegistrarSeguimientoButton entidadId={entidad.id} />
                         </div>
                       </td>
                     </tr>
