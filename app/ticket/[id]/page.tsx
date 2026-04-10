@@ -193,12 +193,20 @@ export default function TicketPage({ params }: { params: Promise<{ id: string }>
             </button>
           </div>
 
-          <Link
-            href="/pos"
-            className="no-print bg-gray-200 text-black px-4 py-2 rounded mb-4 block text-center font-medium hover:bg-gray-300"
-          >
-            ← Nueva Venta
-          </Link>
+          <div className="no-print flex gap-3 mb-4">
+            <Link
+              href="/pos"
+              className="flex-1 bg-gray-200 text-black px-4 py-2 rounded text-center font-medium hover:bg-gray-300"
+            >
+              ← Nueva Venta
+            </Link>
+            <Link
+              href="/dashboard/general" 
+              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded text-center font-medium hover:bg-blue-700"
+            >
+              ← Volver al Dashboard
+            </Link>
+          </div>
 
           {/* Ticket Térmico */}
           <div className="ticket-container bg-white p-6 shadow-lg font-mono text-sm text-gray-800">

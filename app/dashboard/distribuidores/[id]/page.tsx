@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -248,47 +250,47 @@ export default async function EstadoCuentaPage({ params }: { params: Promise<{ i
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Total Generado</p>
-              <p className="text-3xl font-bold text-blue-600 mt-2">{formatCurrency(saldos.totalGenerado)}</p>
+              <p className="text-sm font-medium text-gray-600">Total Ganado</p>
+              <p className="text-3xl font-bold text-purple-600 mt-2">{formatCurrency(comisionesTotales)}</p>
             </div>
-            <div className="bg-blue-100 p-3 rounded-full">
+            <div className="bg-purple-100 p-3 rounded-full">
               <span className="text-2xl">💰</span>
             </div>
           </div>
-          <p className="text-xs text-gray-500 mt-2">Deuda total por ventas realizadas</p>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Abonado</p>
-              <p className="text-3xl font-bold text-green-600 mt-2">{formatCurrency(saldos.totalAbonado)}</p>
-            </div>
-            <div className="bg-green-100 p-3 rounded-full">
-              <span className="text-2xl">✅</span>
-            </div>
-          </div>
-          <p className="text-xs text-gray-500 mt-2">Pagos realizados a la cuenta</p>
+          <p className="text-xs text-gray-500 mt-2">Comisiones pasivas ganadas</p>
         </div>
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Saldo Pendiente</p>
+              <p className="text-3xl font-bold text-blue-600 mt-2">{formatCurrency(saldos.saldoPendiente)}</p>
+            </div>
+            <div className="bg-blue-100 p-3 rounded-full">
+              <span className="text-2xl">⏳</span>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">Deuda bruta sin descuentos</p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Jineteo</p>
               <p className={`text-3xl font-bold mt-2 ${
-                saldos.saldoPendiente > 0 ? 'text-red-600' : 'text-green-600'
+                jineteo > 0 ? 'text-red-600' : 'text-green-600'
               }`}>
-                {formatCurrency(saldos.saldoPendiente)}
+                {formatCurrency(jineteo)}
               </p>
             </div>
             <div className={`p-3 rounded-full ${
-              saldos.saldoPendiente > 0 ? 'bg-red-100' : 'bg-green-100'
+              jineteo > 0 ? 'bg-red-100' : 'bg-green-100'
             }`}>
-              <span className="text-2xl">{saldos.saldoPendiente > 0 ? '⚠️' : '✨'}</span>
+              <span className="text-2xl">{jineteo > 0 ? '⚠️' : '✨'}</span>
             </div>
           </div>
           <p className="text-xs text-gray-500 mt-2">
-            {saldos.saldoPendiente > 0 ? 'Deuda pendiente de pago' : 'Cuenta al corriente'}
+            {jineteo > 0 ? 'Riesgo financiero neto' : 'Balance positivo'}
           </p>
         </div>
       </div>

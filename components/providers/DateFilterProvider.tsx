@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState } from 'react'
 
-export type DateRange = 'HOY' | 'ESTE_MES' | 'TRIMESTRE' | 'PERSONALIZADO'
+export type DateRange = 'HOY' | 'ESTE_MES' | 'TRIMESTRE' | 'PERSONALIZADO' | 'TODO'
 
 interface DateFilterContextType {
   dateRange: DateRange

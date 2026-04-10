@@ -187,6 +187,20 @@ export default function NuevoMiembroPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
+            <div>
+              <label htmlFor="ubicacion_maps" className="block text-sm font-medium text-gray-700 mb-2">
+                Ubicación Maps (URL)
+              </label>
+              <input
+                type="url"
+                id="ubicacion_maps"
+                value={ubicacionMaps}
+                onChange={(e) => setUbicacionMaps(e.target.value)}
+                placeholder="https://maps.google.com/..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">Enlace a Google Maps de la ubicación</p>
+            </div>
 
             {rol === 'LOC' && (
               <div>
