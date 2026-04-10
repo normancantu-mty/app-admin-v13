@@ -36,7 +36,6 @@ interface TicketDetalle {
 
 export default function TicketPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
-  const router = useRouter()
   const [ticket, setTicket] = useState<TicketMaster | null>(null)
   const [detalles, setDetalles] = useState<TicketDetalle[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -113,12 +112,6 @@ export default function TicketPage({ params }: { params: Promise<{ id: string }>
     window.open(`https://wa.me/?text=${texto}`, '_blank')
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('es-MX', {
-      style: 'currency',
-      currency: 'MXN'
-    }).format(amount)
-  }
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)

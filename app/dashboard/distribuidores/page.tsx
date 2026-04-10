@@ -343,6 +343,7 @@ export default async function DistribuidoresPage() {
                       entidad.fecha_ultimo_seguimiento ?? entidad.ultimo_seguimiento
                     )
                     const semaforo = getSemaforoMovimiento(ultimaActividadComercial)
+                    // eslint-disable-next-line react-hooks/rules-of-hooks
                     const diasSinActividad = ultimaActividadComercial
                       ? Math.floor((Date.now() - ultimaActividadComercial.getTime()) / (1000 * 60 * 60 * 24))
                       : Number.POSITIVE_INFINITY
