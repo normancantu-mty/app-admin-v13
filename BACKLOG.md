@@ -36,19 +36,19 @@
 
 ## EPIC 3: Módulo Analítico Avanzado (Gráficas y KPIs Extendidos)
 
-### [ ] TKT-006: Gráficas de Pastel y Categorización Financiera
+### [X] TKT-006: Gráficas de Pastel y Categorización Financiera
 - **Objetivo Estratégico:** Proveer desglose visual de ingresos y egresos por categoría dentro de la pestaña de Finanzas.
 - **Reglas de Negocio (Context):** Renderizar gráficas (usando Recharts ligero o barras Tailwind) bajo las tarjetas de KPI en `/dashboard/finanzas`. Extraer agrupaciones del `finanzas_ledger` por `categoria` (Renta, Nómina, Insumos, Fuga Fiscal IVA/IEPS). Omitir la "Utilidad Neta" compleja por ahora para evitar fricción cognitiva.
 - **Archivos a Modificar:** `app/dashboard/finanzas/page.tsx`, `components/dashboard/CategoryPieChart.tsx`
 - **Criterio de Aceptación (Promesa de Finalización):** Playwright assertion: `await expect(page.locator('[data-testid="category-pie-chart"]')).toBeVisible();` comprobando que las categorías maestras se renderizan en el DOM.
 
-### [ ] TKT-007: Ranking de Distribuidores Geográfico y Envejecimiento de Deuda
+### [x] TKT-007: Ranking de Distribuidores Geográfico y Envejecimiento de Deuda
 - **Objetivo Estratégico:** Separar la red por zona geográfica (Zacatecas vs Foráneo) y aplicar el semáforo de envejecimiento de deuda a los Locales y Distribuidores.
 - **Reglas de Negocio (Context):** En `/dashboard/distribuidores`, crear dos secciones de tabla: "Directos" e "Indirectos". Agregar columna de estado agrupado por `zona`. El semáforo de deuda evalúa `fecha_actual - fecha_ultimo_abono_completado` (0-7d Verde, 8-15d Amarillo, 16+d Rojo). Agregar botón de URL para `ubicacion_maps`.
 - **Archivos a Modificar:** `app/dashboard/distribuidores/page.tsx`, `lib/network-utils.ts`
 - **Criterio de Aceptación (Promesa de Finalización):** Playwright assertion: `await expect(page.locator('td:has-text("Zacatecas")')).toBeVisible(); await expect(page.locator('.bg-red-500.rounded-full')).toBeVisible();` (verificando la existencia de semáforos de alerta).
 
-### [ ] TKT-008: Promedios de BOM y Segmentación de Inventario
+### [x] TKT-008: Promedios de BOM y Segmentación de Inventario
 - **Objetivo Estratégico:** Desglosar el inventario en tarjetas separadas para Botellas y Pastas, calculando el consumo promedio de componentes.
 - **Reglas de Negocio (Context):** En `/dashboard/inventario`, separar los productos de `tipo === 'TERMINADO'` en dos KPIs: "Total Botellas" (SKUs que incluyan 'ml') y "Total Pastas" (SKUs que incluyan 'kg'). Añadir un botón táctico exclusivo para registrar "Merma" (Logística Inversa manual).
 - **Archivos a Modificar:** `app/dashboard/inventario/page.tsx`
