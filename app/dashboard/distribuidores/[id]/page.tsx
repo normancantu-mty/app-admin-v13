@@ -1,6 +1,5 @@
 export const dynamic = 'force-dynamic'
 
-import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getCurrentUser } from '@/lib/auth-utils'
@@ -186,6 +185,8 @@ export default async function EstadoCuentaPage({ params }: { params: Promise<{ i
   ])
 
   const saldos = calcularSaldos(tickets, finanzas, resolvedParams.id)
+  const comisionesTotales = saldos?.totalGenerado || 0
+  const jineteo = (saldos?.saldoPendiente || 0) - comisionesTotales
   const actividades = unificarActividades(tickets, finanzas, resolvedParams.id)
   const canMutate = currentUser?.rol !== 'SOCIO'
 

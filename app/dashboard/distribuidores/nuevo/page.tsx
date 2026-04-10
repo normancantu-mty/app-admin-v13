@@ -20,6 +20,7 @@ export default function NuevoMiembroPage() {
   const [rol, setRol] = useState<'DST' | 'LOC'>('DST')
   const [zona, setZona] = useState('Zacatecas')
   const [telefono, setTelefono] = useState('')
+  const [ubicacionMaps, setUbicacionMaps] = useState('')
   const [idPadre, setIdPadre] = useState('')
   const [comisionBase, setComisionBase] = useState('')
   const [comisionBaseLocal, setComisionBaseLocal] = useState('')
@@ -92,7 +93,8 @@ export default function NuevoMiembroPage() {
           comision_base: comisionBaseDecimal,
           comision_base_local: comisionBaseLocalDecimal,
           comision_hijo_local: comisionHijoLocalDecimal,
-          comision_logistica: comisionLogisticaDecimal
+          comision_logistica: comisionLogisticaDecimal,
+          ubicacion_maps: ubicacionMaps || null
         })
 
       if (error) {
