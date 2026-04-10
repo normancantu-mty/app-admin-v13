@@ -368,23 +368,6 @@ export default async function DistribuidoresPage() {
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {entidad.zona}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {entidad.ubicacion_maps ? (
-                          <a
-                            href={entidad.ubicacion_maps}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 font-medium"
-                          >
-                            Ver Mapa
-                          </a>
-                        ) : (
-                          <span className="text-gray-400">-</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {padre ? padre.nombre : 'Línea Directa'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold">
@@ -403,11 +386,6 @@ export default async function DistribuidoresPage() {
                               ? 'bg-yellow-500' 
                               : 'bg-red-500'
                         }`} />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${estadoComercial.classes}`}>
-                          {estadoComercial.label}
-                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {riesgo.estado === 'FALTANTE' ? (

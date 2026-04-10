@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getCurrentUser } from '@/lib/auth-utils'
