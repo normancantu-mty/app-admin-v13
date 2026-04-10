@@ -355,17 +355,48 @@ export default async function DistribuidoresPage() {
                     
                     return (
                       <tr key={entidad.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {entidad.nombre}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                          entidad.rol === 'DST' 
-                            ? 'bg-blue-100 text-blue-800' 
-                            : 'bg-purple-100 text-purple-800'
-                        }`}>
-                          {entidad.rol}
-                        </span>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex flex-col">
+                          <div className="flex items-center">
+                            <div className={`w-3 h-3 rounded-full mr-2 ${
+                              calcularSemaforoDeuda(entidad.fecha_ultimo_abono) === 'VERDE' 
+                                ? 'bg-green-500' 
+                                : calcularSemaforoDeuda(entidad.fecha_ultimo_abono) === 'AMARILLO' 
+                                  ? 'bg-yellow-500' 
+                                  : 'bg-red-500'
+                            }`} />
+                            <span className="text-sm font-medium text-gray-900">{entidad.nombre}</span>
+                          </div>
+                          <div className="flex gap-2 mt-1 ml-5">
+                            <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
+                              entidad.rol === 'DST' 
+                                ? 'bg-blue-100 text-blue-800' 
+                                : 'bg-purple-100 text-purple-800'
+                            }`}>
+                              {entidad.rol}
+                            </span>
+                            {entidad.telefono && (
+                              <a 
+                                href={`tel:${entidad.telefono}`} 
+                                className="text-xs text-gray-500 hover:text-blue-600 flex items-center" 
+                                title="Llamar"
+                              >
+                                📞 {entidad.telefono}
+                              </a>
+                            )}
+                            {entidad.ubicacion_maps && (
+                              <a 
+                                href={entidad.ubicacion_maps} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="text-xs text-gray-500 hover:text-blue-600 flex items-center" 
+                                title="Ver en Google Maps"
+                              >
+                                📍 Mapa
+                              </a>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {padre ? padre.nombre : 'Línea Directa'}
