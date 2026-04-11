@@ -19,6 +19,10 @@ export interface Producto {
   tipo: 'INSUMO' | 'TERMINADO'
   unidad_medida: string
   costo_unitario: number
+  precioBase: number
+  categoria: keyof typeof import('@/lib/catalog-constants').SUBCATEGORIAS
+  subcategoria: string
+  taxType: 'LIBRE' | 'IVA_ONLY' | 'FULL_TAX'
 }
 
 export interface Ticket {
@@ -29,6 +33,10 @@ export interface Ticket {
   monto_base_ingreso: number
   impuesto_iva_calculado: number
   impuesto_ieps_calculado: number
+}
+
+export type Subcategorias = {
+  [key: string]: string[]
 }
 
 export type EstadoFinanzaLedger = 'APPROVED' | 'PENDING' | 'REJECTED'
