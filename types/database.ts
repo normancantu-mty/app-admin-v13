@@ -32,10 +32,17 @@ export interface Ticket {
 }
 
 export type EstadoFinanzaLedger = 'APPROVED' | 'PENDING' | 'REJECTED'
+export type TipoMovimientoFinanciero =
+  | 'CARGO_DEUDA'
+  | 'ABONO_DEUDA'
+  | 'INGRESO_VENTA'
+  | 'GASTO_OPERATIVO'
+  | 'SUBSIDIO_FISCAL'
+  | 'COMISION_PASIVA'
 
 export interface FinanzaLedger {
   id: string
-  tipo_movimiento: string
+  tipo_movimiento: TipoMovimientoFinanciero
   monto: number
   categoria: string | null
   categoria_gasto: string | null
