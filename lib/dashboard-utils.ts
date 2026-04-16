@@ -282,9 +282,9 @@ export async function getAspectosUrgentes(): Promise<AspectosUrgentes> {
 
       inventarioLedger.forEach(mov => {
         const stockActual = stockPorProducto.get(mov.id_producto) || 0
-        if (mov.tipo_movimiento === 'ENTRADA') {
+        if (['ENTRADA_COMPRA', 'PRODUCCION', 'DEVOLUCION_FISICA'].includes(mov.tipo_movimiento)) {
           stockPorProducto.set(mov.id_producto, stockActual + mov.cantidad)
-        } else if (mov.tipo_movimiento === 'SALIDA') {
+        } else if (['SALIDA_VENTA', 'MERMA', 'TRASPASO'].includes(mov.tipo_movimiento)) {
           stockPorProducto.set(mov.id_producto, stockActual - mov.cantidad)
         }
       })
