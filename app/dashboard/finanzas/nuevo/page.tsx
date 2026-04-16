@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { requireClientMutationPermission } from '@/lib/auth-utils.client'
 import type { TipoMovimientoFinanciero } from '@/types/database'
+import FinanzaForm from './FinanzaForm'
 
 // Strict Business Categories - Exhaustive List
 const CATEGORIAS_INGRESOS = [
@@ -28,9 +29,6 @@ const CATEGORIAS_EGRESOS = [
   { value: 'Gastos_Personales_Socio', label: 'Gastos Personales Socio' },
   { value: 'Ajuste_Caja', label: 'Ajuste Caja' }
 ]
-
-import Link from 'next/link'
-import FinanzaForm from './FinanzaForm'
 
 export default function NuevoMovimientoPage() {
   return (
