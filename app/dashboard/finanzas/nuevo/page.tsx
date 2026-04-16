@@ -29,56 +29,10 @@ const CATEGORIAS_EGRESOS = [
   { value: 'Ajuste_Caja', label: 'Ajuste Caja' }
 ]
 
+import Link from 'next/link'
+import FinanzaForm from './FinanzaForm'
+
 export default function NuevoMovimientoPage() {
-  const router = useRouter()
-  const [isLoading, setIsLoading] = useState(false)
-  const [tipoMovimiento, setTipoMovimiento] = useState<'INGRESO_VENTA' | 'GASTO_OPERATIVO'>('INGRESO_VENTA')
-  const [categoria, setCategoria] = useState('Venta_Directa')
-  const [monto, setMonto] = useState('')
-  const [descripcion, setDescripcion] = useState('')
-
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    setIsLoading(true)
-
-    try {
-      // Check if user has mutation permission (not SOCIO)
-      await requireClientMutationPermission()
-
-      const payloadFinanzas = {
-        tipo_movimiento: tipoMovimiento as TipoMovimientoFinanciero,
-        categoria,
-        monto: parseFloat(monto),
-        descripcion
-      }
-
-      const { error } = await supabase
-        .from('finanzas_ledger')
-        .insert(payloadFinanzas)
-
-      if (error) {
-        console.error('Error inserting transaction:', error)
-        const errorMessage = `Error: ${error.message}${error.details ? `\nDetalles: ${error.details}` : ''}`
-        alert(errorMessage)
-        return
-      }
-
-      router.push('/dashboard/finanzas')
-      router.refresh()
-    } catch (error: unknown) {
-      let errorMessage = 'Error al guardar el movimiento. Inténtalo de nuevo.'
-      if (error instanceof Error) {
-        errorMessage = error.message
-      } else if (typeof error === 'string') {
-        errorMessage = error
-      }
-      console.error('Error in handleSubmit:', error)
-      alert(errorMessage)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   return (
     <div className="p-8">
       <div className="max-w-2xl mx-auto">
@@ -95,118 +49,7 @@ export default function NuevoMovimientoPage() {
 
         {/* Form Card */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Tipo de Movimiento */}
-            <div>
-              <label htmlFor="tipo_movimiento" className="block text-sm font-medium text-gray-700 mb-2">
-                Tipo de Movimiento
-              </label>
-              <select
-                id="tipo_movimiento"
-                name="tipo_movimiento"
-                value={tipoMovimiento}
-                onChange={(e) => {
-                  const nuevoTipo = e.target.value as 'INGRESO_VENTA' | 'GASTO_OPERATIVO'
-                  setTipoMovimiento(nuevoTipo)
-                  // Reset categoria to first option when tipo changes
-                  setCategoria(nuevoTipo === 'INGRESO_VENTA' ? 'Venta_Directa' : 'Compra_Insumos')
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              >
-                <option value="INGRESO_VENTA">💰 Ingreso</option>
-                <option value="GASTO_OPERATIVO">💸 Egreso</option>
-              </select>
-            </div>
-
-            {/* Categoría - Strict Business Categories */}
-            <div>
-              <label htmlFor="categoria" className="block text-sm font-medium text-gray-700 mb-2">
-                Categoría
-              </label>
-              <select
-                id="categoria"
-                name="categoria"
-                value={categoria}
-                onChange={(e) => setCategoria(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              >
-                {tipoMovimiento === 'INGRESO_VENTA' ? (
-                  <optgroup label="💰 INGRESOS">
-                    {CATEGORIAS_INGRESOS.map(cat => (
-                      <option key={cat.value} value={cat.value}>
-                        {cat.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : (
-                  <optgroup label="💸 EGRESOS">
-                    {CATEGORIAS_EGRESOS.map(cat => (
-                      <option key={cat.value} value={cat.value}>
-                        {cat.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </div>
-
-            {/* Monto */}
-            <div>
-              <label htmlFor="monto" className="block text-sm font-medium text-gray-700 mb-2">
-                Monto (MXN)
-              </label>
-              <input
-                type="number"
-                id="monto"
-                name="monto"
-                value={monto}
-                onChange={(e) => setMonto(e.target.value)}
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
-            </div>
-
-            {/* Campos de Recurrencia */}
-            {tipoMovimiento === 'GASTO_OPERATIVO' && <RecurrenceFields />}
-
-            {/* Descripción */}
-            <div>
-              <label htmlFor="descripcion" className="block text-sm font-medium text-gray-700 mb-2">
-                Descripción (Opcional)
-              </label>
-              <textarea
-                id="descripcion"
-                name="descripcion"
-                value={descripcion}
-                onChange={(e) => setDescripcion(e.target.value)}
-                rows={3}
-                placeholder="Añade notas o detalles adicionales..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-
-            {/* Buttons */}
-            <div className="flex gap-4 pt-4">
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
-                {isLoading ? 'Guardando...' : 'Guardar Movimiento'}
-              </button>
-              <Link
-                href="/dashboard/finanzas"
-                className="flex-1 bg-gray-200 text-gray-800 py-2 px-4 rounded-md hover:bg-gray-300 transition-colors text-center"
-              >
-                Cancelar
-              </Link>
-            </div>
-          </form>
+          <FinanzaForm />
         </div>
       </div>
     </div>
