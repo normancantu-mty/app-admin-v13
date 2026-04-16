@@ -1,8 +1,31 @@
-import { CATALOGO_PRODUCTOS } from '@/lib/catalog-constants';
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 
-export const dynamic = 'force-dynamic';
+export const dynamic = 'force-dynamic'
 
-export default function CatalogoPage() {
+export default async function CatalogoPage() {
+  const cookieStore = cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value
+        },
+      },
+    }
+  )
+
+  const { data: productos, error } = await supabase
+    .from('catalogo_productos')
+    .select('id, sku, nombre, precio_base, categoria')
+    .order('nombre', { ascending: true })
+
+  if (error) {
+    console.error('Error fetching productos:', error)
+    return <div>Error al cargar el catálogo</div>
+  }
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Catálogo de Productos y Precios</h1>
@@ -17,12 +40,12 @@ export default function CatalogoPage() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {CATALOGO_PRODUCTOS.map((producto) => (
+            {productos?.map((producto) => (
               <tr key={producto.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{producto.nombre}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${producto.precioBase.toFixed(2)}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">${(producto.precioBase * 0.8).toFixed(2)}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-purple-600 font-medium">${(producto.precioBase * 0.85).toFixed(2)}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${producto.precio_base.toFixed(2)}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">${(producto.precio_base * 0.8).toFixed(2)}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-purple-600 font-medium">${(producto.precio_base * 0.85).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
