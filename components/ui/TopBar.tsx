@@ -18,6 +18,7 @@ export function TopBar() {
       case 'ESTE_MES': return 'Este Mes'
       case 'TRIMESTRE': return 'Trimestre'
       case 'PERSONALIZADO': return 'Personalizado'
+      case 'TODO': return 'Histórico Completo'
       default: return 'Este Mes'
     }
   }
@@ -40,6 +41,7 @@ export function TopBar() {
         <option value="ESTE_MES">Este Mes</option>
         <option value="TRIMESTRE">Trimestre</option>
         <option value="PERSONALIZADO">Personalizado</option>
+        <option value="TODO">Histórico Completo</option>
       </select>
     </div>
   )
