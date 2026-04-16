@@ -6,7 +6,8 @@ import { bulkDeleteMovements } from '@/app/actions/audit'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { requireMutationPermission } from '@/lib/auth-utils'
+import { requireClientMutationPermission } from '@/lib/auth-utils.client'
+import type { TipoMovimientoFinanciero } from '@/types/database'
 
 // Strict Business Categories - Exhaustive List
 const CATEGORIAS_INGRESOS = [
@@ -31,10 +32,9 @@ const CATEGORIAS_EGRESOS = [
 export default function NuevoMovimientoPage() {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
-  const [tipoMovimiento, setTipoMovimiento] = useState('ingreso')
+  const [tipoMovimiento, setTipoMovimiento] = useState<'INGRESO_VENTA' | 'GASTO_OPERATIVO'>('INGRESO_VENTA')
   const [categoria, setCategoria] = useState('Venta_Directa')
   const [monto, setMonto] = useState('')
-  const [tieneMarbete, setTieneMarbete] = useState(false)
   const [descripcion, setDescripcion] = useState('')
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -43,17 +43,18 @@ export default function NuevoMovimientoPage() {
 
     try {
       // Check if user has mutation permission (not SOCIO)
-      await requireMutationPermission()
+      await requireClientMutationPermission()
+
+      const payloadFinanzas = {
+        tipo_movimiento: tipoMovimiento as TipoMovimientoFinanciero,
+        categoria,
+        monto: parseFloat(monto),
+        descripcion
+      }
 
       const { error } = await supabase
         .from('finanzas_ledger')
-        .insert({
-          tipo_movimiento: tipoMovimiento,
-          categoria: categoria,
-          monto: parseFloat(monto),
-          tiene_marbete: tieneMarbete,
-          descripcion: descripcion
-        })
+        .insert(payloadFinanzas)
 
       if (error) {
         console.error('Error inserting transaction:', error)
@@ -105,15 +106,16 @@ export default function NuevoMovimientoPage() {
                 name="tipo_movimiento"
                 value={tipoMovimiento}
                 onChange={(e) => {
-                  setTipoMovimiento(e.target.value)
+                  const nuevoTipo = e.target.value as 'INGRESO_VENTA' | 'GASTO_OPERATIVO'
+                  setTipoMovimiento(nuevoTipo)
                   // Reset categoria to first option when tipo changes
-                  setCategoria(e.target.value === 'ingreso' ? 'Venta_Directa' : 'Compra_Insumos')
+                  setCategoria(nuevoTipo === 'INGRESO_VENTA' ? 'Venta_Directa' : 'Compra_Insumos')
                 }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 required
               >
-                <option value="ingreso">💰 Ingreso</option>
-                <option value="egreso">💸 Egreso</option>
+                <option value="INGRESO_VENTA">💰 Ingreso</option>
+                <option value="GASTO_OPERATIVO">💸 Egreso</option>
               </select>
             </div>
 
@@ -130,7 +132,7 @@ export default function NuevoMovimientoPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 required
               >
-                {tipoMovimiento === 'ingreso' ? (
+                {tipoMovimiento === 'INGRESO_VENTA' ? (
                   <optgroup label="💰 INGRESOS">
                     {CATEGORIAS_INGRESOS.map(cat => (
                       <option key={cat.value} value={cat.value}>
@@ -169,23 +171,8 @@ export default function NuevoMovimientoPage() {
               />
             </div>
 
-            {/* ¿Tiene Marbete? */}
-            <div className="flex items-center">
-              <input
-                type="checkbox"
-                id="tiene_marbete"
-                name="tiene_marbete"
-                checked={tieneMarbete}
-                onChange={(e) => setTieneMarbete(e.target.checked)}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <label htmlFor="tiene_marbete" className="ml-2 block text-sm text-gray-700">
-                ¿Tiene Marbete?
-              </label>
-            </div>
-
             {/* Campos de Recurrencia */}
-            {tipoMovimiento === 'egreso' && <RecurrenceFields />}
+            {tipoMovimiento === 'GASTO_OPERATIVO' && <RecurrenceFields />}
 
             {/* Descripción */}
             <div>
