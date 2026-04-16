@@ -346,6 +346,8 @@ export function calcularFechasPorRango(rango: string) {
   const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
   
   switch (rango) {
+    case 'TODO':
+      return { fechaInicio: undefined, fechaFin: undefined }
     case 'HOY':
       return {
         fechaInicio: hoy.toISOString().split('T')[0],

@@ -19,7 +19,7 @@ export default async function CatalogoPage() {
 
   const { data: productos, error } = await supabase
     .from('catalogo_productos')
-    .select('id, sku, nombre, precio_base, categoria')
+    .select('id, sku, nombre, tipo')
     .order('nombre', { ascending: true })
 
   if (error) {
@@ -43,9 +43,9 @@ export default async function CatalogoPage() {
             {productos?.map((producto) => (
               <tr key={producto.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{producto.nombre}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${producto.precio_base.toFixed(2)}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">${(producto.precio_base * 0.8).toFixed(2)}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-purple-600 font-medium">${(producto.precio_base * 0.85).toFixed(2)}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">$0.00</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">$0.00</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-purple-600 font-medium">$0.00</td>
               </tr>
             ))}
           </tbody>
