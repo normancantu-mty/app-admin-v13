@@ -486,9 +486,9 @@ const movimientosComisionTriangulacionYAdmin: FinanzaInsert[] = []
         await rollbackTicket(ticketData.id)
         return { ok: false, error: `Error inventario: ${inventarioError.message}` }
       }
-    }
 
-    return { ok: true, ticketId: ticketData.id }
+      return { ok: true, ticketId: ticketData.id }
+    }
   } catch (error: any) {
     return { ok: false, error: error?.message || 'Error interno POS.' }
   }

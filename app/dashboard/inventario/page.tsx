@@ -286,31 +286,48 @@ export default async function InventarioPage() {
   const kpis = calcularKPIs(productosConStock, movimientosRango, preciosRetailPorProducto)
 
   const movimientos = movimientosStock
-  // --- INICIO LÓGICA DE CONCESIÓN ---
+  // --- INICIO LÓGICA DE CONCESIÓN (Mejorada) ---
   const inventarioConcesion = productos
     .filter(p => p.tipo === 'TERMINADO')
     .map(producto => {
-      const movsConsignado = movimientos.filter(m => m.id_producto === producto.id && m.cubeta === 'CONSIGNADO' && m.status === 'ACTIVO');
-      const stockFisicoConsignado = movsConsignado.reduce((acc, mov) => {
-        // Entradas a consignación suman, salidas o mermas restan
-        if (mov.tipo_movimiento.startsWith('ENTRADA')) return acc + mov.cantidad;
-        if (mov.tipo_movimiento.startsWith('SALIDA') || mov.tipo_movimiento === 'MERMA') return acc - mov.cantidad;
-        return acc;
-      }, 0);
-      
-      // Obtenemos el precio de la primera lista disponible para la valoración (o 0)
-      const precioReferencia = producto.listas_precios?.[0]?.precio_final || 0;
-      
-      return { 
-        ...producto, 
-        stock_consignado: stockFisicoConsignado, 
-        valor_consignado: stockFisicoConsignado * precioReferencia 
-      };
+      try {
+        const movsConsignado = movimientos.filter(m => 
+          m.id_producto === producto.id && 
+          m.cubeta === 'CONSIGNADO' && 
+          m.status === 'ACTIVO'
+        );
+        
+        const stockFisicoConsignado = movsConsignado.reduce((acc, mov) => {
+          if (mov.status !== 'ACTIVO') return acc;
+          if (mov.tipo_movimiento.startsWith('ENTRADA')) return acc + mov.cantidad;
+          if (mov.tipo_movimiento.startsWith('SALIDA') || mov.tipo_movimiento === 'MERMA') return acc - mov.cantidad;
+          return acc;
+        }, 0);
+
+        const precioFinal = producto.listas_precios?.[0]?.precio_final || 
+                           preciosRetailPorProducto.get(producto.id) || 
+                           0;
+        
+        return { 
+          ...producto, 
+          stock_consignado: Math.max(0, stockFisicoConsignado),
+          valor_consignado: roundTo2(stockFisicoConsignado * precioFinal)
+        };
+      } catch (error) {
+        console.error(`Error calculando concesión para producto ${producto.id}:`, error);
+        return { ...producto, stock_consignado: 0, valor_consignado: 0 };
+      }
     })
     .filter(p => p.stock_consignado > 0);
 
-  const valorTotalConcesion = inventarioConcesion.reduce((sum, p) => sum + p.valor_consignado, 0);
+  const valorTotalConcesion = roundTo2(
+    inventarioConcesion.reduce((sum, p) => sum + p.valor_consignado, 0)
+  );
   // --- FIN LÓGICA DE CONCESIÓN ---
+
+  function roundTo2(value: number): number {
+    return Number(value.toFixed(2));
+  }
 
   const canMutate = currentUser?.rol !== 'SOCIO'
   const ultimosMovimientos = movimientosRango.map((mov) => {
