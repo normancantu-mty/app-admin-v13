@@ -383,6 +383,36 @@ export default async function InventarioPage() {
               </div>
             </div>
 
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">Valor Comercial en Concesión</p>
+                    <p className="text-3xl font-bold text-amber-600 mt-2">
+                      {new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(valorTotalConcesion)}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-amber-50 rounded-full text-xl">📦</div>
+                </div>
+              </div>
+              
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs font-semibold text-gray-500 mb-2">DESGLOSE FÍSICO (PIEZAS)</p>
+                {inventarioConcesion.length === 0 ? (
+                  <p className="text-sm text-gray-400">No hay stock en concesión.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {inventarioConcesion.map(p => (
+                      <li key={p.id} className="flex justify-between text-sm">
+                        <span className="text-gray-600 truncate mr-2">{p.nombre}</span>
+                        <span className="font-semibold text-gray-900">{Number(p.stock_consignado).toFixed(0)} pz</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <div className="flex items-center justify-between">
                 <div>
