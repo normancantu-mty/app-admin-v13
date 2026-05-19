@@ -1,4 +1,3 @@
-import { supabase } from './supabase'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
@@ -9,7 +8,7 @@ import { cookies } from 'next/headers'
 export interface CurrentUser {
   id: string
   email: string
-  rol: 'ADMIN' | 'DST' | 'LOC' | 'SOCIO'
+  rol: 'ADMIN' | 'DST' | 'LOC' | 'SOCIO' | 'SUB-ADMIN'
   nombre: string
 }
 
@@ -19,38 +18,44 @@ export interface CurrentUser {
  */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   try {
-    const cookieStore = await cookies();
-    console.log('☢️ [ESLABÓN 1] Cookies físicas en SSR:', cookieStore.getAll().map(c => c.name));
+    const cookieStore = await cookies()
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          getAll() { return cookieStore.getAll() },
-          setAll() {} // Ignorado en SSR
+          get(name: string) {
+            return cookieStore.get(name)?.value
+          },
+          set() {
+            // No-op en SSR
+          },
+          remove() {
+            // No-op en SSR
+          }
         }
       }
-    );
+    )
 
-    const { data: { session }, error: authError } = await supabase.auth.getSession();
-    console.log('☢️ [ESLABÓN 2] Supabase Auth Session:', session?.user?.id || 'NULO', '| Error:', authError?.message || 'Ninguno');
+    const {
+      data: { user },
+      error: authError
+    } = await supabase.auth.getUser()
 
-    if (!session || !session.user.email) {
-      return null;
+    if (authError || !user?.email) {
+      return null
     }
 
     const { data: entidad, error: dbError } = await supabase
       .from('entidades')
       .select('id, email, rol, nombre')
-      .eq('email', session.user.email)
-      .single();
-
-    console.log('☢️ [ESLABÓN 3] Tabla Roles (DB):', entidad?.id || 'NULO', '| Rol:', entidad?.rol, '| Error:', dbError?.message || 'Ninguno');
+      .eq('email', user.email)
+      .single()
 
     if (dbError || !entidad) {
-      console.error('☢️ [FATAL ERROR] Error fetching user entity:', dbError?.message);
-      return null;
+      console.error('Error fetching user entity:', dbError?.message)
+      return null
     }
 
     return {
@@ -58,10 +63,10 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
       email: entidad.email,
       rol: entidad.rol as CurrentUser['rol'],
       nombre: entidad.nombre
-    };
+    }
   } catch (e) {
-    console.error('☢️ [FATAL ERROR] Excepción en getCurrentUser:', e);
-    return null;
+    console.error('Error in getCurrentUser:', e)
+    return null
   }
 }
 

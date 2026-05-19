@@ -191,28 +191,38 @@ async function getPreciosRetailPorProducto(): Promise<Map<string, number>> {
 function calcularStockActual(productos: Producto[], movimientos: MovimientoInventario[]): ProductoConStock[] {
   return productos.map(producto => {
     const movimientosDelProducto = movimientos.filter(mov => mov.id_producto === producto.id)
-    
+
     const stockActual = movimientosDelProducto.reduce((acc, mov) => {
       if (mov.status === 'ANULADO') {
         return acc
       }
-      // Reglas explícitas para logística inversa:
-      // MERMA resta stock, DEVOLUCION_FISICA suma stock.
+
+      // Entity-perspective guard: this dashboard represents Admin's physical stock.
+      // An ENTRADA row only increases Admin stock when its destination is Admin (or
+      // unrouted, e.g. production batches with no explicit entity). Buyer-side
+      // ENTRADA_COMPRA / ENTRADA_CONCESION rows (destino = LOC / DST) must be
+      // ignored here — otherwise every sale double-counts the quantity back in.
+      // A SALIDA row decreases Admin stock when its origin is Admin (or unrouted).
+      const destino = normalizeEntidad(mov.entidad_destino)
+      const origen  = normalizeEntidad(mov.entidad_origen)
+      const destinoEsAdmin = !destino || destino.rol === 'ADMIN'
+      const origenEsAdmin  = !origen  || origen.rol  === 'ADMIN'
+
       if (mov.tipo_movimiento === 'MERMA') {
-        return acc - mov.cantidad
+        return origenEsAdmin ? acc - mov.cantidad : acc
       }
       if (mov.tipo_movimiento === 'DEVOLUCION_FISICA') {
-        return acc + mov.cantidad
+        return destinoEsAdmin ? acc + mov.cantidad : acc
       }
       if (isTipoMovimientoEntrada(mov.tipo_movimiento)) {
-        return acc + mov.cantidad
+        return destinoEsAdmin ? acc + mov.cantidad : acc
       }
       if (isTipoMovimientoSalida(mov.tipo_movimiento)) {
-        return acc - mov.cantidad
+        return origenEsAdmin ? acc - mov.cantidad : acc
       }
       return acc
     }, 0)
-    
+
     return {
       ...producto,
       stock_actual: stockActual
@@ -251,6 +261,29 @@ function formatCurrency(amount: number): string {
 }
 
 function EmptyState() {
+  // --- INICIO LÓGICA DE CONCESIÓN FALTANTE ---
+  const inventarioConcesion = productos
+    .filter(p => p.tipo === 'TERMINADO')
+    .map(producto => {
+      const movsConsignado = movimientos.filter(m => m.id_producto === producto.id && m.cubeta === 'CONSIGNADO' && m.status === 'ACTIVO')
+      const stockFisicoConsignado = movsConsignado.reduce((acc, mov) => {
+        if (mov.tipo_movimiento.startsWith('ENTRADA')) return acc + mov.cantidad
+        if (mov.tipo_movimiento.startsWith('SALIDA') || mov.tipo_movimiento === 'MERMA') return acc - mov.cantidad
+        return acc
+      }, 0)
+      
+      const precioReferencia = producto.listas_precios?.[0]?.precio_final || 0
+      
+      return { 
+        ...producto, 
+        stock_consignado: stockFisicoConsignado, 
+        valor_consignado: stockFisicoConsignado * precioReferencia 
+      }
+    })
+    .filter(p => p.stock_consignado > 0)
+
+  const valorTotalConcesion = inventarioConcesion.reduce((sum, p) => sum + p.valor_consignado, 0)
+  // --- FIN LÓGICA DE CONCESIÓN FALTANTE ---
   return (
     <div className="text-center py-12">
       <div className="text-gray-400 text-6xl mb-4">📦</div>
@@ -425,35 +458,6 @@ export default async function InventarioPage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Valor Comercial en Concesión</p>
-                    <p className="text-3xl font-bold text-amber-600 mt-2">
-                      {new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(valorTotalConcesion)}
-                    </p>
-                  </div>
-                  <div className="p-3 bg-amber-50 rounded-full text-xl">📦</div>
-                </div>
-              </div>
-              
-              <div className="mt-4 pt-4 border-t border-gray-100">
-                <p className="text-xs font-semibold text-gray-500 mb-2">DESGLOSE FÍSICO (PIEZAS)</p>
-                {inventarioConcesion.length === 0 ? (
-                  <p className="text-sm text-gray-400">No hay stock en concesión.</p>
-                ) : (
-                  <ul className="space-y-1">
-                    {inventarioConcesion.map(p => (
-                      <li key={p.id} className="flex justify-between text-sm">
-                        <span className="text-gray-600 truncate mr-2">{p.nombre}</span>
-                        <span className="font-semibold text-gray-900">{Number(p.stock_consignado).toFixed(0)} pz</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
           </div>
 
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">

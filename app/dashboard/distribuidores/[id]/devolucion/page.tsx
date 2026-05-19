@@ -4,6 +4,7 @@ import { useState, useEffect, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import type { TablesInsert } from '@/types/database'
 
 interface ProductoConPrecio {
   id: string
@@ -11,6 +12,9 @@ interface ProductoConPrecio {
   nombre: string
   precio_final: number
 }
+
+type InventarioInsert = TablesInsert<'inventario_ledger'>
+type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 
 export default function DevolucionPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
@@ -92,15 +96,28 @@ export default function DevolucionPage({ params }: { params: Promise<{ id: strin
     setIsLoading(true)
 
     try {
+      const {
+        data: { user },
+        error: authError
+      } = await supabase.auth.getUser()
+
+      if (authError || !user?.email) {
+        alert('No se pudo validar tu sesión para auditoría. Inicia sesión nuevamente.')
+        return
+      }
+
       // PASO A: Restaurar Inventario
+      const inventarioPayload: InventarioInsert = {
+        id_producto: idProducto,
+        tipo_movimiento: 'ENTRADA_COMPRA',
+        cantidad: cantidadNum,
+        notas: 'Devolución de Distribuidor',
+        usuario_creador: user.email
+      }
+
       const { error: errorInventario } = await supabase
         .from('inventario_ledger')
-        .insert({
-          id_producto: idProducto,
-          tipo_movimiento: 'ENTRADA_COMPRA',
-          cantidad: cantidadNum,
-          notas: 'Devolución de Distribuidor'
-        })
+        .insert(inventarioPayload)
 
       if (errorInventario) {
         console.error('Error details:', errorInventario.message, errorInventario.details, errorInventario.hint)
@@ -109,14 +126,17 @@ export default function DevolucionPage({ params }: { params: Promise<{ id: strin
       }
 
       // PASO B: Cancelar Deuda
+      const finanzasPayload: FinanzaInsert = {
+        id_entidad_relacionada: resolvedParams.id,
+        tipo_movimiento: 'ABONO_DEUDA',
+        monto: subtotal,
+        categoria_gasto: 'Devolucion de Mercancia',
+        status: 'ACTIVO'
+      }
+
       const { error: errorFinanzas } = await supabase
         .from('finanzas_ledger')
-        .insert({
-          id_entidad_relacionada: resolvedParams.id,
-          tipo_movimiento: 'ABONO_DEUDA',
-          monto: subtotal,
-          categoria_gasto: 'Devolucion de Mercancia'
-        })
+        .insert(finanzasPayload)
 
       if (errorFinanzas) {
         console.error('Error details:', errorFinanzas.message, errorFinanzas.details, errorFinanzas.hint)

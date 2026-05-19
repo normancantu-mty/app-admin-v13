@@ -1,15 +1,22 @@
+const SUBCATEGORIAS_GASTO_OPERATIVO = ['LOGISTICA', 'MANTENIMIENTO', 'ADMINISTRACION'] as const
+const SUBCATEGORIAS_INGRESO_VENTA = ['MAYOREO', 'MENUDEO', 'EVENTOS'] as const
+const SUBCATEGORIAS_INSUMOS = ['BOTELLAS', 'ETIQUETAS', 'TAPAS', 'LIQUIDOS'] as const
+
 export const SUBCATEGORIAS = {
-  GASTO_OPERATIVO: ['LOGISTICA', 'MANTENIMIENTO', 'ADMINISTRACION'],
-  INGRESO_VENTA: ['MAYOREO', 'MENUDEO', 'EVENTOS'],
-  INSUMOS: ['BOTELLAS', 'ETIQUETAS', 'TAPAS', 'LIQUIDOS'],
-} as const;
+  GASTO_OPERATIVO: SUBCATEGORIAS_GASTO_OPERATIVO,
+  INGRESO_VENTA: SUBCATEGORIAS_INGRESO_VENTA,
+  INSUMOS: SUBCATEGORIAS_INSUMOS,
+  Compra_Insumos: SUBCATEGORIAS_INSUMOS,
+  Venta_Directa: SUBCATEGORIAS_INGRESO_VENTA,
+  Logistica_Envios: SUBCATEGORIAS_GASTO_OPERATIVO,
+} as const
 
 export const CATEGORIAS_INGRESOS = [
   { value: 'Venta_Directa', label: 'Venta Directa' },
   { value: 'Venta_Red_DST', label: 'Venta Red DST' },
   { value: 'Aportacion_Capital', label: 'Aportación Capital' },
   { value: 'Abono_Deuda', label: 'Abono Deuda' }
-] as const;
+] as const
 
 export const CATEGORIAS_EGRESOS = [
   { value: 'Compra_Insumos', label: 'Compra Insumos' },
@@ -21,4 +28,4 @@ export const CATEGORIAS_EGRESOS = [
   { value: 'Fuga_Fiscal_IEPS', label: 'Fuga Fiscal IEPS' },
   { value: 'Gastos_Personales_Socio', label: 'Gastos Personales Socio' },
   { value: 'Ajuste_Caja', label: 'Ajuste Caja' }
-] as const;
+] as const

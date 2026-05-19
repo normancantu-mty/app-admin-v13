@@ -37,10 +37,13 @@ export default function DashboardLayout({
             if (entidad.rol !== 'ADMIN' && entidad.rol !== 'SOCIO') {
               const protectedPaths = ['/dashboard/finanzas', '/dashboard/inventario', '/dashboard/general']
               const isProtectedPath = protectedPaths.some(path => pathname.includes(path))
-              const isDistribuidoresIndex = pathname === '/dashboard/distribuidores'
               
-              if (isProtectedPath || isDistribuidoresIndex) {
-                router.replace('/dashboard/distribuidores/' + entidad.id)
+              if (isProtectedPath) {
+                const dest =
+                  entidad.rol === 'DST'
+                    ? '/dashboard/distribuidores'
+                    : `/dashboard/distribuidores/${entidad.id}`
+                router.replace(dest)
               }
             }
           }
@@ -71,6 +74,10 @@ export default function DashboardLayout({
           label: 'Inventario'
         },
         {
+          href: '/dashboard/catalogo',
+          label: '🏷️ Catálogo / Precios'
+        },
+        {
           href: '/dashboard/distribuidores',
           label: 'Distribuidores'
         }
@@ -90,15 +97,39 @@ export default function DashboardLayout({
           label: '📦 Inventario'
         },
         {
+          href: '/dashboard/catalogo',
+          label: '🏷️ Catálogo / Precios'
+        },
+        {
           href: '/dashboard/distribuidores',
           label: '👥 Distribuidores'
         }
       ]
     } else if (entidadId) {
+      if (userRole === 'DST') {
+        return [
+          {
+            href: '/dashboard/distribuidores',
+            label: 'Directorio de Red / Mis Locales'
+          },
+          {
+            href: `/dashboard/distribuidores/${entidadId}`,
+            label: 'Mi Estado de Cuenta'
+          },
+          {
+            href: '/dashboard/catalogo',
+            label: '🏷️ Catálogo / Precios'
+          }
+        ]
+      }
       return [
         {
           href: `/dashboard/distribuidores/${entidadId}`,
           label: 'Mi Estado de Cuenta'
+        },
+        {
+          href: '/dashboard/catalogo',
+          label: '🏷️ Catálogo / Precios'
         }
       ]
     }

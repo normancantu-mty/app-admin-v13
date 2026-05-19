@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from './inventario-types'
 
 // ============================================================================
 // INTERFACES - Anti-Fraud Engine & Traffic Lights
@@ -16,6 +17,7 @@ export interface InventarioLedger {
   id_producto: string
   tipo_movimiento: string
   cantidad: number
+  status?: string | null
 }
 
 export interface ListaPrecio {
@@ -60,14 +62,14 @@ export async function getMovimientosInventario(): Promise<MovimientoFecha[]> {
   try {
     const { data, error } = await supabase
       .from('inventario_ledger')
-      .select('id_entidad_destino, fecha_movimiento')
+      .select('id_entidad_destino, fecha_movimiento, status')
 
     if (error) {
       console.error('Error fetching inventario movements:', error?.message, error?.details, error?.hint)
       return []
     }
 
-    return data || []
+    return (data || []).filter((mov) => mov.status !== 'ANULADO')
   } catch (error: any) {
     console.error('Error in getMovimientosInventario:', error?.message)
     return []
@@ -78,14 +80,14 @@ export async function getInventarioLedger(): Promise<InventarioLedger[]> {
   try {
     const { data, error } = await supabase
       .from('inventario_ledger')
-      .select('id_entidad_destino, id_producto, tipo_movimiento, cantidad')
+      .select('id_entidad_destino, id_producto, tipo_movimiento, cantidad, status')
 
     if (error) {
       console.error('Error fetching inventario_ledger:', error?.message, error?.details, error?.hint)
       return []
     }
 
-    return data || []
+    return (data || []).filter((mov) => mov.status !== 'ANULADO')
   } catch (error: any) {
     console.error('Error in getInventarioLedger:', error?.message)
     return []
@@ -169,9 +171,9 @@ export function calcularValorFisicoInventario(
     .filter(mov => mov.id_entidad_destino === idEntidad)
     .forEach(mov => {
       const stockActual = stockPorProducto.get(mov.id_producto) || 0
-      if (mov.tipo_movimiento === 'ENTRADA') {
+      if (isTipoMovimientoEntrada(mov.tipo_movimiento)) {
         stockPorProducto.set(mov.id_producto, stockActual + mov.cantidad)
-      } else if (mov.tipo_movimiento === 'SALIDA') {
+      } else if (isTipoMovimientoSalida(mov.tipo_movimiento)) {
         stockPorProducto.set(mov.id_producto, stockActual - mov.cantidad)
       }
     })

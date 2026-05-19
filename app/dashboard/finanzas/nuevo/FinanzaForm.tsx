@@ -6,9 +6,21 @@ import Link from 'next/link'
 import { CATEGORIAS_INGRESOS, CATEGORIAS_EGRESOS } from '@/lib/catalog-constants'
 import { SUBCATEGORIAS } from '@/lib/catalog-constants'
 
-export default function FinanzaForm() {
-  const [tipoMovimiento, setTipoMovimiento] = useState<'INGRESO_VENTA' | 'GASTO_OPERATIVO'>('INGRESO_VENTA')
+interface CuentaFinancieraFormOption {
+  id: string
+  nombre: string
+  tipo: string
+}
+
+interface FinanzaFormProps {
+  cuentas: CuentaFinancieraFormOption[]
+}
+
+export default function FinanzaForm({ cuentas }: FinanzaFormProps) {
+  const [tipoMovimiento, setTipoMovimiento] = useState<'INGRESO_VENTA' | 'GASTO_OPERATIVO' | 'TRANSFERENCIA'>('INGRESO_VENTA')
   const [categoria, setCategoria] = useState('Venta_Directa')
+  const [cuentaOrigen, setCuentaOrigen] = useState(cuentas[0]?.id ?? '')
+  const [cuentaDestino, setCuentaDestino] = useState(cuentas[0]?.id ?? '')
   const [monto, setMonto] = useState('')
   const [descripcion, setDescripcion] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -18,10 +30,17 @@ export default function FinanzaForm() {
     setIsLoading(true)
 
     try {
+      if (tipoMovimiento === 'TRANSFERENCIA' && (!cuentaOrigen || !cuentaDestino || cuentaOrigen === cuentaDestino)) {
+        alert('Selecciona cuentas válidas de origen y destino para la transferencia.')
+        return
+      }
+
       const formData = new FormData(e.currentTarget)
       const payload = {
         tipo_movimiento: tipoMovimiento,
         categoria,
+        cuenta_destino: cuentaDestino,
+        cuenta_origen: tipoMovimiento === 'TRANSFERENCIA' ? cuentaOrigen : null,
         subcategoria: formData.get('subcategoria') || null,
         monto: parseFloat(monto),
         descripcion
@@ -46,7 +65,13 @@ export default function FinanzaForm() {
   }
 
   const categoriasActuales = tipoMovimiento === 'INGRESO_VENTA' ? CATEGORIAS_INGRESOS : CATEGORIAS_EGRESOS
-  const subcategoriasActuales = SUBCATEGORIAS[categoria as keyof typeof SUBCATEGORIAS] || []
+  const categoriaToSubcategoriaKey: Record<string, keyof typeof SUBCATEGORIAS> = {
+    Compra_Insumos: 'Compra_Insumos',
+    Venta_Directa: 'Venta_Directa',
+    Logistica_Envios: 'Logistica_Envios',
+  }
+  const subcategoriaKey = categoriaToSubcategoriaKey[categoria] ?? (categoria as keyof typeof SUBCATEGORIAS)
+  const subcategoriasActuales = SUBCATEGORIAS[subcategoriaKey] || []
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -60,19 +85,27 @@ export default function FinanzaForm() {
           name="tipo_movimiento"
           value={tipoMovimiento}
           onChange={(e) => {
-            const nuevoTipo = e.target.value as 'INGRESO_VENTA' | 'GASTO_OPERATIVO'
+            const nuevoTipo = e.target.value as 'INGRESO_VENTA' | 'GASTO_OPERATIVO' | 'TRANSFERENCIA'
             setTipoMovimiento(nuevoTipo)
-            setCategoria(nuevoTipo === 'INGRESO_VENTA' ? 'Venta_Directa' : 'Compra_Insumos')
+            if (nuevoTipo === 'INGRESO_VENTA') {
+              setCategoria('Venta_Directa')
+            } else if (nuevoTipo === 'GASTO_OPERATIVO') {
+              setCategoria('Compra_Insumos')
+            } else {
+              setCategoria('Transferencia')
+            }
           }}
           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           required
         >
           <option value="INGRESO_VENTA">💰 Ingreso</option>
           <option value="GASTO_OPERATIVO">💸 Egreso</option>
+          <option value="TRANSFERENCIA">🔁 Transferencia</option>
         </select>
       </div>
 
       {/* Categoría */}
+      {tipoMovimiento !== 'TRANSFERENCIA' && (
       <div>
         <label htmlFor="categoria" className="block text-sm font-medium text-gray-700 mb-2">
           Categoría
@@ -92,9 +125,88 @@ export default function FinanzaForm() {
           ))}
         </select>
       </div>
+      )}
+
+      {/* Cuenta Destino */}
+      {tipoMovimiento === 'TRANSFERENCIA' ? (
+      <>
+      <div>
+        <label htmlFor="cuenta_origen" className="block text-sm font-medium text-gray-700 mb-2">
+          Cuenta Origen
+        </label>
+        <select
+          id="cuenta_origen"
+          name="cuenta_origen"
+          value={cuentaOrigen}
+          onChange={(e) => setCuentaOrigen(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          required
+        >
+          {cuentas.length === 0 ? (
+            <option value="" disabled>
+              No hay cuentas financieras disponibles
+            </option>
+          ) : (
+            cuentas.map((cuenta) => (
+              <option key={cuenta.id} value={cuenta.id}>
+                {cuenta.nombre}
+              </option>
+            ))
+          )}
+        </select>
+      </div>
+      <div>
+        <label htmlFor="cuenta_destino" className="block text-sm font-medium text-gray-700 mb-2">
+          Cuenta Destino
+        </label>
+        <select
+          id="cuenta_destino"
+          name="cuenta_destino"
+          value={cuentaDestino}
+          onChange={(e) => setCuentaDestino(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          required
+        >
+          {cuentas
+            .filter((cuenta) => cuenta.id !== cuentaOrigen)
+            .map((cuenta) => (
+              <option key={cuenta.id} value={cuenta.id}>
+                {cuenta.nombre}
+              </option>
+            ))}
+        </select>
+      </div>
+      </>
+      ) : (
+      <div>
+        <label htmlFor="cuenta_destino" className="block text-sm font-medium text-gray-700 mb-2">
+          Cuenta Destino
+        </label>
+        <select
+          id="cuenta_destino"
+          name="cuenta_destino"
+          value={cuentaDestino}
+          onChange={(e) => setCuentaDestino(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          required
+        >
+          {cuentas.length === 0 ? (
+            <option value="" disabled>
+              No hay cuentas financieras disponibles
+            </option>
+          ) : (
+            cuentas.map((cuenta) => (
+              <option key={cuenta.id} value={cuenta.id}>
+                {cuenta.nombre}
+              </option>
+            ))
+          )}
+        </select>
+      </div>
+      )}
 
       {/* Subcategoría (condicional) */}
-      {subcategoriasActuales.length > 0 && (
+      {tipoMovimiento !== 'TRANSFERENCIA' && subcategoriasActuales.length > 0 && (
         <div>
           <label htmlFor="subcategoria" className="block text-sm font-medium text-gray-700 mb-2">
             Subcategoría

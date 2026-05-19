@@ -1,18 +1,67 @@
-'use client'
-
-import { useState, useTransition } from 'react'
-import RecurrenceFields from './RecurrenceFields'
-import { bulkDeleteMovements } from '@/app/actions/audit'
-import { useRouter } from 'next/navigation'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import Link from 'next/link'
-import { supabase } from '@/lib/supabase'
-import { requireClientMutationPermission } from '@/lib/auth-utils.client'
-import type { TipoMovimientoFinanciero } from '@/types/database'
-import { CATEGORIAS_INGRESOS, CATEGORIAS_EGRESOS } from '@/lib/catalog-constants'
 import FinanzaForm from './FinanzaForm'
 
+interface CuentaFinancieraFormOption {
+  id: string
+  nombre: string
+  tipo: string
+}
 
-export default function NuevoMovimientoPage() {
+export default async function NuevoMovimientoPage() {
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll()
+        },
+        setAll() {
+          // Server Component: no writeback required
+        },
+      },
+    }
+  )
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser()
+
+  if (authError || !user?.email) {
+    console.error('🚨 [ERROR AUTH NUEVO MOVIMIENTO]:', authError)
+  }
+
+  let activeEntityId: string | null = null
+  if (user?.email) {
+    const { data: entidadData, error: entidadError } = await supabase
+      .from('entidades')
+      .select('id')
+      .eq('email', user.email)
+      .single()
+
+    if (entidadError) {
+      console.error('🚨 [ERROR FETCH ENTIDAD ACTIVA]:', JSON.stringify(entidadError, null, 2))
+    } else {
+      activeEntityId = entidadData.id
+    }
+  }
+
+  const { data: cuentasData, error: cuentasError } = await supabase
+    .from('cuentas_financieras')
+    .select('id, nombre, tipo:tipo_fiscalidad')
+    .eq('id_entidad', activeEntityId ?? '')
+    .order('nombre', { ascending: true })
+
+  if (cuentasError) {
+    console.error('🚨 [ERROR FETCH CUENTAS]:', JSON.stringify(cuentasError, null, 2))
+  }
+
+  const cuentas: CuentaFinancieraFormOption[] = cuentasData ?? []
+
   return (
     <div className="p-8">
       <div className="max-w-2xl mx-auto">
@@ -29,7 +78,7 @@ export default function NuevoMovimientoPage() {
 
         {/* Form Card */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <FinanzaForm />
+          <FinanzaForm cuentas={cuentas} />
         </div>
       </div>
     </div>

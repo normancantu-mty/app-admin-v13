@@ -1,17 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
-import type { Entidad as EntidadBase } from '@/types/database'
+import { calculateWaterfall } from '@/lib/pricing-waterfall'
+import { procesarVentaPOS } from '@/app/actions/pos'
+import type { Tables } from '@/types/database'
 
-interface Entidad extends Omit<EntidadBase, 'comisiones'> {
-  comision_base: number
-  comision_base_local: number
-  comision_hijo_local: number
-  comision_logistica: number
-}
+type Entidad = Tables<'entidades'>
+
+type EntidadCompradorOpcion = Entidad & { displayLabel: string }
 
 interface ListaPrecio {
   zona: string
@@ -28,13 +27,21 @@ interface ProductoConPrecio {
 interface ItemCarrito {
   producto: ProductoConPrecio
   cantidad: number
+  precioUnitario: number
   subtotal: number
 }
+
+type CondicionPago = 'CONTADO' | 'CONCESION'
 
 interface CuentaFinanciera {
   id: string
   nombre: string
   tipo_fiscalidad: TipoFiscalidad
+  id_entidad?: string | null
+}
+
+function roundTo2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
 export default function POSPage() {
@@ -44,15 +51,18 @@ export default function POSPage() {
   
   const [entidades, setEntidades] = useState<Entidad[]>([])
   const [productos, setProductos] = useState<ProductoConPrecio[]>([])
-  const [cuentas, setCuentas] = useState<CuentaFinanciera[]>([])
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [compradoresPermitidos, setCompradoresPermitidos] = useState<Entidad[]>([])
+  const [cuentasDisponibles, setCuentasDisponibles] = useState<CuentaFinanciera[]>([])
 
-  const [loggedInUserId, setLoggedInUserId] = useState<string | null>(null)
   const [loggedInUserRole, setLoggedInUserRole] = useState<string | null>(null)
+  const [activeUserEntityName, setActiveUserEntityName] = useState('')
   const [idVendedor, setIdVendedor] = useState('')
   const [idComprador, setIdComprador] = useState('')
+  const [origenInventarioId, setOrigenInventarioId] = useState('')
   const [idCuentaDestino, setIdCuentaDestino] = useState('')
+  const [condicionPago, setCondicionPago] = useState<CondicionPago>('CONTADO')
   const [tipoFiscalidadCuenta, setTipoFiscalidadCuenta] = useState<TipoFiscalidad>('FULL_TAX')
   const [productoSeleccionado, setProductoSeleccionado] = useState('')
   const [cantidadInput, setCantidadInput] = useState('1')
@@ -60,12 +70,45 @@ export default function POSPage() {
   const [carrito, setCarrito] = useState<ItemCarrito[]>([])
 
   const [precioFinalTotal, setPrecioFinalTotal] = useState(0)
-  const [porcentajeDescuento, setPorcentajeDescuento] = useState(0)
-  const [totalNeto, setTotalNeto] = useState(0)
   const [desglose, setDesglose] = useState({
     montoBase: 0,
     ieps: 0,
     iva: 0
+  })
+
+  const compradorSeleccionado = entidades.find((entidad) => entidad.id === idComprador)
+  const vendedorSeleccionado = entidades.find((entidad) => entidad.id === idVendedor)
+  const distribuidorPadreComprador = compradorSeleccionado?.id_padre || compradorSeleccionado?.id_nodo_padre
+    ? entidades.find((entidad) => entidad.id === (compradorSeleccionado.id_padre || compradorSeleccionado.id_nodo_padre))
+    : null
+
+  const mostrarSelectorOrigenInventario = Boolean(
+    vendedorSeleccionado?.rol === 'ADMIN' &&
+    compradorSeleccionado?.rol === 'LOC' &&
+    distribuidorPadreComprador?.id
+  )
+  
+  const esCompradorDST = compradorSeleccionado?.rol === 'DST'
+  const totalVisualCobro = esCompradorDST ? desglose.montoBase : precioFinalTotal
+  const requiereCompradorConcesion = condicionPago === 'CONCESION' && idComprador === ''
+
+  // MAPEO INFALIBLE: Buscamos al padre en la memoria local, no dependemos del JOIN de Supabase
+  const opcionesCompradores: EntidadCompradorOpcion[] = compradoresPermitidos.map((ent) => {
+    let label = `${ent.nombre} (${ent.rol})`
+
+    if (ent.rol === 'LOC') {
+      const padreLocal = entidades.find(e => e.id === ent.id_nodo_padre || e.id === ent.id_padre)
+      if (padreLocal) {
+        label = `${ent.nombre} (Loc-${padreLocal.nombre})`
+      } else {
+        label = `${ent.nombre} (LOC)`
+      }
+    }
+
+    return {
+      ...ent,
+      displayLabel: label
+    }
   })
 
   useEffect(() => {
@@ -75,13 +118,13 @@ export default function POSPage() {
         if (session && session.user.email) {
           const { data: entidad } = await supabase
             .from('entidades')
-            .select('id, rol')
+            .select('id, rol, nombre')
             .eq('email', session.user.email)
             .single()
           
           if (entidad) {
-            setLoggedInUserId(entidad.id)
             setLoggedInUserRole(entidad.rol)
+            setActiveUserEntityName(entidad.nombre ?? '')
             
             if (entidad.rol !== 'ADMIN') {
               setIdVendedor(entidad.id)
@@ -99,8 +142,11 @@ export default function POSPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [entidadesRes, productosRes, cuentasRes] = await Promise.all([
-          supabase.from('entidades').select('*').order('nombre', { ascending: true }),
+        const [entidadesRes, productosRes] = await Promise.all([
+          supabase
+            .from('entidades')
+            .select('*')
+            .order('nombre', { ascending: true }),
           supabase
             .from('catalogo_productos')
             .select(`
@@ -109,8 +155,7 @@ export default function POSPage() {
               nombre,
               listas_precios (zona, precio_final)
             `)
-            .eq('tipo', 'TERMINADO'),
-          supabase.from('cuentas_financieras').select('id, nombre, tipo_fiscalidad').order('nombre', { ascending: true })
+            .eq('tipo', 'TERMINADO')
         ])
 
         if (entidadesRes.error) {
@@ -123,12 +168,6 @@ export default function POSPage() {
           console.error('Error fetching productos:', productosRes.error)
         } else {
           setProductos(productosRes.data || [])
-        }
-
-        if (cuentasRes.error) {
-          console.error('Error fetching cuentas:', cuentasRes.error)
-        } else {
-          setCuentas(cuentasRes.data || [])
         }
       } catch (error) {
         console.error('Error in fetchData:', error)
@@ -147,51 +186,240 @@ export default function POSPage() {
   }, [vendedorUrl, entidades, isLoadingData, loggedInUserRole])
 
   useEffect(() => {
-    if (idVendedor && cuentas.length > 0) {
-      const vendedorActual = entidades.find(e => e.id === idVendedor)
-      if (vendedorActual && vendedorActual.rol !== 'ADMIN') {
-        const cuentaSeleccionada = cuentas.find(c => c.id === idCuentaDestino)
-        if (cuentaSeleccionada && cuentaSeleccionada.tipo_fiscalidad !== 'LIBRE') {
-          const cuentaEfectivo = cuentas.find(c => c.tipo_fiscalidad === 'LIBRE')
-          if (cuentaEfectivo) {
-            setIdCuentaDestino(cuentaEfectivo.id)
-            setTipoFiscalidadCuenta(cuentaEfectivo.tipo_fiscalidad)
+    let isCancelled = false
+
+    const fetchCompradoresPermitidos = async () => {
+      if (!idVendedor) {
+        setCompradoresPermitidos([])
+        return
+      }
+
+      const vendedorActual = entidades.find((entidad) => entidad.id === idVendedor)
+      if (!vendedorActual) {
+        setCompradoresPermitidos([])
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('entidades')
+        .select('*')
+        .neq('id', vendedorActual.id)
+        .order('nombre', { ascending: true })
+
+      if (error) {
+        console.error('Error fetching compradores permitidos:', error)
+        if (!isCancelled) setCompradoresPermitidos([])
+        return
+      }
+
+      if (!isCancelled) {
+        const lista = (data || []) as Entidad[]
+        const compradoresFiltrados = lista.filter((c) => {
+          if (vendedorActual.rol === 'ADMIN') {
+            return c.rol === 'DST' || c.rol === 'LOC'
           }
-        }
+          return c.id_padre === vendedorActual.id || c.id_nodo_padre === vendedorActual.id
+        })
+        setCompradoresPermitidos(compradoresFiltrados)
       }
     }
-  }, [idVendedor, cuentas, entidades, idCuentaDestino])
+
+    fetchCompradoresPermitidos()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [idVendedor, entidades])
 
   useEffect(() => {
-    const totalCarrito = carrito.reduce((sum, item) => sum + item.subtotal, 0)
-    setPrecioFinalTotal(totalCarrito)
-    
-    let descuentoDecimal = 0
-    const compradorActual = entidades.find(e => e.id === idComprador)
-    if (compradorActual) {
-      if (compradorActual.rol === 'DST') descuentoDecimal = compradorActual.comision_base || 0
-      if (compradorActual.rol === 'LOC') descuentoDecimal = compradorActual.comision_base_local || 0
+    let isCancelled = false
+
+    const normalizeText = (value: string) =>
+      value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, '')
+        .toLowerCase()
+
+    const fetchCuentasDisponibles = async () => {
+      if (!idVendedor) {
+        setCuentasDisponibles([])
+        setIdCuentaDestino('')
+        return
+      }
+
+      const vendedorActual = entidades.find((entidad) => entidad.id === idVendedor)
+      if (!vendedorActual) {
+        setCuentasDisponibles([])
+        setIdCuentaDestino('')
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('cuentas_financieras')
+        .select('id, nombre, tipo_fiscalidad, id_entidad')
+        .eq('id_entidad', vendedorActual.id)
+        .order('nombre', { ascending: true })
+
+      if (error) {
+        console.error('Error fetching cuentas financieras para POS:', error)
+        if (!isCancelled) {
+          setCuentasDisponibles([])
+          setIdCuentaDestino('')
+        }
+        return
+      }
+      let cuentas = (data || []) as CuentaFinanciera[]
+      if (loggedInUserRole !== 'ADMIN') {
+        cuentas = cuentas.filter((cuenta) => cuenta.tipo_fiscalidad === 'LIBRE')
+      }
+
+      if (isCancelled) return
+
+      setCuentasDisponibles(cuentas)
+
+      if (cuentas.length === 0) {
+        setIdCuentaDestino('')
+        return
+      }
+
+      const nombreCtaDefault = `CTA-${vendedorActual.nombre || activeUserEntityName || ''}`
+      const cuentaPreferida = cuentas.find((cuenta) =>
+        normalizeText(cuenta.nombre) === normalizeText(nombreCtaDefault)
+      )
+      const cuentaFallbackCta = cuentas.find((cuenta) =>
+        normalizeText(cuenta.nombre).startsWith('cta-')
+      )
+      const cuentaDefault = cuentaPreferida ?? cuentaFallbackCta ?? cuentas[0]
+
+      setIdCuentaDestino((current) => {
+        if (current && cuentas.some((cuenta) => cuenta.id === current)) {
+          return current
+        }
+        return cuentaDefault.id
+      })
     }
-    
-    const montoDescuento = totalCarrito * descuentoDecimal
-    const neto = totalCarrito - montoDescuento
-    
-    setPorcentajeDescuento(descuentoDecimal * 100)
-    setTotalNeto(neto)
+
+    fetchCuentasDisponibles()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [idVendedor, entidades, activeUserEntityName, loggedInUserRole])
+
+  useEffect(() => {
+    if (!idComprador) return
+    const permitido = compradoresPermitidos.some((entidad) => entidad.id === idComprador)
+    if (!permitido) {
+      setIdComprador('')
+    }
+  }, [compradoresPermitidos, idComprador])
+
+  useEffect(() => {
+    if (!idVendedor) {
+      setOrigenInventarioId('')
+      return
+    }
+
+    if (!mostrarSelectorOrigenInventario || !distribuidorPadreComprador?.id) {
+      setOrigenInventarioId(idVendedor)
+      return
+    }
+
+    setOrigenInventarioId((current) => {
+      if (current === idVendedor || current === distribuidorPadreComprador.id) {
+        return current
+      }
+      return idVendedor
+    })
+  }, [idVendedor, mostrarSelectorOrigenInventario, distribuidorPadreComprador?.id])
+
+  useEffect(() => {
+    let isCancelled = false
+
+    const fetchCuentaFiscalidad = async () => {
+      if (!idCuentaDestino) {
+        setTipoFiscalidadCuenta('FULL_TAX')
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('cuentas_financieras')
+        .select('tipo_fiscalidad')
+        .eq('id', idCuentaDestino)
+        .single()
+
+      if (error) {
+        console.error('Error fetching fiscalidad de cuenta CTA:', error)
+        if (!isCancelled) setTipoFiscalidadCuenta('FULL_TAX')
+        return
+      }
+
+      if (!isCancelled) {
+        const fiscalidad = data && typeof data === 'object' ? data.tipo_fiscalidad : null
+        setTipoFiscalidadCuenta((fiscalidad as TipoFiscalidad) ?? 'FULL_TAX')
+      }
+    }
+
+    fetchCuentaFiscalidad()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [idCuentaDestino])
+
+  useEffect(() => {
+    const totalCarrito = roundTo2(carrito.reduce((sum, item) => sum + item.subtotal, 0))
+    setPrecioFinalTotal(totalCarrito)
 
     if (totalCarrito > 0) {
-      const resultado = calculateReverseTaxes(neto, tipoFiscalidadCuenta)
+      const resultado = calculateReverseTaxes(totalCarrito, tipoFiscalidadCuenta)
       setDesglose(resultado)
     } else {
       setDesglose({ montoBase: 0, ieps: 0, iva: 0 })
     }
-  }, [carrito, idComprador, tipoFiscalidadCuenta, entidades])
+  }, [carrito, tipoFiscalidadCuenta])
 
-  const getPrecioAplicable = (producto: ProductoConPrecio): number => {
+  const getPrecioAplicable = useCallback((producto: ProductoConPrecio): number => {
     const zonaComprador = entidades.find(e => e.id === idComprador)?.zona || 'Zacatecas'
     const precioAplicable = producto.listas_precios.find(p => p.zona === zonaComprador)?.precio_final || 0
     return precioAplicable
-  }
+  }, [entidades, idComprador])
+
+  const getCostoFinalParaCarrito = useCallback((producto: ProductoConPrecio): number => {
+    const precioAplicable = getPrecioAplicable(producto)
+    const compradorActual = entidades.find((entidad) => entidad.id === idComprador)
+
+    if (compradorActual?.rol === 'DST' || compradorActual?.rol === 'LOC') {
+      const waterfall = calculateWaterfall(
+        { listas_precios: [{ precio_final: precioAplicable }] },
+        compradorActual,
+        compradorActual.rol
+      )
+      return roundTo2(waterfall.tuCosto)
+    }
+
+    return roundTo2(precioAplicable)
+  }, [entidades, getPrecioAplicable, idComprador])
+
+  useEffect(() => {
+    setCarrito((prev) => {
+      let changed = false
+      const updated = prev.map((item) => {
+        const nuevoPrecioUnitario = getCostoFinalParaCarrito(item.producto)
+        const nuevoSubtotal = roundTo2(nuevoPrecioUnitario * item.cantidad)
+        if (
+          Math.abs(item.precioUnitario - nuevoPrecioUnitario) > 0.001 ||
+          Math.abs(item.subtotal - nuevoSubtotal) > 0.001
+        ) {
+          changed = true
+          return { ...item, precioUnitario: nuevoPrecioUnitario, subtotal: nuevoSubtotal }
+        }
+        return item
+      })
+      return changed ? updated : prev
+    })
+  }, [getCostoFinalParaCarrito])
 
   const handleAgregarAlCarrito = () => {
     if (!productoSeleccionado || !cantidadInput) {
@@ -208,19 +436,24 @@ export default function POSPage() {
       return
     }
 
-    const precioAplicable = getPrecioAplicable(producto)
-    const subtotal = precioAplicable * cantidad
+    const precioUnitario = getCostoFinalParaCarrito(producto)
+    const subtotal = roundTo2(precioUnitario * cantidad)
 
     const itemExistente = carrito.find(item => item.producto.id === producto.id)
     
     if (itemExistente) {
       setCarrito(carrito.map(item =>
         item.producto.id === producto.id
-          ? { ...item, cantidad: item.cantidad + cantidad, subtotal: item.subtotal + subtotal }
+          ? {
+              ...item,
+              cantidad: item.cantidad + cantidad,
+              precioUnitario,
+              subtotal: roundTo2((item.cantidad + cantidad) * precioUnitario)
+            }
           : item
       ))
     } else {
-      setCarrito([...carrito, { producto, cantidad, subtotal }])
+      setCarrito([...carrito, { producto, cantidad, precioUnitario, subtotal }])
     }
 
     setProductoSeleccionado('')
@@ -232,117 +465,40 @@ export default function POSPage() {
   }
 
   const handleGenerarTicket = async () => {
-    if (!idVendedor || !idCuentaDestino || carrito.length === 0) {
-      alert('Por favor completa vendedor, cuenta destino y agrega productos al carrito')
+    if (!idVendedor || carrito.length === 0) {
+      alert('Por favor completa vendedor y agrega productos al carrito')
       return
     }
 
     setIsSubmitting(true)
 
     try {
-      const { data: ticketData, error: ticketError } = await supabase
-        .from('transacciones_tickets')
-        .insert({
-          id_vendedor: idVendedor,
-          id_comprador: idComprador === '' ? null : idComprador,
-          subtotal_catalogo: precioFinalTotal,
-          total_cobrado_real: totalNeto,
-          monto_base_ingreso: desglose.montoBase,
-          impuesto_iva_calculado: desglose.iva,
-          impuesto_ieps_calculado: desglose.ieps,
-          id_cuenta_destino: idCuentaDestino
-        })
-        .select()
-        .single()
-
-      if (ticketError) {
-        console.error('Error inserting ticket:', ticketError)
-        alert(`Error al generar ticket: ${ticketError.message}`)
-        return
-      }
-
-      const detalles = carrito.map(item => {
-        const precioAplicable = getPrecioAplicable(item.producto)
-        return {
-          id_ticket: ticketData.id,
+      const result = await procesarVentaPOS({
+        idVendedor,
+        idComprador: idComprador === '' ? null : idComprador,
+        origenInventarioId: origenInventarioId || idVendedor,
+        idCuentaDestino: idCuentaDestino || null,
+        condicion_pago: condicionPago,
+        subtotalCatalogo: precioFinalTotal,
+        totalCobradoReal: precioFinalTotal,
+        montoBaseIngreso: desglose.montoBase,
+        impuestoIvaCalculado: desglose.iva,
+        impuestoIepsCalculado: desglose.ieps,
+        items: carrito.map((item) => ({
           id_producto: item.producto.id,
           cantidad: item.cantidad,
-          precio_unitario: precioAplicable,
+          precio_unitario: item.precioUnitario,
           subtotal_linea: item.subtotal
-        }
+        }))
       })
 
-      const { error: detallesError } = await supabase
-        .from('ticket_detalles')
-        .insert(detalles)
-
-      if (detallesError) {
-        console.error('Error inserting ticket detalles:', detallesError)
-        alert(`Error al guardar detalles: ${detallesError.message}`)
+      if (!result.ok || !result.ticketId) {
+        alert(result.error || 'Error al procesar la venta')
         return
       }
 
-      const vendedorActual = entidades.find(e => e.id === idVendedor)
-      const esVentaPublicoAdmin = vendedorActual?.rol === 'ADMIN' && !idComprador
-
-      const movimientosFinancieros: any[] = []
-
-      if (esVentaPublicoAdmin) {
-        movimientosFinancieros.push({
-          id_cuenta_destino: idCuentaDestino,
-          id_ticket: ticketData.id,
-          tipo_movimiento: 'INGRESO_VENTA',
-          monto: desglose.montoBase,
-          categoria_gasto: 'Venta de mercancia'
-        })
-      }
-
-      if (vendedorActual?.rol === 'LOC' && vendedorActual.id_padre) {
-        const padre = entidades.find(e => e.id === vendedorActual.id_padre)
-        if (padre) {
-          // Fórmula estricta: (padre.hijo_local + vendedor.base_local) - padre.base
-          const porcentajeBono = (padre.comision_hijo_local + vendedorActual.comision_base_local) - padre.comision_base
-          if (porcentajeBono > 0) {
-            const bonoCalculado = Math.round((desglose.montoBase * porcentajeBono) * 100) / 100
-            movimientosFinancieros.push({
-              id_entidad_relacionada: padre.id,
-              tipo_movimiento: 'ABONO_DEUDA',
-              monto: bonoCalculado,
-              categoria_gasto: 'Comisión Pasiva por venta de ' + vendedorActual.nombre
-            })
-          }
-        }
-      }
-
-      if (movimientosFinancieros.length > 0) {
-        const { error: finanzasError } = await supabase
-          .from('finanzas_ledger')
-          .insert(movimientosFinancieros)
-
-        if (finanzasError) {
-          console.error('Error inserting finanzas ledger:', finanzasError)
-          alert(`Error al registrar ingreso financiero: ${finanzasError.message}`)
-          return
-        }
-      }
-
-      const inventarioMovimientos = carrito.map(item => ({
-        id_producto: item.producto.id,
-        tipo_movimiento: 'SALIDA_VENTA',
-        cantidad: item.cantidad
-      }))
-
-      const { error: inventarioError } = await supabase
-        .from('inventario_ledger')
-        .insert(inventarioMovimientos)
-
-      if (inventarioError) {
-        console.error('Error inserting inventario ledger:', inventarioError)
-        alert(`Error al registrar salida de inventario: ${inventarioError.message}`)
-        return
-      }
-
-      router.push(`/ticket/${ticketData.id}`)
+      router.refresh()
+      router.push(`/ticket/${result.ticketId}`)
     } catch (error) {
       console.error('Error in handleGenerarTicket:', error)
       alert('Error al guardar el ticket')
@@ -384,12 +540,10 @@ export default function POSPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Columna Izquierda: Captura */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-6">Captura</h2>
             
             <div className="space-y-4">
-              {/* Vendedor */}
               <div>
                 <label htmlFor="vendedor" className="block text-sm font-medium text-gray-700 mb-2">
                   Vendedor
@@ -414,7 +568,6 @@ export default function POSPage() {
                 )}
               </div>
 
-              {/* Comprador */}
               <div>
                 <label htmlFor="comprador" className="block text-sm font-medium text-gray-700 mb-2">
                   Comprador
@@ -426,52 +579,73 @@ export default function POSPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="">Público en General</option>
-                  {entidades.map(entidad => (
-                    <option key={entidad.id} value={entidad.id}>
-                      {entidad.nombre} ({entidad.rol})
+                  {opcionesCompradores.map((comprador) => (
+                    <option key={comprador.id} value={comprador.id}>
+                      {comprador.displayLabel}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* Cuenta Destino */}
+              {mostrarSelectorOrigenInventario && (
+                <div>
+                  <label htmlFor="origen_inventario" className="block text-sm font-medium text-gray-700 mb-2">
+                    Origen de Inventario
+                  </label>
+                  <select
+                    id="origen_inventario"
+                    value={origenInventarioId || idVendedor}
+                    onChange={(e) => setOrigenInventarioId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value={idVendedor}>Mi Inventario (Bodega Central)</option>
+                    <option value={distribuidorPadreComprador?.id || ''}>
+                      Inventario de su Distribuidor
+                    </option>
+                  </select>
+                </div>
+              )}
+
               <div>
-                <label htmlFor="cuenta" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="condicion_pago" className="block text-sm font-medium text-gray-700 mb-2">
+                  Modalidad de Venta
+                </label>
+                <select
+                  id="condicion_pago"
+                  value={condicionPago}
+                  onChange={(e) => setCondicionPago(e.target.value as CondicionPago)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="CONTADO">Contado</option>
+                  <option value="CONCESION">Concesión</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="cuenta_destino" className="block text-sm font-medium text-gray-700 mb-2">
                   Cuenta Destino
                 </label>
                 <select
-                  id="cuenta"
+                  id="cuenta_destino"
                   value={idCuentaDestino}
-                  onChange={(e) => {
-                    const cuentaId = e.target.value
-                    setIdCuentaDestino(cuentaId)
-                    const cuenta = cuentas.find(c => c.id === cuentaId)
-                    if (cuenta) {
-                      setTipoFiscalidadCuenta(cuenta.tipo_fiscalidad)
-                    }
-                  }}
+                  onChange={(e) => setIdCuentaDestino(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
                 >
-                  <option value="">Selecciona cuenta...</option>
-                  {(() => {
-                    const vendedorActual = entidades.find(e => e.id === idVendedor)
-                    const cuentasFiltradas = vendedorActual && vendedorActual.rol !== 'ADMIN'
-                      ? cuentas.filter(c => c.tipo_fiscalidad === 'LIBRE')
-                      : cuentas
-                    return cuentasFiltradas.map(cuenta => (
+                  {cuentasDisponibles.length === 0 ? (
+                    <option value="">No hay cuentas disponibles</option>
+                  ) : (
+                    cuentasDisponibles.map((cuenta) => (
                       <option key={cuenta.id} value={cuenta.id}>
-                        {cuenta.nombre} ({cuenta.tipo_fiscalidad})
+                        {cuenta.nombre}
                       </option>
                     ))
-                  })()}
+                  )}
                 </select>
               </div>
 
               <div className="border-t border-gray-200 pt-4 mt-6">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Agregar Producto</h3>
                 
-                {/* Producto */}
                 <div className="mb-3">
                   <label htmlFor="producto" className="block text-sm font-medium text-gray-700 mb-2">
                     Producto
@@ -484,7 +658,7 @@ export default function POSPage() {
                   >
                     <option value="">Selecciona producto...</option>
                     {productos.map(producto => {
-                      const precioAplicable = getPrecioAplicable(producto)
+                      const precioAplicable = getCostoFinalParaCarrito(producto)
                       return (
                         <option key={producto.id} value={producto.id}>
                           {producto.nombre} - {formatCurrency(precioAplicable)}
@@ -494,7 +668,6 @@ export default function POSPage() {
                   </select>
                 </div>
 
-                {/* Cantidad */}
                 <div className="mb-3">
                   <label htmlFor="cantidad" className="block text-sm font-medium text-gray-700 mb-2">
                     Cantidad
@@ -519,7 +692,6 @@ export default function POSPage() {
             </div>
           </div>
 
-          {/* Columna Central: Carrito */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-6">Carrito de Compras</h2>
             
@@ -531,7 +703,7 @@ export default function POSPage() {
             ) : (
               <div className="space-y-3">
                 {carrito.map((item, index) => {
-                  const precioUnitario = getPrecioAplicable(item.producto)
+                  const precioUnitario = item.precioUnitario
                   return (
                     <div key={index} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
                       <div className="flex justify-between items-start mb-2">
@@ -561,14 +733,18 @@ export default function POSPage() {
 
             <button
               onClick={handleGenerarTicket}
-              disabled={isSubmitting || !idVendedor || !idCuentaDestino || carrito.length === 0}
+              disabled={isSubmitting || !idVendedor || carrito.length === 0 || requiereCompradorConcesion}
               className="w-full mt-6 bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
             >
               {isSubmitting ? 'Generando...' : '🎫 Generar Ticket'}
             </button>
+            {requiereCompradorConcesion && (
+              <p className="mt-2 text-sm text-amber-700">
+                Identifique al cliente para otorgar concesión
+              </p>
+            )}
           </div>
 
-          {/* Columna Derecha: Desglose */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-6">Desglose Financiero</h2>
             
@@ -578,17 +754,20 @@ export default function POSPage() {
                   <span className="text-sm font-medium text-gray-700">Subtotal</span>
                   <span className="text-lg font-semibold text-gray-900">{formatCurrency(precioFinalTotal)}</span>
                 </div>
-                {porcentajeDescuento > 0 && (
-                  <div className="flex justify-between text-green-600 text-sm">
-                    <span>Descuento Mayorista ({porcentajeDescuento}%):</span>
-                    <span>-${(precioFinalTotal - totalNeto).toFixed(2)}</span>
-                  </div>
-                )}
+                <div className="flex justify-between text-sm text-gray-700">
+                  <span>Total costo final de items:</span>
+                  <span>{formatCurrency(precioFinalTotal)}</span>
+                </div>
               </div>
               
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Total a Cobrar</p>
-                <p className="text-3xl font-bold text-blue-600">{formatCurrency(totalNeto)}</p>
+                <p className="text-sm text-gray-600 mb-1">
+                  {esCompradorDST ? 'Total a Cobrar (Deuda Neta)' : 'Total a Cobrar'}
+                </p>
+                <p className="text-3xl font-bold text-blue-600">{formatCurrency(totalVisualCobro)}</p>
+                {esCompradorDST && (
+                  <p className="text-xs text-blue-700 mt-1">(Impuestos absorbidos por la empresa)</p>
+                )}
               </div>
 
               <div className="border-t border-gray-200 pt-4 space-y-3">
@@ -610,7 +789,7 @@ export default function POSPage() {
 
               <div className="bg-gray-50 rounded-lg p-4 mt-4">
                 <p className="text-xs text-gray-500 text-center">
-                  Cálculo inverso con factor 1.69. Los precios incluyen impuestos.
+                  Cálculo inverso con factor 1.7748 (IEPS 53% + IVA 16% sobre Base+IEPS).
                 </p>
               </div>
             </div>

@@ -93,4 +93,15 @@
 \*   \*\*Validation:\*\* Only proceed to the next task after the automated sensory script returns a clean pass.
 
 ```
+Aquí tienes las convenciones y reglas de negocio extraídas de la exitosa ejecución del TKT-006 y TKT-007, redactadas con el rigor táctico de nuestra arquitectura para ser añadidas directamente a tu archivo `CONVENTIONS.md`:
 
+**1. Convención Visual UI (YAGNI): Barras Nativas vs. Librerías Pesadas**
+*   Para mantener la velocidad de carga óptima y no engordar el *bundle* de Next.js, queda **estrictamente prohibido** instalar y utilizar librerías gráficas complejas y pesadas (como Recharts o Chart.js) cuando se requieran métricas visuales simples. 
+*   **El estándar oficial:** Todo desglose porcentual o gráfica ligera (como la categorización financiera de ingresos y egresos) debe construirse desde cero utilizando **barras de progreso puras renderizadas nativamente con Tailwind CSS**. Esto se logra inyectando el cálculo de porcentaje dinámico como estilo en línea (ej. `style={{ width: \`${porcentaje}%\` }}`) sobre contenedores `div` redondeados.
+
+**2. Regla de Negocio: Semáforo de Envejecimiento de Deuda (Aging Debt)**
+*   Para erradicar la ceguera financiera en el directorio de la red (Distribuidores y Locales), la salud de las cuentas por cobrar se mide bajo un cálculo temporal estricto: la diferencia entre la fecha actual y la fecha del último abono completado (`fecha_actual - fecha_ultimo_abono_completado`).
+*   Este cálculo detona un indicador visual (semáforo) obligatorio bajo la siguiente matemática:
+    *   **🟢 Verde (0 a 7 días):** Deuda operativa sana y al corriente.
+    *   **🟡 Amarillo (8 a 15 días):** Alerta de estancamiento temporal; requiere seguimiento al nodo.
+    *   **🔴 Rojo (16+ días):** Riesgo crítico de jineteo o impago prolongado; sugiere medidas restrictivas.

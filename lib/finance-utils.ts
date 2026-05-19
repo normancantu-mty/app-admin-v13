@@ -1,9 +1,8 @@
-/**
- * Constantes del negocio (Actualizado para Fresnillo IEPS 53% + IVA)
- */
-const TASA_IEPS = 0.53
-const TASA_IVA = 0.16
-const FACTOR_FRESNILLO = 1.7748 // (1 + 0.53) * 1.16
+// --- CONSTANTES FISCALES ---
+export const TASA_IVA = 0.16
+export const TASA_IEPS = 0.53 // Ajustar segun el % de la destileria
+export const FACTOR_RECONSTRUCCION = 1 + TASA_IEPS + (1 + TASA_IEPS) * TASA_IVA
+// ---------------------------
 
 export type TipoCuentaDestino = 'EFECTIVO' | 'CUENTA_PERSONAL' | 'CUENTA_FRESNILLO'
 
@@ -48,7 +47,7 @@ export function calculateReverseTaxes(
   if (tipoFiscalidad === 'FULL_TAX') {
     montoBase = precioFinalCobrado / FACTOR_RECONSTRUCCION
     ieps = montoBase * TASA_IEPS
-    iva = montoBase * TASA_IVA
+    iva = (montoBase + ieps) * TASA_IVA
   } else if (tipoFiscalidad === 'IVA_ONLY') {
     montoBase = precioFinalCobrado / 1.16
     ieps = 0
@@ -87,4 +86,61 @@ export function calculateCascadeCommissions(
     comisionDistribuidor: Math.round(comisionDistribuidor * 100) / 100,
     comisionLocal: Math.round(comisionLocal * 100) / 100
   }
+}
+
+/** Categoría sentinel: abono registrado pero excluido de KPIs hasta aprobación ADMIN. */
+export const CATEGORIA_ABONO_PENDIENTE = 'ABONO_PENDIENTE'
+/** Categoría post-aprobación con desglose fiscal aplicable. */
+export const CATEGORIA_ABONO_REAL = 'ABONO_REAL'
+
+export function esAbonoPendienteAprobacion(categoria: string | null | undefined): boolean {
+  return categoria === CATEGORIA_ABONO_PENDIENTE
+}
+
+/** Movimiento que impacta caja, saldos y KPIs (excluye anulados y abonos pendientes). */
+export function movimientoContableEfectivo(
+  status: string,
+  categoria?: string | null
+): boolean {
+  if (status === 'ANULADO' || status === 'PENDING' || status === 'REJECTED') return false
+  if (esAbonoPendienteAprobacion(categoria)) return false
+  return status === 'ACTIVO' || status === 'APPROVED'
+}
+
+function textoConceptoFiscal(
+  categoria?: string | null,
+  categoriaGasto?: string | null,
+  descripcion?: string | null
+): string {
+  return `${categoria ?? ''} ${categoriaGasto ?? ''} ${descripcion ?? ''}`.toUpperCase()
+}
+
+export function esPagoImpuestoIva(mov: {
+  tipo_movimiento: string
+  categoria?: string | null
+  categoria_gasto?: string | null
+  descripcion?: string | null
+}): boolean {
+  if (mov.tipo_movimiento !== 'GASTO_OPERATIVO') return false
+  const texto = textoConceptoFiscal(mov.categoria, mov.categoria_gasto, mov.descripcion)
+  return (
+    texto.includes('FUGA_FISCAL_IVA') ||
+    texto.includes('FUGA FISCAL IVA') ||
+    texto.includes('PAGO IVA')
+  )
+}
+
+export function esPagoImpuestoIeps(mov: {
+  tipo_movimiento: string
+  categoria?: string | null
+  categoria_gasto?: string | null
+  descripcion?: string | null
+}): boolean {
+  if (mov.tipo_movimiento !== 'GASTO_OPERATIVO') return false
+  const texto = textoConceptoFiscal(mov.categoria, mov.categoria_gasto, mov.descripcion)
+  return (
+    texto.includes('FUGA_FISCAL_IEPS') ||
+    texto.includes('FUGA FISCAL IEPS') ||
+    texto.includes('PAGO IEPS')
+  )
 }

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { registrarProduccionAction } from '@/app/actions/inventario'
 
 interface Producto {
   id: string
@@ -113,27 +114,13 @@ export default function NuevoMovimientoInventarioPage() {
 
     try {
       const cantidad = parseFloat(cantidadProducir)
-      
-      const movimientos = [
-        {
-          id_producto: productoSeleccionado,
-          tipo_movimiento: 'PRODUCCION',
-          cantidad: cantidad
-        },
-        ...previewInsumos.map(insumo => ({
-          id_producto: insumo.id_insumo,
-          tipo_movimiento: 'TRASPASO',
-          cantidad: insumo.cantidad_total
-        }))
-      ]
+      const result = await registrarProduccionAction({
+        idProductoTerminado: productoSeleccionado,
+        cantidad
+      })
 
-      const { error } = await supabase
-        .from('inventario_ledger')
-        .insert(movimientos)
-
-      if (error) {
-        console.error('Error inserting movimientos:', error)
-        alert(`Error al registrar producción: ${error.message}`)
+      if (!result.success) {
+        alert(result.error || 'Error al registrar producción.')
         return
       }
 
@@ -141,6 +128,7 @@ export default function NuevoMovimientoInventarioPage() {
       setProductoSeleccionado('')
       setCantidadProducir('')
       setPreviewInsumos([])
+      router.refresh()
     } catch (error) {
       console.error('Error in handleRegistrarProduccion:', error)
       alert('Error al registrar la producción. Inténtalo de nuevo.')

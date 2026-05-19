@@ -1,8 +1,10 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import type { TablesInsert } from '@/types/database'
+import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
@@ -35,6 +37,15 @@ interface ProcesarVentaPOSResult {
   error?: string
 }
 
+interface CompradorEntidad {
+  id: string
+  rol: string
+  id_padre: string | null
+  id_nodo_padre: string | null
+  comision_base_local: number | null
+  nombre?: string | null
+}
+
 type TicketInsert = TablesInsert<'transacciones_tickets'>
 type TicketDetalleInsert = TablesInsert<'ticket_detalles'>
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
@@ -42,6 +53,63 @@ type InventarioInsert = TablesInsert<'inventario_ledger'>
 
 function roundTo2(value: number): number {
   return Number(value.toFixed(2))
+}
+
+// ─── Commission Engine (Lean Global-Percentage + Cost-Rounding Model) ────────
+//
+// TWO commission paths exist depending on who receives the commission:
+//
+// ① calcularComisionConRedondeo — active inventory provider (Block 2 / DST direct)
+//   precio_base_calculo = cuentaEsDeAdmin ? (precioVenta / 1.7748) : precioVenta
+//   costo_crudo  = precio_base_calculo × (1 − comision_base)
+//   costo_final  = aplica_redondeo ? Math.ceil(costo_crudo) : costo_crudo
+//   comision_unitaria = max(0, precio_base_calculo − costo_final)
+//   → Math.ceil raises the cost floor, protecting the Admin's margin.
+//
+// ② calcularComisionPasiva — passive network fee (Block 1 / parent DST of buying LOC)
+//   precio_base_calculo = cuentaEsDeAdmin ? (precioVenta / 1.7748) : precioVenta
+//   comision_cruda = precio_base_calculo × comision_hijo_local
+//   comision_final = aplica_redondeo ? Math.floor(comision_cruda) : comision_cruda
+//   → Math.floor caps the passive payout, also protecting the Admin's margin.
+//
+// AUDIT NOTE (id_entidad_relacionada):
+//   Block 1 → LOC's id_nodo_padre (parent DST of the buying LOC) — uses path ②.
+//   Block 2 → origenInventarioId (DST whose inventory was triangulated) — uses path ①.
+function calcularComisionConRedondeo(
+  items: Array<{ precio_unitario: number; cantidad: number }>,
+  comisionBase: number,
+  aplicaRedondeo: boolean,
+  cuentaEsDeAdmin: boolean
+): number {
+  let total = 0
+  for (const item of items) {
+    const precioBaseCalculo = cuentaEsDeAdmin
+      ? item.precio_unitario / 1.7748
+      : item.precio_unitario
+    const costoCrudo = precioBaseCalculo * (1 - comisionBase)
+    const costoFinal = aplicaRedondeo ? Math.ceil(costoCrudo) : costoCrudo
+    const comisionUnitaria = Math.max(0, precioBaseCalculo - costoFinal)
+    total += comisionUnitaria * item.cantidad
+  }
+  return roundTo2(total)
+}
+
+function calcularComisionPasiva(
+  items: Array<{ precio_unitario: number; cantidad: number }>,
+  comisionHijoLocal: number,
+  aplicaRedondeo: boolean,
+  cuentaEsDeAdmin: boolean
+): number {
+  let total = 0
+  for (const item of items) {
+    const precioBaseCalculo = cuentaEsDeAdmin
+      ? item.precio_unitario / 1.7748
+      : item.precio_unitario
+    const comisionCruda = precioBaseCalculo * comisionHijoLocal
+    const comisionFinal = aplicaRedondeo ? Math.floor(comisionCruda) : comisionCruda
+    total += comisionFinal * item.cantidad
+  }
+  return roundTo2(total)
 }
 
 function normalizeText(value: string): string {
@@ -112,7 +180,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
 
     const { data: vendedor, error: vendedorError } = await supabase
       .from('entidades')
-      .select('id, rol, id_padre, nombre, comision_base, comision_base_local, comision_hijo_local')
+      .select('id, rol, id_padre, nombre, comision_base, comision_base_local, comision_hijo_local, aplica_redondeo_costo')
       .eq('id', vendedorId)
       .single()
 
@@ -134,7 +202,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
 
     const { data: entidadOrigenInventario, error: origenInventarioError } = await supabase
       .from('entidades')
-      .select('id, rol, nombre, comision_base, comision_hijo_local')
+      .select('id, rol, nombre, comision_base, comision_hijo_local, aplica_redondeo_costo')
       .eq('id', origenInventarioId)
       .single()
 
@@ -189,6 +257,10 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     }
 
     const tipoFiscalidadCuenta = resolveTipoFiscalidadCuenta(cuentaData.nombre, cuentaData.tipo_fiscalidad)
+    // True when the cash destination is the Admin's own account (e.g. "Cuenta Fresnillo").
+    // In this scenario the DST never holds physical cash, so no ABONO_DEUDA should be
+    // generated for them — only their commission leg is valid.
+    const cuentaEsDeAdmin = normalizeText(cuentaData.nombre).includes('fresnillo')
     const desgloseFiscal = calculateReverseTaxes(payload.totalCobradoReal, tipoFiscalidadCuenta)
     const montoBaseIngreso = roundTo2(desgloseFiscal.montoBase)
     const impuestoIepsCalculado = roundTo2(desgloseFiscal.ieps)
@@ -216,7 +288,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     }))
 
     let compradorInventarioValido: string | null = null
-    let compradorEntidad: any = null
+    let compradorEntidad: CompradorEntidad | null = null
     if (payload.idComprador) {
       const { data: compradorInventario, error: compradorInventarioError } = await supabase
         .from('entidades')
@@ -362,13 +434,16 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       await supabase.from('transacciones_tickets').delete().eq('id', ticketId)
     }
 
-    const detalles = itemsNormalizados.map((item) => ({
+    const detalles: TicketDetalleInsert[] = itemsNormalizados.map((item) => {
+      const precioUnitarioFinal = roundTo2(item.precio_unitario)
+      return {
       id_ticket: ticketData.id,
       id_producto: item.id_producto,
       cantidad: item.cantidad,
-      precio_unitario: item.precio_unitario,
-      subtotal_linea: item.subtotal_linea
-    }))
+      precio_unitario: precioUnitarioFinal,
+      subtotal_linea: roundTo2(precioUnitarioFinal * item.cantidad)
+    }
+    })
 
     const { error: detallesError } = await supabase.from('ticket_detalles').insert(detalles)
     if (detallesError) {
@@ -376,24 +451,42 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       return { ok: false, error: `Error al guardar detalles: ${detallesError.message}` }
     }
 
-const movimientosComisionTriangulacionYAdmin: FinanzaInsert[] = []
+    const movimientosComisionTriangulacionYAdmin: FinanzaInsert[] = []
 
-    if (vendedor.rol === 'ADMIN' && compradorEntidad?.rol === 'LOC') {
+    // ── Block 1: Admin sells directly from own inventory → LOC ──────────────
+    // Passive commission recipient = LOC's parent DST (id_nodo_padre).
+    // Uses comision_hijo_local (the DST's network fee rate) + Math.floor to
+    // protect the Admin's margin while paying the DST their passive cut.
+    // Block 2 owns the active commission leg when triangulation is active; this
+    // guard prevents both blocks firing and producing a duplicate INGRESO_COMISION.
+    if (vendedor.rol === 'ADMIN' && compradorEntidad?.rol === 'LOC' && !usaTriangulacionInventario) {
       const idPadreLocal = compradorEntidad.id_nodo_padre || compradorEntidad.id_padre
       if (idPadreLocal) {
-        const comisionBase = compradorEntidad.comision_base_local || 0
-        const factorComision = comisionBase > 1 ? comisionBase / 100 : comisionBase
-        // FIX MATEMÁTICO: Multiplicamos por la base sin impuestos
-        const montoComision = roundTo2(montoBaseIngreso * factorComision)
+        const { data: dstPadre } = await supabase
+          .from('entidades')
+          .select('comision_hijo_local, aplica_redondeo_costo')
+          .eq('id', idPadreLocal)
+          .single()
+
+        const comisionHijoLocalPadre = Number(dstPadre?.comision_hijo_local ?? 0)
+        const aplicaRedondePadre     = dstPadre?.aplica_redondeo_costo ?? true
+
+        const montoComision = calcularComisionPasiva(
+          itemsNormalizados,
+          comisionHijoLocalPadre,
+          aplicaRedondePadre,
+          cuentaEsDeAdmin
+        )
 
         if (montoComision > 0) {
           movimientosComisionTriangulacionYAdmin.push({
             id_entidad_relacionada: idPadreLocal,
+            id_cuenta_destino: null,
             id_ticket: ticketData.id,
-            tipo_movimiento: 'INGRESO_COMISION',
+            tipo_movimiento: 'COMISION_PASIVA',
             monto: montoComision,
-            categoria_gasto: `Comisión Pasiva Matriz a Local`,
-            status: 'APPROVED', // FIX DE VISIBILIDAD EN DASHBOARD
+            categoria_gasto: `Comisión ganada - Ticket #${ticketData.id.slice(0, 8).toUpperCase()}`,
+            status: 'ACTIVO',
             fecha_movimiento: timestampTransaccion,
             usuario_creador: user.email
           })
@@ -401,25 +494,32 @@ const movimientosComisionTriangulacionYAdmin: FinanzaInsert[] = []
       }
     }
 
+    // ── Block 2: Admin uses DST's inventory → LOC (triangulation) ────────────
+    // Commission recipient = the DST whose inventory was used (origenInventarioId).
     if (
       usaTriangulacionInventario &&
       entidadOrigenInventario.rol === 'DST' &&
       compradorEntidad?.rol === 'LOC'
     ) {
-      const comisionBaseDistribuidor = Number(entidadOrigenInventario.comision_base ?? 0)
-      const comisionHijoLocalDistribuidor = Number(entidadOrigenInventario.comision_hijo_local ?? 0)
-      const comisionBaseLocalComprador = Number(compradorEntidad.comision_base_local ?? 0)
-      const porcentajeBono = (comisionHijoLocalDistribuidor + comisionBaseLocalComprador) - comisionBaseDistribuidor
+      const comisionBaseOrigen  = Number(entidadOrigenInventario.comision_base ?? 0)
+      const aplicaRedondeoOrigen = entidadOrigenInventario.aplica_redondeo_costo ?? true
 
-      if (porcentajeBono > 0) {
-        const montoComisionTriangulada = roundTo2(montoBaseIngreso * porcentajeBono)
+      const montoComisionTriangulada = calcularComisionConRedondeo(
+        itemsNormalizados,
+        comisionBaseOrigen,
+        aplicaRedondeoOrigen,
+        cuentaEsDeAdmin
+      )
+
+      if (montoComisionTriangulada > 0) {
         movimientosComisionTriangulacionYAdmin.push({
           id_entidad_relacionada: origenInventarioId,
+          id_cuenta_destino: null,
           id_ticket: ticketData.id,
           tipo_movimiento: 'INGRESO_COMISION',
           monto: montoComisionTriangulada,
-          categoria_gasto: `Comisión pasiva por triangulación hacia ${compradorEntidad.nombre || compradorEntidad.id}`,
-          status: 'APPROVED', // FIX DE VISIBILIDAD EN DASHBOARD
+          categoria_gasto: `Comisión ganada - Ticket #${ticketData.id.slice(0, 8).toUpperCase()}`,
+          status: 'ACTIVO',
           fecha_movimiento: timestampTransaccion,
           usuario_creador: user.email
         })
@@ -428,41 +528,93 @@ const movimientosComisionTriangulacionYAdmin: FinanzaInsert[] = []
 
     if (payload.condicion_pago === 'CONTADO') {
       const movimientosFinancieros: FinanzaInsert[] = []
-      const montoIngresoNeto = montoBaseIngreso
       const totalLiquidezEsperado = roundTo2(payload.totalCobradoReal)
-      const totalComponentes = roundTo2(montoIngresoNeto + impuestoIvaCalculado + impuestoIepsCalculado)
-
-      if (Math.abs(totalComponentes - totalLiquidezEsperado) > 0.01) {
+      if (!Number.isFinite(totalLiquidezEsperado) || totalLiquidezEsperado <= 0) {
         await rollbackTicket(ticketData.id)
-        return { ok: false, error: 'Descuadre contable detectado.' }
+        return { ok: false, error: 'Monto de cobro inválido.' }
       }
 
-      movimientosFinancieros.push({
-        id_entidad_relacionada: vendedorId,
-        id_cuenta_destino: cuentaData.id,
-        id_ticket: ticketData.id,
-        tipo_movimiento: 'INGRESO_VENTA',
-        monto: montoIngresoNeto,
-        categoria_gasto: 'Venta de mercancia',
-        status: 'APPROVED', // FIX DE VISIBILIDAD
-        fecha_movimiento: timestampTransaccion,
-        usuario_creador: user.email
-      })
+      if (vendedor.rol === 'DST' || vendedor.rol === 'LOC') {
+        // ── Node Contado Split ───────────────────────────────────────────────
+        // Cash collected by the node is split into two ledger legs:
+        //   INGRESO_COMISION → node's earned margin (kept by node)
+        //   DEUDA_A_MATRIZ   → admin's share (node holds cash, must remit later)
+        // Rounding: Math.floor for node's share, exact complement for admin's share.
+        const comisionDecimal = vendedor.rol === 'DST'
+          ? Number(vendedor.comision_base ?? 0)
+          : Number(vendedor.comision_base_local ?? 0)
+        const aplicaRedondeo = vendedor.aplica_redondeo_costo ?? true
+        const ticketRef = `Ticket #${ticketData.id.slice(0, 8).toUpperCase()}`
 
-      if (impuestoIvaCalculado > 0) movimientosFinancieros.push({ id_cuenta_destino: cuentaData.id, id_ticket: ticketData.id, tipo_movimiento: 'PASIVO_IVA', monto: impuestoIvaCalculado, categoria_gasto: 'Pasivo fiscal IVA', status: 'APPROVED', fecha_movimiento: timestampTransaccion, usuario_creador: user.email })
-      if (impuestoIepsCalculado > 0) movimientosFinancieros.push({ id_cuenta_destino: cuentaData.id, id_ticket: ticketData.id, tipo_movimiento: 'PASIVO_IEPS', monto: impuestoIepsCalculado, categoria_gasto: 'Pasivo fiscal IEPS', status: 'APPROVED', fecha_movimiento: timestampTransaccion, usuario_creador: user.email })
+        let montoComision: number
+        let montoDeuda: number
+        if (aplicaRedondeo) {
+          montoComision = Math.floor(totalLiquidezEsperado * comisionDecimal)
+          montoDeuda = totalLiquidezEsperado - montoComision
+        } else {
+          montoComision = roundTo2(totalLiquidezEsperado * comisionDecimal)
+          montoDeuda = roundTo2(totalLiquidezEsperado - montoComision)
+        }
 
-      if (usaTriangulacionInventario) {
+        if (montoComision > 0) {
+          movimientosFinancieros.push({
+            id_entidad_relacionada: vendedorId,
+            id_cuenta_destino: cuentaData.id,
+            id_ticket: ticketData.id,
+            tipo_movimiento: 'INGRESO_COMISION',
+            monto: montoComision,
+            categoria_gasto: `Comisión ganada - ${ticketRef}`,
+            status: 'ACTIVO',
+            fecha_movimiento: timestampTransaccion,
+            usuario_creador: user.email
+          })
+        }
+        if (montoDeuda > 0) {
+          movimientosFinancieros.push({
+            id_entidad_relacionada: vendedorId,
+            id_cuenta_destino: cuentaData.id,
+            id_ticket: ticketData.id,
+            tipo_movimiento: 'DEUDA_A_MATRIZ',
+            monto: montoDeuda,
+            categoria_gasto: `Caja por entregar a Matriz - ${ticketRef}`,
+            status: 'ACTIVO',
+            fecha_movimiento: timestampTransaccion,
+            usuario_creador: user.email
+          })
+        }
+      } else {
+        // ── Admin Contado: monolithic INGRESO_VENTA ──────────────────────────
         movimientosFinancieros.push({
-          id_entidad_relacionada: origenInventarioId,
+          id_entidad_relacionada: vendedorId,
+          id_cuenta_destino: cuentaData.id,
           id_ticket: ticketData.id,
-          tipo_movimiento: 'ABONO_DEUDA',
-          monto: montoBaseIngreso,
-          categoria_gasto: 'Abono por triangulación de inventario',
-          status: 'APPROVED', // FIX DE VISIBILIDAD
+          tipo_movimiento: 'INGRESO_VENTA',
+          monto: totalLiquidezEsperado,
+          categoria_gasto: 'Venta de mercancia',
+          status: 'ACTIVO',
           fecha_movimiento: timestampTransaccion,
           usuario_creador: user.email
         })
+
+        if (impuestoIvaCalculado > 0) movimientosFinancieros.push({ id_cuenta_destino: cuentaData.id, id_ticket: ticketData.id, tipo_movimiento: 'PASIVO_IVA', monto: impuestoIvaCalculado, categoria_gasto: 'Pasivo fiscal IVA', status: 'ACTIVO', fecha_movimiento: timestampTransaccion, usuario_creador: user.email })
+        if (impuestoIepsCalculado > 0) movimientosFinancieros.push({ id_cuenta_destino: cuentaData.id, id_ticket: ticketData.id, tipo_movimiento: 'PASIVO_IEPS', monto: impuestoIepsCalculado, categoria_gasto: 'Pasivo fiscal IEPS', status: 'ACTIVO', fecha_movimiento: timestampTransaccion, usuario_creador: user.email })
+
+        // Only credit the DST with an ABONO_DEUDA when they physically hold the cash
+        // (i.e. the destination account belongs to the DST, not to Admin). When the
+        // Admin collects cash into their own account (cuentaEsDeAdmin), the DST
+        // receives only their INGRESO_COMISION from Block 2 — never a debt reduction.
+        if (usaTriangulacionInventario && !cuentaEsDeAdmin) {
+          movimientosFinancieros.push({
+            id_entidad_relacionada: origenInventarioId,
+            id_ticket: ticketData.id,
+            tipo_movimiento: 'ABONO_DEUDA',
+            monto: montoBaseIngreso,
+            categoria_gasto: 'Abono por triangulación de inventario',
+            status: 'ACTIVO',
+            fecha_movimiento: timestampTransaccion,
+            usuario_creador: user.email
+          })
+        }
       }
 
       if (movimientosFinancieros.length > 0) {
@@ -481,15 +633,33 @@ const movimientosComisionTriangulacionYAdmin: FinanzaInsert[] = []
         return { ok: false, error: `Error comision: ${comisionError.message}` }
       }
     }
-      const { error: inventarioError } = await supabase.from('inventario_ledger').insert(inventarioMovimientos)
+
+    if (inventarioMovimientos.length > 0) {
+      const inventarioConTicket = inventarioMovimientos.map((row) => ({
+        ...row,
+        notas: notasConIdTicket(ticketData.id, row.notas)
+      }))
+      const { error: inventarioError } = await supabase.from('inventario_ledger').insert(inventarioConTicket)
       if (inventarioError) {
         await rollbackTicket(ticketData.id)
         return { ok: false, error: `Error inventario: ${inventarioError.message}` }
       }
-
-      return { ok: true, ticketId: ticketData.id }
     }
-  } catch (error: any) {
-    return { ok: false, error: error?.message || 'Error interno POS.' }
+
+    revalidatePath('/dashboard/finanzas')
+    revalidatePath('/dashboard/inventario')
+    revalidatePath('/dashboard/distribuidores')
+    if (payload.idComprador) {
+      revalidatePath(`/dashboard/distribuidores/${payload.idComprador}`)
+    }
+    if (origenInventarioId && origenInventarioId !== vendedorId) {
+      revalidatePath(`/dashboard/distribuidores/${origenInventarioId}`)
+    }
+    revalidatePath(`/dashboard/distribuidores/${vendedorId}`)
+
+    return { ok: true, ticketId: ticketData.id }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error interno POS.'
+    return { ok: false, error: message }
   }
 }

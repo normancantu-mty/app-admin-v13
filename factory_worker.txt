@@ -1,0 +1,9 @@
+OBJETIVO: Eres el Obrero Autónomo de la Fábrica (Aider). Tu trabajo es consumir el backlog de manera sistemática.
+
+INSTRUCCIONES DE EJECUCIÓN:
+1. Lee el archivo `BACKLOG.md`.
+2. Encuentra el PRIMER ticket que esté marcado como pendiente `[ ]`.
+3. Agrega al chat los "Archivos a Modificar" que menciona ese ticket.
+4. Escribe el código necesario para cumplir las "Reglas de Negocio", respetando estrictamente nuestro `CONVENTIONS.md`.
+5. REGLA DE AISLAMIENTO (CRÍTICA): NO intentes arreglar errores de TypeScript o ESLint en archivos que no están mencionados en el ticket (ej. si el ticket es de finanzas, ignora los errores en POS o Login).
+6. ÉXITO: Cuando termines la lógica del ticket, abre el archivo `BACKLOG.md`, cambia el `[ ]` por `[x]` en ese ticket, y haz un git commit con el mensaje "feat(TKT-XXX): [Nombre del ticket] completado".

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import type { TablesInsert } from '@/types/database'
 
 interface Insumo {
   id: string
@@ -16,6 +17,9 @@ interface CuentaFinanciera {
   id: string
   nombre: string
 }
+
+type InventarioInsert = TablesInsert<'inventario_ledger'>
+type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 
 export default function CompraInsumosPage() {
   const router = useRouter()
@@ -32,6 +36,22 @@ export default function CompraInsumosPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.user?.email) {
+          return
+        }
+
+        const { data: currentEntidad, error: entidadError } = await supabase
+          .from('entidades')
+          .select('id')
+          .eq('email', session.user.email)
+          .single()
+
+        if (entidadError || !currentEntidad?.id) {
+          console.error('Error fetching current entidad:', entidadError)
+          return
+        }
+
         const [insumosRes, cuentasRes] = await Promise.all([
           supabase
             .from('catalogo_productos')
@@ -41,6 +61,7 @@ export default function CompraInsumosPage() {
           supabase
             .from('cuentas_financieras')
             .select('id, nombre')
+            .eq('id_entidad', currentEntidad.id)
             .order('nombre', { ascending: true })
         ])
 
@@ -82,13 +103,26 @@ export default function CompraInsumosPage() {
     setIsLoading(true)
 
     try {
+      const {
+        data: { user },
+        error: authError
+      } = await supabase.auth.getUser()
+
+      if (authError || !user?.email) {
+        alert('No se pudo validar tu sesión para auditoría. Inicia sesión nuevamente.')
+        return
+      }
+
+      const inventarioPayload: InventarioInsert = {
+        id_producto: insumoSeleccionado,
+        tipo_movimiento: 'ENTRADA_COMPRA',
+        cantidad: cantidadNum,
+        usuario_creador: user.email
+      }
+
       const { error: inventarioError } = await supabase
         .from('inventario_ledger')
-        .insert({
-          id_producto: insumoSeleccionado,
-          tipo_movimiento: 'ENTRADA_COMPRA',
-          cantidad: cantidadNum
-        })
+        .insert(inventarioPayload)
 
       if (inventarioError) {
         console.error('Error inserting inventario:', inventarioError)
@@ -96,14 +130,18 @@ export default function CompraInsumosPage() {
         return
       }
 
+      const finanzasPayload: FinanzaInsert = {
+        id_cuenta_origen: cuentaOrigen,
+        tipo_movimiento: 'COMPRA_INSUMOS',
+        categoria: 'Insumos',
+        monto: costoNum,
+        status: 'ACTIVO',
+        usuario_creador: user.email
+      }
+
       const { error: finanzasError } = await supabase
         .from('finanzas_ledger')
-        .insert({
-          id_cuenta_destino: cuentaOrigen,
-          tipo_movimiento: 'GASTO_OPERATIVO',
-          categoria: 'COMPRA_INSUMOS',
-          monto: costoNum
-        })
+        .insert(finanzasPayload)
 
       if (finanzasError) {
         console.error('Error inserting finanzas:', finanzasError)

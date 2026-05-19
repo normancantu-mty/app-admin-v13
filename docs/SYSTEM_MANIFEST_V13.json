@@ -1,0 +1,823 @@
+{
+  "MANIFEST_VERSION": "V13",
+  "GENERATED_AT": "2026-05-19",
+  "SCOPE": {
+    "directories_scanned": [
+      "app",
+      "lib",
+      "app/actions"
+    ],
+    "totals": {
+      "app_files": 42,
+      "lib_files": 14,
+      "action_files": 5
+    }
+  },
+  "BUSINESS_CORE": {
+    "reverse_tax_factor": {
+      "factor_name": "FACTOR_RECONSTRUCCION",
+      "constants": {
+        "TASA_IEPS": 0.53,
+        "TASA_IVA": 0.16
+      },
+      "formula_symbolic": "1 + IEPS + (1 + IEPS) * IVA",
+      "formula_numeric": "1 + 0.53 + (1 + 0.53) * 0.16 = 1.7748",
+      "base_reconstruction_equation": "montoBase = precioFinalCobrado / 1.7748",
+      "tax_equations": {
+        "ieps": "ieps = montoBase * 0.53",
+        "iva": "iva = (montoBase + ieps) * 0.16"
+      },
+      "fiscality_modes": {
+        "FULL_TAX": "Aplica factor 1.7748 y separa IEPS+IVA.",
+        "IVA_ONLY": "montoBase = precio / 1.16; IEPS=0; IVA=montoBase*0.16.",
+        "LIBRE": "montoBase = precio; IEPS=0; IVA=0."
+      },
+      "evidence_files": [
+        "lib/finance-utils.ts",
+        "app/pos/page.tsx",
+        "app/actions/pos.ts",
+        "app/api/finanzas/aprobaciones/route.ts",
+        "app/dashboard/distribuidores/[id]/abono/page.tsx"
+      ]
+    },
+    "vmi_cubetas": {
+      "domain_terms_detected": {
+        "VMI_literal_presence_in_code": false,
+        "implemented_inventory_bucket_model": "PAGADO/CONSIGNADO"
+      },
+      "bucket_types": [
+        "PAGADO",
+        "CONSIGNADO"
+      ],
+      "canonical_types_file": "lib/inventario-types.ts",
+      "zero_trust_burn_order": {
+        "rule": "La deduccion en cascada consume primero PAGADO y solo desborda a CONSIGNADO.",
+        "equations": {
+          "deduccionPagado": "min(cantidadDeducir, stockPagadoActual)",
+          "restante": "cantidadDeducir - deduccionPagado",
+          "deduccionConsignado": "min(restante, stockConsignadoActual)"
+        },
+        "hard_stop_condition": "Si restante > stockConsignadoActual, se lanza error de stock insuficiente."
+      },
+      "operational_mappings": {
+        "contado_default_bucket": "PAGADO",
+        "concesion_default_bucket": "CONSIGNADO",
+        "auditoria_salida_bucket": "CONSIGNADO"
+      },
+      "evidence_files": [
+        "lib/inventario-auditoria.ts",
+        "app/actions/inventario.ts",
+        "app/actions/pos.ts",
+        "app/actions/auditoria.ts"
+      ]
+    },
+    "cash_split_logic_auditoria": {
+      "source_file": "app/actions/auditoria.ts",
+      "activation_guard": "Se activa solo cuando entidadOperadora.rol === 'DST' y entidadObjetivo.rol === 'LOC'.",
+      "dynamic_categoria_abono": {
+        "rule": "categoria del ABONO_DEUDA base se deriva del rol de la entidad auditada (entidadObjetivo), no del operador.",
+        "mapping": {
+          "DST": "Abono por distribuidor",
+          "LOC": "Abono por local",
+          "default": "Abono por local"
+        },
+        "expression": "entidadObjetivo.rol === 'DST' ? 'Abono por distribuidor' : 'Abono por local'"
+      },
+      "commission_normalization": {
+        "raw_source": "entidadObjetivo.comision_base_local",
+        "fallback": 15,
+        "normalization_rule": "Si valor <= 1 se usa como decimal; si valor > 1 se divide entre 100."
+      },
+      "cost_rounding_rule": {
+        "flag": "entidadObjetivo.aplica_redondeo_costo",
+        "default": true,
+        "unit_price_when_true": "Math.ceil(basePrecio * (1 - comisionDecimal))",
+        "unit_price_when_false": "roundTo2(basePrecio * (1 - comisionDecimal))",
+        "cash_split_when_true": {
+          "montoAdmin": "Math.ceil(totalCobranza * (1 - comisionDecimal))",
+          "montoDST": "totalCobranza - montoAdmin",
+          "invariant": "montoAdmin + montoDST === totalCobranza (complemento exacto)"
+        },
+        "cash_split_when_false": {
+          "montoAdmin": "roundTo2(totalCobranza * (1 - comisionDecimal))",
+          "montoDST": "roundTo2(totalCobranza - montoAdmin)",
+          "note": "Puede existir deriva sub-cent tolerada en ambas patas."
+        }
+      },
+      "exact_math": {
+        "when_aplica_redondeo_costo_true": {
+          "montoAdmin": "Math.ceil(totalCobranza * (1 - comisionDecimal))",
+          "montoDST": "totalCobranza - montoAdmin"
+        },
+        "when_aplica_redondeo_costo_false": {
+          "montoAdmin": "roundTo2(totalCobranza * (1 - comisionDecimal))",
+          "montoDST": "roundTo2(totalCobranza - montoAdmin)"
+        }
+      },
+      "inventory_notas_ticket_injection": {
+        "helper": "lib/ticket-annul-cascade.ts → notasConIdTicket(ticketId, notasExistentes)",
+        "rule": "Tras crear transacciones_tickets, cada fila de inventario_ledger recibe notas con marca estable ticket:{uuid}.",
+        "purpose": "Permite annulComercialCascadePorTicketId anular inventario por ILIKE %ticketId% sin DELETE.",
+        "applied_in": [
+          "app/actions/auditoria.ts (cobranza física)",
+          "app/actions/pos.ts (venta POS)"
+        ]
+      },
+      "reverse_tax_on_audit_abono": {
+        "trigger": "cuentaDestino.tipo_fiscalidad IN ('FULL_TAX','IVA_ONLY')",
+        "companion_rows": [
+          "PASIVO_IVA",
+          "PASIVO_IEPS"
+        ],
+        "note": "ABONO_DEUDA registra totalCobranza bruto; pasivos descomponen impuesto embebido."
+      },
+      "ledger_outputs": [
+        {
+          "tipo_movimiento": "INGRESO_COMISION",
+          "monto": "montoDST",
+          "categoria_gasto": "Comision cobranza de red"
+        },
+        {
+          "tipo_movimiento": "DEUDA_A_MATRIZ",
+          "monto": "montoAdmin",
+          "categoria_gasto": "Caja por entregar a matriz"
+        }
+      ],
+      "base_movement_always_written": {
+        "tipo_movimiento": "ABONO_DEUDA",
+        "monto": "totalCobranza",
+        "categoria": "dynamic (Abono por distribuidor | Abono por local)"
+      }
+    },
+    "identity_unification": {
+      "matriz_role_state": {
+        "rol_matriz_exists_in_code_paths_scanned": false,
+        "matriz_usage_remaining": "Permanece solo como semantica financiera textual y tipo_movimiento DEUDA_A_MATRIZ."
+      },
+      "admin_as_root_behavior": {
+        "production_inventory_owner": "registrarProduccionAction resuelve entidad con rol ADMIN y asigna id_entidad_destino/id_entidad_origen de produccion/BOM a ADMIN.",
+        "legacy_bridge": "Se mantiene doble topologia id_nodo_padre + id_padre por compatibilidad temporal.",
+        "parent_resolution_pattern": "id_nodo_padre ?? id_padre se usa para permisos y triangulacion."
+      },
+      "practical_reason_observed": "La topologia operativa se consolidó en ADMIN como nodo raiz funcional mientras se preserva puente legacy para rutas antiguas.",
+      "evidence_files": [
+        "app/actions/inventario.ts",
+        "app/actions/distribuidores.ts",
+        "app/actions/auditoria.ts",
+        "app/actions/pos.ts",
+        "app/dashboard/distribuidores/[id]/page.tsx"
+      ]
+    }
+  },
+  "COMMERCIAL_LOGIC": {
+    "laws_of_the_two_buckets": {
+      "inventory_debt_saldo_pendiente": {
+        "definition": "Tracks physical bottle debt from concession operations.",
+        "source_of_truth": "Concession ticket and inventory ledger events (physical flow).",
+        "kpi_semantics": "Represents pending physical obligation (bottles/value) from CONCESION flows."
+      },
+      "liquid_debt_saldo_por_pagar": {
+        "definition": "Tracks cash collected by nodes that belongs to Admin/Matriz, net of recognized commissions and debt settlements.",
+        "kpi_formula_contract": "saldoPorPagar = DEUDA_A_MATRIZ - ABONO_DEUDA - INGRESO_COMISION - COMISION_PASIVA + CARGO_DEUDA",
+        "polarity": {
+          "positive": "Node still owes cash to Admin.",
+          "negative": "Admin owes cash to node (saldo a favor)."
+        }
+      }
+    },
+    "rounding_laws": {
+      "invariant": "When rounding mode is enabled, split outputs are integer-safe and complementary.",
+      "admin_matriz_portion": {
+        "rule": "ALWAYS rounds up.",
+        "operator": "Math.ceil"
+      },
+      "node_distributor_portion": {
+        "rule": "ALWAYS rounds down.",
+        "operator": "Math.floor"
+      },
+      "complement_rule": "One leg is computed as exact complement of total to preserve ledger balance."
+    },
+    "reverse_tax_standard": {
+      "mandatory_factor": 1.7748,
+      "canonical_equation": "montoBase = totalCobradoReal / 1.7748",
+      "scope": "Applies to FULL_TAX reconstruction paths."
+    },
+    "mandatory_cash_split": {
+      "contract": "Node-originated commercial flows must split liquidity into margin and upstream debt legs.",
+      "applies_to": [
+        "CONTADO",
+        "CONCESION"
+      ],
+      "legs": [
+        "INGRESO_COMISION",
+        "DEUDA_A_MATRIZ"
+      ],
+      "purpose": "Guarantees that liquid debt KPI reflects cash retained by nodes that belongs to Admin."
+    },
+    "virtual_wallet_deprecation": {
+      "status": "DEPRECATED",
+      "previous_model": "Virtual Wallet",
+      "current_model": "Unified Current Account (Cuenta Corriente Unica)",
+      "migration_note": "Commissions and debt compensation are now represented directly in finanzas_ledger using id_entidad_relacionada as accountability axis."
+    },
+    "tax_amortization": {
+      "rule": "GASTO_OPERATIVO con conceptos fiscales de pago amortiza los KPI globales de pasivos.",
+      "matching_concepts": [
+        "Fuga_Fiscal_IVA",
+        "Fuga_Fiscal_IEPS",
+        "PAGO IVA",
+        "PAGO IEPS"
+      ],
+      "detection": "lib/finance-utils.ts → esPagoImpuestoIva / esPagoImpuestoIeps (tipo_movimiento === 'GASTO_OPERATIVO' + texto en categoria/categoria_gasto/descripcion)",
+      "kpi_effect": {
+        "ivaPorPagar": "max(0, sum(PASIVO_IVA) - sum(pagos IVA matching))",
+        "iepsPorPagar": "max(0, sum(PASIVO_IEPS) - sum(pagos IEPS matching))"
+      },
+      "implementation": "lib/dashboard-utils.ts → calcularPasivosFiscalesAdmin",
+      "scope": "Solo movimientos ACTIVO que pasan Account_Firewall (adminAccountSet)."
+    },
+    "ledger_status_v13": {
+      "allowed": [
+        "ACTIVO",
+        "ANULADO"
+      ],
+      "deprecated": [
+        "APPROVED",
+        "PENDING",
+        "REJECTED"
+      ],
+      "note": "APPROVED está completamente deprecado para operaciones de ledger; nuevas inserciones usan ACTIVO."
+    }
+  },
+  "SERVER_ACTIONS_MAP": {
+    "directory": "app/actions",
+    "actions": [
+      {
+        "file": "app/actions/audit.ts",
+        "exports": [
+          {
+            "name": "bulkDeleteMovements",
+            "input_schema": {
+              "ids": "string[] (non-empty)"
+            },
+            "output_schema": {
+              "success": "boolean",
+              "count": "number"
+            },
+            "tables_affected": {
+              "read": [
+                "finanzas_ledger",
+                "entidades (via getCurrentUser)"
+              ],
+              "write": [
+                "finanzas_ledger (status=ANULADO)"
+              ]
+            },
+            "error_handling": "throw Error en validacion, auth o DB.",
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false,
+              "notes": "Proceso secuencial por ID; no BEGIN/COMMIT multi-row."
+            }
+          },
+          {
+            "name": "anularMovimientoFinanzas",
+            "input_schema": {
+              "id": "string (required)"
+            },
+            "output_schema": {
+              "success": "true"
+            },
+            "tables_affected": {
+              "read": [
+                "finanzas_ledger"
+              ],
+              "write": [
+                "finanzas_ledger (status=ANULADO)"
+              ]
+            },
+            "error_handling": "throw Error; bloqueo por ventana temporal y ownership via assertAnnullmentAllowed.",
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false
+            }
+          },
+          {
+            "name": "anularMovimientoInventario",
+            "input_schema": {
+              "id": "string (required)"
+            },
+            "output_schema": {
+              "success": "true"
+            },
+            "tables_affected": {
+              "read": [
+                "inventario_ledger"
+              ],
+              "write": [
+                "inventario_ledger (status=ANULADO, notas+=ANULADO)"
+              ]
+            },
+            "error_handling": "throw Error; bloqueo por ventana temporal y ownership via assertAnnullmentAllowed.",
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false
+            }
+          },
+          {
+            "name": "deleteInventarioMovement",
+            "input_schema": {
+              "id": "string"
+            },
+            "output_schema": "Alias de anularMovimientoInventario",
+            "tables_affected": {
+              "read": [
+                "inventario_ledger"
+              ],
+              "write": [
+                "inventario_ledger"
+              ]
+            },
+            "error_handling": "Propaga errores de anularMovimientoInventario.",
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false
+            }
+          }
+        ]
+      },
+      {
+        "file": "app/actions/auditoria.ts",
+        "exports": [
+          {
+            "name": "procesarCorteInventarioAction",
+            "input_schema": {
+              "idEntidad": "string",
+              "conteosFisicos": "Array<{ idProducto: string; fisico: number }>",
+              "idCuentaDestino": "string | null | undefined"
+            },
+            "output_schema": {
+              "ok": "boolean",
+              "ticketId": "string | undefined",
+              "error": "string | undefined"
+            },
+            "tables_affected": {
+              "read": [
+                "entidades",
+                "catalogo_productos",
+                "listas_precios (nested)",
+                "cuentas_financieras",
+                "inventario_ledger (via getStockEsperadoPorEntidad)"
+              ],
+              "write": [
+                "transacciones_tickets",
+                "inventario_ledger",
+                "finanzas_ledger",
+                "ticket_detalles"
+              ]
+            },
+            "error_handling": "throw Error en validacion de entidad, permisos, stock, cuenta y fallas de insercion.",
+            "status_constraints": [
+              "Inserta inventario_ledger con status='ACTIVO'.",
+              "Inserta finanzas_ledger con status='ACTIVO'."
+            ],
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false,
+              "notes": "No rollback si falla una etapa tardía despues de ticket/ledger previos."
+            }
+          }
+        ]
+      },
+      {
+        "file": "app/actions/distribuidores.ts",
+        "exports": [
+          {
+            "name": "registrarSeguimientoAction",
+            "input_schema": {
+              "entidadId": "string (required)"
+            },
+            "output_schema": "void (throws on error)",
+            "tables_affected": {
+              "read": [
+                "entidades (usuario por email)"
+              ],
+              "write": [
+                "entidades (fecha_ultimo_seguimiento)"
+              ]
+            },
+            "error_handling": "throw Error si sesion/rol/DB invalidos.",
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false
+            }
+          },
+          {
+            "name": "registrarEntidadAction",
+            "input_schema": {
+              "nombre": "string",
+              "rol": "'DST' | 'LOC'",
+              "zona": "string",
+              "telefono": "string | null | undefined",
+              "ubicacion_maps": "string | null | undefined",
+              "id_nodo_padre": "string | null | undefined",
+              "comision_base": "number",
+              "comision_base_local": "number",
+              "comision_hijo_local": "number",
+              "comision_logistica": "number"
+            },
+            "output_schema": {
+              "success": "true"
+            },
+            "tables_affected": {
+              "read": [
+                "entidades (operador por email)"
+              ],
+              "write": [
+                "entidades (insert)",
+                "cuentas_financieras (insert cuenta por defecto)"
+              ],
+              "delete": [
+                "entidades (rollback compensatorio si falla cuenta_financiera)"
+              ]
+            },
+            "error_handling": "throw Error en validaciones, autorizacion y DB.",
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": true,
+              "notes": "Rollback manual de entidad cuando falla insercion de cuenta financiera."
+            }
+          },
+          {
+            "name": "updateEntidadAction",
+            "input_schema": {
+              "id": "UUID string",
+              "formData": "Partial<{ nombre, telefono, ubicacion_maps, comision_base, comision_base_local, comision_hijo_local, zona }>"
+            },
+            "output_schema": {
+              "success": "true"
+            },
+            "tables_affected": {
+              "read": [
+                "entidades (operador y objetivo)"
+              ],
+              "write": [
+                "entidades (update)"
+              ]
+            },
+            "error_handling": "throw Error; solo ADMIN; bloqueo explicito para editar nodo ADMIN.",
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false
+            }
+          }
+        ]
+      },
+      {
+        "file": "app/actions/inventario.ts",
+        "exports": [
+          {
+            "name": "registrarProduccionAction",
+            "input_schema": {
+              "idProductoTerminado": "string",
+              "cantidad": "number > 0"
+            },
+            "output_schema": {
+              "success": "boolean",
+              "error": "string | undefined"
+            },
+            "tables_affected": {
+              "read": [
+                "entidades (operador + ADMIN)",
+                "catalogo_productos",
+                "recetas_produccion"
+              ],
+              "write": [
+                "inventario_ledger (PRODUCCION + TRASPASO BOM)"
+              ]
+            },
+            "error_handling": "Retorna {success:false,error} en validaciones/DB; catch final.",
+            "status_constraints": [
+              "Inserta status='ACTIVO' en todos los movimientos de produccion."
+            ],
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false
+            }
+          },
+          {
+            "name": "registrarSalidaCascada",
+            "input_schema": {
+              "id_entidad": "string",
+              "id_producto": "string",
+              "cantidad_a_deducir": "number > 0",
+              "tipo_movimiento": "'SALIDA_VENTA' | 'MERMA' | 'DEVOLUCION_FISICA' | 'SALIDA_CONCESION'",
+              "usuario_creador": "string"
+            },
+            "output_schema": {
+              "success": "boolean",
+              "data": "InventarioInsert[] | undefined",
+              "error": "string | undefined"
+            },
+            "tables_affected": {
+              "read": [
+                "inventario_ledger (status='ACTIVO')"
+              ],
+              "write": [
+                "inventario_ledger"
+              ]
+            },
+            "error_handling": "Retorna {success:false,error}; usa calcularDeduccionCascada para hard-stop por stock.",
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false
+            }
+          },
+          {
+            "name": "registrarLogisticaInversaAction",
+            "input_schema": {
+              "_prevState": "{ success: boolean; error?: string }",
+              "formData_fields": [
+                "producto_id",
+                "tipo_movimiento (MERMA | DEVOLUCION_FISICA)",
+                "cantidad",
+                "distribuidor_id (requerido para DEVOLUCION_FISICA)",
+                "monto_abono (requerido para DEVOLUCION_FISICA)"
+              ]
+            },
+            "output_schema": {
+              "success": "boolean",
+              "error": "string | undefined"
+            },
+            "tables_affected": {
+              "read": [
+                "entidades"
+              ],
+              "write": [
+                "inventario_ledger",
+                "finanzas_ledger (ABONO_DEUDA opcional en DEVOLUCION_FISICA)"
+              ]
+            },
+            "error_handling": "Retorna {success:false,error}; no throw en flujo normal.",
+            "status_constraints": [
+              "finanzas_ledger de devolucion usa status='ACTIVO'."
+            ],
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": false,
+              "notes": "Si inserta inventario y falla finanzas, queda commit parcial."
+            }
+          }
+        ]
+      },
+      {
+        "file": "app/actions/pos.ts",
+        "exports": [
+          {
+            "name": "procesarVentaPOS",
+            "input_schema": {
+              "idVendedor": "string",
+              "vendedor_id": "string | undefined",
+              "idComprador": "string | null",
+              "origenInventarioId": "string | null | undefined",
+              "idCuentaDestino": "string | null",
+              "condicion_pago": "'CONTADO' | 'CONCESION'",
+              "subtotalCatalogo": "number",
+              "totalCobradoReal": "number",
+              "montoBaseIngreso": "number (recalculado en servidor)",
+              "impuestoIvaCalculado": "number (recalculado en servidor)",
+              "impuestoIepsCalculado": "number (recalculado en servidor)",
+              "items": "Array<{ id_producto, cantidad, precio_unitario, subtotal_linea }>"
+            },
+            "output_schema": {
+              "ok": "boolean",
+              "ticketId": "string | undefined",
+              "error": "string | undefined"
+            },
+            "tables_affected": {
+              "read": [
+                "entidades",
+                "cuentas_financieras",
+                "catalogo_productos",
+                "inventario_ledger (status='ACTIVO')"
+              ],
+              "write": [
+                "transacciones_tickets",
+                "ticket_detalles",
+                "finanzas_ledger",
+                "inventario_ledger"
+              ],
+              "delete": [
+                "finanzas_ledger, ticket_detalles, transacciones_tickets (rollbackTicket compensatorio)"
+              ]
+            },
+            "error_handling": "Retorna {ok:false,error} en validaciones; catch global; rollback compensatorio parcial.",
+            "status_constraints": [
+              "Queries de stock usan status='ACTIVO'.",
+              "Inserciones de finanzas e inventario usan status='ACTIVO'."
+            ],
+            "acid_rollback": {
+              "explicit_transaction": false,
+              "compensating_rollback": true,
+              "notes": "rollbackTicket limpia artefactos de ticket/finanzas/detalles; no transaccion SQL unica."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "UI_ARCHITECTURE": {
+    "dashboard_kpi_logic": {
+      "inventario_kpis": {
+        "source": "app/dashboard/inventario/page.tsx",
+        "date_filter_basis": "cookie global_rango -> calcularFechasPorRango -> movimientosRango",
+        "stock_basis": "stock_actual se calcula con todo el ledger (movimientosStock), no solo rango.",
+        "kpi_formulas": {
+          "totalBotellas": "sum(stock_actual) donde tipo='TERMINADO' y unidad_medida incluye 'ml'",
+          "totalPastas": "sum(stock_actual) donde tipo='TERMINADO' y unidad_medida incluye 'kg' o 'gr'",
+          "totalInsumos": "sum(stock_actual) donde tipo='INSUMO'",
+          "totalMermas": "sum(abs(cantidad)) en movimientos activos con tipo_movimiento='MERMA'",
+          "valorComercialInventario": "sum(stock_actual * precioRetailZacatecas|maxPorProducto, fallback costo_unitario) para TERMINADO"
+        },
+        "zacatecas_filter": "getPreciosRetailPorProducto consulta listas_precios.eq('zona','Zacatecas').",
+        "terminado_filter": "TERMINADO es obligatorio para botellas/pastas y valor comercial."
+      },
+      "catalogo_and_pos_terminado_filters": [
+        "app/dashboard/catalogo/page.tsx usa .eq('tipo','TERMINADO').",
+        "app/pos/page.tsx usa .eq('tipo','TERMINADO').",
+        "app/dashboard/distribuidores/[id]/devolucion/page.tsx filtra TERMINADO.",
+        "app/actions/inventario.ts bloquea produccion si producto.tipo !== 'TERMINADO'."
+      ],
+      "note_on_requested_filter": "No se detecta un KPI global que filtre simultaneamente por 'TERMINADO' y 'Zacatecas' fuera del flujo de valorizacion de inventario y catalogo/producto."
+    },
+    "pos_god_mode_admin": {
+      "ui_layer": {
+        "source": "app/pos/page.tsx",
+        "admin_only_vendor_override": "Selector vendedor habilitado solo para ADMIN.",
+        "deep_link_vendor": "Parametro URL vendedor aplicado solo si rol logueado es ADMIN.",
+        "triangulation_ui": "Selector de origenInventario aparece para ADMIN cuando comprador es LOC y tiene padre."
+      },
+      "server_enforcement": {
+        "source": "app/actions/pos.ts",
+        "non_admin_constraints": [
+          "currentUser.id debe coincidir con vendedor.id",
+          "origenInventarioId debe ser vendedorId"
+        ],
+        "triangulation_rules_admin": [
+          "Solo ADMIN puede triangular",
+          "Comprador debe ser LOC",
+          "origenInventarioId debe coincidir con padre del LOC (id_padre ?? id_nodo_padre)"
+        ],
+        "fiscal_zero_trust": "Solo cuentas cuyo nombre contiene 'fresnillo' aplican tipo fiscal; resto se fuerza a LIBRE."
+      }
+    },
+    "activity_feed_conditional_coloring": {
+      "source": "app/dashboard/feed/page.tsx",
+      "ticket_colors": {
+        "concesion": "bg-gray-100 text-gray-500",
+        "non_concesion": "bg-blue-100 text-blue-800"
+      },
+      "finance_colors": {
+        "ABONO_DEUDA": "bg-green-100 text-green-600",
+        "INGRESO_COMISION": "bg-green-100 text-green-600",
+        "DEUDA_A_MATRIZ": "bg-gray-100 text-gray-500",
+        "fallback": "bg-red-100 text-red-800"
+      },
+      "inventory_colors": {
+        "default": "bg-purple-100 text-purple-800"
+      },
+      "requirement_trace": {
+        "grey_for_concession": true,
+        "green_for_commission": true
+      }
+    }
+  },
+  "SECURITY_PROTOCOLS": {
+    "Account_Firewall": {
+      "pattern_name": "Account_Firewall",
+      "paradigm": "Zero-Trust tenant isolation for global financial aggregates",
+      "adminAccountSet": {
+        "definition": "Set<string> de ids de cuentas_financieras pertenecientes a entidades con rol ADMIN.",
+        "resolution": "fetchAdminCuentaIds / fetchAdminCuentasRows en lib/dashboard-utils.ts y getAdminAccountIds en app/dashboard/finanzas/page.tsx"
+      },
+      "inclusion_rule": {
+        "description": "Un movimiento finanzas_ledger solo entra en cálculos globales si toca al menos una cuenta del adminAccountSet.",
+        "predicate": "adminAccountSet.has(id_cuenta_destino) OR adminAccountSet.has(id_cuenta_origen)",
+        "implementations": [
+          "movimientoTocaCuentaAdminId / movimientoTocaFirewallAdmin (lib/dashboard-utils.ts)",
+          "movimientoTocaCuentaAdmin / filtrarMovimientosFirewallAdmin (app/dashboard/finanzas/page.tsx)"
+        ]
+      },
+      "outflow_deduction_rule": {
+        "description": "Liquidez, Ingresos y Egresos deben restar salidas reales vía id_cuenta_origen (no solo sumar destinos).",
+        "ingresos": "Suman monto cuando tipo IN (INGRESO_VENTA, ABONO_DEUDA, INGRESO_TRASPASO) Y id_cuenta_destino ∈ adminAccountSet.",
+        "egresos": "Restan monto cuando tipo es egreso admin (GASTO_OPERATIVO, COMPRA_INSUMOS, etc.) Y resolveCuentaEgresoAdmin(...) ∈ adminAccountSet; GASTO_OPERATIVO prioriza id_cuenta_origen.",
+        "liquidez_buckets": "getLiquidezPorCuenta: +destino en ingresos, -origen (via resolveCuentaEgresoAdmin) en egresos, siempre tras filtro Firewall."
+      },
+      "anti_leak_guarantee": "Sin filtro adminAccountSet, filas de cuentas DST/LOC contaminarían KPIs de Matriz (cross-tenant data leak). Todo dashboard global DEBE aplicar el firewall antes de reduce/sum.",
+      "evidence_files": [
+        "lib/dashboard-utils.ts",
+        "app/dashboard/finanzas/page.tsx"
+      ]
+    },
+    "zero_trust_constraints": {
+      "status_active_contract": {
+        "inventory_reads": "Consultas de stock criticas usan .eq('status','ACTIVO').",
+        "finance_writes": "Movimientos financieros operativos se insertan con status='ACTIVO'.",
+        "inventory_writes": "Movimientos operativos de inventario en POS/auditoria/produccion se escriben como ACTIVO.",
+        "deprecated_status": "APPROVED/PENDING/REJECTED no son estados operativos V13; ANULADO es la unica anulacion."
+      },
+      "role_gates": [
+        "SOCIO es solo lectura en server actions relevantes.",
+        "Solo ADMIN puede aprobar/rechazar abonos en app/api/finanzas/aprobaciones/route.ts.",
+        "Solo ADMIN puede editar entidades (updateEntidadAction).",
+        "Solo ADMIN puede triangular origen de inventario en POS."
+      ],
+      "ownership_gates": [
+        "Anulaciones limitadas por creador y ventana temporal para DST/TRABAJADOR en app/actions/audit.ts.",
+        "Cuenta destino en POS/auditoria debe pertenecer a entidad operadora salvo excepcion Fresnillo."
+      ]
+    },
+    "rls_implications_found_in_code": {
+      "explicit_rls_keyword_in_app_lib_actions": false,
+      "effective_model_observed": [
+        "Capas con createServerClient + auth.getUser dependen de JWT de sesion y politicas de Supabase.",
+        "Algunas consultas administrativas usan service-role en utilidades de inventario/auditoria (bypass de RLS).",
+        "La seguridad real combina RLS (implícita) + validaciones de rol/jerarquia/cuenta en capa de aplicacion."
+      ],
+      "service_role_usages_detected": [
+        "lib/inventario-auditoria.ts (SUPABASE_SERVICE_ROLE_KEY)"
+      ],
+      "risk_statement": "Donde no hay transaccion SQL, existe riesgo de commits parciales pese a controles de rol/status."
+    }
+  },
+  "FILE_SCAN_INDEX": {
+    "app": [
+      "app/actions/audit.ts",
+      "app/actions/auditoria.ts",
+      "app/actions/distribuidores.ts",
+      "app/actions/inventario.ts",
+      "app/actions/pos.ts",
+      "app/api/finanzas/aprobaciones/route.ts",
+      "app/api/finanzas/nuevo/route.ts",
+      "app/dashboard/catalogo/page.tsx",
+      "app/dashboard/distribuidores/DirectoryTableClient.tsx",
+      "app/dashboard/distribuidores/EditEntidadModal.tsx",
+      "app/dashboard/distribuidores/RegistrarSeguimientoButton.tsx",
+      "app/dashboard/distribuidores/[id]/HistorialActividadTableClient.tsx",
+      "app/dashboard/distribuidores/[id]/abono/page.tsx",
+      "app/dashboard/distribuidores/[id]/cobranza/CobranzaClient.tsx",
+      "app/dashboard/distribuidores/[id]/cobranza/page.tsx",
+      "app/dashboard/distribuidores/[id]/devolucion/page.tsx",
+      "app/dashboard/distribuidores/[id]/page.tsx",
+      "app/dashboard/distribuidores/nuevo/page.tsx",
+      "app/dashboard/distribuidores/page.tsx",
+      "app/dashboard/feed/page.tsx",
+      "app/dashboard/finanzas/MovimientosTable.tsx",
+      "app/dashboard/finanzas/PendingApprovalsPanel.tsx",
+      "app/dashboard/finanzas/nuevo/FinanzaForm.tsx",
+      "app/dashboard/finanzas/nuevo/RecurrenceFields.tsx",
+      "app/dashboard/finanzas/nuevo/page.tsx",
+      "app/dashboard/finanzas/page.tsx",
+      "app/dashboard/general/page.tsx",
+      "app/dashboard/inventario/BotonReportarMerma.tsx",
+      "app/dashboard/inventario/LogisticaInversaModal.tsx",
+      "app/dashboard/inventario/MovimientosTable.tsx",
+      "app/dashboard/inventario/compra/page.tsx",
+      "app/dashboard/inventario/nuevo/page.tsx",
+      "app/dashboard/inventario/page.tsx",
+      "app/dashboard/layout.tsx",
+      "app/globals.css",
+      "app/layout.tsx",
+      "app/login/page.tsx",
+      "app/page.tsx",
+      "app/pos/layout.tsx",
+      "app/pos/page.tsx",
+      "app/ticket/[id]/page.tsx",
+      "app/ticket/layout.tsx"
+    ],
+    "lib": [
+      "lib/auth-utils.client.ts",
+      "lib/auth-utils.ts",
+      "lib/catalog-constants.ts",
+      "lib/constants.ts",
+      "lib/dashboard-utils.ts",
+      "lib/feed-utils.ts",
+      "lib/finance-utils.ts",
+      "lib/inventario-auditoria.ts",
+      "lib/inventario-types.ts",
+      "lib/network-utils.ts",
+      "lib/pricing-waterfall.ts",
+      "lib/risk-utils.ts",
+      "lib/supabase.ts",
+      "lib/utils.ts"
+    ],
+    "actions_resolved_path": [
+      "app/actions/audit.ts",
+      "app/actions/auditoria.ts",
+      "app/actions/distribuidores.ts",
+      "app/actions/inventario.ts",
+      "app/actions/pos.ts"
+    ]
+  }
+}

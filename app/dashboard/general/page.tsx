@@ -1,7 +1,6 @@
 import Link from 'next/link'
-import DateFilter from '@/components/dashboard/DateFilter'
 import AuditFeed from '@/components/dashboard/AuditFeed'
-import { getFinanzasDashboard, getLiderazgoRed, getAspectosUrgentes, calcularFechasPorRango } from '@/lib/dashboard-utils'
+import { getFinanzasDashboard, getLiderazgoRed, getAspectosUrgentes, calcularFechasPorRango, getLiquidezPorCuenta } from '@/lib/dashboard-utils'
 import { getCurrentUser } from '@/lib/auth-utils'
 
 function formatCurrency(amount: number): string {
@@ -28,11 +27,12 @@ export default async function DashboardGeneralPage() {
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
-  const [finanzas, liderazgo, urgentes, currentUser] = await Promise.all([
+  const [finanzasPeriodo, liderazgoHistorico, urgentes, currentUser, liquidezHistorica] = await Promise.all([
     getFinanzasDashboard(fechaInicio, fechaFin),
-    getLiderazgoRed(fechaInicio, fechaFin),
+    getLiderazgoRed(),
     getAspectosUrgentes(),
-    getCurrentUser()
+    getCurrentUser(),
+    getLiquidezPorCuenta()
   ])
 
   const canMutate = currentUser?.rol !== 'SOCIO'
@@ -41,13 +41,13 @@ export default async function DashboardGeneralPage() {
     return total > 0 ? Math.round((valor / total) * 100) : 0
   }
 
-  const pctVentaRed = calcularPorcentaje(finanzas.desgloseIngresos.ventaRed, finanzas.totalIngresos)
-  const pctVentaDirecta = calcularPorcentaje(finanzas.desgloseIngresos.ventaDirecta, finanzas.totalIngresos)
-  const pctAbonos = calcularPorcentaje(finanzas.desgloseIngresos.abonos, finanzas.totalIngresos)
+  const pctVentaRed = calcularPorcentaje(finanzasPeriodo.desgloseIngresos.ventaRed, finanzasPeriodo.totalIngresos)
+  const pctVentaDirecta = calcularPorcentaje(finanzasPeriodo.desgloseIngresos.ventaDirecta, finanzasPeriodo.totalIngresos)
+  const pctAbonos = calcularPorcentaje(finanzasPeriodo.desgloseIngresos.abonos, finanzasPeriodo.totalIngresos)
 
-  const pctInsumos = calcularPorcentaje(finanzas.desgloseEgresos.insumos, finanzas.totalEgresos)
-  const pctRenta = calcularPorcentaje(finanzas.desgloseEgresos.renta, finanzas.totalEgresos)
-  const pctLogistica = calcularPorcentaje(finanzas.desgloseEgresos.logistica, finanzas.totalEgresos)
+  const pctInsumos = calcularPorcentaje(finanzasPeriodo.desgloseEgresos.insumos, finanzasPeriodo.totalEgresos)
+  const pctRenta = calcularPorcentaje(finanzasPeriodo.desgloseEgresos.renta, finanzasPeriodo.totalEgresos)
+  const pctLogistica = calcularPorcentaje(finanzasPeriodo.desgloseEgresos.logistica, finanzasPeriodo.totalEgresos)
 
   return (
     <div className="p-8 space-y-6">
@@ -71,6 +71,24 @@ export default async function DashboardGeneralPage() {
         )}
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+          <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Efectivo</p>
+          <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.EFECTIVO)}</p>
+          <p className="text-xs text-gray-500 mt-1">Cuenta: EFECTIVO</p>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+          <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Personal</p>
+          <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.CUENTA_PERSONAL)}</p>
+          <p className="text-xs text-gray-500 mt-1">Cuenta: CUENTA_PERSONAL</p>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+          <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Fresnillo</p>
+          <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.CUENTA_FRESNILLO)}</p>
+          <p className="text-xs text-gray-500 mt-1">Cuenta: CUENTA_FRESNILLO</p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {/* COLUMNA IZQUIERDA - 75% (3 de 4 columnas) */}
         <div className="md:col-span-3 space-y-6">
@@ -84,7 +102,8 @@ export default async function DashboardGeneralPage() {
               {/* Ingresos */}
               <div className="bg-green-50 border border-green-200 rounded-lg p-6">
                 <h3 className="text-sm font-medium text-green-800 mb-2">Ingresos</h3>
-                <p className="text-3xl font-bold text-green-900 mb-4">{formatCurrency(finanzas.totalIngresos)}</p>
+                <p className="text-3xl font-bold text-green-900 mb-1">{formatCurrency(finanzasPeriodo.totalIngresos)}</p>
+                <p className="text-xs text-green-800 mb-3">En este periodo</p>
                 <div className="space-y-2">
                   <div>
                     <div className="flex justify-between text-xs text-gray-600 mb-1">
@@ -119,7 +138,8 @@ export default async function DashboardGeneralPage() {
               {/* Egresos */}
               <div className="bg-red-50 border border-red-200 rounded-lg p-6">
                 <h3 className="text-sm font-medium text-red-800 mb-2">Egresos</h3>
-                <p className="text-3xl font-bold text-red-900 mb-4">{formatCurrency(finanzas.totalEgresos)}</p>
+                <p className="text-3xl font-bold text-red-900 mb-1">{formatCurrency(finanzasPeriodo.totalEgresos)}</p>
+                <p className="text-xs text-red-800 mb-3">En este periodo</p>
                 <div className="space-y-2">
                   <div>
                     <div className="flex justify-between text-xs text-gray-600 mb-1">
@@ -171,7 +191,7 @@ export default async function DashboardGeneralPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {liderazgo.nodosAlfa.map((nodo) => (
+                  {liderazgoHistorico.nodosAlfa.map((nodo) => (
                     <tr key={nodo.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
@@ -215,7 +235,7 @@ export default async function DashboardGeneralPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {liderazgo.subNodos.map((nodo) => (
+                  {liderazgoHistorico.subNodos.map((nodo) => (
                     <tr key={nodo.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">

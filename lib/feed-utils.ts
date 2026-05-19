@@ -10,13 +10,14 @@ export interface AuditEvent {
   tipo: 'VENTA' | 'ABONO' | 'GASTO' | 'PRODUCCION' | 'MERMA'
   descripcion: string
   monto?: number
-  color: 'green' | 'blue' | 'red' | 'purple' | 'orange'
+  color: 'green' | 'blue' | 'red' | 'purple' | 'orange' | 'gray'
 }
 
 interface TicketRaw {
   id: string
   fecha_transaccion: string
   total_cobrado_real: number
+  condicion_pago: 'CONTADO' | 'CONCESION' | null
   vendedor?: { nombre: string } | { nombre: string }[]
   comprador?: { nombre: string } | { nombre: string }[]
   ticket_detalles?: Array<{
@@ -30,7 +31,8 @@ interface FinanzaRaw {
   fecha_movimiento: string
   tipo_movimiento: string | null
   monto: number
-  categoria: string | null
+  categoria_gasto: string | null
+  id_ticket: string | null
   entidad?: { nombre: string } | { nombre: string }[]
 }
 
@@ -40,6 +42,28 @@ interface InventarioRaw {
   tipo_movimiento: string | null
   cantidad: number
   producto?: { nombre: string } | { nombre: string }[]
+}
+
+function getNombreFromRelation(
+  relation?: { nombre: string } | { nombre: string }[] | null,
+  fallback: string = 'Entidad'
+): string {
+  if (!relation) return fallback
+  if (Array.isArray(relation)) {
+    return relation[0]?.nombre || fallback
+  }
+  return relation.nombre || fallback
+}
+
+function getNombreProductoFromDetalle(
+  detalle?: { catalogo_productos?: { nombre: string } | { nombre: string }[] }
+): string {
+  const relation = detalle?.catalogo_productos
+  if (!relation) return 'Producto'
+  if (Array.isArray(relation)) {
+    return relation[0]?.nombre || 'Producto'
+  }
+  return relation.nombre || 'Producto'
 }
 
 // ============================================================================
@@ -55,6 +79,7 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
         id,
         fecha_transaccion,
         total_cobrado_real,
+        condicion_pago,
         vendedor:entidades!id_vendedor(nombre),
         comprador:entidades!id_comprador(nombre),
         ticket_detalles(
@@ -77,7 +102,8 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
         fecha_movimiento,
         tipo_movimiento,
         monto,
-        categoria,
+        categoria_gasto,
+        id_ticket,
         entidad:entidades!id_entidad_relacionada(nombre)
       `)
       .order('fecha_movimiento', { ascending: false })
@@ -97,7 +123,6 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
         cantidad,
         producto:catalogo_productos!id_producto(nombre)
       `)
-      .in('tipo_movimiento', ['PRODUCCION', 'MERMA'])
       .order('fecha_movimiento', { ascending: false })
       .range(offset, offset + limit - 1)
 
@@ -108,10 +133,17 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
     // Translate all events to natural language
     const eventos: AuditEvent[] = []
 
+    const ticketsReciboCobro = new Set(
+      ((finanzas as FinanzaRaw[] | null) || [])
+        .filter((finanza) => finanza.tipo_movimiento === 'ABONO_DEUDA' && Boolean(finanza.id_ticket))
+        .map((finanza) => finanza.id_ticket as string)
+    )
+
     // Process tickets
     if (tickets) {
       tickets.forEach((ticket: TicketRaw) => {
-        eventos.push(translateTicketToNaturalLanguage(ticket))
+        const esReciboCobro = ticket.condicion_pago === 'CONTADO' && ticketsReciboCobro.has(ticket.id)
+        eventos.push(translateTicketToNaturalLanguage(ticket, esReciboCobro))
       })
     }
 
@@ -135,8 +167,9 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
     // Return only the requested limit
     return eventos.slice(0, limit)
 
-  } catch (error: any) {
-    console.error('Error in fetchAuditFeed:', error?.message)
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown error'
+    console.error('Error in fetchAuditFeed:', errorMessage)
     return []
   }
 }
@@ -145,23 +178,32 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
 // PURE FUNCTIONS - Natural Language Translation
 // ============================================================================
 
-function translateTicketToNaturalLanguage(ticket: TicketRaw): AuditEvent {
-  const vendedor = (ticket.vendedor as any)?.nombre || 'Vendedor'
-  const comprador = (ticket.comprador as any)?.nombre || 'Cliente'
+function translateTicketToNaturalLanguage(ticket: TicketRaw, esReciboCobro: boolean): AuditEvent {
+  const vendedor = getNombreFromRelation(ticket.vendedor, 'Vendedor')
+  const comprador = getNombreFromRelation(ticket.comprador, 'Cliente')
+  const esConcesion = ticket.condicion_pago === 'CONCESION'
   
   // Get product summary
   let productosTexto = ''
   if (ticket.ticket_detalles && ticket.ticket_detalles.length > 0) {
     const totalCantidad = ticket.ticket_detalles.reduce((sum, d) => sum + d.cantidad, 0)
-    const primerProducto = (ticket.ticket_detalles[0].catalogo_productos as any)?.nombre || 'Producto'
+    const primerProducto = getNombreProductoFromDetalle(ticket.ticket_detalles[0])
     productosTexto = ticket.ticket_detalles.length === 1
       ? `${totalCantidad}x ${primerProducto}`
       : `${totalCantidad} productos`
   }
 
-  const descripcion = productosTexto
-    ? `${vendedor} vendió ${productosTexto} a ${comprador} por $${ticket.total_cobrado_real.toLocaleString('es-MX')}`
-    : `${vendedor} vendió a ${comprador} por $${ticket.total_cobrado_real.toLocaleString('es-MX')}`
+  const descripcion = esReciboCobro
+    ? (productosTexto
+      ? `RECIBO DE COBRO: ${vendedor} registró cobro de ${productosTexto} a ${comprador}`
+      : `RECIBO DE COBRO: ${vendedor} registró cobro a ${comprador}`)
+    : esConcesion
+    ? (productosTexto
+      ? `TRASPASO CONCESIÓN: ${vendedor} transfirió ${productosTexto} a ${comprador}`
+      : `TRASPASO CONCESIÓN: ${vendedor} transfirió inventario a ${comprador}`)
+    : (productosTexto
+      ? `${vendedor} vendió ${productosTexto} a ${comprador} por $${ticket.total_cobrado_real.toLocaleString('es-MX')}`
+      : `${vendedor} vendió a ${comprador} por $${ticket.total_cobrado_real.toLocaleString('es-MX')}`)
 
   return {
     id: `ticket-${ticket.id}`,
@@ -169,14 +211,14 @@ function translateTicketToNaturalLanguage(ticket: TicketRaw): AuditEvent {
     tipo: 'VENTA',
     descripcion,
     monto: ticket.total_cobrado_real,
-    color: 'green'
+    color: esReciboCobro ? 'blue' : (esConcesion ? 'gray' : 'green')
   }
 }
 
 function translateFinanzaToNaturalLanguage(finanza: FinanzaRaw): AuditEvent {
-  const entidad = (finanza.entidad as any)?.nombre || 'Entidad'
+  const entidad = getNombreFromRelation(finanza.entidad, 'Entidad')
   // Null-safe string manipulation
-  const categoriaLegible = (finanza.categoria || 'Operación').replace(/_/g, ' ')
+  const categoriaLegible = (finanza.categoria_gasto || 'Operación').replace(/_/g, ' ')
   const tipoMovimiento = finanza.tipo_movimiento || 'GASTO'
 
   let descripcion = ''
@@ -184,9 +226,17 @@ function translateFinanzaToNaturalLanguage(finanza: FinanzaRaw): AuditEvent {
   let color: AuditEvent['color'] = 'red'
 
   if (tipoMovimiento === 'ABONO_DEUDA') {
-    descripcion = `${entidad} abonó $${finanza.monto.toLocaleString('es-MX')} (${categoriaLegible})`
+    descripcion = `Pago recibido / Deuda saldada: ${entidad} abonó $${finanza.monto.toLocaleString('es-MX')}`
     tipo = 'ABONO'
-    color = 'blue'
+    color = 'green'
+  } else if (tipoMovimiento === 'INGRESO_COMISION') {
+    descripcion = `Comisión ganada por red: ${entidad} registró $${finanza.monto.toLocaleString('es-MX')}`
+    tipo = 'ABONO'
+    color = 'green'
+  } else if (tipoMovimiento === 'DEUDA_A_MATRIZ') {
+    descripcion = `Efectivo recolectado (Por entregar a Matriz): ${entidad} resguardó $${finanza.monto.toLocaleString('es-MX')}`
+    tipo = 'ABONO'
+    color = 'gray'
   } else if (tipoMovimiento === 'INGRESO') {
     descripcion = `Ingreso de $${finanza.monto.toLocaleString('es-MX')} en ${categoriaLegible}`
     tipo = 'ABONO'
@@ -208,7 +258,7 @@ function translateFinanzaToNaturalLanguage(finanza: FinanzaRaw): AuditEvent {
 }
 
 function translateInventarioToNaturalLanguage(inv: InventarioRaw): AuditEvent {
-  const producto = (inv.producto as any)?.nombre || 'Producto'
+  const producto = getNombreFromRelation(inv.producto, 'Producto')
   // Null-safe tipo_movimiento
   const tipoMovimiento = inv.tipo_movimiento || 'PRODUCCION'
   
@@ -224,6 +274,8 @@ function translateInventarioToNaturalLanguage(inv: InventarioRaw): AuditEvent {
     descripcion = `Merma de ${inv.cantidad}x botellas de ${producto}`
     tipo = 'MERMA'
     color = 'orange'
+  } else {
+    descripcion = `${tipoMovimiento.replace(/_/g, ' ')} de ${inv.cantidad}x de ${producto}`
   }
 
   return {
@@ -261,7 +313,7 @@ export function getColorClasses(color: AuditEvent['color']): { border: string; b
     green: {
       border: 'border-green-500',
       bg: 'bg-green-50',
-      text: 'text-green-900',
+      text: 'text-green-600',
       dot: 'bg-green-500'
     },
     blue: {
@@ -287,6 +339,12 @@ export function getColorClasses(color: AuditEvent['color']): { border: string; b
       bg: 'bg-orange-50',
       text: 'text-orange-900',
       dot: 'bg-orange-500'
+    },
+    gray: {
+      border: 'border-gray-500',
+      bg: 'bg-gray-100',
+      text: 'text-gray-500',
+      dot: 'bg-gray-500'
     }
   }
 

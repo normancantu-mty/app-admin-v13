@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import {
+  FACTOR_RECONSTRUCCION as FACTOR_FRESNILLO,
+  TASA_IEPS,
+  TASA_IVA,
+  type TipoCuentaDestino
+} from '@/lib/finance-utils'
 
 interface PendingApproval {
   id: string

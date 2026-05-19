@@ -3,50 +3,44 @@ export const dynamic = 'force-dynamic'
 
 import { supabase } from '@/lib/supabase'
 import { getCurrentUser } from '@/lib/auth-utils'
+import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
 
 type AprobacionAction = 'APPROVE' | 'REJECT'
 
-function calcularFugaFiscal(
+function calcularDesgloseFiscal(
   monto: number,
-  tipoFiscalidad: string,
-  idCuentaDestino: string
+  tipoFiscalidad: string
 ) {
-  if (tipoFiscalidad === 'IVA_ONLY') {
-    const base = monto / 1.16
-    const iva = monto - base
-    const ivaRedondeado = Math.round(iva * 100) / 100
-
-    return {
-      tipo_movimiento: 'GASTO_OPERATIVO',
-      categoria: 'Fuga_Fiscal_IVA',
-      monto: ivaRedondeado,
-      id_cuenta_origen: idCuentaDestino,
-      categoria_gasto: 'Subsidio IVA por abono bancario',
-      status: 'APPROVED'
-    }
-  }
-
   if (tipoFiscalidad === 'FULL_TAX') {
     const base = monto / 1.7748
-    const impuestos = monto - base
-    const impuestosRedondeados = Math.round(impuestos * 100) / 100
-
+    const ieps = base * 0.53
+    const iva = (base + ieps) * 0.16
     return {
-      tipo_movimiento: 'GASTO_OPERATIVO',
-      categoria: 'Fuga_Fiscal_IEPS_IVA',
-      monto: impuestosRedondeados,
-      id_cuenta_origen: idCuentaDestino,
-      categoria_gasto: 'Subsidio IEPS+IVA por abono bancario',
-      status: 'APPROVED'
+      base: Math.round(base * 100) / 100,
+      iva: Math.round(iva * 100) / 100,
+      ieps: Math.round(ieps * 100) / 100
     }
   }
 
-  return null
+  if (tipoFiscalidad === 'IVA_ONLY') {
+    const base = monto / 1.16
+    const iva = base * 0.16
+    return {
+      base: Math.round(base * 100) / 100,
+      iva: Math.round(iva * 100) / 100,
+      ieps: 0
+    }
+  }
+
+  return {
+    base: Math.round(monto * 100) / 100,
+    iva: 0,
+    ieps: 0
+  }
 }
 
 export async function GET() {
   try {
-
     const { data, error } = await supabase
       .from('finanzas_ledger')
       .select(`
@@ -57,7 +51,8 @@ export async function GET() {
         entidad_relacionada:entidades!id_entidad_relacionada(nombre),
         cuenta_destino:cuentas_financieras!id_cuenta_destino(nombre)
       `)
-      .eq('status', 'PENDING')
+      .eq('status', 'ACTIVO')
+      .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
       .eq('tipo_movimiento', 'ABONO_DEUDA')
       .order('fecha_movimiento', { ascending: false })
 
@@ -66,9 +61,9 @@ export async function GET() {
     }
 
     return NextResponse.json({ approvals: data || [] })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error?.message || 'Error interno al obtener pendientes.' },
+      { error: error instanceof Error ? error.message : 'Error interno al obtener pendientes.' },
       { status: 500 }
     )
   }
@@ -91,9 +86,10 @@ export async function PATCH(request: Request) {
 
     const { data: movimiento, error: movimientoError } = await supabase
       .from('finanzas_ledger')
-      .select('id, tipo_movimiento, categoria, monto, id_cuenta_destino, status')
+      .select('id, tipo_movimiento, categoria, monto, id_cuenta_destino, id_entidad_relacionada, status')
       .eq('id', id)
-      .eq('status', 'PENDING')
+      .eq('status', 'ACTIVO')
+      .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
       .single()
 
     if (movimientoError || !movimiento) {
@@ -106,9 +102,9 @@ export async function PATCH(request: Request) {
     if (action === 'REJECT') {
       const { error: rejectError } = await supabase
         .from('finanzas_ledger')
-        .update({ status: 'REJECTED' })
+        .update({ status: 'ANULADO' })
         .eq('id', id)
-        .eq('status', 'PENDING')
+        .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
 
       if (rejectError) {
         return NextResponse.json({ error: rejectError.message }, { status: 500 })
@@ -117,21 +113,8 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ ok: true })
     }
 
-    const { error: approveError } = await supabase
-      .from('finanzas_ledger')
-      .update({ status: 'APPROVED' })
-      .eq('id', id)
-      .eq('status', 'PENDING')
-
-    if (approveError) {
-      return NextResponse.json({ error: approveError.message }, { status: 500 })
-    }
-
-    // CRITICAL GUARDRAIL:
-    // Fuga Fiscal se ejecuta solo cuando ADMIN aprueba el ABONO pendiente.
     if (
       movimiento.tipo_movimiento === 'ABONO_DEUDA' &&
-      movimiento.categoria === 'ABONO_REAL' &&
       movimiento.id_cuenta_destino
     ) {
       const { data: cuenta, error: cuentaError } = await supabase
@@ -144,27 +127,77 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: cuentaError.message }, { status: 500 })
       }
 
-      const fugaFiscal = calcularFugaFiscal(
-        movimiento.monto,
-        cuenta?.tipo_fiscalidad || '',
-        movimiento.id_cuenta_destino
-      )
+      const desglose = calcularDesgloseFiscal(movimiento.monto, cuenta?.tipo_fiscalidad || '')
 
-      if (fugaFiscal) {
-        const { error: fugaError } = await supabase
+      const { error: baseError } = await supabase
+        .from('finanzas_ledger')
+        .update({ monto: desglose.base, categoria: CATEGORIA_ABONO_REAL, status: 'ACTIVO' })
+        .eq('id', id)
+        .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
+
+      if (baseError) {
+        return NextResponse.json({ error: baseError.message }, { status: 500 })
+      }
+
+      const reservas: Array<{
+        tipo_movimiento: 'PASIVO_IVA' | 'PASIVO_IEPS'
+        categoria: string
+        monto: number
+        id_cuenta_destino: string
+        id_entidad_relacionada: string | null
+        categoria_gasto: string
+        status: 'ACTIVO'
+      }> = []
+
+      if (desglose.iva > 0) {
+        reservas.push({
+          tipo_movimiento: 'PASIVO_IVA',
+          categoria: 'RESERVA_FISCAL_IVA',
+          monto: desglose.iva,
+          id_cuenta_destino: movimiento.id_cuenta_destino,
+          id_entidad_relacionada: movimiento.id_entidad_relacionada ?? null,
+          categoria_gasto: 'Reserva IVA por cobro de deuda aprobado',
+          status: 'ACTIVO'
+        })
+      }
+
+      if (desglose.ieps > 0) {
+        reservas.push({
+          tipo_movimiento: 'PASIVO_IEPS',
+          categoria: 'RESERVA_FISCAL_IEPS',
+          monto: desglose.ieps,
+          id_cuenta_destino: movimiento.id_cuenta_destino,
+          id_entidad_relacionada: movimiento.id_entidad_relacionada ?? null,
+          categoria_gasto: 'Reserva IEPS por cobro de deuda aprobado',
+          status: 'ACTIVO'
+        })
+      }
+
+      if (reservas.length > 0) {
+        const { error: reservasError } = await supabase
           .from('finanzas_ledger')
-          .insert(fugaFiscal)
+          .insert(reservas)
 
-        if (fugaError) {
-          return NextResponse.json({ error: fugaError.message }, { status: 500 })
+        if (reservasError) {
+          return NextResponse.json({ error: reservasError.message }, { status: 500 })
         }
+      }
+    } else {
+      const { error: approveErrorSimple } = await supabase
+        .from('finanzas_ledger')
+        .update({ categoria: CATEGORIA_ABONO_REAL, status: 'ACTIVO' })
+        .eq('id', id)
+        .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
+
+      if (approveErrorSimple) {
+        return NextResponse.json({ error: approveErrorSimple.message }, { status: 500 })
       }
     }
 
     return NextResponse.json({ ok: true })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error?.message || 'Error interno al procesar aprobación.' },
+      { error: error instanceof Error ? error.message : 'Error interno al procesar aprobación.' },
       { status: 500 }
     )
   }

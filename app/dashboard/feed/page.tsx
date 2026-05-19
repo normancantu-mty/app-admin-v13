@@ -16,6 +16,7 @@ interface Ticket {
   id: string
   fecha_transaccion: string
   total_cobrado_real: number
+  condicion_pago: 'CONTADO' | 'CONCESION' | null
   vendedor: {
     nombre: string
   } | null
@@ -45,14 +46,21 @@ interface Inventario {
   }[]
 }
 
-const TIPOS_INGRESO = ['INGRESO_VENTA', 'ABONO_DEUDA']
+interface TicketRaw extends Omit<Ticket, 'vendedor' | 'comprador'> {
+  vendedor: Ticket['vendedor'] | Ticket['vendedor'][]
+  comprador: Ticket['comprador'] | Ticket['comprador'][]
+}
+
+interface FinanzaRaw extends Omit<Finanza, 'entidad'> {
+  entidad: Finanza['entidad'] | Finanza['entidad'][]
+}
 
 async function getFeedData() {
   try {
     const [ticketsRes, finanzasRes, inventarioRes] = await Promise.all([
       supabase
         .from('transacciones_tickets')
-        .select('id, fecha_transaccion, total_cobrado_real, vendedor:entidades!id_vendedor(nombre), comprador:entidades!id_comprador(nombre)')
+        .select('id, fecha_transaccion, total_cobrado_real, condicion_pago, vendedor:entidades!id_vendedor(nombre), comprador:entidades!id_comprador(nombre)')
         .limit(20)
         .order('fecha_transaccion', { ascending: false }),
       
@@ -70,8 +78,8 @@ async function getFeedData() {
         .order('fecha_movimiento', { ascending: false })
     ])
 
-    const ticketsRaw: any[] = ticketsRes.data || []
-    const finanzasRaw: any[] = finanzasRes.data || []
+    const ticketsRaw: TicketRaw[] = (ticketsRes.data || []) as TicketRaw[]
+    const finanzasRaw: FinanzaRaw[] = (finanzasRes.data || []) as FinanzaRaw[]
     const inventario: Inventario[] = inventarioRes.data || []
 
     const feedItems: FeedItem[] = []
@@ -84,12 +92,15 @@ async function getFeedData() {
       }
       const nombreVendedor = ticket.vendedor?.nombre || 'Un Distribuidor'
       const nombreComprador = ticket.comprador?.nombre || 'Público en General'
+      const esConcesion = ticket.condicion_pago === 'CONCESION'
       feedItems.push({
         id: `ticket-${ticket.id}`,
         fecha: ticket.fecha_transaccion,
         tipo: 'TICKET',
-        mensaje: `${nombreVendedor} le vendió $${ticket.total_cobrado_real.toFixed(2)} a ${nombreComprador}`,
-        colorBadge: 'bg-blue-100 text-blue-800',
+        mensaje: esConcesion
+          ? `TRASPASO CONCESIÓN: ${nombreVendedor} transfirió inventario a ${nombreComprador}`
+          : `${nombreVendedor} le vendió $${ticket.total_cobrado_real.toFixed(2)} a ${nombreComprador}`,
+        colorBadge: esConcesion ? 'bg-gray-100 text-gray-500' : 'bg-blue-100 text-blue-800',
         icono: '🛍️'
       })
     })
@@ -100,13 +111,27 @@ async function getFeedData() {
         entidad: Array.isArray(finanzaRaw.entidad) ? finanzaRaw.entidad[0] : finanzaRaw.entidad
       }
       const nombreEntidad = finanza.entidad?.nombre || 'El Administrador'
-      const esIngreso = TIPOS_INGRESO.includes(finanza.tipo_movimiento)
+      const tipoFinanza = finanza.tipo_movimiento
+      const colorBadge =
+        tipoFinanza === 'ABONO_DEUDA' || tipoFinanza === 'INGRESO_COMISION'
+          ? 'bg-green-100 text-green-600'
+          : tipoFinanza === 'DEUDA_A_MATRIZ'
+            ? 'bg-gray-100 text-gray-500'
+            : 'bg-red-100 text-red-800'
+      const mensaje =
+        tipoFinanza === 'ABONO_DEUDA'
+          ? `${nombreEntidad}: Pago recibido / Deuda saldada ($${finanza.monto.toFixed(2)})`
+          : tipoFinanza === 'INGRESO_COMISION'
+            ? `${nombreEntidad}: Comisión ganada por red ($${finanza.monto.toFixed(2)})`
+            : tipoFinanza === 'DEUDA_A_MATRIZ'
+              ? `${nombreEntidad}: Efectivo recolectado (Por entregar a Matriz) ($${finanza.monto.toFixed(2)})`
+              : `${nombreEntidad} registró un(a) ${tipoFinanza} de $${finanza.monto.toFixed(2)}`
       feedItems.push({
         id: `finanza-${finanza.id}`,
         fecha: finanza.fecha_movimiento,
         tipo: 'FINANZAS',
-        mensaje: `${nombreEntidad} registró un(a) ${finanza.tipo_movimiento} de $${finanza.monto.toFixed(2)}`,
-        colorBadge: esIngreso ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+        mensaje,
+        colorBadge,
         icono: '💰'
       })
     })
