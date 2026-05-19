@@ -261,29 +261,6 @@ function formatCurrency(amount: number): string {
 }
 
 function EmptyState() {
-  // --- INICIO LÓGICA DE CONCESIÓN FALTANTE ---
-  const inventarioConcesion = productos
-    .filter(p => p.tipo === 'TERMINADO')
-    .map(producto => {
-      const movsConsignado = movimientos.filter(m => m.id_producto === producto.id && m.cubeta === 'CONSIGNADO' && m.status === 'ACTIVO')
-      const stockFisicoConsignado = movsConsignado.reduce((acc, mov) => {
-        if (mov.tipo_movimiento.startsWith('ENTRADA')) return acc + mov.cantidad
-        if (mov.tipo_movimiento.startsWith('SALIDA') || mov.tipo_movimiento === 'MERMA') return acc - mov.cantidad
-        return acc
-      }, 0)
-      
-      const precioReferencia = producto.listas_precios?.[0]?.precio_final || 0
-      
-      return { 
-        ...producto, 
-        stock_consignado: stockFisicoConsignado, 
-        valor_consignado: stockFisicoConsignado * precioReferencia 
-      }
-    })
-    .filter(p => p.stock_consignado > 0)
-
-  const valorTotalConcesion = inventarioConcesion.reduce((sum, p) => sum + p.valor_consignado, 0)
-  // --- FIN LÓGICA DE CONCESIÓN FALTANTE ---
   return (
     <div className="text-center py-12">
       <div className="text-gray-400 text-6xl mb-4">📦</div>
