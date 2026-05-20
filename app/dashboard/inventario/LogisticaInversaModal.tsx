@@ -56,7 +56,7 @@ export default function LogisticaInversaModal({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+        className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 md:w-auto"
       >
         Registrar Logística Inversa
       </button>

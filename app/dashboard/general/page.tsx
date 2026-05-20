@@ -180,7 +180,7 @@ export default async function DashboardGeneralPage() {
               <h2 className="text-xl font-semibold text-gray-800">🌟 Liderazgo de Red (Nodos Alfa)</h2>
               <p className="text-sm text-gray-500">Distribuidores y Locales Directos</p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="hidden w-full overflow-x-auto md:block">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -216,6 +216,36 @@ export default async function DashboardGeneralPage() {
                 </tbody>
               </table>
             </div>
+            <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
+              {liderazgoHistorico.nodosAlfa.map((nodo) => (
+                <div key={nodo.id} className="space-y-3 rounded-lg bg-white p-4 shadow">
+                  <div className="flex items-start gap-2">
+                    <div className={`mt-1 h-3 w-3 shrink-0 rounded-full ${getTrafficLightColor(nodo.diasSinActividad)}`} />
+                    <div>
+                      <p className="text-xs font-medium text-gray-500">Entidad</p>
+                      <p className="text-base font-semibold text-gray-900">{nodo.nombre}</p>
+                      <p className="text-xs text-gray-500">{nodo.rol} — Línea Directa</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">Ingreso Neto Empresa:</span>
+                      <span className="font-semibold text-green-600">{formatCurrency(nodo.ingresoNetoEmpresa)}</span>
+                    </p>
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">Deuda Actual:</span>
+                      <span className="text-gray-900">{formatCurrency(nodo.deudaActual)}</span>
+                    </p>
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">Última Actividad:</span>
+                      <span className="text-gray-600">
+                        {nodo.diasSinActividad < 999 ? `Hace ${nodo.diasSinActividad} días` : 'Sin actividad'}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* LIDERAZGO DE RED - Sub-nodos (Con Patrocinador) */}
@@ -224,7 +254,7 @@ export default async function DashboardGeneralPage() {
               <h2 className="text-xl font-semibold text-gray-800">🔗 Liderazgo de Red (Sub-nodos)</h2>
               <p className="text-sm text-gray-500">Locales con Patrocinador</p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="hidden w-full overflow-x-auto md:block">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -259,6 +289,38 @@ export default async function DashboardGeneralPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
+              {liderazgoHistorico.subNodos.map((nodo) => (
+                <div key={nodo.id} className="space-y-3 rounded-lg bg-white p-4 shadow">
+                  <div className="flex items-start gap-2">
+                    <div className={`mt-1 h-3 w-3 shrink-0 rounded-full ${getTrafficLightColor(nodo.diasSinActividad)}`} />
+                    <div>
+                      <p className="text-xs font-medium text-gray-500">Entidad</p>
+                      <p className="text-base font-semibold text-gray-900">{nodo.nombre}</p>
+                      <p className="text-xs text-gray-500">
+                        {nodo.rol} — Patrocinado por {nodo.patrocinador}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">Ingreso Neto Empresa:</span>
+                      <span className="font-semibold text-green-600">{formatCurrency(nodo.ingresoNetoEmpresa)}</span>
+                    </p>
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">Deuda Actual:</span>
+                      <span className="text-gray-900">{formatCurrency(nodo.deudaActual)}</span>
+                    </p>
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">Última Actividad:</span>
+                      <span className="text-gray-600">
+                        {nodo.diasSinActividad < 999 ? `Hace ${nodo.diasSinActividad} días` : 'Sin actividad'}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

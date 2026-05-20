@@ -1,11 +1,11 @@
 'use client'
 
-import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ReactNode, useEffect, useState } from 'react'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { supabase } from '@/lib/supabase'
 import { DateFilterProvider } from '@/components/providers/DateFilterProvider'
+import { DashboardSidebar } from '@/components/ui/DashboardSidebar'
 import { TopBar } from '@/components/ui/TopBar'
 
 export default function DashboardLayout({
@@ -18,6 +18,8 @@ export default function DashboardLayout({
   const [userRole, setUserRole] = useState<string | null>(null)
   const [entidadId, setEntidadId] = useState<string | null>(null)
   const [isLoadingRole, setIsLoadingRole] = useState(true)
+  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isMobileOpen, setIsMobileOpen] = useState(false)
 
   useEffect(() => {
     const fetchUserRole = async () => {
@@ -57,6 +59,10 @@ export default function DashboardLayout({
     
     fetchUserRole()
   }, [pathname, router])
+
+  useEffect(() => {
+    setIsMobileOpen(false)
+  }, [pathname])
 
   const getNavItems = () => {
     if (userRole === 'ADMIN') {
@@ -138,47 +144,32 @@ export default function DashboardLayout({
 
   const navItems = getNavItems()
 
-  const getLinkClassName = (href: string) => {
-    const isActive = pathname === href
-    return `block px-6 py-3 transition-colors ${
-      isActive
-        ? 'bg-blue-50 text-blue-600 font-medium border-r-4 border-blue-600'
-        : 'text-gray-700 hover:bg-gray-100 hover:text-blue-600'
-    }`
-  }
-
   return (
     <ProtectedRoute>
       <div className="flex h-screen bg-gray-100">
-        {/* Sidebar */}
-        <aside className="w-64 bg-white shadow-md">
-          <div className="p-6">
-            <h2 className="text-2xl font-bold text-gray-800">Destilado Digital</h2>
-          </div>
-          <nav className="mt-6">
-          {isLoadingRole ? (
-            <div className="px-6 py-3 text-gray-500">Cargando...</div>
-          ) : (
-            navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={getLinkClassName(item.href)}
-              >
-                {item.label}
-              </Link>
-            ))
-          )}
-        </nav>
-        </aside>
+        {isMobileOpen ? (
+          <button
+            type="button"
+            className="fixed inset-0 z-30 bg-black/50 md:hidden"
+            aria-label="Cerrar menú de navegación"
+            onClick={() => setIsMobileOpen(false)}
+          />
+        ) : null}
 
-        {/* Main Content */}
-        <main className="flex-1 overflow-auto flex flex-col">
+        <DashboardSidebar
+          navItems={navItems}
+          pathname={pathname}
+          isLoadingRole={isLoadingRole}
+          isCollapsed={isCollapsed}
+          isMobileOpen={isMobileOpen}
+          onToggleCollapse={() => setIsCollapsed((prev) => !prev)}
+          onCloseMobile={() => setIsMobileOpen(false)}
+        />
+
+        <main className="flex min-w-0 flex-1 flex-col overflow-auto">
           <DateFilterProvider>
-            <TopBar />
-            <div className="flex-1 overflow-auto">
-              {children}
-            </div>
+            <TopBar onMenuClick={() => setIsMobileOpen(true)} />
+            <div className="flex-1 overflow-auto">{children}</div>
           </DateFilterProvider>
         </main>
       </div>

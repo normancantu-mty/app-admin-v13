@@ -156,47 +156,91 @@ export default async function CatalogoPage({
           </button>
         </form>
       </div>
-      <div className="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Precio Público</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Impuestos (SAT)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tu Costo Operativo</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Precio para Entidad</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ganancia Directa</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ganancia por Red</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {catalogoFinal.map((producto) => (
-              <tr key={producto.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{producto.nombre}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                  {currencyFormatter.format(producto.waterfall.precioPublico)}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-amber-600">
-                  {currencyFormatter.format(producto.waterfall.impuestosRetenidos)}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">
-                  {currencyFormatter.format(producto.waterfall.tuCosto)}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-700 font-medium">
-                  {producto.waterfall.precioLocal > 0
-                    ? currencyFormatter.format(producto.waterfall.precioLocal)
-                    : '—'}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-emerald-700 font-medium">
-                  {currencyFormatter.format(producto.waterfall.margenDirecto)}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-amber-700 font-medium">
-                  {currencyFormatter.format(producto.waterfall.comisionPasiva || 0)}
-                </td>
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow">
+        <div className="hidden w-full overflow-x-auto md:block">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Producto</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Precio Público</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Impuestos (SAT)</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Tu Costo Operativo</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Precio para Entidad</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Ganancia Directa</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Ganancia por Red</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-200 bg-white">
+              {catalogoFinal.map((producto) => (
+                <tr key={producto.id} className="hover:bg-gray-50">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">{producto.nombre}</td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                    {currencyFormatter.format(producto.waterfall.precioPublico)}
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-amber-600">
+                    {currencyFormatter.format(producto.waterfall.impuestosRetenidos)}
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-blue-600">
+                    {currencyFormatter.format(producto.waterfall.tuCosto)}
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-indigo-700">
+                    {producto.waterfall.precioLocal > 0
+                      ? currencyFormatter.format(producto.waterfall.precioLocal)
+                      : '—'}
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-emerald-700">
+                    {currencyFormatter.format(producto.waterfall.margenDirecto)}
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-amber-700">
+                    {currencyFormatter.format(producto.waterfall.comisionPasiva || 0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
+          {catalogoFinal.map((producto) => (
+            <div key={producto.id} className="space-y-3 rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
+              <p className="text-base font-semibold text-gray-900">{producto.nombre}</p>
+              <div className="space-y-2 text-sm">
+                <p className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Precio Público:</span>
+                  <span className="text-gray-900">{currencyFormatter.format(producto.waterfall.precioPublico)}</span>
+                </p>
+                <p className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Impuestos (SAT):</span>
+                  <span className="text-amber-600">{currencyFormatter.format(producto.waterfall.impuestosRetenidos)}</span>
+                </p>
+                <p className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Tu Costo Operativo:</span>
+                  <span className="font-medium text-blue-600">{currencyFormatter.format(producto.waterfall.tuCosto)}</span>
+                </p>
+                <p className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Precio para Entidad:</span>
+                  <span className="font-medium text-indigo-700">
+                    {producto.waterfall.precioLocal > 0
+                      ? currencyFormatter.format(producto.waterfall.precioLocal)
+                      : '—'}
+                  </span>
+                </p>
+                <p className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Ganancia Directa:</span>
+                  <span className="font-medium text-emerald-700">
+                    {currencyFormatter.format(producto.waterfall.margenDirecto)}
+                  </span>
+                </p>
+                <p className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Ganancia por Red:</span>
+                  <span className="font-medium text-amber-700">
+                    {currencyFormatter.format(producto.waterfall.comisionPasiva || 0)}
+                  </span>
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

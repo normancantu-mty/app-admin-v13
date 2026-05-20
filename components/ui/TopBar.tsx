@@ -3,7 +3,11 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
-export function TopBar() {
+type TopBarProps = {
+  onMenuClick?: () => void
+}
+
+export function TopBar({ onMenuClick }: TopBarProps) {
   const router = useRouter()
   const [rango, setRango] = useState('ESTE_MES')
 
@@ -30,8 +34,20 @@ export function TopBar() {
   }
 
   return (
-    <div className="bg-white border-b border-gray-200 p-4 flex justify-between items-center">
-      <div id="date-filter-display">{getDisplayText()}</div>
+    <div className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white p-4">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-xl text-gray-700 transition-colors hover:bg-gray-100 md:hidden"
+          aria-label="Abrir menú de navegación"
+        >
+          ☰
+        </button>
+        <div id="date-filter-display" className="truncate text-sm font-medium text-gray-800 sm:text-base">
+          {getDisplayText()}
+        </div>
+      </div>
       <select
         value={rango}
         onChange={(e) => handleChange(e.target.value)}

@@ -148,7 +148,7 @@ export default function DirectoryTableClient({
         </button>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="hidden w-full overflow-x-auto md:block">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -275,6 +275,120 @@ export default function DirectoryTableClient({
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 px-4 pb-4 md:hidden">
+        {filteredRows.length === 0 ? (
+          <p className="rounded-lg border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
+            No hay resultados con los filtros seleccionados.
+          </p>
+        ) : (
+          filteredRows.map((row) => (
+            <div
+              key={row.id}
+              className="space-y-3 rounded-lg bg-white p-4 shadow"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span className="text-base font-semibold text-gray-900">{row.nombre}</span>
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none ${
+                        row.rol === 'DST' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
+                      }`}
+                    >
+                      {rolEtiqueta(row.rol)}
+                    </span>
+                  </div>
+                </div>
+                <Link
+                  href={`/dashboard/distribuidores/${row.id}`}
+                  className="shrink-0 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100"
+                >
+                  Ver estado
+                </Link>
+              </div>
+
+              {(row.telefono || row.ubicacionMaps) && (
+                <div className="flex flex-wrap gap-3 text-sm">
+                  {row.telefono && (
+                    <a href={`tel:${row.telefono}`} className="text-gray-600 hover:text-blue-600">
+                      <span className="font-medium text-gray-500">Teléfono: </span>
+                      {row.telefono}
+                    </a>
+                  )}
+                  {row.ubicacionMaps && (
+                    <a
+                      href={row.ubicacionMaps}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-gray-600 hover:text-blue-600"
+                    >
+                      <span className="font-medium text-gray-500">Mapa: </span>
+                      Abrir
+                    </a>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-2 border-t border-gray-100 pt-3 text-sm">
+                {showZonaColumn ? (
+                  <div className="flex justify-between gap-2">
+                    <span className="font-medium text-gray-500">Zona:</span>
+                    <span className="text-right text-gray-900">{row.zona}</span>
+                  </div>
+                ) : null}
+                <div className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Patrocinador:</span>
+                  <span className="text-right text-gray-900">{row.patrocinador}</span>
+                </div>
+              </div>
+
+              <div className="space-y-2 border-t border-gray-100 pt-3 text-sm">
+                <div className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Saldo Pendiente:</span>
+                  <span
+                    className={`font-semibold ${row.saldoPendiente > 0 ? 'text-red-600' : 'text-green-600'}`}
+                  >
+                    {formatCurrency(Math.abs(row.saldoPendiente))}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Saldo por pagar:</span>
+                  {row.rol === 'LOC' ? (
+                    <span className="text-gray-300">—</span>
+                  ) : (
+                    <span
+                      className={`font-semibold ${row.saldoPorPagar > 0 ? 'text-red-600' : 'text-green-600'}`}
+                    >
+                      {formatCurrency(row.saldoPorPagar)}
+                    </span>
+                  )}
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="font-medium text-gray-500">Seguimiento:</span>
+                  <span className={`text-right ${getSeguimientoTextClass(row.semaforo)} ${seguimientoClass}`}>
+                    {row.seguimientoTexto}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 border-t border-gray-100 pt-3">
+                {canEdit ? (
+                  <button
+                    type="button"
+                    onClick={() => setRowToEdit(row)}
+                    className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+                  >
+                    Editar
+                  </button>
+                ) : null}
+                <RegistrarSeguimientoButton entidadId={row.id} />
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   )

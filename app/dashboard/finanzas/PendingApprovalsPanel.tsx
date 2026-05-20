@@ -8,6 +8,7 @@ import {
   TASA_IVA,
   type TipoCuentaDestino
 } from '@/lib/finance-utils'
+import { formatFechaHoraMX } from '@/lib/utils'
 
 interface PendingApproval {
   id: string
@@ -150,7 +151,8 @@ export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps)
           No hay abonos pendientes en este momento.
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        <div className="hidden w-full overflow-x-auto md:block">
           <table className="min-w-full divide-y divide-amber-200">
             <thead className="bg-amber-100/60">
               <tr>
@@ -178,11 +180,7 @@ export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps)
               {approvals.map((item) => (
                 <tr key={item.id} className="hover:bg-amber-50/60">
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {new Date(item.fecha_movimiento).toLocaleDateString('es-MX', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric'
-                    })}
+                    {formatFechaHoraMX(item.fecha_movimiento)}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-900">
                     {item.entidad_relacionada?.nombre || 'Sin entidad'}
@@ -223,6 +221,52 @@ export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps)
             </tbody>
           </table>
         </div>
+
+        <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
+          {approvals.map((item) => (
+            <div key={item.id} className="space-y-3 rounded-lg border border-amber-100 bg-white p-4 shadow-sm">
+              <p>
+                <span className="text-xs font-medium text-gray-500">Fecha y hora: </span>
+                <span className="text-sm text-gray-900">{formatFechaHoraMX(item.fecha_movimiento)}</span>
+              </p>
+              <p>
+                <span className="text-sm font-medium text-gray-500">Distribuidor: </span>
+                <span className="text-sm text-gray-900">{item.entidad_relacionada?.nombre || 'Sin entidad'}</span>
+              </p>
+              <p>
+                <span className="text-sm font-medium text-gray-500">Cuenta Destino: </span>
+                <span className="text-sm text-gray-600">{item.cuenta_destino?.nombre || 'N/A'}</span>
+              </p>
+              <p>
+                <span className="text-sm font-medium text-gray-500">Referencia: </span>
+                <span className="text-sm text-gray-600">{item.categoria_gasto || 'Sin referencia'}</span>
+              </p>
+              <p className="flex justify-between gap-2">
+                <span className="text-sm font-medium text-gray-500">Monto:</span>
+                <span className="text-sm font-semibold text-blue-700">{formatCurrency(item.monto)}</span>
+              </p>
+              {!props.isSubAdmin && (
+                <div className="flex gap-2 border-t border-amber-100 pt-3">
+                  <button
+                    onClick={() => onAction(item.id, 'REJECT')}
+                    disabled={processingId === item.id}
+                    className="flex-1 rounded-md border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    Rechazar
+                  </button>
+                  <button
+                    onClick={() => onAction(item.id, 'APPROVE')}
+                    disabled={processingId === item.id}
+                    className="flex-1 rounded-md bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                  >
+                    Aprobar
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        </>
       )}
     </div>
   )

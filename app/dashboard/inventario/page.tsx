@@ -352,26 +352,28 @@ export default async function InventarioPage() {
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-gray-800">Control de Inventario</h1>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <h1 className="text-2xl font-bold text-gray-800 sm:text-3xl">Control de Inventario</h1>
         {canMutate && (
-          <div className="flex gap-3">
+          <div className="flex w-full flex-wrap gap-2 md:w-auto md:justify-end md:gap-3">
             <Link
               href="/dashboard/inventario/nuevo"
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+              className="inline-flex w-full min-w-[9rem] flex-1 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 sm:w-auto sm:flex-none"
             >
               Producción (Envasar)
             </Link>
             <Link
               href="/dashboard/inventario/compra"
-              className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700"
+              className="inline-flex w-full min-w-[9rem] flex-1 items-center justify-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 sm:w-auto sm:flex-none"
             >
               Comprar Insumos
             </Link>
-            <LogisticaInversaModal
-              productos={productos.map((p) => ({ id: p.id, nombre: p.nombre, sku: p.sku }))}
-              distribuidores={distribuidores}
-            />
+            <div className="w-full min-w-[9rem] flex-1 sm:w-auto sm:flex-none">
+              <LogisticaInversaModal
+                productos={productos.map((p) => ({ id: p.id, nombre: p.nombre, sku: p.sku }))}
+                distribuidores={distribuidores}
+              />
+            </div>
           </div>
         )}
       </div>
@@ -441,7 +443,7 @@ export default async function InventarioPage() {
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-800">Stock Actual por Producto</h2>
             </div>
-            <div className="overflow-x-auto">
+            <div className="hidden w-full overflow-x-auto md:block">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -492,6 +494,42 @@ export default async function InventarioPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
+              {productosConStockOrdenados.map((producto: ProductoConStock) => (
+                <div key={producto.id} className="space-y-3 rounded-lg bg-white p-4 shadow">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-medium text-gray-500">Nombre</p>
+                      <p className="text-base font-semibold text-gray-900">{producto.nombre}</p>
+                    </div>
+                    <span
+                      className={`inline-flex shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
+                        producto.tipo === 'INSUMO' ? 'bg-gray-100 text-gray-800' : 'bg-blue-100 text-blue-800'
+                      }`}
+                    >
+                      {producto.tipo}
+                    </span>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">SKU:</span>
+                      <span className="text-gray-900">{producto.sku}</span>
+                    </p>
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">Unidad de Medida:</span>
+                      <span className="text-gray-900">{producto.unidad_medida}</span>
+                    </p>
+                    <p className="flex justify-between gap-2">
+                      <span className="font-medium text-gray-500">Stock Actual:</span>
+                      <span className={`font-semibold ${producto.stock_actual <= 10 ? 'text-red-600' : 'text-gray-900'}`}>
+                        {Number(producto.stock_actual).toFixed(4)}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

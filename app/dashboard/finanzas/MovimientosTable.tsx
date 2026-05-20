@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { bulkDeleteMovements } from '@/app/actions/audit'
 import { useRouter } from 'next/navigation'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatFechaHoraMX } from '@/lib/utils'
 
 interface MovimientosTableProps {
   movimientos: {
@@ -106,6 +106,8 @@ export default function MovimientosTable({ movimientos, sessionEmail, sessionRol
     )
   }
 
+  const visibleMovimientos = movimientos.slice(0, visibleRows)
+
   return (
     <>
       <div className="flex justify-end mb-4">
@@ -121,7 +123,7 @@ export default function MovimientosTable({ movimientos, sessionEmail, sessionRol
       </div>
 
       <div className="flex flex-col space-y-4">
-        <div className="overflow-x-auto">
+        <div className="hidden w-full overflow-x-auto md:block">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -151,7 +153,7 @@ export default function MovimientosTable({ movimientos, sessionEmail, sessionRol
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {movimientos.slice(0, visibleRows).map((movimiento) => {
+              {visibleMovimientos.map((movimiento) => {
                 const canDelete = canDeleteMovimiento(movimiento)
                 const isAnulado = movimiento.status === 'ANULADO'
                 const rowClass = isAnulado ? 'opacity-60 line-through' : ''
@@ -159,11 +161,7 @@ export default function MovimientosTable({ movimientos, sessionEmail, sessionRol
                 return (
                   <tr key={movimiento.id} className={`hover:bg-gray-50 ${rowClass}`}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(movimiento.fecha_movimiento).toLocaleDateString('es-MX', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric'
-                      })}
+                      {formatFechaHoraMX(movimiento.fecha_movimiento)}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900">
                       <div className="font-medium">{movimiento.tipo_movimiento}</div>
@@ -206,6 +204,92 @@ export default function MovimientosTable({ movimientos, sessionEmail, sessionRol
             </tbody>
           </table>
         </div>
+
+        <div className="grid grid-cols-1 gap-4 px-4 md:hidden">
+          {visibleMovimientos.map((movimiento) => {
+            const canDelete = canDeleteMovimiento(movimiento)
+            const isAnulado = movimiento.status === 'ANULADO'
+            const cardClass = isAnulado ? 'opacity-60 line-through' : ''
+
+            return (
+              <div
+                key={movimiento.id}
+                className={`space-y-3 rounded-lg bg-white p-4 shadow ${cardClass}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-medium text-gray-500">Fecha y hora</p>
+                    <p className="text-sm font-medium text-gray-900">
+                      {formatFechaHoraMX(movimiento.fecha_movimiento)}
+                    </p>
+                  </div>
+                  {isAnulado && (
+                    <span className="rounded bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">
+                      Anulado
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-1 text-sm">
+                  <p className="text-xs font-medium text-gray-500">Concepto</p>
+                  <p className="font-medium text-gray-900">{movimiento.tipo_movimiento}</p>
+                  <p>
+                    <span className="font-medium text-gray-500">Categoría: </span>
+                    <span className="text-gray-700">{movimiento.categoria}</span>
+                  </p>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <p>
+                    <span className="font-medium text-gray-500">Cuenta: </span>
+                    <span className="text-gray-900">{movimiento.cuenta_destino?.nombre || 'N/A'}</span>
+                  </p>
+                  <p>
+                    <span className="font-medium text-gray-500">Asignado A: </span>
+                    {movimiento.entidad_relacionada?.nombre ? (
+                      <span className="inline-flex rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800">
+                        {movimiento.entidad_relacionada.nombre}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </p>
+                  <p>
+                    <span className="font-medium text-gray-500">Monto: </span>
+                    <span className={`font-semibold ${getClaseMonto(movimiento.tipo_movimiento)}`}>
+                      {getPrefijoMonto(movimiento.tipo_movimiento)}
+                      {formatCurrency(movimiento.monto)}
+                    </span>
+                  </p>
+                  <p>
+                    <span className="font-medium text-gray-500">Creado por: </span>
+                    <span className="text-gray-700">{movimiento.usuario_creador?.trim() || '—'}</span>
+                  </p>
+                </div>
+
+                {showSelectionColumn && (
+                  <div className="flex items-center gap-2 border-t border-gray-100 pt-3">
+                    <input
+                      type="checkbox"
+                      id={`annul-mobile-${movimiento.id}`}
+                      checked={selectedIds.includes(movimiento.id)}
+                      disabled={!canDelete || isPending}
+                      onChange={() => toggleSelectId(movimiento.id)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <label
+                      htmlFor={`annul-mobile-${movimiento.id}`}
+                      className={`text-sm ${canDelete ? 'text-gray-700' : 'text-gray-400'}`}
+                    >
+                      Seleccionar para anular
+                    </label>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
         {visibleRows < movimientos.length && (
           <div className="flex justify-center pb-4">
             <button

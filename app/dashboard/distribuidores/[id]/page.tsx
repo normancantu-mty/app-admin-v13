@@ -899,16 +899,16 @@ export default async function EstadoCuentaPage({
   return (
     <div className="p-8 space-y-6">
       {/* HEADER CON PANEL DE MANDO - Jerarquía de Acción Implementada */}
-      <div className="flex justify-between items-center">
-        <div>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0 flex-1">
           <Link 
             href="/dashboard/distribuidores"
             className="text-blue-600 hover:text-blue-800 mb-2 inline-block"
           >
             {viewingLocalFromMyNetwork ? '← Volver a mi Red' : '← Volver a Distribuidores'}
           </Link>
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold text-gray-800">{entidad.nombre}</h1>
+          <div className="flex flex-wrap items-center gap-2 gap-y-1">
+            <h1 className="text-2xl font-bold text-gray-800 sm:text-3xl">{entidad.nombre}</h1>
             <span className={`inline-flex px-3 py-1 text-sm font-semibold rounded-full ${
               entidad.rol === 'DST' 
                 ? 'bg-blue-100 text-blue-800' 
@@ -925,11 +925,11 @@ export default async function EstadoCuentaPage({
         
         {/* PANEL DE MANDO - 3 Botones con Jerarquía de Acción */}
         {canMutate && (
-          <div className="flex gap-3">
+          <div className="flex w-full flex-wrap gap-2 md:w-auto md:justify-end md:gap-3">
             {/* Botón 1: Nueva Venta - Color secundario/neutro - Query params pre-configurados */}
             <Link
               href={`/pos?vendedor=${resolvedParams.id}`}
-              className="bg-slate-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors flex items-center gap-2"
+              className="inline-flex w-full min-w-[9rem] flex-1 items-center justify-center gap-2 rounded-lg bg-slate-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 sm:w-auto sm:flex-none md:px-5"
             >
               <span>📦</span>
               <span>Nueva Venta</span>
@@ -937,16 +937,16 @@ export default async function EstadoCuentaPage({
 
             <Link
               href={`/dashboard/distribuidores/${resolvedParams.id}/cobranza`}
-              className="bg-amber-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors flex items-center gap-2 shadow-sm"
+              className="inline-flex w-full min-w-[9rem] flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-amber-700 sm:w-auto sm:flex-none md:px-5"
             >
               <span>📦</span>
-              <span>Cobrar, contar inventario</span>
+              <span className="text-center">Cobrar, contar inventario</span>
             </Link>
             
             {/* Botón 2: Registrar Abono - Color verde/destacado - Acción primaria */}
             <Link
               href={`/dashboard/distribuidores/${resolvedParams.id}/abono`}
-              className="bg-green-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors flex items-center gap-2 shadow-sm"
+              className="inline-flex w-full min-w-[9rem] flex-1 items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-green-700 sm:w-auto sm:flex-none md:px-5"
             >
               <span>💵</span>
               <span>Registrar Abono</span>
@@ -955,7 +955,7 @@ export default async function EstadoCuentaPage({
             {/* Botón 3: Devolución - Color outline/advertencia */}
             <Link
               href={`/dashboard/distribuidores/${resolvedParams.id}/devolucion`}
-              className="border-2 border-orange-500 text-orange-600 px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-orange-50 transition-colors flex items-center gap-2"
+              className="inline-flex w-full min-w-[9rem] flex-1 items-center justify-center gap-2 rounded-lg border-2 border-orange-500 px-4 py-2.5 text-sm font-medium text-orange-600 transition-colors hover:bg-orange-50 sm:w-auto sm:flex-none md:px-5"
             >
               <span>🔄</span>
               <span>Devolución</span>
@@ -1042,7 +1042,7 @@ export default async function EstadoCuentaPage({
 
       <div className="space-y-4">
         {canMutate && (
-          <div className="flex justify-end">
+          <div className="flex flex-wrap justify-stretch gap-2 sm:justify-end">
             <BotonReportarMerma
               entidades={[]}
               entidadFijaId={entidad.id}
@@ -1064,30 +1064,46 @@ export default async function EstadoCuentaPage({
                 <p className="text-sm text-gray-500">0 botellas en esta cubeta.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Producto
-                      </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Cantidad
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {inventarioPagado.map((row) => (
-                      <tr key={`pagado-${row.idProducto}`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 text-sm text-gray-900">{row.producto}</td>
-                        <td className="px-6 py-4 text-sm font-semibold text-right text-gray-800">
-                          {row.stockEsperado.toFixed(4)}
-                        </td>
+              <>
+                <div className="hidden w-full overflow-x-auto md:block">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Producto
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Cantidad
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {inventarioPagado.map((row) => (
+                        <tr key={`pagado-${row.idProducto}`} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 text-sm text-gray-900">{row.producto}</td>
+                          <td className="px-6 py-4 text-sm font-semibold text-right text-gray-800">
+                            {row.stockEsperado.toFixed(4)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="grid grid-cols-1 gap-3 p-4 md:hidden">
+                  {inventarioPagado.map((row) => (
+                    <div key={`pagado-mobile-${row.idProducto}`} className="space-y-2 rounded-lg bg-white p-4 shadow">
+                      <p>
+                        <span className="text-sm font-medium text-gray-500">Producto: </span>
+                        <span className="text-sm font-semibold text-gray-900">{row.producto}</span>
+                      </p>
+                      <p className="flex justify-between gap-2 text-sm">
+                        <span className="font-medium text-gray-500">Cantidad:</span>
+                        <span className="font-semibold text-gray-800">{row.stockEsperado.toFixed(4)}</span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
 
@@ -1101,30 +1117,46 @@ export default async function EstadoCuentaPage({
                 <p className="text-sm text-gray-500">0 botellas en esta cubeta.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Producto
-                      </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Cantidad
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {inventarioConsignado.map((row) => (
-                      <tr key={`consignado-${row.idProducto}`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 text-sm text-gray-900">{row.producto}</td>
-                        <td className="px-6 py-4 text-sm font-semibold text-right text-gray-800">
-                          {row.stockEsperado.toFixed(4)}
-                        </td>
+              <>
+                <div className="hidden w-full overflow-x-auto md:block">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Producto
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Cantidad
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {inventarioConsignado.map((row) => (
+                        <tr key={`consignado-${row.idProducto}`} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 text-sm text-gray-900">{row.producto}</td>
+                          <td className="px-6 py-4 text-sm font-semibold text-right text-gray-800">
+                            {row.stockEsperado.toFixed(4)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="grid grid-cols-1 gap-3 p-4 md:hidden">
+                  {inventarioConsignado.map((row) => (
+                    <div key={`consignado-mobile-${row.idProducto}`} className="space-y-2 rounded-lg bg-white p-4 shadow">
+                      <p>
+                        <span className="text-sm font-medium text-gray-500">Producto: </span>
+                        <span className="text-sm font-semibold text-gray-900">{row.producto}</span>
+                      </p>
+                      <p className="flex justify-between gap-2 text-sm">
+                        <span className="font-medium text-gray-500">Cantidad:</span>
+                        <span className="font-semibold text-gray-800">{row.stockEsperado.toFixed(4)}</span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>

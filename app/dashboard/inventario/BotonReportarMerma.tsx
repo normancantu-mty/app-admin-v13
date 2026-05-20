@@ -116,7 +116,7 @@ export default function BotonReportarMerma({
       <button
         type="button"
         onClick={openModal}
-        className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700"
+        className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 sm:w-auto"
       >
         Reportar Merma (Cascada)
       </button>

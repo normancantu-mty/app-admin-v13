@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { deleteInventarioMovement } from '@/app/actions/audit'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
+import { formatFechaHoraMX } from '@/lib/utils'
 
 interface MovimientoInventario {
   id: string
@@ -63,9 +64,23 @@ export default function MovimientosTable({
   const [isPending, startTransition] = useTransition()
   const [visibleRows, setVisibleRows] = useState(15)
 
+  const visibleMovimientos = movimientos.slice(0, visibleRows)
+
+  const getClaseTipoMovimiento = (tipo: string) => {
+    const esEntrada = isTipoMovimientoEntrada(tipo)
+    const esSalida = isTipoMovimientoSalida(tipo)
+    const esMerma = tipo === 'MERMA'
+    const esDevolucionFisica = tipo === 'DEVOLUCION_FISICA'
+    if (esMerma) return 'bg-red-100 text-red-800'
+    if (esDevolucionFisica) return 'bg-amber-100 text-amber-800'
+    if (esEntrada) return 'bg-green-100 text-green-800'
+    if (esSalida) return 'bg-red-100 text-red-800'
+    return 'bg-gray-100 text-gray-800'
+  }
+
   return (
     <div className="flex flex-col space-y-4">
-      <div className="overflow-x-auto">
+      <div className="hidden w-full overflow-x-auto md:block">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -95,32 +110,16 @@ export default function MovimientosTable({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {movimientos.slice(0, visibleRows).map((mov) => {
+            {visibleMovimientos.map((mov) => {
               const isAnulado = mov.status === 'ANULADO'
-              const esEntrada = isTipoMovimientoEntrada(mov.tipo_movimiento)
-              const esSalida = isTipoMovimientoSalida(mov.tipo_movimiento)
-              const esMerma = mov.tipo_movimiento === 'MERMA'
-              const esDevolucionFisica = mov.tipo_movimiento === 'DEVOLUCION_FISICA'
-              const claseTipoMovimiento = esMerma
-                ? 'bg-red-100 text-red-800'
-                : esDevolucionFisica
-                ? 'bg-amber-100 text-amber-800'
-                : esEntrada
-                ? 'bg-green-100 text-green-800'
-                : esSalida
-                ? 'bg-red-100 text-red-800'
-                : 'bg-gray-100 text-gray-800'
+              const claseTipoMovimiento = getClaseTipoMovimiento(mov.tipo_movimiento)
               const canDelete = canDeleteMovement(mov, sessionEmail, sessionRole)
               const rowClass = isAnulado ? 'opacity-60 line-through' : ''
 
               return (
                 <tr key={mov.id} className={`hover:bg-gray-50 ${rowClass}`}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {new Date(mov.fecha_movimiento).toLocaleDateString('es-MX', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric'
-                    })}
+                    {formatFechaHoraMX(mov.fecha_movimiento)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {mov.producto_nombre}
@@ -179,6 +178,99 @@ export default function MovimientosTable({
           </tbody>
         </table>
       </div>
+
+      <div className="grid grid-cols-1 gap-4 px-4 md:hidden">
+        {visibleMovimientos.map((mov) => {
+          const isAnulado = mov.status === 'ANULADO'
+          const claseTipoMovimiento = getClaseTipoMovimiento(mov.tipo_movimiento)
+          const canDelete = canDeleteMovement(mov, sessionEmail, sessionRole)
+          const cardClass = isAnulado ? 'opacity-60 line-through' : ''
+
+          return (
+            <div
+              key={mov.id}
+              className={`space-y-3 rounded-lg bg-white p-4 shadow ${cardClass}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-medium text-gray-500">Fecha y hora</p>
+                  <p className="text-sm font-medium text-gray-900">{formatFechaHoraMX(mov.fecha_movimiento)}</p>
+                </div>
+                {isAnulado && (
+                  <span className="rounded bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">
+                    Anulado
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <p>
+                  <span className="font-medium text-gray-500">Producto: </span>
+                  <span className="text-gray-900">{mov.producto_nombre}</span>
+                </p>
+                <p>
+                  <span className="font-medium text-gray-500">Entidad: </span>
+                  {mov.es_entidad_admin ? (
+                    <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                      {mov.entidad_nombre || 'Admin'}
+                    </span>
+                  ) : (
+                    <span className="text-gray-900">{mov.entidad_nombre || 'Sin entidad'}</span>
+                  )}
+                </p>
+                <p className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-gray-500">Tipo Movimiento: </span>
+                  <span
+                    className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${claseTipoMovimiento}`}
+                  >
+                    {mov.tipo_movimiento}
+                  </span>
+                </p>
+                <p>
+                  <span className="font-medium text-gray-500">Cantidad: </span>
+                  <span className="font-semibold text-gray-900">{Number(mov.cantidad).toFixed(4)}</span>
+                </p>
+                <p>
+                  <span className="font-medium text-gray-500">Creado por: </span>
+                  <span className="text-gray-700">{mov.usuario_creador || 'Legacy / Sistema'}</span>
+                </p>
+              </div>
+
+              {canMutate && (
+                <div className="border-t border-gray-100 pt-3">
+                  {canDelete ? (
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() =>
+                        startTransition(async () => {
+                          try {
+                            const result = await deleteInventarioMovement(mov.id)
+                            if (!result.success) {
+                              throw new Error('No se pudo anular el movimiento.')
+                            }
+                            router.refresh()
+                          } catch (error) {
+                            alert(
+                              error instanceof Error ? error.message : 'Error al anular movimiento.'
+                            )
+                          }
+                        })
+                      }
+                      className="w-full rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                    >
+                      Anular
+                    </button>
+                  ) : (
+                    <p className="text-center text-xs text-gray-400">Anulación bloqueada</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
       {visibleRows < movimientos.length && (
         <div className="flex justify-center pb-4">
           <button
