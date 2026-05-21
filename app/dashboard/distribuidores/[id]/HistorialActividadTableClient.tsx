@@ -167,7 +167,7 @@ export default function HistorialActividadTableClient({
               </th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
             {visibleActividades.map((actividad, index) => {
               const { isAnulado, showAnnul, rowBusy, fechaDisplay, montoColor, montoText } =
                 getRowMeta(actividad)
@@ -257,7 +257,7 @@ export default function HistorialActividadTableClient({
           const rowMuted = isAnulado ? 'opacity-50 line-through' : ''
 
           return (
-            <div key={`mobile-${actividad.tipo}-${actividad.fecha}-${index}`} className={`space-y-3 rounded-lg bg-white p-4 shadow ${rowMuted}`}>
+            <div key={`mobile-${actividad.tipo}-${actividad.fecha}-${index}`} className={`space-y-3 rounded-lg bg-white p-4 shadow dark:bg-gray-800 dark:border dark:border-gray-700 dark:text-gray-200 ${rowMuted}`}>
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-xs font-medium text-gray-500">Fecha y hora</p>

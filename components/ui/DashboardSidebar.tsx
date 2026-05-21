@@ -52,15 +52,15 @@ export function DashboardSidebar({
       ? 'justify-center px-2 py-3 md:px-2'
       : 'px-4 py-3 md:px-6'
     const state = isActive
-      ? 'bg-blue-50 text-blue-600 font-medium border-r-4 border-blue-600'
-      : 'text-gray-700 hover:bg-gray-100 hover:text-blue-600'
+      ? 'bg-blue-50 text-blue-600 font-medium border-r-4 border-blue-600 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-500'
+      : 'text-gray-700 hover:bg-gray-100 hover:text-blue-600 dark:text-gray-200 dark:hover:bg-gray-800 dark:hover:text-blue-300'
     return `${base} ${layout} ${state}`
   }
 
   return (
     <aside
       className={[
-        'fixed inset-y-0 left-0 z-40 flex flex-col bg-white shadow-md transition-all duration-300 ease-in-out',
+        'fixed inset-y-0 left-0 z-40 flex flex-col bg-white shadow-md transition-all duration-300 ease-in-out dark:bg-gray-900 dark:shadow-gray-950/50',
         'md:relative md:z-auto',
         isMobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
         isCollapsed ? 'md:w-20' : 'md:w-64',
@@ -70,16 +70,16 @@ export function DashboardSidebar({
     >
       <div
         className={[
-          'flex shrink-0 items-center border-b border-gray-100 p-4 md:p-6',
+          'flex shrink-0 items-center border-b border-gray-100 p-4 dark:border-gray-800 md:p-6',
           isCollapsed ? 'justify-center md:px-2' : ''
         ].join(' ')}
       >
         {isCollapsed ? (
-          <span className="text-xl font-bold text-gray-800" title="Destilado Digital">
+          <span className="text-xl font-bold text-gray-800 dark:text-gray-100" title="Destilado Digital">
             DD
           </span>
         ) : (
-          <h2 className="text-xl font-bold leading-tight text-gray-800 md:text-2xl">
+          <h2 className="text-xl font-bold leading-tight text-gray-800 dark:text-gray-100 md:text-2xl">
             Destilado Digital
           </h2>
         )}
@@ -89,7 +89,7 @@ export function DashboardSidebar({
         {isLoadingRole ? (
           <div
             className={[
-              'text-gray-500',
+              'text-gray-500 dark:text-gray-400',
               isCollapsed ? 'px-2 py-3 text-center text-xs' : 'px-6 py-3 text-sm'
             ].join(' ')}
           >
@@ -119,12 +119,12 @@ export function DashboardSidebar({
         )}
       </nav>
 
-      <div className="hidden shrink-0 border-t border-gray-100 p-2 md:block">
+      <div className="hidden shrink-0 border-t border-gray-100 p-2 dark:border-gray-800 md:block">
         <button
           type="button"
           onClick={onToggleCollapse}
           className={[
-            'flex w-full items-center rounded-lg py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900',
+            'flex w-full items-center rounded-lg py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100',
             isCollapsed ? 'justify-center px-2' : 'justify-between px-4'
           ].join(' ')}
           aria-expanded={!isCollapsed}
@@ -134,7 +134,7 @@ export function DashboardSidebar({
           <span className="text-base leading-none" aria-hidden="true">
             {isCollapsed ? '›|' : '‹|'}
           </span>
-          {!isCollapsed && <span className="text-xs text-gray-500">Contraer</span>}
+          {!isCollapsed && <span className="text-xs text-gray-500 dark:text-gray-400">Contraer</span>}
         </button>
       </div>
     </aside>

@@ -133,7 +133,7 @@ export default async function CobranzaPage({ params }: { params: Promise<{ id: s
       </div>
 
       {rows.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-6 text-gray-600">
+        <div className="rounded-lg border border-gray-200 bg-white p-6 text-gray-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-300">
           No hay productos terminados con stock esperado para esta entidad.
         </div>
       ) : (

@@ -217,7 +217,7 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
           <p className="text-gray-600 mt-2">Control explícito de abonos, pagos de comisión y movimientos cruzados.</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6 space-y-6">
           <div>
             <label htmlFor="origen" className="block text-sm font-medium text-gray-700 mb-2">
               Origen

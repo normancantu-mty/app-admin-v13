@@ -124,7 +124,7 @@ export default function CobranzaClient({
           {success}
         </div>
       )}
-      <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+      <div className="rounded-lg border border-gray-200 bg-white shadow-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
         <div className="hidden w-full overflow-x-auto md:block">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -135,7 +135,7 @@ export default function CobranzaClient({
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Botellas Vendidas</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
+            <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-800">
               {resumen.detalles.map((row) => {
                 const isSobregiro = row.diferencia < 0
                 return (
@@ -170,7 +170,7 @@ export default function CobranzaClient({
             return (
               <div
                 key={`mobile-${row.idProducto}`}
-                className={`space-y-3 rounded-lg p-4 shadow ${isSobregiro ? 'border border-red-200 bg-red-50' : 'bg-white'}`}
+                className={`space-y-3 rounded-lg p-4 shadow ${isSobregiro ? 'border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40' : 'bg-white dark:bg-gray-800 dark:border dark:border-gray-700 dark:text-gray-200'}`}
               >
                 <p className="text-base font-semibold text-gray-900">{row.producto}</p>
                 <div className="space-y-2 text-sm">

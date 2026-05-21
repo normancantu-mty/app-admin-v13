@@ -1,5 +1,6 @@
 'use client'
 
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
@@ -34,31 +35,34 @@ export function TopBar({ onMenuClick }: TopBarProps) {
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white p-4">
+    <div className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <button
           type="button"
           onClick={onMenuClick}
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-xl text-gray-700 transition-colors hover:bg-gray-100 md:hidden"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-xl text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 md:hidden"
           aria-label="Abrir menú de navegación"
         >
           ☰
         </button>
-        <div id="date-filter-display" className="truncate text-sm font-medium text-gray-800 sm:text-base">
+        <div id="date-filter-display" className="truncate text-sm font-medium text-gray-800 dark:text-gray-100 sm:text-base">
           {getDisplayText()}
         </div>
       </div>
-      <select
-        value={rango}
-        onChange={(e) => handleChange(e.target.value)}
-        className="px-3 py-2 border border-gray-300 rounded-md text-sm"
-      >
-        <option value="HOY">Hoy</option>
-        <option value="ESTE_MES">Este Mes</option>
-        <option value="TRIMESTRE">Trimestre</option>
-        <option value="PERSONALIZADO">Personalizado</option>
-        <option value="TODO">Histórico Completo</option>
-      </select>
+      <div className="flex shrink-0 items-center gap-2">
+        <ThemeToggle />
+        <select
+          value={rango}
+          onChange={(e) => handleChange(e.target.value)}
+          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+        >
+          <option value="HOY">Hoy</option>
+          <option value="ESTE_MES">Este Mes</option>
+          <option value="TRIMESTRE">Trimestre</option>
+          <option value="PERSONALIZADO">Personalizado</option>
+          <option value="TODO">Histórico Completo</option>
+        </select>
+      </div>
     </div>
   )
 }

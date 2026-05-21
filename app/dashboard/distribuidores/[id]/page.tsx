@@ -970,7 +970,7 @@ export default async function EstadoCuentaPage({
         }`}
       >
         {showComisionYsaldoEfectivo ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Ganado</p>
@@ -984,7 +984,7 @@ export default async function EstadoCuentaPage({
           </div>
         ) : null}
 
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">
@@ -1005,7 +1005,7 @@ export default async function EstadoCuentaPage({
           </p>
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border border-orange-200 p-6">
+        <div className="bg-white rounded-lg shadow-sm border border-orange-200 p-6 dark:bg-gray-800 dark:border-orange-900 dark:text-gray-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Total Mermas</p>
@@ -1019,7 +1019,7 @@ export default async function EstadoCuentaPage({
         </div>
 
         {showComisionYsaldoEfectivo ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Saldo por Pagar (Efectivo)</p>
@@ -1054,7 +1054,7 @@ export default async function EstadoCuentaPage({
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-800">Inventario Propio (Pagado)</h2>
               <p className="text-sm text-gray-600 mt-1">Stock teórico pagado de producto terminado</p>
@@ -1077,7 +1077,7 @@ export default async function EstadoCuentaPage({
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
+                    <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
                       {inventarioPagado.map((row) => (
                         <tr key={`pagado-${row.idProducto}`} className="hover:bg-gray-50">
                           <td className="px-6 py-4 text-sm text-gray-900">{row.producto}</td>
@@ -1091,7 +1091,7 @@ export default async function EstadoCuentaPage({
                 </div>
                 <div className="grid grid-cols-1 gap-3 p-4 md:hidden">
                   {inventarioPagado.map((row) => (
-                    <div key={`pagado-mobile-${row.idProducto}`} className="space-y-2 rounded-lg bg-white p-4 shadow">
+                    <div key={`pagado-mobile-${row.idProducto}`} className="space-y-2 rounded-lg bg-white p-4 shadow dark:bg-gray-800 dark:border dark:border-gray-700 dark:text-gray-200">
                       <p>
                         <span className="text-sm font-medium text-gray-500">Producto: </span>
                         <span className="text-sm font-semibold text-gray-900">{row.producto}</span>
@@ -1107,7 +1107,7 @@ export default async function EstadoCuentaPage({
             )}
           </div>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-800">Inventario a Concesión (Deuda)</h2>
               <p className="text-sm text-gray-600 mt-1">Stock teórico consignado de producto terminado</p>
@@ -1130,7 +1130,7 @@ export default async function EstadoCuentaPage({
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
+                    <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
                       {inventarioConsignado.map((row) => (
                         <tr key={`consignado-${row.idProducto}`} className="hover:bg-gray-50">
                           <td className="px-6 py-4 text-sm text-gray-900">{row.producto}</td>
@@ -1144,7 +1144,7 @@ export default async function EstadoCuentaPage({
                 </div>
                 <div className="grid grid-cols-1 gap-3 p-4 md:hidden">
                   {inventarioConsignado.map((row) => (
-                    <div key={`consignado-mobile-${row.idProducto}`} className="space-y-2 rounded-lg bg-white p-4 shadow">
+                    <div key={`consignado-mobile-${row.idProducto}`} className="space-y-2 rounded-lg bg-white p-4 shadow dark:bg-gray-800 dark:border dark:border-gray-700 dark:text-gray-200">
                       <p>
                         <span className="text-sm font-medium text-gray-500">Producto: </span>
                         <span className="text-sm font-semibold text-gray-900">{row.producto}</span>
@@ -1162,7 +1162,7 @@ export default async function EstadoCuentaPage({
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-800">Historial de Actividad</h2>
           <p className="text-sm text-gray-600 mt-1">Registro cronológico de ventas y abonos</p>

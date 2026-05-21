@@ -409,7 +409,7 @@ export default async function FinanzasPage() {
 
           <CategoryBreakdown categorias={categorias} />
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-800">Movimientos Financieros</h2>
             </div>

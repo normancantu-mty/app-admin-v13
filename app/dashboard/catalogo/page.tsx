@@ -109,7 +109,7 @@ export default async function CatalogoPage({
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Catálogo de Productos y Waterfall de Precio</h1>
-      <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4">
+      <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
         <form method="GET" className="flex flex-wrap items-end gap-4">
           <div>
             <label htmlFor="fiscalidad" className="block text-sm font-medium text-gray-700 mb-1">
@@ -156,7 +156,7 @@ export default async function CatalogoPage({
           </button>
         </form>
       </div>
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
         <div className="hidden w-full overflow-x-auto md:block">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -202,7 +202,7 @@ export default async function CatalogoPage({
 
         <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
           {catalogoFinal.map((producto) => (
-            <div key={producto.id} className="space-y-3 rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
+            <div key={producto.id} className="space-y-3 rounded-lg border border-gray-100 bg-white p-4 shadow-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
               <p className="text-base font-semibold text-gray-900">{producto.nombre}</p>
               <div className="space-y-2 text-sm">
                 <p className="flex justify-between gap-2">

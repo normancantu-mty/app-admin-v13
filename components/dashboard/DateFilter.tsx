@@ -11,7 +11,7 @@ export default function DateFilter() {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-4">
       <div className="flex items-center gap-4">
         <label className="text-sm font-medium text-gray-700">Período:</label>
         <input 

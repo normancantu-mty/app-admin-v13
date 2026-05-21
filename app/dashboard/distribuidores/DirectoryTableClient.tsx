@@ -125,7 +125,7 @@ export default function DirectoryTableClient({
             id="directory-role-filter"
             value={roleFilter}
             onChange={(event) => setRoleFilter(event.target.value as RolFilter)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="ALL">Todos</option>
             <option value="DST">Solo DST</option>
@@ -177,7 +177,7 @@ export default function DirectoryTableClient({
               </th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
             {filteredRows.length === 0 ? (
               <tr>
                 <td colSpan={tableColSpan} className="px-6 py-8 text-center text-sm text-gray-500">
@@ -279,14 +279,14 @@ export default function DirectoryTableClient({
 
       <div className="grid grid-cols-1 gap-4 px-4 pb-4 md:hidden">
         {filteredRows.length === 0 ? (
-          <p className="rounded-lg border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
+          <p className="rounded-lg border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400">
             No hay resultados con los filtros seleccionados.
           </p>
         ) : (
           filteredRows.map((row) => (
             <div
               key={row.id}
-              className="space-y-3 rounded-lg bg-white p-4 shadow"
+              className="space-y-3 rounded-lg bg-white p-4 shadow dark:bg-gray-800 dark:border dark:border-gray-700 dark:text-gray-200"
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">

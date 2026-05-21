@@ -189,7 +189,7 @@ export default function MovimientosTable({
           return (
             <div
               key={mov.id}
-              className={`space-y-3 rounded-lg bg-white p-4 shadow ${cardClass}`}
+              className={`space-y-3 rounded-lg bg-white p-4 shadow dark:bg-gray-800 dark:border dark:border-gray-700 dark:text-gray-200 ${cardClass}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div>

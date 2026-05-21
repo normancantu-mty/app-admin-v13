@@ -72,17 +72,17 @@ export default async function DashboardGeneralPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
           <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Efectivo</p>
           <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.EFECTIVO)}</p>
           <p className="text-xs text-gray-500 mt-1">Cuenta: EFECTIVO</p>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
           <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Personal</p>
           <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.CUENTA_PERSONAL)}</p>
           <p className="text-xs text-gray-500 mt-1">Cuenta: CUENTA_PERSONAL</p>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
           <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Fresnillo</p>
           <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.CUENTA_FRESNILLO)}</p>
           <p className="text-xs text-gray-500 mt-1">Cuenta: CUENTA_FRESNILLO</p>
@@ -95,7 +95,7 @@ export default async function DashboardGeneralPage() {
           
 
           {/* FINANZAS - 2 Tarjetas con Mini-Barras */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-6">💰 Finanzas</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               
@@ -175,7 +175,7 @@ export default async function DashboardGeneralPage() {
           </div>
 
           {/* LIDERAZGO DE RED - Nodos Alfa (Directos) */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-800">🌟 Liderazgo de Red (Nodos Alfa)</h2>
               <p className="text-sm text-gray-500">Distribuidores y Locales Directos</p>
@@ -218,7 +218,7 @@ export default async function DashboardGeneralPage() {
             </div>
             <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
               {liderazgoHistorico.nodosAlfa.map((nodo) => (
-                <div key={nodo.id} className="space-y-3 rounded-lg bg-white p-4 shadow">
+                <div key={nodo.id} className="space-y-3 rounded-lg bg-white p-4 shadow dark:bg-gray-800 dark:border dark:border-gray-700 dark:text-gray-200">
                   <div className="flex items-start gap-2">
                     <div className={`mt-1 h-3 w-3 shrink-0 rounded-full ${getTrafficLightColor(nodo.diasSinActividad)}`} />
                     <div>
@@ -249,7 +249,7 @@ export default async function DashboardGeneralPage() {
           </div>
 
           {/* LIDERAZGO DE RED - Sub-nodos (Con Patrocinador) */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-800">🔗 Liderazgo de Red (Sub-nodos)</h2>
               <p className="text-sm text-gray-500">Locales con Patrocinador</p>
@@ -292,7 +292,7 @@ export default async function DashboardGeneralPage() {
             </div>
             <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
               {liderazgoHistorico.subNodos.map((nodo) => (
-                <div key={nodo.id} className="space-y-3 rounded-lg bg-white p-4 shadow">
+                <div key={nodo.id} className="space-y-3 rounded-lg bg-white p-4 shadow dark:bg-gray-800 dark:border dark:border-gray-700 dark:text-gray-200">
                   <div className="flex items-start gap-2">
                     <div className={`mt-1 h-3 w-3 shrink-0 rounded-full ${getTrafficLightColor(nodo.diasSinActividad)}`} />
                     <div>
@@ -330,7 +330,7 @@ export default async function DashboardGeneralPage() {
         <div className="md:col-span-1 space-y-6">
           
           {/* ASPECTOS URGENTES - Alertas Consolidadas */}
-          <div className="bg-white rounded-lg shadow-sm border-2 border-yellow-400 p-6">
+          <div className="bg-white rounded-lg shadow-sm border-2 border-yellow-400 p-6 dark:bg-gray-800 dark:border-yellow-600 dark:text-gray-200">
             <h2 className="text-lg font-semibold text-gray-800 mb-4">⚠️ Aspectos Urgentes</h2>
             <div className="space-y-3">
               

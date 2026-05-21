@@ -146,7 +146,7 @@ export default function DashboardLayout({
 
   return (
     <ProtectedRoute>
-      <div className="flex h-screen bg-gray-100">
+      <div className="flex h-screen bg-gray-100 dark:bg-gray-950">
         {isMobileOpen ? (
           <button
             type="button"

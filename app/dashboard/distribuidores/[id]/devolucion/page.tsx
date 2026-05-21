@@ -176,7 +176,7 @@ export default function DevolucionPage({ params }: { params: Promise<{ id: strin
           <p className="text-gray-600 mt-2">Logística inversa: restaura stock y cancela deuda</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
           <div className="space-y-6">
             <div>
               <label htmlFor="producto" className="block text-sm font-medium text-gray-700 mb-2">

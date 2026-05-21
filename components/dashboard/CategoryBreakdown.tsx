@@ -10,7 +10,7 @@ interface CategoryBreakdownProps {
 
 export function CategoryBreakdown({ categorias }: CategoryBreakdownProps) {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
       <h3 className="text-lg font-semibold text-gray-800 mb-4">Desglose por Categoría</h3>
       <div className="space-y-4">
         {categorias.map((item) => (

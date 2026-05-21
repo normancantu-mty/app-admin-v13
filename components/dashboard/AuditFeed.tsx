@@ -45,7 +45,7 @@ export default function AuditFeed() {
 
   if (eventos.length === 0 && !isLoading) {
     return (
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">📋 Auditoría de Actividad</h2>
         <div className="text-center py-8 text-gray-500">
           <p>No hay actividad registrada</p>
@@ -55,7 +55,7 @@ export default function AuditFeed() {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
       <h2 className="text-lg font-semibold text-gray-800 mb-4">📋 Auditoría de Actividad</h2>
       
       {/* Timeline */}

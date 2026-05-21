@@ -147,7 +147,7 @@ export default function NuevoMiembroPage() {
           <p className="text-gray-600 mt-2">Registro con comisión base global</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
           <form className="space-y-6" onSubmit={handleRegistrarMiembro}>
             {/* ── Nombre ────────────────────────────────────────────── */}
             <div>

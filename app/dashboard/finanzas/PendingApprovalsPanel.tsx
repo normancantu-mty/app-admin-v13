@@ -224,7 +224,7 @@ export default function PendingApprovalsPanel(props: PendingApprovalsPanelProps)
 
         <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
           {approvals.map((item) => (
-            <div key={item.id} className="space-y-3 rounded-lg border border-amber-100 bg-white p-4 shadow-sm">
+            <div key={item.id} className="space-y-3 rounded-lg border border-amber-100 bg-white p-4 shadow-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
               <p>
                 <span className="text-xs font-medium text-gray-500">Fecha y hora: </span>
                 <span className="text-sm text-gray-900">{formatFechaHoraMX(item.fecha_movimiento)}</span>
