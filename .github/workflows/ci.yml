@@ -54,6 +54,69 @@ jobs:
         continue-on-error: true
         run: npm run lint
 
+      # Las pruebas de humo abren los tableros con una sesion de ADMIN real y
+      # exigen que pinten cifras. Necesitan app corriendo, base y contrasena,
+      # asi que dependen de secrets. Si faltan NO se fallan en rojo: se saltan
+      # diciendo CUAL falto, en el step summary. Saltarse en silencio es lo que
+      # las volvio inutiles mientras el Dashboard General pintaba ceros.
+      - name: ¿Hay credenciales para las pruebas de humo?
+        id: humo
+        env:
+          EMAIL_HUMO: ${{ secrets.E2E_ADMIN_EMAIL }}
+          PASSWORD_HUMO: ${{ secrets.E2E_ADMIN_PASSWORD }}
+          URL_SUPABASE: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          ANON_SUPABASE: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          faltan=""
+          if [ -z "$EMAIL_HUMO" ]; then faltan="$faltan E2E_ADMIN_EMAIL"; fi
+          if [ -z "$PASSWORD_HUMO" ]; then faltan="$faltan E2E_ADMIN_PASSWORD"; fi
+          if [ -z "$URL_SUPABASE" ]; then faltan="$faltan NEXT_PUBLIC_SUPABASE_URL"; fi
+          if [ -z "$ANON_SUPABASE" ]; then faltan="$faltan NEXT_PUBLIC_SUPABASE_ANON_KEY"; fi
+          if [ -z "$faltan" ]; then
+            echo "configuradas=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configuradas=false" >> "$GITHUB_OUTPUT"
+            echo "faltan=$faltan" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Chromium para las pruebas de humo
+        if: steps.humo.outputs.configuradas == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Pruebas de humo (tableros con sesion real)
+        if: steps.humo.outputs.configuradas == 'true'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+        run: npm run test:humo
+
+      - name: Aviso — pruebas de humo saltadas, y cual credencial falto
+        if: steps.humo.outputs.configuradas != 'true'
+        env:
+          FALTAN: ${{ steps.humo.outputs.faltan }}
+        run: |
+          echo "::warning title=Pruebas de humo saltadas::Faltan estos secrets:$FALTAN"
+          {
+            echo "### ⚠️ Pruebas de humo SALTADAS"
+            echo
+            echo "No corrieron las 3 pruebas que abren los tableros con una sesion real."
+            echo
+            echo "**Faltan estos secrets:**"
+            echo
+            for nombre in $FALTAN; do echo "- \`$nombre\`"; done
+            echo
+            echo "Se agregan en **Settings → Secrets and variables → Actions → New repository secret**."
+            echo "En local van en \`.env.test.local\` (ver \`.env.test.local.example\`) y se corren"
+            echo "con \`npm run test:humo\`."
+            echo
+            echo "**Esto no es un fallo, es un hueco.** Mientras falten, nadie comprueba en CI que"
+            echo "el Dashboard General no este en ceros — la regresion del 2026-09-02."
+            echo "La *causa* si esta cubierta siempre: \`tests/arquitectura.spec.ts\` corre en"
+            echo "\`npm test\`, sin navegador ni credenciales."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # El build de Next necesita las dos variables publicas de Supabase.
       # Se leen de `secrets`, nunca del repo. Este paso solo comprueba si
       # existen: escribe true/false, jamas el valor.

@@ -44,3 +44,14 @@ next-env.d.ts
 test-results/
 playwright-report/
 .claude/settings.local.json
+
+# supabase cli (estado local, no es del repo)
+supabase/.temp/
+
+# credenciales de las pruebas de humo y la sesion que guarda auth.setup.ts
+.env.test.local
+tests/.auth/
+
+# ...pero el ejemplo SIN valores si se commitea: es la documentacion de que
+# variables hacen falta. La regla `.env*` de arriba lo tapaba.
+!.env.test.local.example

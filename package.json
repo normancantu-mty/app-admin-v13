@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:humo": "playwright test --project=humo"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",
