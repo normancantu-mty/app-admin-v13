@@ -1,7 +1,26 @@
-import { supabase } from '@/lib/supabase'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
+
+// Cliente por request con la sesion del usuario. NUNCA el cliente browser de
+// '@/lib/supabase' aqui: en un Server Component viaja sin sesion, o sea como
+// `anon`, y con RLS encendido no ve nada.
+async function getSupabaseServer() {
+  const cookieStore = await cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value
+        },
+      },
+    }
+  )
+}
 
 interface FeedItem {
   id: string
@@ -57,6 +76,7 @@ interface FinanzaRaw extends Omit<Finanza, 'entidad'> {
 
 async function getFeedData() {
   try {
+    const supabase = await getSupabaseServer()
     const [ticketsRes, finanzasRes, inventarioRes] = await Promise.all([
       supabase
         .from('transacciones_tickets')

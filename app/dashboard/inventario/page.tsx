@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase'
+import { createServerClient } from '@supabase/ssr'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { cookies } from 'next/headers'
@@ -6,6 +6,24 @@ import { calcularFechasPorRango } from '@/lib/dashboard-utils'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
 import LogisticaInversaModal from './LogisticaInversaModal'
 import MovimientosTable from './MovimientosTable'
+
+// Cliente por request con la sesion del usuario. NUNCA el cliente browser de
+// '@/lib/supabase' aqui: en un Server Component viaja sin sesion, o sea como
+// `anon`, y con RLS encendido no ve nada.
+async function getSupabaseServer() {
+  const cookieStore = await cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value
+        },
+      },
+    }
+  )
+}
 
 interface Producto {
   id: string
@@ -48,6 +66,7 @@ interface Distribuidor {
 
 async function getCatalogoProductos(): Promise<Producto[]> {
   try {
+    const supabase = await getSupabaseServer()
     const { data, error } = await supabase
       .from('catalogo_productos')
       .select('*, listas_precios(precio_final)')
@@ -70,6 +89,7 @@ async function getInventarioLedger(
   fechaFin?: string
 ): Promise<MovimientoInventario[]> {
   try {
+    const supabase = await getSupabaseServer()
     let query = supabase
       .from('inventario_ledger')
       .select(`
@@ -141,6 +161,7 @@ function resolveEntidadDisplay(movimiento: MovimientoInventario): { nombre: stri
 
 async function getDistribuidores(): Promise<Distribuidor[]> {
   try {
+    const supabase = await getSupabaseServer()
     const { data, error } = await supabase
       .from('entidades')
       .select('id, nombre')
@@ -161,6 +182,7 @@ async function getDistribuidores(): Promise<Distribuidor[]> {
 
 async function getPreciosRetailPorProducto(): Promise<Map<string, number>> {
   try {
+    const supabase = await getSupabaseServer()
     const { data, error } = await supabase
       .from('listas_precios')
       .select('id_producto, precio_final, zona')

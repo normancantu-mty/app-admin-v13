@@ -18,7 +18,6 @@ interface RegistrarSalidaCascadaInput {
   id_producto: string
   cantidad_a_deducir: number
   tipo_movimiento: TipoSalidaCascada
-  usuario_creador: string
 }
 
 interface RegistrarSalidaCascadaResult {
@@ -195,7 +194,34 @@ export async function registrarSalidaCascada(
   input: RegistrarSalidaCascadaInput
 ): Promise<RegistrarSalidaCascadaResult> {
   try {
-    const { id_entidad, id_producto, cantidad_a_deducir, tipo_movimiento, usuario_creador } = input
+    const supabase = await getServerSupabaseClient()
+    const {
+      data: { user },
+      error: authError
+    } = await supabase.auth.getUser()
+
+    if (authError || !user?.email) {
+      return { success: false, error: 'Sesión no válida. Inicia sesión nuevamente.' }
+    }
+
+    const { data: entidadOperadora, error: entidadError } = await supabase
+      .from('entidades')
+      .select('id, rol')
+      .eq('email', user.email)
+      .single()
+
+    if (entidadError || !entidadOperadora) {
+      return { success: false, error: 'No se pudo validar tu identidad operativa.' }
+    }
+
+    if (entidadOperadora.rol === 'SOCIO') {
+      return { success: false, error: 'No autorizado para registrar salidas de inventario.' }
+    }
+
+    // El autor sale de la sesión, nunca de lo que mande el cliente.
+    const usuarioCreador = user.email || entidadOperadora.id
+
+    const { id_entidad, id_producto, cantidad_a_deducir, tipo_movimiento } = input
 
     if (!id_entidad) {
       return { success: false, error: 'id_entidad vacío' }
@@ -212,8 +238,6 @@ export async function registrarSalidaCascada(
     if (!Number.isFinite(cantidad_a_deducir) || cantidad_a_deducir <= 0) {
       return { success: false, error: 'cantidad_a_deducir debe ser un número mayor a cero.' }
     }
-
-    const supabase = await getServerSupabaseClient()
 
     const { data: movimientos, error: movimientosError } = await supabase
       .from('inventario_ledger')
@@ -263,7 +287,7 @@ export async function registrarSalidaCascada(
         tipo_movimiento,
         cubeta: 'PAGADO',
         cantidad: deduccionPagado,
-        usuario_creador
+        usuario_creador: usuarioCreador
       })
     }
 
@@ -274,7 +298,7 @@ export async function registrarSalidaCascada(
         tipo_movimiento,
         cubeta: 'CONSIGNADO',
         cantidad: deduccionConsignado,
-        usuario_creador
+        usuario_creador: usuarioCreador
       })
     }
 

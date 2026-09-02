@@ -1048,7 +1048,6 @@ export default async function EstadoCuentaPage({
               entidadFijaId={entidad.id}
               entidadFijaNombre={entidad.nombre}
               productos={productosReportables}
-              usuarioCreador={currentUser?.email ?? null}
             />
           </div>
         )}

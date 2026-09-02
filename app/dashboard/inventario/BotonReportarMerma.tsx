@@ -21,7 +21,6 @@ interface ProductoOption {
 interface BotonReportarMermaProps {
   entidades: EntidadOption[]
   productos: ProductoOption[]
-  usuarioCreador: string | null
   entidadFijaId?: string
   entidadFijaNombre?: string
 }
@@ -29,7 +28,6 @@ interface BotonReportarMermaProps {
 export default function BotonReportarMerma({
   entidades,
   productos,
-  usuarioCreador,
   entidadFijaId,
   entidadFijaNombre
 }: BotonReportarMermaProps) {
@@ -48,7 +46,6 @@ export default function BotonReportarMerma({
         .filter((producto) => Boolean(producto.id)),
     [productos]
   )
-  const fallbackUsuario = usuarioCreador || 'sistema@erp.local'
   const usaEntidadFija = Boolean(entidadFijaId)
   const entidadInicial = entidades[0]?.id || ''
 
@@ -94,8 +91,7 @@ export default function BotonReportarMerma({
           id_entidad: submittedIdEntidad,
           id_producto: submittedIdProducto,
           cantidad_a_deducir: submittedCantidad,
-          tipo_movimiento: 'MERMA',
-          usuario_creador: fallbackUsuario
+          tipo_movimiento: 'MERMA'
         })
 
         if (!result.success) {

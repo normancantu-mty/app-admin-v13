@@ -1,9 +1,34 @@
 import { NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 
-import { supabase } from '@/lib/supabase'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
+
+// Cliente por request con la sesion del usuario. El cliente browser de
+// '@/lib/supabase' viaja sin sesion desde un route handler (o sea, como `anon`):
+// con RLS encendido no leeria nada, y desde el prompt 1 `anon` ya no puede
+// escribir, asi que el PATCH de aprobar/rechazar tampoco funcionaba.
+async function getSupabaseRoute() {
+  const cookieStore = await cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options)
+          })
+        },
+      },
+    }
+  )
+}
 
 type AprobacionAction = 'APPROVE' | 'REJECT'
 
@@ -41,6 +66,15 @@ function calcularDesgloseFiscal(
 
 export async function GET() {
   try {
+    const currentUser = await getCurrentUser()
+    if (currentUser?.rol !== 'ADMIN') {
+      return NextResponse.json(
+        { error: 'Solo ADMIN puede consultar la cola de aprobaciones.' },
+        { status: 403 }
+      )
+    }
+
+    const supabase = await getSupabaseRoute()
     const { data, error } = await supabase
       .from('finanzas_ledger')
       .select(`
@@ -84,6 +118,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Payload inválido.' }, { status: 400 })
     }
 
+    const supabase = await getSupabaseRoute()
     const { data: movimiento, error: movimientoError } = await supabase
       .from('finanzas_ledger')
       .select('id, tipo_movimiento, categoria, monto, id_cuenta_destino, id_entidad_relacionada, status')
