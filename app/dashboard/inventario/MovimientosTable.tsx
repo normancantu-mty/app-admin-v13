@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { deleteInventarioMovement } from '@/app/actions/audit'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
 import { formatFechaHoraMX } from '@/lib/utils'
+import { VENTANA_EDICION_MS } from '@/lib/constants'
 
 interface MovimientoInventario {
   id: string
@@ -18,8 +19,6 @@ interface MovimientoInventario {
   usuario_creador?: string | null
 }
 
-const DELETE_WINDOW_HOURS_DST = 24
-const DELETE_WINDOW_MINUTES_WORKER = 15
 
 function canDeleteMovement(
   movimiento: MovimientoInventario,
@@ -36,17 +35,8 @@ function canDeleteMovement(
   const createdAt = new Date(movimiento.fecha_movimiento).getTime()
   if (!Number.isFinite(createdAt)) return false
 
-  if (role === 'DST') {
-    const ageHours = (Date.now() - createdAt) / (1000 * 60 * 60)
-    return ageHours <= DELETE_WINDOW_HOURS_DST
-  }
-
-  if (role === 'WORKER' || role === 'TRABAJADOR') {
-    const ageMinutes = (Date.now() - createdAt) / (1000 * 60)
-    return ageMinutes <= DELETE_WINDOW_MINUTES_WORKER
-  }
-
-  return true
+  // Espejo exacto de `assertAnnullmentAllowed` en `app/actions/audit.ts`.
+  return Date.now() - createdAt <= VENTANA_EDICION_MS
 }
 
 export default function MovimientosTable({

@@ -1,31 +1,26 @@
 'use client'
 
+/**
+ * Formulario de compra de insumos. **Solo UI**: no lee ni escribe la base.
+ * Los catalogos y las dos filas del ledger las maneja
+ * `app/actions/compras.ts`, que ademas compensa si la segunda falla.
+ */
+
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { supabase } from '@/lib/supabase'
-import type { TablesInsert } from '@/types/database'
-
-interface Insumo {
-  id: string
-  nombre: string
-  sku: string
-  unidad_medida: string
-}
-
-interface CuentaFinanciera {
-  id: string
-  nombre: string
-}
-
-type InventarioInsert = TablesInsert<'inventario_ledger'>
-type FinanzaInsert = TablesInsert<'finanzas_ledger'>
+import {
+  getDatosCompraAction,
+  registrarCompraInsumosAction,
+  type CuentaCompra,
+  type InsumoCompra
+} from '@/app/actions/compras'
 
 export default function CompraInsumosPage() {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
-  const [insumos, setInsumos] = useState<Insumo[]>([])
-  const [cuentas, setCuentas] = useState<CuentaFinanciera[]>([])
+  const [insumos, setInsumos] = useState<InsumoCompra[]>([])
+  const [cuentas, setCuentas] = useState<CuentaCompra[]>([])
   const [isLoadingData, setIsLoadingData] = useState(true)
 
   const [insumoSeleccionado, setInsumoSeleccionado] = useState('')
@@ -36,46 +31,15 @@ export default function CompraInsumosPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session?.user?.email) {
+        const resultado = await getDatosCompraAction()
+
+        if (!resultado.success || !resultado.data) {
+          console.error('Error cargando datos de compra:', resultado.error)
           return
         }
 
-        const { data: currentEntidad, error: entidadError } = await supabase
-          .from('entidades')
-          .select('id')
-          .eq('email', session.user.email)
-          .single()
-
-        if (entidadError || !currentEntidad?.id) {
-          console.error('Error fetching current entidad:', entidadError)
-          return
-        }
-
-        const [insumosRes, cuentasRes] = await Promise.all([
-          supabase
-            .from('catalogo_productos')
-            .select('id, nombre, sku, unidad_medida')
-            .eq('tipo', 'INSUMO')
-            .order('nombre', { ascending: true }),
-          supabase
-            .from('cuentas_financieras')
-            .select('id, nombre')
-            .eq('id_entidad', currentEntidad.id)
-            .order('nombre', { ascending: true })
-        ])
-
-        if (insumosRes.error) {
-          console.error('Error fetching insumos:', insumosRes.error)
-        } else {
-          setInsumos(insumosRes.data || [])
-        }
-
-        if (cuentasRes.error) {
-          console.error('Error fetching cuentas:', cuentasRes.error)
-        } else {
-          setCuentas(cuentasRes.data || [])
-        }
+        setInsumos(resultado.data.insumos)
+        setCuentas(resultado.data.cuentas)
       } catch (error) {
         console.error('Error in fetchData:', error)
       } finally {
@@ -103,49 +67,15 @@ export default function CompraInsumosPage() {
     setIsLoading(true)
 
     try {
-      const {
-        data: { user },
-        error: authError
-      } = await supabase.auth.getUser()
-
-      if (authError || !user?.email) {
-        alert('No se pudo validar tu sesión para auditoría. Inicia sesión nuevamente.')
-        return
-      }
-
-      const inventarioPayload: InventarioInsert = {
-        id_producto: insumoSeleccionado,
-        tipo_movimiento: 'ENTRADA_COMPRA',
+      const resultado = await registrarCompraInsumosAction({
+        idInsumo: insumoSeleccionado,
         cantidad: cantidadNum,
-        usuario_creador: user.email
-      }
+        costoTotal: costoNum,
+        idCuentaOrigen: cuentaOrigen
+      })
 
-      const { error: inventarioError } = await supabase
-        .from('inventario_ledger')
-        .insert(inventarioPayload)
-
-      if (inventarioError) {
-        console.error('Error inserting inventario:', inventarioError)
-        alert(`Error al registrar entrada de inventario: ${inventarioError.message}`)
-        return
-      }
-
-      const finanzasPayload: FinanzaInsert = {
-        id_cuenta_origen: cuentaOrigen,
-        tipo_movimiento: 'COMPRA_INSUMOS',
-        categoria: 'Insumos',
-        monto: costoNum,
-        status: 'ACTIVO',
-        usuario_creador: user.email
-      }
-
-      const { error: finanzasError } = await supabase
-        .from('finanzas_ledger')
-        .insert(finanzasPayload)
-
-      if (finanzasError) {
-        console.error('Error inserting finanzas:', finanzasError)
-        alert(`Error al registrar gasto financiero: ${finanzasError.message}`)
+      if (!resultado.success) {
+        alert(resultado.error || 'No se pudo registrar la compra.')
         return
       }
 

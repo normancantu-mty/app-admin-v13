@@ -1,4 +1,29 @@
-import { supabase } from './supabase'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/types/database'
+import { fetchTodasLasFilas } from '@/lib/dashboard-utils'
+
+/**
+ * **Este modulo es server-only.** Sus dos lectores reciben el cliente de
+ * Supabase por parametro; no construyen ninguno.
+ *
+ * Antes importaba `{ supabase } from './supabase'` — el cliente de NAVEGADOR —
+ * y lo usaba desde el Server Component `app/dashboard/distribuidores/page.tsx`.
+ * Ahi ese cliente no ve las cookies de Next: viaja como `anon`, y desde que la
+ * migracion `20260902022000` revoco `SELECT` a `anon` cada consulta respondia
+ * `permission denied for table ...`. El `try/catch` se lo tragaba y devolvia
+ * `[]`, asi que **todos los semaforos del directorio salian 🔴 sin un solo
+ * error visible**. Mismo defecto y misma cura que `lib/dashboard-utils.ts`.
+ *
+ * Dos cambios de fondo, aparte del cliente:
+ * 1. Se pagina con `fetchTodasLasFilas`. Sin `.range()` PostgREST corta en 1000
+ *    filas en silencio, e `inventario_ledger` ya va en 468.
+ * 2. **Ya no se traga el error.** Si la lectura falla, revienta la pagina — que
+ *    es exactamente lo que hacen las lecturas vecinas del mismo directorio
+ *    (`getFinanzasLedger`, `getTickets`). Un 500 ruidoso es preferible a un
+ *    tablero de semaforos que miente.
+ */
+
+type ClienteSupabase = SupabaseClient<Database>
 
 // ============================================================================
 // INTERFACES - Anti-Fraud Engine & Traffic Lights
@@ -15,40 +40,24 @@ export interface MovimientoFecha {
 // DATA FETCHING - Server-Side Only
 // ============================================================================
 
-export async function getMovimientosFinanzas(): Promise<MovimientoFecha[]> {
-  try {
-    const { data, error } = await supabase
-      .from('finanzas_ledger')
-      .select('id_entidad_relacionada, fecha_movimiento')
-
-    if (error) {
-      console.error('Error fetching finanzas movements:', error?.message, error?.details, error?.hint)
-      return []
-    }
-
-    return data || []
-  } catch (error: any) {
-    console.error('Error in getMovimientosFinanzas:', error?.message)
-    return []
-  }
+export async function getMovimientosFinanzas(
+  supabase: ClienteSupabase
+): Promise<MovimientoFecha[]> {
+  return fetchTodasLasFilas<MovimientoFecha>(
+    () => supabase.from('finanzas_ledger').select('id_entidad_relacionada, fecha_movimiento'),
+    'semaforo: finanzas_ledger'
+  )
 }
 
-export async function getMovimientosInventario(): Promise<MovimientoFecha[]> {
-  try {
-    const { data, error } = await supabase
-      .from('inventario_ledger')
-      .select('id_entidad_destino, fecha_movimiento, status')
+export async function getMovimientosInventario(
+  supabase: ClienteSupabase
+): Promise<MovimientoFecha[]> {
+  const filas = await fetchTodasLasFilas<MovimientoFecha & { status: string | null }>(
+    () => supabase.from('inventario_ledger').select('id_entidad_destino, fecha_movimiento, status'),
+    'semaforo: inventario_ledger'
+  )
 
-    if (error) {
-      console.error('Error fetching inventario movements:', error?.message, error?.details, error?.hint)
-      return []
-    }
-
-    return (data || []).filter((mov) => mov.status !== 'ANULADO')
-  } catch (error: any) {
-    console.error('Error in getMovimientosInventario:', error?.message)
-    return []
-  }
+  return filas.filter((mov) => mov.status !== 'ANULADO')
 }
 
 // ============================================================================

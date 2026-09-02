@@ -7,6 +7,7 @@ import type { Database } from '@/types/database'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getCurrentUser } from '@/lib/auth-utils'
+import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
 import { cookies } from 'next/headers'
 import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
 import { getStockPorCubetaPorEntidad } from '@/lib/inventario-auditoria'
@@ -521,12 +522,14 @@ function enrichActividadesAnulacionUi(
         }
       }
 
+      // Espejo exacto de la ventana del servidor (`VENTANA_EDICION_MS`): si aqui
+      // dijera otro numero, el boton se veria habilitado y la accion fallaria.
       const tsMs = row.policyTimestamp ? Date.parse(row.policyTimestamp) : NaN
-      if (!Number.isFinite(tsMs) || Date.now() - tsMs > 6 * 60 * 60 * 1000) {
+      if (!Number.isFinite(tsMs) || Date.now() - tsMs > VENTANA_EDICION_MS) {
         return {
           ...row,
           annulDisabled: true,
-          annulDisabledReason: 'Ventana de anulación expirada (máximo 6 horas).'
+          annulDisabledReason: VENTANA_EDICION_ERROR
         }
       }
 

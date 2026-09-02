@@ -10,9 +10,8 @@ import {
   assertAdminOAnulacionTicketPropia,
   assertPermiteAnularTicketEnPerfil
 } from '@/lib/ticket-annul-cascade'
+import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
 
-const DELETE_WINDOW_HOURS_DST = 24
-const DELETE_WINDOW_MINUTES_WORKER = 15
 const LOCKED_RECORD_ERROR = 'Forbidden: Record is locked. Deletion window has expired for your role.'
 
 type FinanzaLedgerRow = Pick<
@@ -99,9 +98,8 @@ async function assertDistribuidoresHistorialAnnul(
   if (!Number.isFinite(tsMs)) {
     throw new Error('No se puede determinar la antigüedad del movimiento.')
   }
-  const sixHoursMs = 6 * 60 * 60 * 1000
-  if (Date.now() - tsMs > sixHoursMs) {
-    throw new Error('Ventana de anulación expirada (máximo 6 horas para distribuidores).')
+  if (Date.now() - tsMs > VENTANA_EDICION_MS) {
+    throw new Error(VENTANA_EDICION_ERROR)
   }
 }
 
@@ -123,21 +121,11 @@ function assertAnnullmentAllowed(
     throw new Error(LOCKED_RECORD_ERROR)
   }
 
-  // Los candados temporales aplican solo para DST y trabajadores.
-  if (rol === 'DST') {
-    const elapsedHours = (Date.now() - createdAtMs) / (1000 * 60 * 60)
-    if (elapsedHours > DELETE_WINDOW_HOURS_DST) {
-      throw new Error(LOCKED_RECORD_ERROR)
-    }
-    return
-  }
-
-  if (rol === 'WORKER' || rol === 'TRABAJADOR') {
-    const elapsedMinutes = (Date.now() - createdAtMs) / (1000 * 60)
-    if (elapsedMinutes > DELETE_WINDOW_MINUTES_WORKER) {
-      throw new Error(LOCKED_RECORD_ERROR)
-    }
-    return
+  // D-E25: el candado temporal es UNO y es el mismo para todo rol que no sea
+  // ADMIN. Antes eran 24 h para DST y 15 min para WORKER, y el resto de los
+  // roles no-ADMIN se colaba sin ninguna ventana por el final de la funcion.
+  if (Date.now() - createdAtMs > VENTANA_EDICION_MS) {
+    throw new Error(LOCKED_RECORD_ERROR)
   }
 }
 

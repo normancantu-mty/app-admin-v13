@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { bulkDeleteMovements } from '@/app/actions/audit'
 import { useRouter } from 'next/navigation'
 import { formatCurrency, formatFechaHoraMX } from '@/lib/utils'
+import { VENTANA_EDICION_MS } from '@/lib/constants'
 
 interface MovimientosTableProps {
   movimientos: {
@@ -25,8 +26,6 @@ interface MovimientosTableProps {
 
 const PREFIJOS_INGRESO = ['INGRESO_', 'ABONO_', 'COMISION_']
 const TIPOS_INGRESO_EXPLICITOS = new Set(['SUBSIDIO_FISCAL'])
-const DELETE_WINDOW_HOURS_DST = 24
-const DELETE_WINDOW_MINUTES_WORKER = 15
 
 function esIngreso(tipoMovimiento: string): boolean {
   return (
@@ -68,17 +67,10 @@ export default function MovimientosTable({ movimientos, sessionEmail, sessionRol
     const createdAt = new Date(movimiento.fecha_movimiento).getTime()
     if (!Number.isFinite(createdAt)) return false
 
-    if (role === 'DST') {
-      const ageHours = (now - createdAt) / (1000 * 60 * 60)
-      return ageHours <= DELETE_WINDOW_HOURS_DST
-    }
-
-    if (role === 'WORKER' || role === 'TRABAJADOR') {
-      const ageMinutes = (now - createdAt) / (1000 * 60)
-      return ageMinutes <= DELETE_WINDOW_MINUTES_WORKER
-    }
-
-    return true
+    // Espejo exacto de `assertAnnullmentAllowed` en `app/actions/audit.ts`.
+    // Si este numero se separa del del servidor, el boton se ve habilitado y
+    // la accion contesta "Record is locked".
+    return now - createdAt <= VENTANA_EDICION_MS
   }
 
   const showSelectionColumn = movimientos.some(canDeleteMovimiento)

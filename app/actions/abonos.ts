@@ -26,10 +26,13 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { cookies } from 'next/headers'
-import { createServerClient } from '@supabase/ssr'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, TablesInsert } from '@/types/database'
+import type { TablesInsert } from '@/types/database'
+import {
+  getServerSupabaseClient,
+  resolverSesionOperador,
+  type ClienteServidor,
+  type SesionOperador
+} from '@/lib/server-session'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
 import {
   aCentavos,
@@ -40,7 +43,6 @@ import {
 } from '@/lib/abonos'
 
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
-type ClienteServidor = SupabaseClient<Database>
 
 /** Zacatecas es UTC-6 todo el anio. Un input `date` no trae hora ni zona. */
 const OFFSET_MX = '-06:00'
@@ -96,69 +98,6 @@ export interface RegistrarAbonoResult {
   filasEscritas?: number
 }
 
-interface SesionAbono {
-  email: string
-  entidadId: string
-  rol: string
-}
-
-async function getServerSupabaseClient(): Promise<ClienteServidor> {
-  const cookieStore = await cookies()
-
-  return createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options)
-          })
-        }
-      }
-    }
-  )
-}
-
-/**
- * Resuelve la sesion y la entidad por correo - mismo patron que
- * `app/actions/inventario.ts`. `usuario_creador` sale de AQUI, nunca del
- * cliente: eso es lo que cierra el hueco por el que 36 de 118 filas quedaron
- * sin autor y un DST no podia anular su propio abono (`audit.ts:117`).
- */
-async function resolverSesion(
-  supabase: ClienteServidor
-): Promise<{ ok: true; sesion: SesionAbono } | { ok: false; error: string }> {
-  const {
-    data: { user },
-    error: authError
-  } = await supabase.auth.getUser()
-
-  if (authError || !user?.email) {
-    return { ok: false, error: 'No se pudo validar tu sesion. Inicia sesion nuevamente.' }
-  }
-
-  const { data: entidad, error: entidadError } = await supabase
-    .from('entidades')
-    .select('id, rol')
-    .eq('email', user.email)
-    .single()
-
-  if (entidadError || !entidad) {
-    return { ok: false, error: 'No se pudo validar la entidad operadora.' }
-  }
-
-  const rol = String(entidad.rol || '').toUpperCase()
-  if (rol === 'SOCIO') {
-    return { ok: false, error: 'Acceso denegado: tu rol es de solo lectura.' }
-  }
-
-  return { ok: true, sesion: { email: user.email, entidadId: entidad.id, rol } }
-}
-
 /**
  * Un ADMIN abona contra cualquier entidad. Cualquier otro rol queda acotado a
  * `mis_entidades()` - la MISMA funcion que usa la politica `finanzas_ins_dst`,
@@ -166,7 +105,7 @@ async function resolverSesion(
  */
 async function autorizarEntidadObjetivo(
   supabase: ClienteServidor,
-  sesion: SesionAbono,
+  sesion: SesionOperador,
   idEntidad: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (sesion.rol === 'ADMIN') return { ok: true }
@@ -308,7 +247,7 @@ export async function getPropuestaAbonoAction(
   try {
     const supabase = await getServerSupabaseClient()
 
-    const sesion = await resolverSesion(supabase)
+    const sesion = await resolverSesionOperador(supabase)
     if (!sesion.ok) return { success: false, error: sesion.error }
 
     const entidadId = String(idEntidad || '').trim()
@@ -359,7 +298,7 @@ export async function registrarAbonoAction(
   try {
     const supabase = await getServerSupabaseClient()
 
-    const sesionResult = await resolverSesion(supabase)
+    const sesionResult = await resolverSesionOperador(supabase)
     if (!sesionResult.ok) return { success: false, error: sesionResult.error }
     const sesion = sesionResult.sesion
 

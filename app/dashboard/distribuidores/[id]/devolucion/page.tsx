@@ -1,26 +1,25 @@
 'use client'
 
+/**
+ * Formulario de devolucion. **Solo UI**: no lee ni escribe la base.
+ * El catalogo con su precio y las dos filas del ledger las maneja
+ * `app/actions/devoluciones.ts`, que ademas compensa si la segunda falla.
+ */
+
 import { useState, useEffect, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { supabase } from '@/lib/supabase'
-import type { TablesInsert } from '@/types/database'
-
-interface ProductoConPrecio {
-  id: string
-  sku: string
-  nombre: string
-  precio_final: number
-}
-
-type InventarioInsert = TablesInsert<'inventario_ledger'>
-type FinanzaInsert = TablesInsert<'finanzas_ledger'>
+import {
+  getProductosDevolucionAction,
+  registrarDevolucionAction,
+  type ProductoDevolucion
+} from '@/app/actions/devoluciones'
 
 export default function DevolucionPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
-  const [productos, setProductos] = useState<ProductoConPrecio[]>([])
+  const [productos, setProductos] = useState<ProductoDevolucion[]>([])
   const [isLoadingData, setIsLoadingData] = useState(true)
 
   const [idProducto, setIdProducto] = useState('')
@@ -31,30 +30,14 @@ export default function DevolucionPage({ params }: { params: Promise<{ id: strin
   useEffect(() => {
     const fetchProductos = async () => {
       try {
-        const { data, error } = await supabase
-          .from('catalogo_productos')
-          .select(`
-            id,
-            sku,
-            nombre,
-            listas_precios (precio_final)
-          `)
-          .eq('tipo', 'TERMINADO')
-          .order('nombre', { ascending: true })
+        const resultado = await getProductosDevolucionAction(resolvedParams.id)
 
-        if (error) {
-          console.error('Error fetching productos:', error)
+        if (!resultado.success || !resultado.data) {
+          console.error('Error cargando productos de devolucion:', resultado.error)
           return
         }
 
-        const productosConPrecio = (data || []).map((p: any) => ({
-          id: p.id,
-          sku: p.sku,
-          nombre: p.nombre,
-          precio_final: p.listas_precios?.[0]?.precio_final || 0
-        }))
-
-        setProductos(productosConPrecio)
+        setProductos(resultado.data.productos)
       } catch (error) {
         console.error('Error in fetchProductos:', error)
       } finally {
@@ -63,7 +46,7 @@ export default function DevolucionPage({ params }: { params: Promise<{ id: strin
     }
 
     fetchProductos()
-  }, [])
+  }, [resolvedParams.id])
 
   useEffect(() => {
     if (idProducto && cantidad) {
@@ -96,59 +79,22 @@ export default function DevolucionPage({ params }: { params: Promise<{ id: strin
     setIsLoading(true)
 
     try {
-      const {
-        data: { user },
-        error: authError
-      } = await supabase.auth.getUser()
+      const resultado = await registrarDevolucionAction({
+        idEntidad: resolvedParams.id,
+        idProducto,
+        cantidad: cantidadNum
+      })
 
-      if (authError || !user?.email) {
-        alert('No se pudo validar tu sesión para auditoría. Inicia sesión nuevamente.')
-        return
-      }
-
-      // PASO A: Restaurar Inventario
-      const inventarioPayload: InventarioInsert = {
-        id_producto: idProducto,
-        tipo_movimiento: 'ENTRADA_COMPRA',
-        cantidad: cantidadNum,
-        notas: 'Devolución de Distribuidor',
-        usuario_creador: user.email
-      }
-
-      const { error: errorInventario } = await supabase
-        .from('inventario_ledger')
-        .insert(inventarioPayload)
-
-      if (errorInventario) {
-        console.error('Error details:', errorInventario.message, errorInventario.details, errorInventario.hint)
-        alert(`Error al registrar entrada de inventario: ${errorInventario.message}`)
-        return
-      }
-
-      // PASO B: Cancelar Deuda
-      const finanzasPayload: FinanzaInsert = {
-        id_entidad_relacionada: resolvedParams.id,
-        tipo_movimiento: 'ABONO_DEUDA',
-        monto: subtotal,
-        categoria_gasto: 'Devolucion de Mercancia',
-        status: 'ACTIVO'
-      }
-
-      const { error: errorFinanzas } = await supabase
-        .from('finanzas_ledger')
-        .insert(finanzasPayload)
-
-      if (errorFinanzas) {
-        console.error('Error details:', errorFinanzas.message, errorFinanzas.details, errorFinanzas.hint)
-        alert(`Error al registrar cancelación de deuda: ${errorFinanzas.message}`)
+      if (!resultado.success) {
+        alert(resultado.error || 'No se pudo procesar la devolución.')
         return
       }
 
       alert('✅ Devolución procesada exitosamente. Stock restaurado y deuda cancelada.')
       router.push(`/dashboard/distribuidores/${resolvedParams.id}`)
       router.refresh()
-    } catch (error: any) {
-      console.error('Error details:', error?.message, error?.details, error?.hint)
+    } catch (error) {
+      console.error('Error al procesar la devolución:', error)
       alert('Error al procesar la devolución. Inténtalo de nuevo.')
     } finally {
       setIsLoading(false)

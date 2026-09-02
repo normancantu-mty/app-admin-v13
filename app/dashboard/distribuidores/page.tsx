@@ -425,8 +425,11 @@ export default async function DistribuidoresPage() {
   ] = await Promise.all([
     getFinanzasLedger(serviceRoleClient, entityIdsForScope, accountIdsForScope),
     getTickets(serviceRoleClient, entityIdsForScope),
-    getMovimientosFinanzas(),
-    getMovimientosInventario()
+    // Mismo cliente que las dos lecturas de arriba. Antes estas dos funciones
+    // construian por su cuenta el cliente de NAVEGADOR y respondian
+    // `permission denied` en silencio: los semaforos salian todos rojos.
+    getMovimientosFinanzas(serviceRoleClient),
+    getMovimientosInventario(serviceRoleClient)
   ])
 
   const adminLegacyAccountId = await getAdminLegacyAccountIdForDirectorio(serviceRoleClient)

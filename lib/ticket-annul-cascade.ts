@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -100,8 +101,8 @@ export async function assertPermiteAnularTicketEnPerfil(
       throw new Error('No autorizado: solo puedes anular en tu cuenta o la de tus locales.')
     }
     const tsMs = ticket.fecha_transaccion ? Date.parse(ticket.fecha_transaccion) : NaN
-    if (!Number.isFinite(tsMs) || Date.now() - tsMs > 6 * 60 * 60 * 1000) {
-      throw new Error('Ventana de anulación expirada (máximo 6 horas).')
+    if (!Number.isFinite(tsMs) || Date.now() - tsMs > VENTANA_EDICION_MS) {
+      throw new Error(VENTANA_EDICION_ERROR)
     }
     return
   }
@@ -136,7 +137,7 @@ export async function assertAdminOAnulacionTicketPropia(
   }
 
   const tsMs = ticket.fecha_transaccion ? Date.parse(ticket.fecha_transaccion) : NaN
-  if (!Number.isFinite(tsMs) || Date.now() - tsMs > 6 * 60 * 60 * 1000) {
-    throw new Error('Ventana de anulación expirada (máximo 6 horas).')
+  if (!Number.isFinite(tsMs) || Date.now() - tsMs > VENTANA_EDICION_MS) {
+    throw new Error(VENTANA_EDICION_ERROR)
   }
 }
