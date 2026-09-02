@@ -86,6 +86,10 @@ export default function DashboardLayout({
         {
           href: '/dashboard/distribuidores',
           label: 'Distribuidores'
+        },
+        {
+          href: '/dashboard/cartera',
+          label: '📋 Cartera'
         }
       ]
     } else if (userRole === 'SOCIO') {
@@ -109,6 +113,10 @@ export default function DashboardLayout({
         {
           href: '/dashboard/distribuidores',
           label: '👥 Distribuidores'
+        },
+        {
+          href: '/dashboard/cartera',
+          label: '📋 Cartera'
         }
       ]
     } else if (entidadId) {
