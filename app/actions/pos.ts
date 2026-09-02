@@ -8,6 +8,7 @@ import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
+import { validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 
 interface POSItemPayload {
   id_producto: string
@@ -302,6 +303,18 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
 
       compradorInventarioValido = compradorInventario.id
       compradorEntidad = compradorInventario
+
+      // La cuenta fiscal factura al LOCAL, no al distribuidor: cuando el local paga, se le paga
+      // al DST por su servicio. Un ticket contra la cuenta fiscal con un DST de comprador es
+      // error de captura, y el motor de impuesto inverso le separa IVA/IEPS que no existen.
+      // TODO ERP-21: detectar la cuenta fiscal por `tipo_fiscalidad`, no por el nombre.
+      const errorCuentaFiscal = validarCompradorContraCuentaFiscal(
+        cuentaData.nombre,
+        compradorInventario.rol
+      )
+      if (errorCuentaFiscal) {
+        return { ok: false, error: errorCuentaFiscal }
+      }
     }
 
     const usaTriangulacionInventario = origenInventarioId !== vendedorId && entidadOrigenInventario.rol === 'DST'
