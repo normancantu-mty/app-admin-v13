@@ -5,9 +5,14 @@ import {
   correnLasDeHumo,
   faltantesDeHumo
 } from './tests/humo-entorno'
+import {
+  ARCHIVOS_DE_EQUIVALENCIA,
+  correnLasDeEquivalencia,
+  faltantesDeEquivalencia
+} from './tests/vistas-entorno'
 
 /**
- * Tres proyectos, con fronteras nitidas:
+ * Cuatro proyectos, con fronteras nitidas:
  *
  * - `puras`   — aritmetica y lectura de codigo fuente. Sin navegador, sin red,
  *               sin base, sin sesion. Es lo que corre `npm test` y lo que corre
@@ -16,6 +21,12 @@ import {
  * - `sesion`  — `tests/auth.setup.ts`: entra una vez y guarda las cookies.
  * - `humo`    — abre los tableros con esa sesion y exige que pinten cifras.
  *               Es `npm run test:humo`. Atrapa el sintoma.
+ * - `equivalencia` — `tests/vistas-equivalencia.spec.ts`: compara las vistas
+ *               canonicas de Postgres contra las funciones de TypeScript que
+ *               dicen reproducir, sobre los datos reales y al centavo. Sin
+ *               navegador y sin sesion, pero CON base: es la unica prueba que
+ *               no puede ser pura, porque una vista solo existe dentro de la
+ *               base y una funcion solo corre en Node. Ver `tests/vistas-entorno.ts`.
  *
  * Sin credenciales, `sesion` y `humo` se SALTAN con el motivo escrito (ver
  * `tests/humo-entorno.ts`), nunca fallan en rojo: el CI publico no tiene ni
@@ -28,6 +39,9 @@ const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:3000'
 /** ¿Hay credenciales? Si no, no se levanta servidor ni se carga la sesion. */
 const CORRE_HUMO = correnLasDeHumo()
 
+/** ¿Hay URL y service role? Si no, la equivalencia de vistas se salta. */
+const CORRE_EQUIVALENCIA = correnLasDeEquivalencia()
+
 /** Con `E2E_BASE_URL` el servidor ya lo levanto el usuario; no se arranca otro. */
 const LEVANTAR_SERVIDOR = CORRE_HUMO && !process.env.E2E_BASE_URL
 
@@ -37,6 +51,14 @@ if (!CORRE_HUMO) {
   console.warn(
     `[playwright] Pruebas de humo desactivadas: faltan ${faltantesDeHumo().join(' y ')}. ` +
       'Ver .env.test.local.example'
+  )
+}
+
+if (!CORRE_EQUIVALENCIA) {
+  // Mismo criterio que arriba: que falte una credencial tiene que VERSE.
+  console.warn(
+    `[playwright] Equivalencia de vistas desactivada: faltan ${faltantesDeEquivalencia().join(' y ')}. ` +
+      'Se leen del entorno o de `.env`.'
   )
 }
 
@@ -53,7 +75,14 @@ export default defineConfig({
   projects: [
     {
       name: 'puras',
-      testIgnore: ARCHIVOS_DE_HUMO
+      testIgnore: [...ARCHIVOS_DE_HUMO, ...ARCHIVOS_DE_EQUIVALENCIA]
+    },
+    {
+      // Sin navegador: solo habla con Postgres. Relee el ledger completo varias
+      // veces, por eso el timeout es el largo y no el de las puras.
+      name: 'equivalencia',
+      testMatch: ARCHIVOS_DE_EQUIVALENCIA,
+      timeout: 120_000
     },
     {
       name: 'sesion',
