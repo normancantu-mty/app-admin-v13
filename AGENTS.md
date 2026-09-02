@@ -1,3 +1,17 @@
+> ## ⚠️ ADVERTENCIA: este documento es ASPIRACIONAL, no descriptivo
+>
+> Lo que sigue describe una arquitectura multi-agente (LangGraph, E2B, Aider headless,
+> Playwright MCP, circuit breakers, "16-Hour Autonomous Software Factory") **que NO existe
+> en este repositorio**. Ninguno de esos componentes esta instalado, configurado ni corriendo.
+> Es un diseno deseado, escrito antes de construir; no un mapa del sistema real.
+>
+> **No tomes nada de aqui como estado actual del ERP.** Si eres un agente y este archivo
+> contradice al codigo, el que esta mal es este archivo.
+>
+> El mapa verificado del sistema real es **`docs/MAPA_ERP_v001_2026-09-01.md`**.
+>
+> Se conserva por su valor de intencion de diseno. Revisado el 2026-09-02.
+
 ```markdown
 # AGENTS.md: 16-Hour Autonomous Software Factory Configuration
 
