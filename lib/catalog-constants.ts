@@ -1,6 +1,13 @@
 const SUBCATEGORIAS_GASTO_OPERATIVO = ['LOGISTICA', 'MANTENIMIENTO', 'ADMINISTRACION'] as const
 const SUBCATEGORIAS_INGRESO_VENTA = ['MAYOREO', 'MENUDEO', 'EVENTOS'] as const
-const SUBCATEGORIAS_INSUMOS = ['BOTELLAS', 'ETIQUETAS', 'TAPAS', 'LIQUIDOS'] as const
+const SUBCATEGORIAS_INSUMOS = ['BOTELLAS', 'ETIQUETAS', 'TAPAS', 'LIQUIDOS', 'EMPAQUE'] as const
+
+/** Mirrors catalogo_productos.tipo CHECK (INSUMO | TERMINADO). */
+export const CATALOG_TIPOS = ['INSUMO', 'TERMINADO'] as const
+
+/** Packaging SKUs for pasta line (B-MVP-Pasta2kg BOM). Stored as tipo INSUMO in DB. */
+export const PASTA_PACKAGING_SKUS = ['Etiqueta-pasta', 'Bolsa-pasta'] as const
+export const PASTA_TERMINADO_SKU = 'B-MVP-Pasta2kg' as const
 
 export const SUBCATEGORIAS = {
   GASTO_OPERATIVO: SUBCATEGORIAS_GASTO_OPERATIVO,
