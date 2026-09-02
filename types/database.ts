@@ -160,6 +160,7 @@ export type Database = {
           id_cuenta_origen: string | null
           id_entidad_relacionada: string | null
           id_ticket: string | null
+          metodo_pago: string | null
           monto: number
           status: string
           subcategoria: string | null
@@ -177,6 +178,7 @@ export type Database = {
           id_cuenta_origen?: string | null
           id_entidad_relacionada?: string | null
           id_ticket?: string | null
+          metodo_pago?: string | null
           monto: number
           status?: string
           subcategoria?: string | null
@@ -194,6 +196,7 @@ export type Database = {
           id_cuenta_origen?: string | null
           id_entidad_relacionada?: string | null
           id_ticket?: string | null
+          metodo_pago?: string | null
           monto?: number
           status?: string
           subcategoria?: string | null
@@ -483,6 +486,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      mis_entidades: {
+        Args: Record<PropertyKey, never>
+        Returns: string[]
+      }
       registrar_logistica_inversa: {
         Args: {
           p_cantidad: number

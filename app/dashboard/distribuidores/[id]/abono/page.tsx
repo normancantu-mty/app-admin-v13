@@ -1,17 +1,20 @@
 'use client'
 
-import { useState, useEffect, use } from 'react'
+import { useState, useEffect, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import type { CurrentUser } from '@/lib/auth-utils'
-import type { TablesInsert } from '@/types/database'
+import { formatCurrency } from '@/lib/utils'
+import { METODOS_PAGO } from '@/lib/abonos'
 import {
-  CATEGORIA_ABONO_PENDIENTE,
-  CATEGORIA_ABONO_REAL
-} from '@/lib/finance-utils'
+  getPropuestaAbonoAction,
+  registrarAbonoAction,
+  type PropuestaTicketAbono
+} from '@/app/actions/abonos'
 
-type FinanzaInsert = TablesInsert<'finanzas_ledger'>
+// Esta pantalla NO escribe en la base. Solo lee catalogos para poblar los
+// selects y delega todo INSERT a `registrarAbonoAction`, que resuelve la sesion
+// en servidor y toma `usuario_creador` de ahi.
 
 interface CuentaOption {
   id: string
@@ -21,24 +24,18 @@ interface CuentaOption {
   ownerNombre: string | null
 }
 
-async function getCurrentUserFromClient(): Promise<CurrentUser | null> {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session?.user?.email) return null
+/** Hoy en hora local del navegador (Zacatecas), no en UTC. */
+function hoyLocalISO(): string {
+  const ahora = new Date()
+  const local = new Date(ahora.getTime() - ahora.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
 
-  const { data, error } = await supabase
-    .from('entidades')
-    .select('id, email, rol, nombre')
-    .eq('email', session.user.email)
-    .single()
-
-  if (error || !data) return null
-
-  return {
-    id: data.id,
-    email: data.email,
-    rol: data.rol as CurrentUser['rol'],
-    nombre: data.nombre
-  }
+function formatFechaTicket(fecha: string | null): string {
+  if (!fecha) return 'Sin fecha'
+  const d = new Date(fecha)
+  if (Number.isNaN(d.getTime())) return 'Sin fecha'
+  return d.toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: '2-digit' })
 }
 
 export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: string }> }) {
@@ -53,6 +50,15 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
   const [idCuentaDestino, setIdCuentaDestino] = useState('')
   const [monto, setMonto] = useState('')
   const [referencia, setReferencia] = useState('')
+  const [fechaPago, setFechaPago] = useState(hoyLocalISO)
+  const [metodoPago, setMetodoPago] = useState('')
+  const [nota, setNota] = useState('')
+
+  const [ticketsPendientes, setTicketsPendientes] = useState<PropuestaTicketAbono[]>([])
+  const [aplicaciones, setAplicaciones] = useState<Record<string, string>>({})
+  const [propuestaError, setPropuestaError] = useState<string | null>(null)
+  const [cargandoPropuesta, setCargandoPropuesta] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchCuentas = async () => {
@@ -115,81 +121,114 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
     return 'Transferencia manual'
   })()
 
+  // Solo un abono (Distribuidor → Admin) paga pedidos. Un cargo de deuda no.
+  const esAbonoDeDeuda = Boolean(cuentaOrigen && cuentaDestino && !origenEsAdmin && destinoEsAdmin)
+  const montoNum = Number.parseFloat(monto)
+  const montoValido = Number.isFinite(montoNum) && montoNum > 0
+
+  const cargarPropuesta = useCallback(async () => {
+    if (!esAbonoDeDeuda || !montoValido) {
+      setTicketsPendientes([])
+      setAplicaciones({})
+      setPropuestaError(null)
+      return
+    }
+
+    setCargandoPropuesta(true)
+    setPropuestaError(null)
+    try {
+      const result = await getPropuestaAbonoAction(resolvedParams.id, montoNum)
+      if (!result.success || !result.data) {
+        setTicketsPendientes([])
+        setAplicaciones({})
+        setPropuestaError(result.error ?? 'No se pudo calcular la propuesta.')
+        return
+      }
+
+      setTicketsPendientes(result.data.tickets)
+      const iniciales: Record<string, string> = {}
+      for (const ticket of result.data.tickets) {
+        iniciales[ticket.id_ticket] = ticket.propuesto > 0 ? ticket.propuesto.toFixed(2) : ''
+      }
+      setAplicaciones(iniciales)
+    } catch (error) {
+      console.error('Error cargando propuesta de abono:', error)
+      setPropuestaError('No se pudo calcular la propuesta.')
+    } finally {
+      setCargandoPropuesta(false)
+    }
+  }, [esAbonoDeDeuda, montoValido, montoNum, resolvedParams.id])
+
+  // La propuesta se deriva del monto y de la direccion: al cambiar cualquiera
+  // de los dos se vuelve a proponer desde cero (con debounce para no pegarle al
+  // servidor en cada tecla).
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void cargarPropuesta()
+    }, 450)
+    return () => clearTimeout(timer)
+  }, [cargarPropuesta])
+
+  const aplicacionesList = ticketsPendientes
+    .map((ticket) => ({
+      id_ticket: ticket.id_ticket,
+      monto: Number.parseFloat(aplicaciones[ticket.id_ticket] ?? '')
+    }))
+    .filter((a) => Number.isFinite(a.monto) && a.monto > 0)
+
+  const totalAplicado = aplicacionesList.reduce((suma, a) => suma + a.monto, 0)
+  const sobrante = montoValido ? Number((montoNum - totalAplicado).toFixed(2)) : 0
+  const excedeMonto = montoValido && totalAplicado - montoNum > 0.004
+
+  const limpiarAplicaciones = () => {
+    setAplicaciones(Object.fromEntries(ticketsPendientes.map((t) => [t.id_ticket, ''])))
+  }
+
   const handleGuardarTransferencia = async () => {
+    setFormError(null)
+
     if (!idCuentaOrigen || !idCuentaDestino || !monto) {
-      alert('Completa origen, destino y monto.')
+      setFormError('Completa origen, destino y monto.')
       return
     }
     if (idCuentaOrigen === idCuentaDestino) {
-      alert('Origen y destino deben ser diferentes.')
+      setFormError('Origen y destino deben ser diferentes.')
       return
     }
-
-    const montoNum = Number.parseFloat(monto)
-    if (!Number.isFinite(montoNum) || montoNum <= 0) {
-      alert('El monto debe ser mayor a cero.')
+    if (!montoValido) {
+      setFormError('El monto debe ser mayor a cero.')
       return
     }
-
-    const currentUser = await getCurrentUserFromClient()
-    if (!currentUser) {
-      alert('No se pudo validar tu sesión.')
+    if (fechaPago > hoyLocalISO()) {
+      setFormError('La fecha del pago no puede ser futura.')
       return
     }
-    if (currentUser.rol === 'SOCIO') {
-      alert('Acceso denegado: tu rol es de solo lectura.')
+    if (excedeMonto) {
+      setFormError('La suma aplicada a pedidos excede el monto del abono.')
       return
-    }
-
-    if (!cuentaOrigen || !cuentaDestino) {
-      alert('No se pudo resolver origen/destino.')
-      return
-    }
-    const transferenciaValida =
-      (origenEsAdmin && !destinoEsAdmin) ||
-      (!origenEsAdmin && destinoEsAdmin)
-    if (!transferenciaValida) {
-      alert('Solo se permiten transferencias cruzadas entre ADMIN y Distribuidor/Local.')
-      return
-    }
-
-    const descripcion = referencia.trim() || conceptoAutomatico
-    // Admin → Dist: CARGO_DEUDA (Admin pays dist, resolves negative debt or advances cash)
-    // Dist → Admin: ABONO_DEUDA (dist remits cash to admin, reduces positive debt)
-    const tipoMovimiento = (origenEsAdmin && !destinoEsAdmin) ? 'CARGO_DEUDA' : 'ABONO_DEUDA'
-    const requiereAprobacionAdmin =
-      currentUser.rol !== 'ADMIN' &&
-      tipoMovimiento === 'ABONO_DEUDA' &&
-      !origenEsAdmin &&
-      destinoEsAdmin
-
-    const movimiento: FinanzaInsert = {
-      tipo_movimiento: tipoMovimiento,
-      monto: Number(montoNum.toFixed(2)),
-      id_cuenta_origen: idCuentaOrigen,
-      id_cuenta_destino: idCuentaDestino,
-      id_entidad_relacionada: resolvedParams.id,
-      categoria: requiereAprobacionAdmin
-        ? CATEGORIA_ABONO_PENDIENTE
-        : tipoMovimiento === 'ABONO_DEUDA'
-          ? CATEGORIA_ABONO_REAL
-          : null,
-      categoria_gasto: descripcion,
-      status: 'ACTIVO'
     }
 
     setIsLoading(true)
     try {
-      const { error } = await supabase
-        .from('finanzas_ledger')
-        .insert([movimiento])
-      if (error) {
-        alert(`Error al registrar transferencia: ${error.message}`)
+      const result = await registrarAbonoAction({
+        idEntidad: resolvedParams.id,
+        idCuentaOrigen,
+        idCuentaDestino,
+        monto: montoNum,
+        fechaPago,
+        metodoPago: metodoPago || null,
+        nota,
+        referencia,
+        aplicaciones: aplicacionesList
+      })
+
+      if (!result.success) {
+        setFormError(result.error ?? 'No se pudo registrar el abono.')
         return
       }
 
       alert(
-        requiereAprobacionAdmin
+        result.requiereAprobacionAdmin
           ? 'Abono registrado y enviado a la cola de aprobación del Admin.'
           : 'Transferencia registrada correctamente.'
       )
@@ -197,7 +236,7 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
       router.refresh()
     } catch (error) {
       console.error('Error registrando transferencia:', error)
-      alert('No se pudo registrar la transferencia.')
+      setFormError('No se pudo registrar la transferencia.')
     } finally {
       setIsLoading(false)
     }
@@ -205,7 +244,7 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="p-8">
-      <div className="max-w-2xl mx-auto">
+      <div className="max-w-3xl mx-auto">
         <div className="mb-8">
           <Link
             href={`/dashboard/distribuidores/${resolvedParams.id}`}
@@ -268,20 +307,54 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
             </select>
           </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="monto" className="block text-sm font-medium text-gray-700 mb-2">
+                Monto
+              </label>
+              <input
+                id="monto"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={monto}
+                onChange={(e) => setMonto(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                placeholder="Ej. 1500.00"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="fechaPago" className="block text-sm font-medium text-gray-700 mb-2">
+                Fecha del pago
+              </label>
+              <input
+                id="fechaPago"
+                type="date"
+                value={fechaPago}
+                max={hoyLocalISO()}
+                onChange={(e) => setFechaPago(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+              <p className="text-xs text-gray-500 mt-1">Cuándo se recibió el dinero, no cuándo se captura.</p>
+            </div>
+          </div>
+
           <div>
-            <label htmlFor="monto" className="block text-sm font-medium text-gray-700 mb-2">
-              Monto
+            <label htmlFor="metodoPago" className="block text-sm font-medium text-gray-700 mb-2">
+              Método de pago <span className="text-gray-400 font-normal">(opcional)</span>
             </label>
-            <input
-              id="monto"
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={monto}
-              onChange={(e) => setMonto(e.target.value)}
+            <select
+              id="metodoPago"
+              value={metodoPago}
+              onChange={(e) => setMetodoPago(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              placeholder="Ej. 1500.00"
-            />
+            >
+              <option value="">Sin especificar</option>
+              {METODOS_PAGO.map((metodo) => (
+                <option key={metodo} value={metodo}>{metodo}</option>
+              ))}
+            </select>
           </div>
 
           <div>
@@ -299,11 +372,142 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
             <p className="text-xs text-gray-500 mt-1">Concepto sugerido: {conceptoAutomatico}</p>
           </div>
 
+          <div>
+            <label htmlFor="nota" className="block text-sm font-medium text-gray-700 mb-2">
+              Nota <span className="text-gray-400 font-normal">(opcional)</span>
+            </label>
+            <textarea
+              id="nota"
+              rows={3}
+              value={nota}
+              onChange={(e) => setNota(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              placeholder="Quién entregó el dinero, folio del depósito, acuerdos..."
+            />
+          </div>
+
+          {esAbonoDeDeuda && (
+            <div className="border border-gray-200 dark:border-gray-700 rounded-md p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                    ¿A qué pedido aplica?
+                  </h2>
+                  <p className="text-xs text-gray-500">
+                    Propuesta automática del más antiguo al más nuevo. Puedes editarla o dejarla vacía.
+                  </p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void cargarPropuesta()}
+                    disabled={cargandoPropuesta || !montoValido}
+                    className="text-xs px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Recalcular
+                  </button>
+                  <button
+                    type="button"
+                    onClick={limpiarAplicaciones}
+                    disabled={!ticketsPendientes.length}
+                    className="text-xs px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Dejar sin aplicar
+                  </button>
+                </div>
+              </div>
+
+              {!montoValido && (
+                <p className="text-xs text-gray-500">Captura un monto para ver la propuesta.</p>
+              )}
+              {cargandoPropuesta && <p className="text-xs text-gray-500">Calculando propuesta...</p>}
+              {propuestaError && <p className="text-xs text-red-600">{propuestaError}</p>}
+              {montoValido && !cargandoPropuesta && !propuestaError && !ticketsPendientes.length && (
+                <p className="text-xs text-gray-600">
+                  Esta entidad no tiene pedidos en consignación con saldo pendiente. El abono se
+                  registrará &quot;a cuenta&quot;, sin pedido.
+                </p>
+              )}
+
+              {ticketsPendientes.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-gray-500 border-b border-gray-200 dark:border-gray-700">
+                        <th className="py-2 pr-3">Pedido</th>
+                        <th className="py-2 pr-3 text-right">Total</th>
+                        <th className="py-2 pr-3 text-right">Ya abonado</th>
+                        <th className="py-2 pr-3 text-right">Saldo</th>
+                        <th className="py-2 text-right">Aplicar</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ticketsPendientes.map((ticket) => (
+                        <tr key={ticket.id_ticket} className="border-b border-gray-100 dark:border-gray-700">
+                          <td className="py-2 pr-3">
+                            <div>{formatFechaTicket(ticket.fecha_transaccion)}</div>
+                            <div className="text-xs text-gray-400">#{ticket.id_ticket.slice(0, 8)}</div>
+                          </td>
+                          <td className="py-2 pr-3 text-right">{formatCurrency(ticket.total_cobrado_real)}</td>
+                          <td className="py-2 pr-3 text-right text-gray-500">{formatCurrency(ticket.ya_aplicado)}</td>
+                          <td className="py-2 pr-3 text-right font-medium">{formatCurrency(ticket.saldo)}</td>
+                          <td className="py-2 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              max={ticket.saldo}
+                              step="0.01"
+                              value={aplicaciones[ticket.id_ticket] ?? ''}
+                              onChange={(e) =>
+                                setAplicaciones((prev) => ({ ...prev, [ticket.id_ticket]: e.target.value }))
+                              }
+                              className="w-28 px-2 py-1 border border-gray-300 rounded-md text-right"
+                              placeholder="0.00"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {montoValido && (
+                <div className="text-sm flex flex-wrap gap-x-6 gap-y-1 pt-1">
+                  <span>
+                    Aplicado a pedidos: <strong>{formatCurrency(totalAplicado)}</strong>
+                  </span>
+                  <span className={excedeMonto ? 'text-red-600' : ''}>
+                    Sin aplicar (a cuenta): <strong>{formatCurrency(sobrante)}</strong>
+                  </span>
+                  {aplicacionesList.length > 1 && (
+                    <span className="text-xs text-gray-500 basis-full">
+                      Se escribirán {aplicacionesList.length + (sobrante > 0.004 ? 1 : 0)} movimientos:
+                      uno por pedido, con la misma fecha, método y nota.
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {excedeMonto && (
+                <p className="text-sm text-red-600">
+                  La suma aplicada excede el monto del abono. Ajusta antes de guardar.
+                </p>
+              )}
+            </div>
+          )}
+
+          {formError && (
+            <p className="text-sm text-red-600 border border-red-200 bg-red-50 rounded-md px-3 py-2">
+              {formError}
+            </p>
+          )}
+
           <div className="flex gap-4 pt-2">
             <button
               type="button"
               onClick={handleGuardarTransferencia}
-              disabled={isLoading || !idCuentaOrigen || !idCuentaDestino || !monto}
+              disabled={isLoading || !idCuentaOrigen || !idCuentaDestino || !monto || excedeMonto}
               className="flex-1 bg-green-600 text-white py-3 px-4 rounded-md hover:bg-green-700 disabled:bg-gray-400 font-semibold"
             >
               {isLoading ? 'Registrando...' : 'Guardar Transferencia'}
