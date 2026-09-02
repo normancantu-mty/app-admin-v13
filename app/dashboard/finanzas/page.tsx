@@ -5,7 +5,11 @@ import {
   calcularEgresosAdmin,
   calcularFechasPorRango,
   calcularPasivosFiscalesAdmin,
-  getDesgloseCategorias
+  fetchTodasLasFilas,
+  filtrarMovimientosFirewallAdmin,
+  getDesgloseCategorias,
+  limitesRangoMX,
+  movimientoTocaCuentaAdmin
 } from '@/lib/dashboard-utils'
 import { movimientoContableEfectivo } from '@/lib/finance-utils'
 import type { CurrentUser } from '@/lib/auth-utils'
@@ -23,6 +27,7 @@ interface MovimientoFinanciero {
   monto: number
   categoria: string
   categoria_gasto?: string | null
+  descripcion?: string | null
   fecha_movimiento: string
   status: 'APPROVED' | 'PENDING' | 'REJECTED' | 'ANULADO' | 'ACTIVO'
   usuario_creador?: string | null
@@ -53,25 +58,6 @@ function esIngresoCajaBrutoAdmin(tipoMovimiento: string): boolean {
   return TIPOS_INGRESO_CAJA_BRUTO.has(tipoMovimiento)
 }
 
-function movimientoTocaCuentaAdmin(
-  m: Pick<MovimientoFinanciero, 'id_cuenta_destino' | 'id_cuenta_origen'>,
-  adminAccountSet: Set<string>
-): boolean {
-  return (
-    Boolean(m.id_cuenta_destino && adminAccountSet.has(m.id_cuenta_destino)) ||
-    Boolean(m.id_cuenta_origen && adminAccountSet.has(m.id_cuenta_origen))
-  )
-}
-
-function filtrarMovimientosFirewallAdmin(
-  movimientos: MovimientoFinanciero[],
-  adminAccountIds: string[]
-): MovimientoFinanciero[] {
-  if (adminAccountIds.length === 0) return movimientos
-  const adminAccountSet = new Set(adminAccountIds)
-  return movimientos.filter((m) => movimientoTocaCuentaAdmin(m, adminAccountSet))
-}
-
 async function getMovimientos(fechaInicio?: string, fechaFin?: string): Promise<MovimientoFinanciero[]> {
   try {
     const cookieStore = await cookies()
@@ -93,44 +79,39 @@ async function getMovimientos(fechaInicio?: string, fechaFin?: string): Promise<
       }
     )
     
-    let query = supabase
-      .from('finanzas_ledger')
-      .select(`
-        id,
-        id_cuenta_origen,
-        id_cuenta_destino,
-        tipo_movimiento,
-        monto,
-        categoria,
-        categoria_gasto,
-        fecha_movimiento,
-        status,
-        usuario_creador,
-        cuenta_destino:cuentas_financieras!id_cuenta_destino(nombre),
-        entidad_relacionada:entidades!finanzas_ledger_id_entidad_relacionada_fkey(nombre)
-      `)
-      .order('fecha_movimiento', { ascending: false })
-      .limit(1000)
+    // `descripcion` va en el select a proposito: `esPagoImpuestoIva/Ieps` la lee
+    // para descontar los pagos de impuesto del pasivo, y sin ella esa resta
+    // nunca podia ocurrir.
+    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
 
-    if (fechaInicio && fechaFin) {
-      const fechaInicioTs = `${fechaInicio}T00:00:00.000Z`
-      const finMasUnDia = new Date(`${fechaFin}T00:00:00.000Z`)
-      finMasUnDia.setUTCDate(finMasUnDia.getUTCDate() + 1)
-      const fechaFinExclusiveTs = finMasUnDia.toISOString()
+    const data = await fetchTodasLasFilas<MovimientoQueryRow>(() => {
+      let query = supabase
+        .from('finanzas_ledger')
+        .select(`
+          id,
+          id_cuenta_origen,
+          id_cuenta_destino,
+          tipo_movimiento,
+          monto,
+          categoria,
+          categoria_gasto,
+          descripcion,
+          fecha_movimiento,
+          status,
+          usuario_creador,
+          cuenta_destino:cuentas_financieras!id_cuenta_destino(nombre),
+          entidad_relacionada:entidades!finanzas_ledger_id_entidad_relacionada_fkey(nombre)
+        `)
+        .order('fecha_movimiento', { ascending: false })
 
-      query = query
-        .gte('fecha_movimiento', fechaInicioTs)
-        .lt('fecha_movimiento', fechaFinExclusiveTs)
-    }
+      if (desde && hastaExclusivo) {
+        query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
+      }
 
-    const { data, error } = await query
+      return query
+    }, 'finanzas getMovimientos')
 
-    if (error) {
-      console.error('Error fetching movimientos:', error)
-      return []
-    }
-
-    return ((data as MovimientoQueryRow[] | null) || []).map((row) => ({
+    return data.map((row) => ({
       ...row,
       cuenta_destino: Array.isArray(row.cuenta_destino)
         ? (row.cuenta_destino[0] ?? null)
@@ -154,9 +135,11 @@ function calcularResumen(
     movimientoContableEfectivo(m.status, m.categoria)
   )
 
+  // Regla del Account_Firewall: origen **o** destino admin. Antes aqui se exigia
+  // solo destino, y el mismo periodo daba un ingreso distinto en el General.
   const ingresos = movimientosActivos
     .filter((m) => esIngresoCajaBrutoAdmin(m.tipo_movimiento))
-    .filter((m) => m.id_cuenta_destino != null && adminAccountSet.has(m.id_cuenta_destino))
+    .filter((m) => movimientoTocaCuentaAdmin(m, adminAccountSet))
     .reduce((sum, m) => sum + m.monto, 0)
 
   const egresos = calcularEgresosAdmin(movimientosActivos, adminAccountIds)
@@ -294,9 +277,10 @@ export default async function FinanzasPage() {
   const userRole = (currentUser?.rol?.toUpperCase() || 'INVITADO') as string
   const isAdmin = userRole === 'ADMIN' || userRole === 'ADMINISTRADOR'
   const canMutate = isAdmin || userRole === 'SUB-ADMIN'
+  // Sin `adminAccountIds.length > 0`: si no se resuelve el ADMIN, el firewall
+  // tiene que dejar la vista vacia, no abrirse y mostrar el ledger de la red.
   const aplicarFirewallFinanzasAdmin =
-    adminAccountIds.length > 0 &&
-    (userRole === 'ADMIN' || userRole === 'ADMINISTRADOR' || userRole === 'SUB-ADMIN')
+    userRole === 'ADMIN' || userRole === 'ADMINISTRADOR' || userRole === 'SUB-ADMIN'
 
   try {
     categorias = (await getDesgloseCategorias(

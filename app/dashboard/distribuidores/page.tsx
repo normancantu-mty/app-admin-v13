@@ -15,6 +15,7 @@ import {
   calcularSaldoPorPagarEfectivo
 } from '@/lib/distribuidores-saldos'
 import { getCurrentUser } from '@/lib/auth-utils'
+import { fetchTodasLasFilas } from '@/lib/dashboard-utils'
 import DirectoryTableClient, { type DirectoryRow } from './DirectoryTableClient'
 
 export const revalidate = 0
@@ -192,34 +193,44 @@ async function getFinanzasLedger(
   }
 
   try {
-    let query = serviceRoleClient
-      .from('finanzas_ledger')
-      .select('id, id_entidad_relacionada, id_cuenta_destino, tipo_movimiento, monto, categoria')
-      .in('status', ['ACTIVO', 'APPROVED'])
+    // Paginado: de estas filas salen los saldos del directorio, y PostgREST
+    // corta en 1000 sin decir nada.
+    const data = await fetchTodasLasFilas<{
+      id: string
+      id_entidad_relacionada: string | null
+      id_cuenta_destino: string | null
+      tipo_movimiento: string | null
+      monto: number | null
+      categoria: string | null
+    }>(() => {
+      let query = serviceRoleClient
+        .from('finanzas_ledger')
+        .select('id, id_entidad_relacionada, id_cuenta_destino, tipo_movimiento, monto, categoria')
+        .in('status', ['ACTIVO', 'APPROVED'])
 
-    if (entityIds.length > 0 && accountIds.length > 0) {
-      query = query.or(
-        `id_entidad_relacionada.in.(${entityIds.join(',')}),id_cuenta_destino.in.(${accountIds.join(',')})`
-      )
-    } else if (entityIds.length > 0) {
-      query = query.in('id_entidad_relacionada', entityIds)
-    } else {
-      query = query.in('id_cuenta_destino', accountIds)
-    }
+      if (entityIds.length > 0 && accountIds.length > 0) {
+        query = query.or(
+          `id_entidad_relacionada.in.(${entityIds.join(',')}),id_cuenta_destino.in.(${accountIds.join(',')})`
+        )
+      } else if (entityIds.length > 0) {
+        query = query.in('id_entidad_relacionada', entityIds)
+      } else {
+        query = query.in('id_cuenta_destino', accountIds)
+      }
 
-    const { data, error } = await query
+      return query
+    }, 'directorio getFinanzasLedger')
 
-    if (error) {
-      console.error('Error fetching finanzas_ledger:', error)
-      return []
-    }
-
+    // `categoria` se propaga a proposito: es lo que distingue un ABONO_PENDIENTE
+    // de un abono aprobado. Al perderla aqui, el directorio restaba abonos que
+    // el perfil no restaba, y el mismo saldo daba dos numeros.
     return (data || []).map((item) => ({
       id: item.id,
       id_entidad_relacionada: item.id_entidad_relacionada ?? '',
       id_cuenta_destino: item.id_cuenta_destino ?? null,
       tipo_movimiento: item.tipo_movimiento ?? '',
-      monto: item.monto ?? 0
+      monto: item.monto ?? 0,
+      categoria: item.categoria ?? null
     }))
   } catch (error) {
     console.error('Error in getFinanzasLedger:', error)
@@ -254,7 +265,8 @@ async function mergeDirectorioLegacyFinanzas(
       id_entidad_relacionada: row.id_entidad_relacionada ?? '',
       id_cuenta_destino: row.id_cuenta_destino ?? null,
       tipo_movimiento: row.tipo_movimiento ?? '',
-      monto: row.monto ?? 0
+      monto: row.monto ?? 0,
+      categoria: row.categoria ?? null
     })
   }
   return Array.from(byId.values())
@@ -307,22 +319,22 @@ async function getTickets(
 
   try {
     // Tickets se cargan con service role (no dependen del cliente SSR/cookies).
-    const { data, error } = await serviceRoleClient
-      .from('transacciones_tickets')
-      .select('id_comprador, id_vendedor, total_cobrado_real, monto_base_ingreso, condicion_pago, status')
-      .or(`id_comprador.in.(${entityIds.join(',')}),id_vendedor.in.(${entityIds.join(',')})`)
-
-    if (error) {
-      console.error(
-        'Error fetching tickets:',
-        JSON.stringify(error, null, 2),
-        JSON.stringify(error, Object.getOwnPropertyNames(Object(error)), 2),
-        error.message,
-        error.details,
-        error.hint
-      )
-      return []
-    }
+    // Paginado: de aqui sale el Saldo Pendiente de cada nodo.
+    const data = await fetchTodasLasFilas<{
+      id_comprador: string | null
+      id_vendedor: string | null
+      total_cobrado_real: number | null
+      monto_base_ingreso: number | null
+      condicion_pago: string | null
+      status: string | null
+    }>(
+      () =>
+        serviceRoleClient
+          .from('transacciones_tickets')
+          .select('id_comprador, id_vendedor, total_cobrado_real, monto_base_ingreso, condicion_pago, status')
+          .or(`id_comprador.in.(${entityIds.join(',')}),id_vendedor.in.(${entityIds.join(',')})`),
+      'directorio getTickets'
+    )
 
     return (data || []).map((item) => ({
       id_comprador: item.id_comprador ?? null,

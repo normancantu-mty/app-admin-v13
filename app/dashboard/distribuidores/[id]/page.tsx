@@ -8,7 +8,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { cookies } from 'next/headers'
-import { calcularFechasPorRango } from '@/lib/dashboard-utils'
+import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
 import { getStockPorCubetaPorEntidad } from '@/lib/inventario-auditoria'
 import BotonReportarMerma from '@/app/dashboard/inventario/BotonReportarMerma'
 import {
@@ -39,6 +39,12 @@ interface TransaccionTicket {
   condicion_pago: 'CONTADO' | 'CONCESION'
   status?: string | null
   usuario_creador?: string | null
+}
+
+/** Fila cruda del ticket antes de normalizar `condicion_pago` / `status`. */
+type TransaccionTicketRow = Omit<TransaccionTicket, 'condicion_pago' | 'status'> & {
+  condicion_pago: string | null
+  status: string | null
 }
 
 interface FinanzaLedger {
@@ -194,34 +200,23 @@ async function getTransaccionesTickets(
 
   try {
     // Service role: no pasa por RLS del cliente SSR; fallos aquí suelen ser columnas/select o env.
-    let query = serviceRoleClient
-      .from('transacciones_tickets')
-      .select('id, fecha_transaccion, monto_base_ingreso, total_cobrado_real, id_vendedor, id_comprador, condicion_pago, status, usuario_creador')
-      .or(`id_comprador.in.(${entityIds.join(',')}),id_vendedor.in.(${entityIds.join(',')})`)
-      .order('fecha_transaccion', { ascending: false })
-      .limit(1000)
+    // Paginado y sin `.limit(1000)`: de estos tickets sale el saldo del perfil.
+    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
 
-    if (shouldApplyDateFilter(fechaInicio, fechaFin)) {
-      query = query
-        .gte('fecha_transaccion', fechaInicio!)
-        .lte('fecha_transaccion', fechaFin!)
-    }
+    const rows = await fetchTodasLasFilas<TransaccionTicketRow>(() => {
+      let query = serviceRoleClient
+        .from('transacciones_tickets')
+        .select('id, fecha_transaccion, monto_base_ingreso, total_cobrado_real, id_vendedor, id_comprador, condicion_pago, status, usuario_creador')
+        .or(`id_comprador.in.(${entityIds.join(',')}),id_vendedor.in.(${entityIds.join(',')})`)
+        .order('fecha_transaccion', { ascending: false })
 
-    const { data, error } = await query
+      if (desde && hastaExclusivo) {
+        query = query.gte('fecha_transaccion', desde).lt('fecha_transaccion', hastaExclusivo)
+      }
 
-    if (error) {
-      console.error(
-        'Error fetching transacciones_tickets:',
-        JSON.stringify(error, null, 2),
-        JSON.stringify(error, Object.getOwnPropertyNames(Object(error)), 2),
-        error.message,
-        error.details,
-        error.hint
-      )
-      return []
-    }
+      return query
+    }, 'perfil getTransaccionesTickets')
 
-    const rows = data || []
     return rows.map((row) => ({
       ...row,
       status: row.status ?? 'ACTIVO',
@@ -251,56 +246,53 @@ async function getFinanzasLedger(
   }
 
   try {
-    let query = serviceRoleClient
-      .from('finanzas_ledger')
-      .select(`
-        id,
-        id_entidad_relacionada,
-        id_cuenta_origen,
-        id_cuenta_destino,
-        id_ticket,
-        fecha_movimiento,
-        status,
-        tipo_movimiento,
-        monto,
-        categoria_gasto,
-        categoria,
-        usuario_creador,
-        cuenta_origen:cuentas_financieras!finanzas_ledger_id_cuenta_origen_fkey(nombre),
-        cuenta_destino:cuentas_financieras!finanzas_ledger_id_cuenta_destino_fkey(nombre)
-      `)
-      .in('status', ['ACTIVO', 'APPROVED', 'ANULADO'])
-      .order('fecha_movimiento', { ascending: false })
-      .limit(1000)
+    // Paginado y sin `.limit(1000)`: de estas filas salen los saldos del perfil.
+    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
 
-    if (accountIds.length > 0 && idEntidadRelacionada) {
-      const joinedAccountIds = accountIds.join(',')
-      query = query.or(
-        `id_cuenta_origen.in.(${joinedAccountIds}),id_cuenta_destino.in.(${joinedAccountIds}),id_entidad_relacionada.eq.${idEntidadRelacionada}`
-      )
-    } else if (accountIds.length > 0) {
-      const joinedAccountIds = accountIds.join(',')
-      query = query.or(
-        `id_cuenta_origen.in.(${joinedAccountIds}),id_cuenta_destino.in.(${joinedAccountIds})`
-      )
-    } else if (idEntidadRelacionada) {
-      query = query.eq('id_entidad_relacionada', idEntidadRelacionada)
-    }
+    const data = await fetchTodasLasFilas<FinanzaLedgerQueryRow>(() => {
+      let query = serviceRoleClient
+        .from('finanzas_ledger')
+        .select(`
+          id,
+          id_entidad_relacionada,
+          id_cuenta_origen,
+          id_cuenta_destino,
+          id_ticket,
+          fecha_movimiento,
+          status,
+          tipo_movimiento,
+          monto,
+          categoria_gasto,
+          categoria,
+          usuario_creador,
+          cuenta_origen:cuentas_financieras!finanzas_ledger_id_cuenta_origen_fkey(nombre),
+          cuenta_destino:cuentas_financieras!finanzas_ledger_id_cuenta_destino_fkey(nombre)
+        `)
+        .in('status', ['ACTIVO', 'APPROVED', 'ANULADO'])
+        .order('fecha_movimiento', { ascending: false })
 
-    if (shouldApplyDateFilter(fechaInicio, fechaFin)) {
-      query = query
-        .gte('fecha_movimiento', fechaInicio!)
-        .lte('fecha_movimiento', fechaFin!)
-    }
+      if (accountIds.length > 0 && idEntidadRelacionada) {
+        const joinedAccountIds = accountIds.join(',')
+        query = query.or(
+          `id_cuenta_origen.in.(${joinedAccountIds}),id_cuenta_destino.in.(${joinedAccountIds}),id_entidad_relacionada.eq.${idEntidadRelacionada}`
+        )
+      } else if (accountIds.length > 0) {
+        const joinedAccountIds = accountIds.join(',')
+        query = query.or(
+          `id_cuenta_origen.in.(${joinedAccountIds}),id_cuenta_destino.in.(${joinedAccountIds})`
+        )
+      } else if (idEntidadRelacionada) {
+        query = query.eq('id_entidad_relacionada', idEntidadRelacionada)
+      }
 
-    const { data, error } = await query
+      if (desde && hastaExclusivo) {
+        query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
+      }
 
-    if (error) {
-      console.error('Error fetching finanzas_ledger:', error)
-      return []
-    }
+      return query
+    }, 'perfil getFinanzasLedger')
 
-    const finanzas = ((data as FinanzaLedgerQueryRow[] | null) || []).map((row) => ({
+    const finanzas = data.map((row) => ({
       ...row,
       cuenta_origen: Array.isArray(row.cuenta_origen)
         ? (row.cuenta_origen[0] ?? null)
@@ -317,44 +309,38 @@ async function getFinanzasLedger(
       return finanzas
     }
 
-    let legacyQuery = serviceRoleClient
-      .from('finanzas_ledger')
-      .select(`
-        id,
-        id_entidad_relacionada,
-        id_cuenta_origen,
-        id_cuenta_destino,
-        id_ticket,
-        fecha_movimiento,
-        status,
-        tipo_movimiento,
-        monto,
-        categoria_gasto,
-        categoria,
-        usuario_creador,
-        cuenta_origen:cuentas_financieras!finanzas_ledger_id_cuenta_origen_fkey(nombre),
-        cuenta_destino:cuentas_financieras!finanzas_ledger_id_cuenta_destino_fkey(nombre)
-      `)
-      .in('status', ['ACTIVO', 'APPROVED', 'ANULADO'])
-      .in('id_entidad_relacionada', entityIds)
-      .eq('id_cuenta_destino', adminLegacyAccountId)
-      .order('fecha_movimiento', { ascending: false })
-      .limit(1000)
+    const legacyData = await fetchTodasLasFilas<FinanzaLedgerQueryRow>(() => {
+      let legacyQuery = serviceRoleClient
+        .from('finanzas_ledger')
+        .select(`
+          id,
+          id_entidad_relacionada,
+          id_cuenta_origen,
+          id_cuenta_destino,
+          id_ticket,
+          fecha_movimiento,
+          status,
+          tipo_movimiento,
+          monto,
+          categoria_gasto,
+          categoria,
+          usuario_creador,
+          cuenta_origen:cuentas_financieras!finanzas_ledger_id_cuenta_origen_fkey(nombre),
+          cuenta_destino:cuentas_financieras!finanzas_ledger_id_cuenta_destino_fkey(nombre)
+        `)
+        .in('status', ['ACTIVO', 'APPROVED', 'ANULADO'])
+        .in('id_entidad_relacionada', entityIds)
+        .eq('id_cuenta_destino', adminLegacyAccountId)
+        .order('fecha_movimiento', { ascending: false })
 
-    if (shouldApplyDateFilter(fechaInicio, fechaFin)) {
-      legacyQuery = legacyQuery
-        .gte('fecha_movimiento', fechaInicio!)
-        .lte('fecha_movimiento', fechaFin!)
-    }
+      if (desde && hastaExclusivo) {
+        legacyQuery = legacyQuery.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
+      }
 
-    const { data: legacyData, error: legacyError } = await legacyQuery
+      return legacyQuery
+    }, 'perfil getFinanzasLedger legacy')
 
-    if (legacyError) {
-      console.error('Error fetching legacy admin bridge rows:', legacyError)
-      return finanzas
-    }
-
-    const legacyFinanzas = ((legacyData as FinanzaLedgerQueryRow[] | null) || []).map((row) => ({
+    const legacyFinanzas = legacyData.map((row) => ({
       ...row,
       cuenta_origen: Array.isArray(row.cuenta_origen)
         ? (row.cuenta_origen[0] ?? null)
@@ -609,6 +595,9 @@ function calcularSaldos(
     return fechaMovimiento.getTime() >= inicioLocal.getTime() && fechaMovimiento.getTime() <= finLocal.getTime()
   }
 
+  // `categoria` viaja hasta el calculo: sin ella, `esAbonoPendienteAprobacion`
+  // no puede distinguir un ABONO_PENDIENTE de uno aprobado y el saldo del perfil
+  // resta abonos que todavia no existen contablemente.
   const saldoPendiente = calcularSaldoPendienteInventarioConsignacion(
     entidad,
     tickets,
@@ -616,7 +605,8 @@ function calcularSaldos(
     finanzasContables.map((f) => ({
       tipo_movimiento: f.tipo_movimiento,
       monto: f.monto,
-      id_entidad_relacionada: f.id_entidad_relacionada
+      id_entidad_relacionada: f.id_entidad_relacionada,
+      categoria: f.categoria ?? null
     }))
   )
 

@@ -70,6 +70,13 @@ function getNombreProductoFromDetalle(
 // DATA FETCHING - Server-Side Only
 // ============================================================================
 
+/**
+ * Feed de auditoria en lenguaje natural.
+ *
+ * Las tres consultas excluyen `ANULADO`: un movimiento anulado no ocurrio, y
+ * mostrarlo como si fuera real es la forma mas barata de que alguien crea que
+ * cobro algo que no cobro. (`status` no es NULL en ninguna de las tres tablas.)
+ */
 export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Promise<AuditEvent[]> {
   try {
     // Fetch tickets (sales)
@@ -87,6 +94,7 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
           catalogo_productos(nombre)
         )
       `)
+      .neq('status', 'ANULADO')
       .order('fecha_transaccion', { ascending: false })
       .range(offset, offset + limit - 1)
 
@@ -106,6 +114,7 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
         id_ticket,
         entidad:entidades!id_entidad_relacionada(nombre)
       `)
+      .neq('status', 'ANULADO')
       .order('fecha_movimiento', { ascending: false })
       .range(offset, offset + limit - 1)
 
@@ -123,6 +132,7 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
         cantidad,
         producto:catalogo_productos!id_producto(nombre)
       `)
+      .neq('status', 'ANULADO')
       .order('fecha_movimiento', { ascending: false })
       .range(offset, offset + limit - 1)
 

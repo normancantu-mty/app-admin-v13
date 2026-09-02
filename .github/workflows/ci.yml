@@ -1,0 +1,97 @@
+# CI del ERP — normancantu-mty/app-admin-v13
+#
+# Que corre, y por que en este orden:
+#   1. tsc --noEmit   bloquea. El repo esta en strict mode.
+#   2. npm test       bloquea. Son las pruebas puras de calculo (dinero e inventario).
+#   3. npm run lint   NO bloquea: hay errores preexistentes que se ven pero no detienen.
+#   4. npm run build  solo si hay secretos de Supabase configurados (ver README).
+#
+# Ninguna prueba necesita la llave privada de Supabase. No la agregues aqui:
+# las pruebas son aritmetica pura, sin red y sin base de datos.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Si se empuja dos veces seguidas a la misma rama, cancela la corrida vieja.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Tipos, pruebas y build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar el repo
+        uses: actions/checkout@v4
+
+      - name: Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Tipos (tsc --noEmit)
+        run: npx tsc --noEmit
+
+      # Las pruebas vivas son puras: no piden el fixture `page`, asi que
+      # Playwright no lanza ningun navegador. Por eso no hace falta
+      # `playwright install` y la suite corre sin red ni base de datos.
+      - name: Pruebas
+        run: npm test
+
+      - name: Lint (informativo, no bloquea)
+        continue-on-error: true
+        run: npm run lint
+
+      # El build de Next necesita las dos variables publicas de Supabase.
+      # Se leen de `secrets`, nunca del repo. Este paso solo comprueba si
+      # existen: escribe true/false, jamas el valor.
+      - name: ¿Hay secretos de Supabase?
+        id: secretos
+        env:
+          URL_SUPABASE: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          ANON_SUPABASE: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -n "$URL_SUPABASE" ] && [ -n "$ANON_SUPABASE" ]; then
+            echo "configurados=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configurados=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        if: steps.secretos.outputs.configurados == 'true'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: npm run build
+
+      # Sin secretos no se falla en rojo: se avisa. Los tipos y las pruebas
+      # ya corrieron y esas son las que protegen las cifras.
+      - name: Aviso — build saltado por falta de secretos
+        if: steps.secretos.outputs.configurados != 'true'
+        run: |
+          echo "::warning title=Build saltado::Faltan NEXT_PUBLIC_SUPABASE_URL y/o NEXT_PUBLIC_SUPABASE_ANON_KEY en los secrets del repo. Los tipos y las pruebas si corrieron."
+          {
+            echo "### ⚠️ Build saltado"
+            echo
+            echo "El build de Next necesita dos secretos que hoy no estan configurados:"
+            echo
+            echo '- `NEXT_PUBLIC_SUPABASE_URL`'
+            echo '- `NEXT_PUBLIC_SUPABASE_ANON_KEY`'
+            echo
+            echo "Se agregan en **Settings → Secrets and variables → Actions → New repository secret**."
+            echo "El README lo explica en la seccion *Como correr*."
+            echo
+            echo "**Esto no es un fallo.** \`tsc --noEmit\` y \`npm test\` si corrieron y pasaron."
+          } >> "$GITHUB_STEP_SUMMARY"

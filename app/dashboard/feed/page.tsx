@@ -74,6 +74,8 @@ interface FinanzaRaw extends Omit<Finanza, 'entidad'> {
   entidad: Finanza['entidad'] | Finanza['entidad'][]
 }
 
+// Las tres consultas excluyen `ANULADO`: este feed es una bitacora de lo que
+// paso, no de lo que se capturo y luego se deshizo.
 async function getFeedData() {
   try {
     const supabase = await getSupabaseServer()
@@ -81,12 +83,14 @@ async function getFeedData() {
       supabase
         .from('transacciones_tickets')
         .select('id, fecha_transaccion, total_cobrado_real, condicion_pago, vendedor:entidades!id_vendedor(nombre), comprador:entidades!id_comprador(nombre)')
+        .neq('status', 'ANULADO')
         .limit(20)
         .order('fecha_transaccion', { ascending: false }),
       
       supabase
         .from('finanzas_ledger')
         .select('id, fecha_movimiento, tipo_movimiento, monto, categoria_gasto, entidad:entidades!id_entidad_relacionada(nombre)')
+        .neq('status', 'ANULADO')
         .limit(20)
         .order('fecha_movimiento', { ascending: false }),
       
@@ -94,6 +98,7 @@ async function getFeedData() {
         .from('inventario_ledger')
         .select('id, fecha_movimiento, tipo_movimiento, cantidad, producto:catalogo_productos!id_producto(nombre)')
         .neq('tipo_movimiento', 'SALIDA_VENTA')
+        .neq('status', 'ANULADO')
         .limit(20)
         .order('fecha_movimiento', { ascending: false })
     ])
