@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import RecurrenceFields from './RecurrenceFields'
 import Link from 'next/link'
 import { CATEGORIAS_INGRESOS, CATEGORIAS_EGRESOS } from '@/lib/catalog-constants'
 import { SUBCATEGORIAS } from '@/lib/catalog-constants'
@@ -244,8 +243,9 @@ export default function FinanzaForm({ cuentas }: FinanzaFormProps) {
         />
       </div>
 
-      {/* Campos de Recurrencia */}
-      {tipoMovimiento === 'GASTO_OPERATIVO' && <RecurrenceFields />}
+      {/* TODO ERP-xx: recurrencia real. Los campos es_recurrente / frecuencia /
+          duracion_meses se quitaron de la UI: handleSubmit arma el payload a mano
+          y nunca los enviaba, asi que marcar "gasto recurrente" no hacia nada. */}
 
       {/* Descripción */}
       <div>
