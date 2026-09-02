@@ -1,0 +1,29 @@
+# Fines de linea: una sola verdad, LF, sin importar el sistema operativo.
+#
+# Por que existe este archivo. El arbol de trabajo en Windows guardaba CRLF y el
+# repo LF (`core.autocrlf=true`), asi que `git status` marcaba como modificados
+# decenas de archivos que nadie habia tocado. Eso obligaba a hacer `git add`
+# archivo por archivo en cada sesion, y un `git add .` distraido arrastraba
+# cambios ajenos. Con `text=auto eol=lf` el indice y el arbol coinciden y el
+# ruido desaparece.
+#
+# Normalizado el 2026-09-02 con `git add --renormalize .`, en un commit propio y
+# sin nada mas, para que sea trivial de saltar en un `git blame`.
+
+* text=auto eol=lf
+
+# Binarios: git no les toca un solo byte.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.pdf   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.zip   binary
+*.mp4   binary
