@@ -8,11 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev      # start dev server (Next.js 16 + Turbopack)
 npm run build    # production build
 npm run start    # run production build
-npm run lint     # eslint
+npm run lint     # eslint (20 pre-existing errors + 1 warning; informational in CI)
+npm test         # playwright test — pure arithmetic specs, no browser/network/db
 npx tsc --noEmit # type-check (strict mode is on in tsconfig.json)
 ```
 
-**There is no working test command.** `tests/finanzas.spec.ts` and `test-recurrence-ui.mjs` import `@playwright/test`, but Playwright is not in `package.json` and no `playwright.config.*` exists — they cannot currently run. `test-math-qa.mjs` at the repo root is dead code: it imports `calculateFiscalLeak` from `lib/finance-utils.js`, a function that no longer exists (it was refactored into `calculateReverseTaxes`). Do not treat any of these as a safety net. There is also no CI (`.github/workflows` does not exist). **After changing anything in `lib/finance-utils.ts`, `lib/pricing-waterfall.ts`, `lib/inventario-auditoria.ts`, or `app/actions/*.ts`, manually verify the numbers against Supabase** — `npm run lint` / `tsc` passing means nothing about correctness of money or stock math.
+**`npm test` works, and it is thin.** Playwright is in `package.json`, `playwright.config.ts` exists, and `tests/calculo.spec.ts` holds 8 pure arithmetic tests covering the reverse-tax engine, the inventory deduction cascade, and movement-type classification. They need no browser, network, or database. The e2e in `tests/finanzas.spec.ts` is `test.describe.skip`. CI lives in `.github/workflows/ci.yml` and runs `tsc --noEmit`, `npm test` and `npm run build` on every push and PR (lint runs informational; the build is skipped with a warning when the Supabase secrets are not configured).
+
+**That suite is not a safety net for money math.** It tests pure functions, not the ledger. **After changing anything in `lib/finance-utils.ts`, `lib/pricing-waterfall.ts`, `lib/inventario-auditoria.ts`, or `app/actions/*.ts`, manually verify the numbers against Supabase** — `npm run lint`, `tsc` and `npm test` passing means nothing about correctness of money or stock math. The control figures are `118 · 468 · 61 · $386,201` (see README).
 
 ## Architecture
 
@@ -34,7 +37,7 @@ All mutations funnel through exactly 5 files in `app/actions/`:
 - `auditoria.ts` — physical stock counts / cobranza (cash collection) settlement.
 - `inventario.ts` — production (`registrarProduccionAction`, posts BOM deductions) and reverse logistics.
 - `distribuidores.ts` — entity CRUD.
-- `audit.ts` — annulment / admin bulk-delete (writes to `auditoria_logs`).
+- `audit.ts` — annulment, single and bulk. Despite the name, `bulkDeleteMovements` **annuls**: it loops calling `anularMovimientoFinanzas`, it does not `DELETE`. It writes **no audit trail** (see rule 6).
 
 Every one of these does **sequential inserts across multiple tables** (ticket → detalles → finanzas_ledger → inventario_ledger) with **no SQL transaction** — there is no `BEGIN`/`COMMIT` anywhere in this codebase. On a failure partway through, they call a manual compensating rollback (e.g. `rollbackTicket` in `pos.ts`) that issues sequential `DELETE`s. A crash between inserts leaves a permanent partial commit. Any new multi-table write must follow this same manual-rollback pattern; there is no better primitive available today.
 
@@ -53,16 +56,16 @@ Every one of these does **sequential inserts across multiple tables** (ticket �
 3. **Inventory deduction order** — always burn from cubeta `PAGADO` first, only overflow into `CONSIGNADO` (`calcularDeduccionCascada` in `lib/inventario-auditoria.ts`). Hard-stops with an error if the requested quantity exceeds total physical stock. Never allow negative stock.
 4. **Ledger status contract** — only `'ACTIVO'` and `'ANULADO'` are valid for **new writes** (DB CHECK constraint). `'APPROVED'`/`'PENDING'`/`'REJECTED'` are deprecated legacy values that reads must still tolerate (many queries do `.in('status', ['ACTIVO','APPROVED'])`) but new code must never write them. Pending-approval state is encoded via `categoria: 'ABONO_PENDIENTE'` / `'ABONO_REAL'`, not via `status`.
 5. **LOC profile visibility** — entities with `rol === 'LOC'` must never see "Total Ganado" or "Saldo por Pagar (Efectivo)" — they only track physical/consignment debt, not liquid commission math (`showComisionYsaldoEfectivo` in `app/dashboard/distribuidores/[id]/page.tsx`).
-6. **Annulment, not deletion** — user-facing "delete" of a ledger row must transition `status → 'ANULADO'`, never `DELETE`, except the explicit ADMIN bulk-delete path in `app/actions/audit.ts`, which logs to `auditoria_logs` first.
+6. **Annulment, not deletion** — user-facing "delete" of a ledger row must transition `status → 'ANULADO'`, never `DELETE`. This holds with no exception in `app/actions/audit.ts`: the ADMIN bulk path (`bulkDeleteMovements`) annuls row by row. The physical `DELETE`s that do exist are elsewhere — `eliminarEntidadAction` in `app/actions/distribuidores.ts` and `rollbackTicket` in `app/actions/pos.ts`. **Pending: there is no audit trail of who annulled what.** A table named `auditoria_logs` is referenced by older docs but **does not exist** and no code writes it (`grep -rn "auditoria_logs"` returns zero); if you need the trail, it has to be built.
 7. **Rounding law** — the Admin/matriz portion of any split always rounds **up** (`Math.ceil`), the node/distributor portion always rounds **down** (`Math.floor`) or is computed as the exact complement of the total, keeping splits integer-safe and complementary.
 
 ## Known risks / fragile areas
 
 - `procesarVentaPOS` in `app/actions/pos.ts` (~660 lines) is a single function doing auth, validation, stock-cascade calculation, two distinct commission engines (`calcularComisionConRedondeo` vs. `calcularComisionPasiva`, which differ only by `Math.ceil` vs. `Math.floor`), and four table writes. Logic (fresnillo detection, reverse-tax call, rounding rules, `notasConIdTicket` injection) is duplicated between `pos.ts` and `auditoria.ts` rather than shared — tax/commission rule changes must be mirrored in both or you get drift (this has happened before, see `BACKLOG.md` TKT-034/TKT-035).
 - `id_nodo_padre` vs `id_padre` are both still read for parent resolution ("puente legacy"). Don't remove either without grepping all usages first.
-- `lib/inventario-auditoria.ts` uses `SUPABASE_SERVICE_ROLE_KEY` to bypass RLS for stock reads. No explicit RLS policy was found referenced anywhere in `app`/`lib`, so real authorization is enforced by scattered `if (rol !== 'ADMIN')` checks inside server actions — treat every one of those checks as load-bearing security, not a UI nicety.
+- `lib/inventario-auditoria.ts` uses `SUPABASE_SERVICE_ROLE_KEY` to bypass RLS for stock reads. RLS **is now on** in all 9 tables (49 policies, all `TO authenticated`; see `supabase/migrations/20260902021000_habilitar_rls_y_politicas.sql` and the README). There is no `FORCE ROW LEVEL SECURITY`, so the service-role reads still pass through by design. RLS is the second line of defence, not the first: the scattered `if (rol !== 'ADMIN')` checks inside server actions still carry real authorization — treat every one of them as load-bearing security, not a UI nicety.
 - Fiscal/geo constants are hardcoded and scattered rather than centralized: `TASA_IEPS = 0.53`, `TASA_IVA = 0.16` in `lib/finance-utils.ts`; `ZONA_PRECIO_CALLE = 'Zacatecas'` in `app/actions/auditoria.ts`.
-- `AGENTS.md` describes an aspirational multi-agent LangGraph/E2B/Playwright swarm architecture that does **not** actually exist in this repo (no such dependencies, no MCP servers configured, no Playwright installed). Don't treat it as ground truth about actual tooling — it's aspirational narrative, not infrastructure documentation.
+- `AGENTS.md` describes an aspirational multi-agent LangGraph/E2B/Playwright swarm architecture that does **not** actually exist in this repo (no such dependencies, no MCP servers configured; Playwright exists but only as a plain test runner, not as the agent tooling that file describes). Don't treat it as ground truth about actual tooling — it's aspirational narrative, not infrastructure documentation.
 - Stray root-level files/folders with broken names (e.g. `(Parte`, `And the buttons section`, `Now for the bulk delete state`, `Lee`, `FIX`) are debris from prior AI agent runs, not intentional project structure.
 
 ## Next.js 15/16 gotchas specific to this repo
