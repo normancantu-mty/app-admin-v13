@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { cookies } from 'next/headers'
-import { calcularFechasPorRango } from '@/lib/dashboard-utils'
+import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
 import LogisticaInversaModal from './LogisticaInversaModal'
 import MovimientosTable from './MovimientosTable'
@@ -25,6 +25,8 @@ async function getSupabaseServer() {
   )
 }
 
+const ZONA_PRECIO_REFERENCIA = 'Zacatecas'
+
 interface Producto {
   id: string
   sku: string
@@ -32,7 +34,6 @@ interface Producto {
   tipo: 'INSUMO' | 'TERMINADO'
   unidad_medida: string
   costo_unitario: number
-  listas_precios?: { precio_final: number }[] | null
 }
 
 interface MovimientoInventario {
@@ -69,7 +70,7 @@ async function getCatalogoProductos(): Promise<Producto[]> {
     const supabase = await getSupabaseServer()
     const { data, error } = await supabase
       .from('catalogo_productos')
-      .select('*, listas_precios(precio_final)')
+      .select('*')
       .order('nombre', { ascending: true })
 
     if (error) {
@@ -90,45 +91,36 @@ async function getInventarioLedger(
 ): Promise<MovimientoInventario[]> {
   try {
     const supabase = await getSupabaseServer()
-    let query = supabase
-      .from('inventario_ledger')
-      .select(`
-        id,
-        id_producto,
-        status,
-        cubeta,
-        id_entidad_destino,
-        id_entidad_origen,
-        tipo_movimiento,
-        cantidad,
-        fecha_movimiento,
-        usuario_creador,
-        entidad_destino:entidades!inventario_ledger_id_entidad_destino_fkey(nombre, rol),
-        entidad_origen:entidades!inventario_ledger_id_entidad_origen_fkey(nombre, rol)
-      `)
-      .order('fecha_movimiento', { ascending: false })
-      .limit(1000)
+    // Rango [inicio, fin+1dia) anclado a America/Mexico_City, igual que el resto
+    // de las pantallas. Sin `.limit(1000)`: de este ledger sale el stock, y un
+    // stock truncado no da error, da un numero falso.
+    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
 
-    if (fechaInicio && fechaFin) {
-      // Usa fin de día inclusivo para no ocultar movimientos del día actual.
-      const fechaInicioTs = `${fechaInicio}T00:00:00.000Z`
-      const finMasUnDia = new Date(`${fechaFin}T00:00:00.000Z`)
-      finMasUnDia.setUTCDate(finMasUnDia.getUTCDate() + 1)
-      const fechaFinExclusiveTs = finMasUnDia.toISOString()
+    return await fetchTodasLasFilas<MovimientoInventario>(() => {
+      let query = supabase
+        .from('inventario_ledger')
+        .select(`
+          id,
+          id_producto,
+          status,
+          cubeta,
+          id_entidad_destino,
+          id_entidad_origen,
+          tipo_movimiento,
+          cantidad,
+          fecha_movimiento,
+          usuario_creador,
+          entidad_destino:entidades!inventario_ledger_id_entidad_destino_fkey(nombre, rol),
+          entidad_origen:entidades!inventario_ledger_id_entidad_origen_fkey(nombre, rol)
+        `)
+        .order('fecha_movimiento', { ascending: false })
 
-      query = query
-        .gte('fecha_movimiento', fechaInicioTs)
-        .lt('fecha_movimiento', fechaFinExclusiveTs)
-    }
+      if (desde && hastaExclusivo) {
+        query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
+      }
 
-    const { data, error } = await query
-
-    if (error) {
-      console.error('Error fetching inventario_ledger:', error)
-      return []
-    }
-
-    return data || []
+      return query
+    }, 'getInventarioLedger')
   } catch (error) {
     console.error('Error in getInventarioLedger:', error)
     return []
@@ -180,13 +172,20 @@ async function getDistribuidores(): Promise<Distribuidor[]> {
   }
 }
 
+/**
+ * Precio de lista de referencia por producto: el mas alto de la zona
+ * `Zacatecas`. Es una eleccion, pero es UNA: antes esta pantalla valuaba el
+ * mismo inventario con dos precios distintos, y el otro era
+ * `listas_precios[0]`, o sea la primera fila que devolviera Postgres, de
+ * cualquier zona y sin orden garantizado.
+ */
 async function getPreciosRetailPorProducto(): Promise<Map<string, number>> {
   try {
     const supabase = await getSupabaseServer()
     const { data, error } = await supabase
       .from('listas_precios')
       .select('id_producto, precio_final, zona')
-      .eq('zona', 'Zacatecas')
+      .eq('zona', ZONA_PRECIO_REFERENCIA)
 
     if (error) {
       console.error('Error fetching listas_precios:', error)
@@ -208,6 +207,14 @@ async function getPreciosRetailPorProducto(): Promise<Map<string, number>> {
     console.error('Error in getPreciosRetailPorProducto:', error)
     return new Map()
   }
+}
+
+/** Unico precio con el que esta pantalla valua una botella. */
+function precioReferencia(
+  producto: Pick<Producto, 'id' | 'costo_unitario'>,
+  preciosRetailPorProducto: Map<string, number>
+): number {
+  return preciosRetailPorProducto.get(producto.id) ?? producto.costo_unitario ?? 0
 }
 
 function calcularStockActual(productos: Producto[], movimientos: MovimientoInventario[]): ProductoConStock[] {
@@ -265,8 +272,7 @@ function calcularKPIs(
   const valorComercialInventario = productosConStock
     .filter((producto) => producto.tipo === 'TERMINADO')
     .reduce((sum, producto) => {
-      const precioRetail = preciosRetailPorProducto.get(producto.id) ?? producto.costo_unitario
-      return sum + (producto.stock_actual * precioRetail)
+      return sum + producto.stock_actual * precioReferencia(producto, preciosRetailPorProducto)
     }, 0)
   
   return {
@@ -336,9 +342,7 @@ export default async function InventarioPage() {
           return acc;
         }, 0);
 
-        const precioFinal = producto.listas_precios?.[0]?.precio_final || 
-                           preciosRetailPorProducto.get(producto.id) || 
-                           0;
+        const precioFinal = precioReferencia(producto, preciosRetailPorProducto);
         
         return { 
           ...producto, 

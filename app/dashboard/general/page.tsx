@@ -1,6 +1,14 @@
 import Link from 'next/link'
 import AuditFeed from '@/components/dashboard/AuditFeed'
-import { getFinanzasDashboard, getLiderazgoRed, getAspectosUrgentes, calcularFechasPorRango, getLiquidezPorCuenta } from '@/lib/dashboard-utils'
+import {
+  getFinanzasDashboard,
+  getLiderazgoRed,
+  getAspectosUrgentes,
+  calcularFechasPorRango,
+  getLiquidezPorCuenta,
+  DIAS_SEMAFORO_AMARILLO,
+  DIAS_SEMAFORO_ROJO
+} from '@/lib/dashboard-utils'
 import { getCurrentUser } from '@/lib/auth-utils'
 
 function formatCurrency(amount: number): string {
@@ -10,9 +18,12 @@ function formatCurrency(amount: number): string {
   }).format(amount)
 }
 
+// Mismo umbral que el directorio (`getSemaforoMovimiento`): 7 / 14 dias.
+// Antes esta pantalla usaba 15 / 30 y pintaba de verde a un nodo que el
+// directorio ya tenia en rojo, el mismo dia.
 function getTrafficLightColor(dias: number): string {
-  if (dias > 30) return 'bg-red-500'
-  if (dias > 15) return 'bg-yellow-500'
+  if (dias > DIAS_SEMAFORO_ROJO) return 'bg-red-500'
+  if (dias >= DIAS_SEMAFORO_AMARILLO) return 'bg-yellow-500'
   return 'bg-green-500'
 }
 
@@ -27,13 +38,15 @@ export default async function DashboardGeneralPage() {
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
-  const [finanzasPeriodo, liderazgoHistorico, urgentes, currentUser, liquidezHistorica] = await Promise.all([
+  // `getLiderazgoRed` se calcula UNA vez y se pasa a `getAspectosUrgentes`:
+  // antes corria dos veces por carga y se traia tickets y ledger completos 2x.
+  const [finanzasPeriodo, liderazgoHistorico, currentUser, liquidezHistorica] = await Promise.all([
     getFinanzasDashboard(fechaInicio, fechaFin),
     getLiderazgoRed(),
-    getAspectosUrgentes(),
     getCurrentUser(),
     getLiquidezPorCuenta()
   ])
+  const urgentes = await getAspectosUrgentes(liderazgoHistorico)
 
   const canMutate = currentUser?.rol !== 'SOCIO'
 
@@ -186,7 +199,7 @@ export default async function DashboardGeneralPage() {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entidad</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ingreso Neto Empresa</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Deuda Actual</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Saldo Pendiente (consignación)</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Última Actividad</th>
                   </tr>
                 </thead>
@@ -206,7 +219,7 @@ export default async function DashboardGeneralPage() {
                         {formatCurrency(nodo.ingresoNetoEmpresa)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatCurrency(nodo.deudaActual)}
+                        {formatCurrency(nodo.saldoPendiente)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {nodo.diasSinActividad < 999 ? `Hace ${nodo.diasSinActividad} días` : 'Sin actividad'}
@@ -233,8 +246,8 @@ export default async function DashboardGeneralPage() {
                       <span className="font-semibold text-green-600">{formatCurrency(nodo.ingresoNetoEmpresa)}</span>
                     </p>
                     <p className="flex justify-between gap-2">
-                      <span className="font-medium text-gray-500">Deuda Actual:</span>
-                      <span className="text-gray-900">{formatCurrency(nodo.deudaActual)}</span>
+                      <span className="font-medium text-gray-500">Saldo Pendiente (consignación):</span>
+                      <span className="text-gray-900">{formatCurrency(nodo.saldoPendiente)}</span>
                     </p>
                     <p className="flex justify-between gap-2">
                       <span className="font-medium text-gray-500">Última Actividad:</span>
@@ -260,7 +273,7 @@ export default async function DashboardGeneralPage() {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entidad</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ingreso Neto Empresa</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Deuda Actual</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Saldo Pendiente (consignación)</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Última Actividad</th>
                   </tr>
                 </thead>
@@ -280,7 +293,7 @@ export default async function DashboardGeneralPage() {
                         {formatCurrency(nodo.ingresoNetoEmpresa)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatCurrency(nodo.deudaActual)}
+                        {formatCurrency(nodo.saldoPendiente)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {nodo.diasSinActividad < 999 ? `Hace ${nodo.diasSinActividad} días` : 'Sin actividad'}
@@ -309,8 +322,8 @@ export default async function DashboardGeneralPage() {
                       <span className="font-semibold text-green-600">{formatCurrency(nodo.ingresoNetoEmpresa)}</span>
                     </p>
                     <p className="flex justify-between gap-2">
-                      <span className="font-medium text-gray-500">Deuda Actual:</span>
-                      <span className="text-gray-900">{formatCurrency(nodo.deudaActual)}</span>
+                      <span className="font-medium text-gray-500">Saldo Pendiente (consignación):</span>
+                      <span className="text-gray-900">{formatCurrency(nodo.saldoPendiente)}</span>
                     </p>
                     <p className="flex justify-between gap-2">
                       <span className="font-medium text-gray-500">Última Actividad:</span>
@@ -343,7 +356,7 @@ export default async function DashboardGeneralPage() {
                       <div key={semaforo.id} className="p-2 bg-red-50 rounded">
                         <p className="text-xs font-medium text-red-900">{semaforo.nombre}</p>
                         <p className="text-xs text-red-700">{semaforo.diasSinActividad} días sin actividad</p>
-                        <p className="text-xs text-red-600 font-semibold">Deuda: {formatCurrency(semaforo.deudaActual)}</p>
+                        <p className="text-xs text-red-600 font-semibold">Consignación: {formatCurrency(semaforo.saldoPendiente)}</p>
                       </div>
                     ))}
                   </div>
@@ -359,7 +372,7 @@ export default async function DashboardGeneralPage() {
                       <div key={semaforo.id} className="p-2 bg-yellow-50 rounded">
                         <p className="text-xs font-medium text-yellow-900">{semaforo.nombre}</p>
                         <p className="text-xs text-yellow-700">{semaforo.diasSinActividad} días sin actividad</p>
-                        <p className="text-xs text-yellow-600 font-semibold">Deuda: {formatCurrency(semaforo.deudaActual)}</p>
+                        <p className="text-xs text-yellow-600 font-semibold">Consignación: {formatCurrency(semaforo.saldoPendiente)}</p>
                       </div>
                     ))}
                   </div>
