@@ -102,9 +102,9 @@ versionado:**
 > prueba la necesita.
 
 ```bash
-npm run dev        # servidor de desarrollo
+npm run dev        # servidor de desarrollo (webpack — ver nota abajo)
 npm test           # pruebas (aritmetica pura: sin red, sin base, sin navegador)
-npm run build      # build de produccion
+npm run build      # build de produccion (Turbopack, el default de Next 16)
 npx tsc --noEmit   # verificacion de tipos (strict mode)
 npm run lint       # eslint (hoy con errores preexistentes conocidos)
 ```
@@ -113,6 +113,30 @@ npm run lint       # eslint (hoy con errores preexistentes conocidos)
 la cascada de deduccion de inventario y la clasificacion de tipos de movimiento. No piden
 navegador, asi que no hace falta `playwright install`. Los e2e que si lo necesitan estan
 marcados con `test.describe.skip`.
+
+### Por que `dev` corre con webpack y no con Turbopack
+
+`npm run dev` lleva `--webpack` a proposito. Con el Turbopack de Next 16.1.6 (el default), el
+servidor de desarrollo **arranca pero cualquier pagina responde 500** en esta maquina Windows:
+
+```
+TurbopackInternalError: Failed to write app endpoint /login/page
+- [project]/app/globals.css [app-client] (css)
+- Execution of PostCssTransformedAsset::process failed
+- creating new process
+- node process exited before we could connect to it with exit code: 0xc0000142
+```
+
+Turbopack levanta `app/globals.css` lanzando un **proceso hijo de node** para PostCSS
+(`.next/dev/build/postcss.js`, que es como se aplica Tailwind v4). Ese hijo muere al arrancar con
+`0xc0000142` (`STATUS_DLL_INIT_FAILED` de Windows) antes de conectarse. **No es un error del
+codigo del proyecto:** el mismo `postcss.js` corre bien lanzado a mano, `npm run build` pasa
+completo (Turbopack incluido, porque el build no usa ese worker persistente) y con webpack —que
+procesa PostCSS en el mismo proceso, sin lanzar hijos— todas las paginas cargan.
+
+El costo es que el dev server es mas lento. **Es un rodeo, no un arreglo de raiz.** Para volver a
+probar Turbopack despues de actualizar Next: `npm run dev:turbo`. Si `/login` da 200, el rodeo
+sobra y `dev` puede regresar a `next dev`.
 
 ### CI
 
@@ -144,10 +168,18 @@ guardados aparte; sigue esa costumbre.
 ### La regla de oro
 
 > **Despues de cada cambio, las cifras historicas de control deben seguir dando
-> `118 · 468 · 61 · $386,201`.**
+> `84 · 468 · 61 · $386,201`.**
 
-Es decir: `finanzas_ledger` = **118** filas, `inventario_ledger` = **468** filas,
-tickets en estado `ACTIVO` = **61**, ventas activas acumuladas = **$386,201**.
+| Metrica | Valor |
+|---|---|
+| `finanzas_ledger` con `status='ACTIVO'` | **84** |
+| `inventario_ledger` | **468** |
+| tickets en estado `ACTIVO` | **61** |
+| suma de `total_cobrado_real` de tickets activos | **$386,201.00** |
+
+**Se cuentan las filas activas y no el total de `finanzas_ledger` porque las pruebas manuales
+dejan filas anuladas: el total sube solo, sin que nada este mal, y una cifra que se mueve por si
+sola no sirve para detectar un error.**
 
 Estas cuatro cifras son el sismografo del sistema. Como **ningun saldo se guarda**, un error de
 agregacion no rompe nada visible: no hay excepcion, no hay pantalla en blanco, no hay prueba en

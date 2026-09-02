@@ -15,7 +15,7 @@ npx tsc --noEmit # type-check (strict mode is on in tsconfig.json)
 
 **`npm test` works, and it is thin.** Playwright is in `package.json`, `playwright.config.ts` exists, and `tests/calculo.spec.ts` holds 8 pure arithmetic tests covering the reverse-tax engine, the inventory deduction cascade, and movement-type classification. They need no browser, network, or database. The e2e in `tests/finanzas.spec.ts` is `test.describe.skip`. CI lives in `.github/workflows/ci.yml` and runs `tsc --noEmit`, `npm test` and `npm run build` on every push and PR (lint runs informational; the build is skipped with a warning when the Supabase secrets are not configured).
 
-**That suite is not a safety net for money math.** It tests pure functions, not the ledger. **After changing anything in `lib/finance-utils.ts`, `lib/pricing-waterfall.ts`, `lib/inventario-auditoria.ts`, or `app/actions/*.ts`, manually verify the numbers against Supabase** — `npm run lint`, `tsc` and `npm test` passing means nothing about correctness of money or stock math. The control figures are `118 · 468 · 61 · $386,201` (see README).
+**That suite is not a safety net for money math.** It tests pure functions, not the ledger. **After changing anything in `lib/finance-utils.ts`, `lib/pricing-waterfall.ts`, `lib/inventario-auditoria.ts`, or `app/actions/*.ts`, manually verify the numbers against Supabase** — `npm run lint`, `tsc` and `npm test` passing means nothing about correctness of money or stock math. The control figures are `84 · 468 · 61 · $386,201` — `finanzas_ledger` rows with `status='ACTIVO'` (**not** the table total, which climbs on its own as manual testing leaves annulled rows behind), `inventario_ledger` rows, `ACTIVO` tickets, and the sum of `total_cobrado_real` over those tickets (see README).
 
 ## Architecture
 
@@ -45,9 +45,11 @@ Every one of these does **sequential inserts across multiple tables** (ticket �
 
 `lib/dashboard-utils.ts` (~850 lines) is the KPI/aggregation engine for all dashboards. It replays the full ledger history on every load (no pagination yet) and implements the **Account_Firewall** (see below).
 
-### Ground-truth docs
+### Reference docs
 
-`docs/SYSTEM_MANIFEST_V13.json` and `docs/FRONTEND_ARCHITECTURE_V13.md` are self-maintained architecture docs that were spot-checked against the live code and found accurate as of this writing. Prefer reading them over re-deriving business logic from scratch — but verify against the actual file when precision matters, since docs can drift.
+`docs/MAPA_ERP_v001_2026-09-01.md` is the verified map of the system — start there when you need the shape of the codebase rather than re-deriving it from scratch. It records what was checked against the live code and when, so prefer it over any other document in `docs/`. Still verify against the actual file when precision matters: a map drifts as soon as the code moves.
+
+The V13 documents (`SYSTEM_MANIFEST_V13.json`, `FRONTEND_ARCHITECTURE_V13.md`, `DATABASE_SCHEMA_DETAILED.sql`) now live in `docs/_historico/`. They are **August 2026 snapshots, unmaintained, and do not describe the current system** — keep them for archaeology, don't trust them for behavior.
 
 ## Critical business rules (never violate silently)
 

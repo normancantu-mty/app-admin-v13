@@ -1,5 +1,6 @@
 {
-  "MANIFEST_VERSION": "V13",
+  "_AVISO": "Documento historico de agosto de 2026. No describe el sistema actual y no se mantiene. La fuente verificada es docs/MAPA_ERP_v001_2026-09-01.md.",
+  "MANIFEST_VERSION": "V13.6",
   "GENERATED_AT": "2026-05-19",
   "SCOPE": {
     "directories_scanned": [
@@ -166,6 +167,236 @@
         "app/actions/auditoria.ts",
         "app/actions/pos.ts",
         "app/dashboard/distribuidores/[id]/page.tsx"
+      ]
+    },
+    "catalog_and_pricing_v13_5": {
+      "ground_truth_source": "Supabase production catalog (2026-05-19 snapshot) + lib/pricing-waterfall.ts",
+      "catalog_constants_file": {
+        "path": "lib/catalog-constants.ts",
+        "scope": "Finance ledger category/subcategory enums (CATEGORIAS_INGRESOS, CATEGORIAS_EGRESOS, SUBCATEGORIAS) plus pasta SKU reference constants (PASTA_PACKAGING_SKUS, PASTA_TERMINADO_SKU). Zone prices remain in listas_precios DB rows.",
+        "insumo_subcategories": [
+          "BOTELLAS",
+          "ETIQUETAS",
+          "TAPAS",
+          "LIQUIDOS",
+          "EMPAQUE"
+        ],
+        "pasta_catalog_constants": {
+          "PASTA_PACKAGING_SKUS": [
+            "Etiqueta-pasta",
+            "Bolsa-pasta"
+          ],
+          "PASTA_TERMINADO_SKU": "B-MVP-Pasta2kg",
+          "packaging_tipo": "INSUMO",
+          "note": "Packaging stored as INSUMO (not MATERIA_PRIMA) to preserve frontend tipo filters."
+        }
+      },
+      "catalog_size": {
+        "total_skus": 17,
+        "by_tipo": {
+          "INSUMO": 13,
+          "TERMINADO": 4
+        },
+        "finished_goods_skus": [
+          "plata-50ml",
+          "plata-250ml",
+          "plata-750ml",
+          "B-MVP-Pasta2kg"
+        ],
+        "insumo_skus_sample": [
+          "botella-50-vacia",
+          "botella-250-vacia",
+          "botella-750-vacia",
+          "tapa50",
+          "tapa250",
+          "corcho",
+          "etiqueta-50",
+          "etiqueta-250",
+          "etiqueta-750",
+          "lamina-plata",
+          "led",
+          "Etiqueta-pasta",
+          "Bolsa-pasta"
+        ]
+      },
+      "pricing_zones": {
+        "canonical_values": [
+          "Zacatecas",
+          "Foraneo"
+        ],
+        "entity_registration": "entidades.zona defaults to 'Zacatecas'; nuevo distribuidor form exposes Zacatecas | Foráneo (stored as 'Foraneo').",
+        "price_matrix_rows_per_zone": 4,
+        "retail_price_matrix_mxn": {
+          "plata-50ml": {
+            "Zacatecas": 69,
+            "Foraneo": 99
+          },
+          "plata-250ml": {
+            "Zacatecas": 179,
+            "Foraneo": 199
+          },
+          "plata-750ml": {
+            "Zacatecas": 599,
+            "Foraneo": 799
+          },
+          "B-MVP-Pasta2kg": {
+            "Zacatecas": 130,
+            "Foraneo": 130
+          }
+        },
+        "price_update_migration": "supabase/update-catalog-pasta-recipe.sql (Section 1 — Plata repricing; Section 4 — Pasta zone prices)",
+        "zone_resolution_by_surface": {
+          "POS": "entidades.zona of idComprador → listas_precios.find(p => p.zona === zonaComprador). Fallback: 'Zacatecas'.",
+          "auditoria_cobranza": "Hard-coded ZONA_PRECIO_CALLE = 'Zacatecas' (street price for physical audit settlement).",
+          "inventario_valor_comercial_kpi": "getPreciosRetailPorProducto filters listas_precios.eq('zona','Zacatecas') — valuation anchor, not buyer zone.",
+          "catalogo_waterfall": "Uses first nested listas_precios row (no zone filter in query); waterfall math uses precio_publico from that row."
+        }
+      },
+      "pricing_waterfall": {
+        "source_file": "lib/pricing-waterfall.ts",
+        "inputs": [
+          "producto.listas_precios[0].precio_final (precioPublico)",
+          "entidad.comision_base | comision_base_local",
+          "entidad.aplica_redondeo_costo",
+          "simulacionFiscal (LIBRE | FULL_TAX | IVA_ONLY)",
+          "localEntidad (optional network simulation target)"
+        ],
+        "reverse_tax_step": "calculateReverseTaxes(precioPublico, fiscalidad) → montoBase, IVA, IEPS",
+        "cost_rounding": "tuCostoNeto = aplicaRedondeoCosto ? Math.ceil(costoCrudo) : costoCrudo",
+        "admin_path": "gananciaNeta = baseIngreso - costo_unitario; optional precioLocal when localEntidad provided",
+        "dst_loc_path": "gananciaNeta = baseIngreso * comisionPropia; tuCosto = baseIngreso - gananciaNeta (rounded)",
+        "dual_pricing_table_future": {
+          "migration": "supabase/entidad-precios.sql",
+          "table": "entidad_precios",
+          "columns": [
+            "precio_efectivo",
+            "precio_facturado"
+          ],
+          "note": "Per-entity agreed prices by fiscality; not yet wired into pricing-waterfall.ts (commission waterfall remains primary)."
+        }
+      }
+    },
+    "bom_production_v13_5": {
+      "table": "recetas_produccion",
+      "ground_truth_source": "Supabase production BOM (2026-05-19 snapshot) + supabase/update-catalog-pasta-recipe.sql",
+      "finished_goods_with_bom": 4,
+      "total_bom_lines": 15,
+      "bom_models": {
+        "full_assembly_plata": "Destilado Plata line — bottle + label + cap/cork + lamina (+ LED on 750ml). Fractional lamina-plata on 50/250ml.",
+        "packaging_only_pasta": "Pasta-Guajillo-2kg (B-MVP-Pasta2kg) — packaging-only BOM: deducts label + bag INSUMOs only; bulk pasta mass is NOT in recetas_produccion."
+      },
+      "recipes": {
+        "plata-50ml": [
+          {
+            "insumo": "botella-50-vacia",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "etiqueta-50",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "tapa50",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "lamina-plata",
+            "cantidad_requerida": 0.0666
+          }
+        ],
+        "plata-250ml": [
+          {
+            "insumo": "botella-250-vacia",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "etiqueta-250",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "tapa250",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "lamina-plata",
+            "cantidad_requerida": 0.3333
+          }
+        ],
+        "plata-750ml": [
+          {
+            "insumo": "botella-750-vacia",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "etiqueta-750",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "corcho",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "lamina-plata",
+            "cantidad_requerida": 1
+          },
+          {
+            "insumo": "led",
+            "cantidad_requerida": 1
+          }
+        ],
+        "B-MVP-Pasta2kg": [
+          {
+            "insumo": "Etiqueta-pasta",
+            "cantidad_requerida": 1,
+            "insumo_tipo": "INSUMO"
+          },
+          {
+            "insumo": "Bolsa-pasta",
+            "cantidad_requerida": 1,
+            "insumo_tipo": "INSUMO"
+          }
+        ]
+      },
+      "packaging_only_bom_rules_v13_6": {
+        "migration": "supabase/update-catalog-pasta-recipe.sql (Section 5)",
+        "target_sku": "B-MVP-Pasta2kg",
+        "target_nombre": "Pasta-Guajillo-2kg",
+        "insumo_skus": [
+          "Etiqueta-pasta",
+          "Bolsa-pasta"
+        ],
+        "insumo_tipo_contract": "INSUMO (catalogo_productos_tipo_check unchanged — no MATERIA_PRIMA)",
+        "recipe_idempotency": "DELETE existing recetas for B-MVP-Pasta2kg then INSERT 2 lines (safe re-run)",
+        "deduction_semantics": "Same registrarProduccionAction contract: PRODUCCION + TRASPASO per receta line from ADMIN PAGADO stock",
+        "frontend_compatibility": "Packaging INSUMOs appear in Compra Insumos and totalInsumos KPI; constants in lib/catalog-constants.ts PASTA_PACKAGING_SKUS"
+      },
+      "posting_rules": {
+        "action": "registrarProduccionAction",
+        "guard": "producto.tipo === 'TERMINADO' AND recetas.length > 0",
+        "inventory_owner": "ADMIN entity (id_entidad_destino for PRODUCCION; id_entidad_origen for BOM TRASPASO)",
+        "cubeta": "PAGADO",
+        "status": "ACTIVO",
+        "ledger_rows": [
+          {
+            "tipo_movimiento": "PRODUCCION",
+            "cantidad": "cantidadProduccion",
+            "id_entidad_destino": "adminId"
+          },
+          {
+            "tipo_movimiento": "TRASPASO",
+            "cantidad": "cantidad_requerida * cantidadProduccion",
+            "id_entidad_origen": "adminId",
+            "per": "each receta line"
+          }
+        ],
+        "ui_preview": "app/dashboard/inventario/nuevo/page.tsx loads recetas_produccion and shows insumo consumption table before submit."
+      },
+      "evidence_files": [
+        "app/actions/inventario.ts",
+        "app/dashboard/inventario/nuevo/page.tsx",
+        "types/database.ts",
+        "supabase/update-catalog-pasta-recipe.sql",
+        "lib/catalog-constants.ts"
       ]
     }
   },
@@ -640,6 +871,7 @@
           "valorComercialInventario": "sum(stock_actual * precioRetailZacatecas|maxPorProducto, fallback costo_unitario) para TERMINADO"
         },
         "zacatecas_filter": "getPreciosRetailPorProducto consulta listas_precios.eq('zona','Zacatecas').",
+        "foraneo_zone_pos": "POS resuelve entidades.zona del comprador y selecciona fila listas_precios coincidente (Zacatecas | Foraneo).",
         "terminado_filter": "TERMINADO es obligatorio para botellas/pastas y valor comercial."
       },
       "catalogo_and_pos_terminado_filters": [
@@ -648,7 +880,12 @@
         "app/dashboard/distribuidores/[id]/devolucion/page.tsx filtra TERMINADO.",
         "app/actions/inventario.ts bloquea produccion si producto.tipo !== 'TERMINADO'."
       ],
-      "note_on_requested_filter": "No se detecta un KPI global que filtre simultaneamente por 'TERMINADO' y 'Zacatecas' fuera del flujo de valorizacion de inventario y catalogo/producto."
+      "catalogo_and_bom_ui": {
+        "catalogo_page": "app/dashboard/catalogo/page.tsx — tabla TERMINADO + columnas calculateWaterfall; simulador fiscalidad (LIBRE/FULL_TAX/IVA_ONLY); localId opcional para simulacion de red ADMIN/DST.",
+        "produccion_page": "app/dashboard/inventario/nuevo/page.tsx — preview BOM antes de registrarProduccionAction; selector muestra [sku] - nombre.",
+        "pos_zone_pricing": "app/pos/page.tsx — getPrecioAplicable empareja listas_precios.zona con comprador.zona; waterfall cost para lineas DST/LOC."
+      },
+      "note_on_requested_filter": "KPI valorComercialInventario y cobranza auditoria anclan en precios calle Zacatecas; POS y entidad.zona usan matriz dual (Zacatecas + Foraneo)."
     },
     "pos_god_mode_admin": {
       "ui_layer": {
