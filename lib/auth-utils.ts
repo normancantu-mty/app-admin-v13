@@ -47,15 +47,58 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
       return null
     }
 
-    const { data: entidad, error: dbError } = await supabase
-      .from('entidades')
-      .select('id, email, rol, nombre')
-      .eq('email', user.email)
-      .single()
+    // La identidad se resuelve por `auth_id`, que apunta a `auth.users(id)`: no
+    // se teclea en ningun formulario y solo se puede cambiar con service role.
+    // El correo NO es identidad — `entidades.email` es una columna de datos que
+    // el ADMIN edita desde la pantalla de distribuidores, y un correo puesto en
+    // la fila equivocada convertia a un DST en ADMIN. Por eso `mi_entidad_id()`
+    // en Postgres tambien dejo de empatar por correo
+    // (supabase/migrations/20260902235500_identidad_solo_por_auth_id.sql).
+    const SELECCION = 'id, email, rol, nombre'
 
-    if (dbError || !entidad) {
-      console.error('Error fetching user entity:', dbError?.message)
+    const { data: porAuthId, error: errorAuthId } = await supabase
+      .from('entidades')
+      .select(SELECCION)
+      .eq('auth_id', user.id)
+      .maybeSingle()
+
+    if (errorAuthId) {
+      console.error('Error fetching user entity by auth_id:', errorAuthId.message)
       return null
+    }
+
+    let entidad = porAuthId
+
+    if (!entidad) {
+      // RESPALDO POR CORREO, y se avisa a gritos. Las 5 entidades con login
+      // tienen `auth_id` (comprobado 2026-09-02), asi que esta rama no deberia
+      // correr nunca. El aviso existe para enterarnos el dia que corra.
+      //
+      // OJO: encontrar la fila aqui NO arregla nada. El RLS de Postgres ya solo
+      // reconoce `auth_id`, asi que una sesion que llegue por este camino vera
+      // la base practicamente vacia aunque la app crea saber quien es. La cura
+      // es poblar `entidades.auth_id`, no ampliar este respaldo.
+      const { data: porCorreo, error: errorCorreo } = await supabase
+        .from('entidades')
+        .select(SELECCION)
+        .eq('email', user.email)
+        .maybeSingle()
+
+      if (errorCorreo || !porCorreo) {
+        console.error(
+          'Error fetching user entity:',
+          errorCorreo?.message ?? `sin fila en entidades para ${user.email}`
+        )
+        return null
+      }
+
+      console.warn(
+        `[auth-utils] RESPALDO POR CORREO: ${user.email} no tiene entidades.auth_id = ${user.id}. ` +
+          'El RLS ya no resuelve identidad por correo: esta sesion vera datos incompletos. ' +
+          'Hay que poblar entidades.auth_id para este usuario.'
+      )
+
+      entidad = porCorreo
     }
 
     return {

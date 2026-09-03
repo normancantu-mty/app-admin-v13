@@ -15,7 +15,15 @@
  * **El ADMIN no tiene ventana.** Cualquier otro rol queda acotado a estas
  * 12 horas contadas desde la fecha del movimiento (o del ticket).
  *
- * Este es el UNICO lugar donde vive el numero. Si cambia, cambia aqui.
+ * Este es el unico lugar donde vive el numero EN TypeScript. Desde el
+ * 2026-09-02 tambien vive en Postgres: el trigger `tg_vigilar_update_no_admin`
+ * (`supabase/migrations/20260902235000_bitacora_auditoria_y_triggers.sql`)
+ * rechaza el UPDATE de un no-ADMIN pasadas las mismas 12 horas, porque la app
+ * no es el unico camino a la base — con un token valido, PostgREST atiende un
+ * `curl`. **Estan duplicados a proposito y no hay forma de evitarlo:** Postgres
+ * no lee una constante de TypeScript ni al reves. Si cambias este numero,
+ * cambia tambien el del trigger; `tests/candados-base.spec.ts` vigila que los
+ * dos digan lo mismo y falla si divergen.
  */
 export const VENTANA_EDICION_HORAS = 12
 

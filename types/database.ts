@@ -490,18 +490,6 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: string[]
       }
-      registrar_logistica_inversa: {
-        Args: {
-          p_cantidad: number
-          p_distribuidor_id?: string
-          p_monto_abono?: number
-          p_producto_id: string
-          p_tipo_movimiento: string
-          p_usuario_creador?: string
-          p_usuario_id: string
-        }
-        Returns: undefined
-      }
     }
     Enums: {
       [_ in never]: never
