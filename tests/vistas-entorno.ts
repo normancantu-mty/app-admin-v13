@@ -26,8 +26,20 @@ import path from 'node:path'
 
 export const RAIZ = path.resolve(__dirname, '..')
 
-/** El proyecto `equivalencia`: el unico archivo que necesita base de datos. */
-export const ARCHIVOS_DE_EQUIVALENCIA = ['**/vistas-equivalencia.spec.ts']
+/**
+ * El proyecto `equivalencia`: los archivos que necesitan base de datos.
+ *
+ * - `vistas-equivalencia.spec.ts` compara VISTA contra FUNCION de TypeScript.
+ * - `cableado-pantallas.spec.ts` compara PANTALLA contra PANTALLA: cada cifra
+ *   que ve un ADMIN con rango "TODO", calculada por el camino viejo y por el
+ *   nuevo. Es la red del cableado del prompt 16.
+ *
+ * Los dos leen con service role y ninguno abre navegador.
+ */
+export const ARCHIVOS_DE_EQUIVALENCIA = [
+  '**/vistas-equivalencia.spec.ts',
+  '**/cableado-pantallas.spec.ts'
+]
 
 export const VARIABLES_DE_EQUIVALENCIA = ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'] as const
 

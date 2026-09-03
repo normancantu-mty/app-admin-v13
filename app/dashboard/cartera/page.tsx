@@ -3,21 +3,22 @@ import { notFound } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { getCurrentUser } from '@/lib/auth-utils'
-import { fetchTodasLasFilas } from '@/lib/dashboard-utils'
-import {
-  construirCartera,
-  totalesCartera,
-  type EntidadCartera,
-  type FilaCartera,
-  type FinanzaCartera,
-  type MovimientoInventarioCartera,
-  type TicketCartera
-} from '@/lib/cartera-utils'
+import { leerCartera, totalesCarteraVista, type FilaCarteraVista } from '@/lib/vistas'
 
 /**
  * Cartera — a quien visitar, cuanto tiene y cuanto debe.
  *
  * Solo lectura: esta pantalla no escribe una sola fila.
+ *
+ * **La aritmetica ya no vive aqui.** Antes esta pantalla se traia cuatro tablas
+ * completas —entidades, inventario_ledger, transacciones_tickets y
+ * finanzas_ledger— y armaba las once filas en memoria con `construirCartera`.
+ * Ahora lee `v_cartera`, que hace exactamente lo mismo dentro de Postgres:
+ * **una consulta en vez de cuatro**, y la misma cifra al centavo (lo prueban
+ * `tests/vistas-equivalencia.spec.ts` y `tests/cableado-pantallas.spec.ts`).
+ *
+ * `construirCartera` NO se borro: sigue siendo la referencia contra la que esas
+ * pruebas comparan la vista. Que quede sin usar por las pantallas es el punto.
  *
  * Dos reglas que no se negocian aqui:
  *
@@ -26,8 +27,11 @@ import {
  *    Component viaja sin sesion, consulta como `anon` y —desde que se cerro la
  *    lectura anonima— devuelve `permission denied`. El codigo que no revisa
  *    `error` pinta ceros con cara de dato. Ya paso en el Dashboard General.
+ *    La vista es `security_invoker`: aplica el RLS de ESTA sesion, no la del
+ *    dueno de la vista, asi que el cliente correcto importa igual que antes.
  * 2. Si una consulta falla, la pantalla **grita**. Nunca un cero que parece un
- *    dato: se muestra el error y no se dibuja la tabla.
+ *    dato: se muestra el error y no se dibuja la tabla. `leerCartera` lanza en
+ *    vez de devolver `[]`, que es justo lo que hace falta aqui.
  */
 
 export const dynamic = 'force-dynamic'
@@ -41,7 +45,7 @@ const formateaPorcentaje = (fraccion: number | null): string =>
 const formateaFecha = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' }) : 'nunca'
 
-type ResultadoCartera = { ok: true; filas: FilaCartera[] } | { ok: false; error: string }
+type ResultadoCartera = { ok: true; filas: FilaCarteraVista[] } | { ok: false; error: string }
 
 async function cargarCartera(): Promise<ResultadoCartera> {
   const cookieStore = await cookies()
@@ -59,48 +63,10 @@ async function cargarCartera(): Promise<ResultadoCartera> {
   )
 
   try {
-    // Todo se pagina con `.range()`: PostgREST corta en 1000 filas sin avisar y
-    // un ledger truncado no da error, da un saldo falso.
-    const [entidades, inventario, tickets, finanzas] = await Promise.all([
-      fetchTodasLasFilas<EntidadCartera>(
-        () => supabase.from('entidades').select('id, nombre, rol').in('rol', ['DST', 'LOC']),
-        'cartera entidades'
-      ),
-      fetchTodasLasFilas<MovimientoInventarioCartera>(
-        () =>
-          supabase
-            .from('inventario_ledger')
-            .select(
-              'tipo_movimiento, cantidad, status, id_entidad_origen, id_entidad_destino, fecha_movimiento'
-            ),
-        'cartera inventario_ledger'
-      ),
-      fetchTodasLasFilas<TicketCartera>(
-        () =>
-          supabase
-            .from('transacciones_tickets')
-            .select('condicion_pago, id_comprador, monto_base_ingreso, total_cobrado_real, status'),
-        'cartera transacciones_tickets'
-      ),
-      fetchTodasLasFilas<FinanzaCartera>(
-        () =>
-          supabase
-            .from('finanzas_ledger')
-            .select('tipo_movimiento, monto, id_entidad_relacionada, categoria, status, fecha_movimiento'),
-        'cartera finanzas_ledger'
-      )
-    ])
-
-    return {
-      ok: true,
-      filas: construirCartera({
-        entidades,
-        inventario,
-        tickets,
-        finanzas,
-        hoy: new Date().toISOString()
-      })
-    }
+    // Una sola consulta. `leerCartera` pagina con `.range()` (PostgREST corta en
+    // 1000 filas sin avisar) y devuelve las filas ya ordenadas por prioridad de
+    // visita, que es el mismo orden que daba `construirCartera`.
+    return { ok: true, filas: await leerCartera(supabase) }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
@@ -133,7 +99,7 @@ export default async function CarteraPage() {
   }
 
   const { filas } = resultado
-  const totales = totalesCartera(filas)
+  const totales = totalesCarteraVista(filas)
 
   return (
     <div className="p-8">
@@ -217,11 +183,11 @@ export default async function CarteraPage() {
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
             {filas.map((fila, indice) => (
-              <tr key={fila.id}>
+              <tr key={fila.id_entidad}>
                 <td className="px-4 py-3 text-sm text-gray-500">{indice + 1}</td>
                 <td className="px-4 py-3 text-sm">
                   <Link
-                    href={`/dashboard/distribuidores/${fila.id}`}
+                    href={`/dashboard/distribuidores/${fila.id_entidad}`}
                     className="font-medium text-blue-600 hover:underline dark:text-blue-400"
                   >
                     {fila.nombre}
@@ -232,24 +198,24 @@ export default async function CarteraPage() {
                   {fila.recibidas}
                 </td>
                 <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-900 dark:text-gray-100">
-                  {fila.libroDice}
+                  {fila.libro_dice}
                 </td>
                 <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-900 dark:text-gray-100">
-                  {fila.estimadoEnPiso}
+                  {fila.estimado_en_piso}
                 </td>
                 <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-900 dark:text-gray-100">
-                  {formateaPorcentaje(fila.porcentajePagado)}
+                  {formateaPorcentaje(fila.porcentaje_pagado)}
                 </td>
                 <td className="px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">
                   {formateaMoneda(fila.deuda)}
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                  {formateaFecha(fila.ultimoAbono)}
-                  {fila.diasSinAbono !== null ? (
+                  {formateaFecha(fila.ultimo_abono)}
+                  {fila.dias_sin_abono !== null ? (
                     <span className="ml-2 text-xs text-gray-500">
-                      {fila.referenciaDias === 'ENTREGA'
-                        ? `${fila.diasSinAbono} d desde la entrega`
-                        : `hace ${fila.diasSinAbono} d`}
+                      {fila.referencia_dias === 'ENTREGA'
+                        ? `${fila.dias_sin_abono} d desde la entrega`
+                        : `hace ${fila.dias_sin_abono} d`}
                     </span>
                   ) : null}
                 </td>

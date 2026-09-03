@@ -8,7 +8,11 @@ import {
   movimientoContableEfectivo
 } from './finance-utils'
 import { limitesRangoMX } from './date-format'
-import { calcularSaldoPendienteInventarioConsignacion } from './distribuidores-saldos'
+// La flecha va en ESTE sentido y solo en este: `lib/vistas.ts` no importa a
+// `dashboard-utils`, que es server-only por `next/headers`; importarlo desde
+// alla volveria server-only tambien la lectura de las vistas. Aqui, al reves,
+// no cuesta nada: este modulo ya lo es.
+import { leerSaldosEntidad } from './vistas'
 
 // Re-exportado a propósito: las pantallas piden el rango a dashboard-utils, y la
 // única implementación vive en date-format.ts junto con los límites del rango.
@@ -82,6 +86,46 @@ export async function fetchTodasLasFilas<T>(
     filas.push(...pagina)
     if (pagina.length < TAMANO_PAGINA) return filas
   }
+}
+
+/**
+ * Filas de `v_movimiento_clasificado` para el periodo pedido.
+ *
+ * **Aqui es donde el Account_Firewall dejo de recalcularse en memoria.** Antes
+ * cada funcion de este archivo resolvia la entidad ADMIN, sus cuentas y despues
+ * filtraba fila por fila con `filtrarMovimientosFirewallAdmin`: tres consultas
+ * y una copia del firewall por tablero. La vista trae las banderas ya puestas y
+ * **falla cerrada igual** — quien no ve las cuentas del ADMIN obtiene `false`
+ * en las cuatro, que es lo mismo que devolvia el filtro con la lista vacia.
+ *
+ * `filtrarMovimientosFirewallAdmin` y `movimientoTocaCuentaAdmin` NO se borran:
+ * son la referencia contra la que `tests/vistas-equivalencia.spec.ts` compara la
+ * vista, movimiento por movimiento.
+ *
+ * La vista no filtra fechas a proposito: el corte lo pone quien consulta, y es
+ * el mismo `limitesRangoMX` de siempre.
+ */
+async function fetchMovimientosClasificados(
+  fechaInicio?: string,
+  fechaFin?: string
+): Promise<MovimientoClasificadoDashboard[]> {
+  const supabase = await getSupabaseServer()
+  const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
+
+  return fetchTodasLasFilas<MovimientoClasificadoDashboard>(() => {
+    let query = supabase
+      .from('v_movimiento_clasificado')
+      .select(
+        'tipo_movimiento, monto, categoria, fecha_movimiento, id_cuenta_destino, ' +
+          'id_cuenta_origen, toca_cuenta_admin, es_contable_efectivo, es_ingreso_admin, es_egreso_admin'
+      )
+
+    if (desde && hastaExclusivo) {
+      query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
+    }
+
+    return query as unknown as ConsultaPaginable<MovimientoClasificadoDashboard>
+  }, 'v_movimiento_clasificado')
 }
 
 export interface DesgloseIngresos {
@@ -183,24 +227,18 @@ type TicketLiderazgo = {
   fecha_transaccion: string
 }
 
-/** Fila de finanzas que ajusta un saldo de la red (abonos y cargos). */
-type AjusteLiderazgo = {
-  id_entidad_relacionada: string | null
+/** Fila de `v_movimiento_clasificado` tal como la leen los tableros. */
+type MovimientoClasificadoDashboard = {
   tipo_movimiento: string | null
   monto: number
   categoria: string | null
-  fecha_movimiento: string
-}
-
-/** Fila del ledger tal como la leen los KPIs del Dashboard General. */
-type MovimientoLedgerDashboard = {
-  tipo_movimiento: string | null
-  monto: number
-  categoria: string | null
-  fecha_movimiento: string
+  fecha_movimiento: string | null
   id_cuenta_destino: string | null
   id_cuenta_origen: string | null
-  status: string | null
+  toca_cuenta_admin: boolean
+  es_contable_efectivo: boolean
+  es_ingreso_admin: boolean
+  es_egreso_admin: boolean
 }
 
 export type MovimientoEgresoAdmin = {
@@ -365,13 +403,14 @@ async function fetchAdminCuentasRows(): Promise<{ id: string; nombre: string }[]
   return cuentas.map((c) => ({ id: c.id, nombre: c.nombre ?? '' }))
 }
 
-/** IDs de cuentas financieras de la entidad ADMIN (misma regla que firewall en Finanzas). */
-async function fetchAdminCuentaIds(): Promise<string[]> {
-  const rows = await fetchAdminCuentasRows()
-  return rows.map((r) => r.id)
-}
-
-function clasificarCuentaLiquidezPorNombre(nombre: string): keyof LiquidezPorCuenta | null {
+/**
+ * A que tarjeta de liquidez pertenece una cuenta del ADMIN, por su nombre.
+ *
+ * Exportada para que `tests/cableado-pantallas.spec.ts` compare las tres
+ * tarjetas con ESTA funcion y no con una copia suya: una copia se desincroniza
+ * en silencio y la prueba pasaria comparando dos errores distintos.
+ */
+export function clasificarCuentaLiquidezPorNombre(nombre: string): keyof LiquidezPorCuenta | null {
   const cuentaUpper = String(nombre).toUpperCase()
   if (cuentaUpper.includes('EFECTIVO') || cuentaUpper.includes('CAJA')) return 'EFECTIVO'
   if (cuentaUpper.includes('PERSONAL')) return 'CUENTA_PERSONAL'
@@ -379,53 +418,30 @@ function clasificarCuentaLiquidezPorNombre(nombre: string): keyof LiquidezPorCue
   return null
 }
 
+/**
+ * Ingresos y egresos del tablero, ya con el Account_Firewall aplicado.
+ *
+ * Antes: tres consultas (entidad ADMIN, sus cuentas, el ledger) y el firewall
+ * armado a mano. Ahora: **una**, contra `v_movimiento_clasificado`. Las dos
+ * banderas `es_ingreso_admin` / `es_egreso_admin` son la transcripcion literal
+ * de los dos filtros que estaban aqui —tipo de movimiento, contabilidad
+ * efectiva, firewall y `resolveCuentaEgresoAdmin`—, comprobada movimiento por
+ * movimiento en `tests/vistas-equivalencia.spec.ts`.
+ *
+ * El desglose por categoria (venta red / venta directa / abonos · insumos /
+ * renta / logistica) NO esta en ninguna vista: se sigue agrupando aqui, sobre
+ * las filas que la vista ya clasifico. No es aritmetica del dinero, es la
+ * misma suma partida por `categoria`.
+ */
 export async function getFinanzasDashboard(
   fechaInicio?: string,
   fechaFin?: string
 ): Promise<FinanzasDashboard> {
   try {
-    const supabase = await getSupabaseServer()
-    const adminIds = await fetchAdminCuentaIds()
-    const adminSet = new Set(adminIds)
+    const movimientos = await fetchMovimientosClasificados(fechaInicio, fechaFin)
 
-    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
-
-    const movimientosRaw = await fetchTodasLasFilas<MovimientoLedgerDashboard>(() => {
-      let query = supabase.from('finanzas_ledger')
-        .select(
-          'tipo_movimiento, monto, categoria, fecha_movimiento, id_cuenta_destino, id_cuenta_origen, status'
-        )
-        .in('status', ['APPROVED', 'ACTIVO'])
-
-      if (desde && hastaExclusivo) {
-        query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
-      }
-
-      return query
-    }, 'getFinanzasDashboard')
-
-    const movimientos = filtrarMovimientosFirewallAdmin(movimientosRaw, adminIds)
-
-    const tiposIngreso = ['INGRESO_VENTA', 'ABONO_DEUDA']
-
-    const ingresos = movimientos.filter(
-      (m) =>
-        tiposIngreso.includes(m.tipo_movimiento ?? '') &&
-        movimientoContableEfectivo(m.status ?? '', m.categoria)
-    )
-    const egresos = movimientos.filter(
-      (m) =>
-        esTipoEgresoAdmin(m.tipo_movimiento ?? '') &&
-        movimientoContableEfectivo(m.status ?? '', m.categoria) &&
-        (() => {
-          const cuenta = resolveCuentaEgresoAdmin({
-            tipo_movimiento: m.tipo_movimiento ?? '',
-            id_cuenta_origen: m.id_cuenta_origen ?? null,
-            id_cuenta_destino: m.id_cuenta_destino ?? null
-          })
-          return cuenta != null && adminSet.has(cuenta)
-        })()
-    )
+    const ingresos = movimientos.filter((m) => m.es_ingreso_admin)
+    const egresos = movimientos.filter((m) => m.es_egreso_admin)
 
     const totalIngresos = ingresos.reduce((sum, m) => sum + m.monto, 0)
     const totalEgresos = egresos.reduce((sum, m) => sum + m.monto, 0)
@@ -495,9 +511,12 @@ export async function getLiquidezPorCuenta(
   }
 
   try {
-    const supabase = await getSupabaseServer()
+    // [HUECO] Ninguna vista dice a que tarjeta pertenece una cuenta: el reparto
+    // en EFECTIVO / PERSONAL / FRESNILLO se hace por SUBCADENA del nombre de la
+    // cuenta (`clasificarCuentaLiquidezPorNombre`), y `v_movimiento_clasificado`
+    // solo lleva los ids. Por eso estas dos consultas siguen aqui. Lo que si se
+    // fue es el firewall en memoria: lo pone la vista.
     const adminRows = await fetchAdminCuentasRows()
-    const adminIds = adminRows.map((r) => r.id)
 
     const cuentaIdABucket = new Map<string, keyof LiquidezPorCuenta>()
     for (const row of adminRows) {
@@ -505,20 +524,7 @@ export async function getLiquidezPorCuenta(
       if (bucket) cuentaIdABucket.set(row.id, bucket)
     }
 
-    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
-
-    const data = await fetchTodasLasFilas<MovimientoLedgerDashboard>(() => {
-      let query = supabase
-        .from('finanzas_ledger')
-        .select('monto, tipo_movimiento, id_cuenta_destino, id_cuenta_origen, status, categoria, fecha_movimiento')
-        .in('status', ['APPROVED', 'ACTIVO'])
-
-      if (desde && hastaExclusivo) {
-        query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
-      }
-
-      return query
-    }, 'getLiquidezPorCuenta')
+    const data = await fetchMovimientosClasificados(fechaInicio, fechaFin)
 
     const tiposIngreso = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO'])
     const tiposEgreso = new Set([
@@ -529,9 +535,9 @@ export async function getLiquidezPorCuenta(
       'EGRESO_TRASPASO'
     ])
 
-    const filas = filtrarMovimientosFirewallAdmin(data, adminIds).filter((mov) =>
-      movimientoContableEfectivo(mov.status ?? '', mov.categoria)
-    )
+    // Las dos condiciones que antes se armaban aqui —firewall y contabilidad
+    // efectiva— vienen ya resueltas de la vista.
+    const filas = data.filter((mov) => mov.toca_cuenta_admin && mov.es_contable_efectivo)
 
     filas.forEach((mov) => {
       const monto = Number(mov.monto) || 0
@@ -560,10 +566,20 @@ export async function getLiquidezPorCuenta(
   }
 }
 
-export async function getLiderazgoRed(
-  fechaInicio?: string,
-  fechaFin?: string
-): Promise<LiderazgoRed> {
+/**
+ * Liderazgo de red: el ingreso que cada nodo genero y lo que debe.
+ *
+ * **Sin parametros de fecha, y a proposito.** Los tenia y ningun llamador los
+ * usaba nunca (`app/dashboard/general/page.tsx` la invoca sin argumentos): esta
+ * tabla siempre fue historica. Dejarlos ahora seria una trampa, porque el saldo
+ * pendiente ya viene de `v_saldo_entidad`, que no conoce periodos: una llamada
+ * con rango habria mezclado tickets recortados con un saldo completo.
+ *
+ * La columna "Saldo Pendiente (consignacion)" ya no se calcula aqui: la trae
+ * `v_saldo_entidad`, la misma fila que ven el directorio y el perfil. Antes esta
+ * funcion se traia el `finanzas_ledger` entero para rehacer esa resta.
+ */
+export async function getLiderazgoRed(): Promise<LiderazgoRed> {
   try {
     const supabase = await getSupabaseServer()
     const { data: entidades, error: entidadesError } = await supabase
@@ -576,61 +592,46 @@ export async function getLiderazgoRed(
       return { nodosAlfa: [], subNodos: [] }
     }
 
-    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
+    const [tickets, saldos] = await Promise.all([
+      fetchTodasLasFilas<TicketLiderazgo>(
+        () =>
+          supabase
+            .from('transacciones_tickets')
+            .select(
+              'id_comprador, monto_base_ingreso, total_cobrado_real, condicion_pago, status, fecha_transaccion'
+            ),
+        'getLiderazgoRed tickets'
+      ),
+      leerSaldosEntidad(supabase)
+    ])
 
-    const tickets = await fetchTodasLasFilas<TicketLiderazgo>(() => {
-      let query = supabase
-        .from('transacciones_tickets')
-        .select(
-          'id_comprador, monto_base_ingreso, total_cobrado_real, condicion_pago, status, fecha_transaccion'
-        )
-
-      if (desde && hastaExclusivo) {
-        query = query.gte('fecha_transaccion', desde).lt('fecha_transaccion', hastaExclusivo)
-      }
-
-      return query
-    }, 'getLiderazgoRed tickets')
-
-    const ledger = await fetchTodasLasFilas<AjusteLiderazgo>(() => {
-      let query = supabase
-        .from('finanzas_ledger')
-        .select('id_entidad_relacionada, tipo_movimiento, monto, categoria, fecha_movimiento')
-        .in('status', ['APPROVED', 'ACTIVO'])
-
-      if (desde && hastaExclusivo) {
-        query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
-      }
-
-      return query
-    }, 'getLiderazgoRed ledger')
+    const saldoPorEntidad = new Map(saldos.map((fila) => [fila.id_entidad, fila]))
 
     const entidadesConMetricas: EntidadLiderazgo[] = entidades.map(entidad => {
-      const ticketsComprador = tickets.filter(t => t.id_comprador === entidad.id)
-      const ticketsVivos = ticketsComprador.filter(t => (t.status ?? 'ACTIVO') !== 'ANULADO')
-      const ajustesEntidad = ledger.filter(l => l.id_entidad_relacionada === entidad.id)
-      const abonosEntidad = ajustesEntidad.filter(l => l.tipo_movimiento === 'ABONO_DEUDA')
+      const ticketsVivos = tickets.filter(
+        (t) => t.id_comprador === entidad.id && (t.status ?? 'ACTIVO') !== 'ANULADO'
+      )
+      const saldo = saldoPorEntidad.get(entidad.id)
 
       const ingresoNetoEmpresa = ticketsVivos.reduce((sum, t) => sum + (t.monto_base_ingreso || 0), 0)
 
-      // Misma función que el perfil y que el directorio (`distribuidores-saldos`):
-      // sólo mercancía en CONSIGNACIÓN viva, más CARGO_DEUDA, menos abonos ya
-      // aprobados. Antes se sumaban aquí a mano TODOS los tickets del comprador
-      // —incluidos los ANULADOS y los de CONTADO— y sólo se restaban abonos.
-      const saldoPendiente = calcularSaldoPendienteInventarioConsignacion(
-        { id: entidad.id, rol: entidad.rol as 'DST' | 'LOC' | 'SOCIO' },
-        ticketsComprador,
-        [entidad.id],
-        ajustesEntidad
-      )
+      // Misma cifra que el directorio y que el perfil, ahora por la misma via:
+      // solo mercancia en CONSIGNACION viva, mas CARGO_DEUDA, menos abonos ya
+      // aprobados. Antes se rehacia aqui con `calcularSaldoPendienteInventarioConsignacion`.
+      const saldoPendiente = Number(saldo?.saldo_pendiente_consignacion ?? 0)
 
       const ultimaActividadTicket = ticketsVivos.length > 0
         ? new Date(Math.max(...ticketsVivos.map(t => new Date(t.fecha_transaccion).getTime())))
         : null
 
-      const ultimaActividadLedger = abonosEntidad.length > 0
-        ? new Date(Math.max(...abonosEntidad.map(l => new Date(l.fecha_movimiento).getTime())))
-        : null
+      // `ultimo_abono` de la vista excluye los abonos con categoria
+      // ABONO_PENDIENTE; el bucle que estaba aqui no los excluia. Hoy da lo
+      // mismo —el unico ABONO_PENDIENTE de la base esta ANULADO y ya se caia
+      // del universo ACTIVO/APPROVED—, y lo comprueba
+      // `tests/cableado-pantallas.spec.ts`. El dia que nazca un abono pendiente
+      // vivo, la vista NO lo contara como actividad, que es lo que corresponde:
+      // un abono sin aprobar no es un pago.
+      const ultimaActividadLedger = saldo?.ultimo_abono ? new Date(saldo.ultimo_abono) : null
 
       let ultimaActividad: Date | null = null
       if (ultimaActividadTicket && ultimaActividadLedger) {
@@ -800,39 +801,28 @@ export interface CategoriaDesglose {
  * 2. **Se aplica `movimientoContableEfectivo`**, igual que las tarjetas de
  *    arriba en esa misma pantalla, para no colar `ABONO_PENDIENTE`.
  */
+/**
+ * @param aplicarFirewallAdmin `true` para que el desglose se limite a los
+ *   movimientos que tocan una cuenta del ADMIN. Antes se recibia la LISTA de
+ *   cuentas admin y se filtraba en memoria; ahora la condicion la trae la vista
+ *   en `toca_cuenta_admin`, asi que basta el si o el no. Sigue fallando cerrado:
+ *   si la sesion no ve las cuentas del ADMIN, la bandera es `false` en todas
+ *   las filas y el desglose sale vacio, nunca con el ledger de la red.
+ */
 export async function getDesgloseCategorias(
   fechaInicio?: string,
   fechaFin?: string,
-  cuentaIdsAdmin?: string[]
+  aplicarFirewallAdmin?: boolean
 ): Promise<CategoriaDesglose[]> {
   try {
-    const supabase = await getSupabaseServer()
-    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
+    const data = await fetchMovimientosClasificados(fechaInicio, fechaFin)
 
-    const data = await fetchTodasLasFilas<MovimientoLedgerDashboard>(() => {
-      let query = supabase
-        .from('finanzas_ledger')
-        .select(
-          'categoria, monto, tipo_movimiento, id_cuenta_destino, id_cuenta_origen, status, fecha_movimiento'
-        )
-        .in('status', ['APPROVED', 'ACTIVO'])
-
-      if (desde && hastaExclusivo) {
-        query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
-      }
-
-      return query
-    }, 'getDesgloseCategorias')
-
-    let filtrados = data
-      .filter((item) => movimientoContableEfectivo(item.status ?? '', item.categoria))
+    const filtrados = data
+      .filter((item) => item.es_contable_efectivo)
       .filter((item) => !TIPOS_EXCLUIR_DESGLOSE_CATEGORIAS.has(String(item.tipo_movimiento ?? '')))
+      .filter((item) => (aplicarFirewallAdmin ? item.toca_cuenta_admin : true))
 
-    if (cuentaIdsAdmin) {
-      filtrados = filtrarMovimientosFirewallAdmin(filtrados, cuentaIdsAdmin)
-    }
-
-    const agrupar = (grupo: GrupoCategoria, filas: MovimientoLedgerDashboard[]): CategoriaDesglose[] => {
+    const agrupar = (grupo: GrupoCategoria, filas: MovimientoClasificadoDashboard[]): CategoriaDesglose[] => {
       const total = filas.reduce((sum, item) => sum + item.monto, 0)
       const porCategoria = new Map<string, number>()
 
@@ -852,7 +842,7 @@ export async function getDesgloseCategorias(
         .sort((a, b) => b.monto - a.monto)
     }
 
-    const esIngreso = (item: MovimientoLedgerDashboard) =>
+    const esIngreso = (item: MovimientoClasificadoDashboard) =>
       TIPOS_INGRESO_DESGLOSE.has(String(item.tipo_movimiento ?? ''))
 
     return [

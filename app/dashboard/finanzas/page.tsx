@@ -1,18 +1,36 @@
+/**
+ * Dashboard Financiero.
+ *
+ * **El Account_Firewall ya no se arma aqui.** Antes esta pantalla resolvia la
+ * entidad ADMIN y sus cuentas (dos consultas), se traia el ledger historico
+ * COMPLETO con sus dos joins de nombres, y sobre esas filas corria en memoria
+ * `filtrarMovimientosFirewallAdmin`, `calcularResumen`, `calcularEgresosAdmin` y
+ * `calcularPasivosFiscalesAdmin`. Ahora:
+ *
+ *  · Ingresos, Egresos y Balance salen de las banderas de
+ *    `v_movimiento_clasificado`.
+ *  · IVA e IEPS por pagar salen de `v_pasivo_fiscal`, una sola fila.
+ *  · La tabla de movimientos sigue leyendo `finanzas_ledger`, porque **necesita
+ *    los nombres de la cuenta destino y de la entidad relacionada y una vista
+ *    no tiene llaves foraneas: PostgREST no puede embeber recursos sobre ella.**
+ *    Lo que si cambio es el recorte: las filas se filtran por los `id` que la
+ *    vista marco con `toca_cuenta_admin`, no por un firewall recalculado.
+ *
+ * Las funciones de `lib/dashboard-utils.ts` que dejaron de llamarse siguen
+ * exportadas y probadas: son la referencia de la prueba de equivalencia.
+ */
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import {
-  calcularEgresosAdmin,
   calcularFechasPorRango,
-  calcularPasivosFiscalesAdmin,
   fetchTodasLasFilas,
-  filtrarMovimientosFirewallAdmin,
   getDesgloseCategorias,
-  limitesRangoMX,
-  movimientoTocaCuentaAdmin
+  limitesRangoMX
 } from '@/lib/dashboard-utils'
-import { movimientoContableEfectivo } from '@/lib/finance-utils'
+import { leerPasivoFiscal, type FilaMovimientoClasificado } from '@/lib/vistas'
 import type { CurrentUser } from '@/lib/auth-utils'
+
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import PendingApprovalsPanel from './PendingApprovalsPanel'
@@ -52,32 +70,29 @@ interface MovimientoQueryRow extends Omit<MovimientoFinanciero, 'cuenta_destino'
   entidad_relacionada: { nombre: string } | { nombre: string }[] | null
 }
 
-const TIPOS_INGRESO_CAJA_BRUTO = new Set(['INGRESO_VENTA', 'ABONO_DEUDA'])
-
-function esIngresoCajaBrutoAdmin(tipoMovimiento: string): boolean {
-  return TIPOS_INGRESO_CAJA_BRUTO.has(tipoMovimiento)
+/**
+ * Cliente por request con la sesion del usuario. Las vistas son
+ * `security_invoker`: leen con ESTE cliente, asi que un DST no obtiene ni una
+ * fila que su RLS no le deje ver.
+ */
+async function getServerSupabaseClient() {
+  const cookieStore = await cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value
+        }
+      }
+    }
+  )
 }
 
 async function getMovimientos(fechaInicio?: string, fechaFin?: string): Promise<MovimientoFinanciero[]> {
   try {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value
-          },
-          set() {
-            // No-op en server component
-          },
-          remove() {
-            // No-op en server component
-          }
-        }
-      }
-    )
+    const supabase = await getServerSupabaseClient()
     
     // `descripcion` va en el select a proposito: `esPagoImpuestoIva/Ieps` la lee
     // para descontar los pagos de impuesto del pasivo, y sin ella esa resta
@@ -126,60 +141,49 @@ async function getMovimientos(fechaInicio?: string, fechaFin?: string): Promise<
   }
 }
 
-function calcularResumen(
-  movimientos: MovimientoFinanciero[],
-  adminAccountIds: string[]
-): ResumenFinanciero {
-  const adminAccountSet = new Set(adminAccountIds)
-  const movimientosActivos = movimientos.filter((m) =>
-    movimientoContableEfectivo(m.status, m.categoria)
-  )
+/** Fila de `v_movimiento_clasificado`: lo minimo que necesitan las tarjetas. */
+type MovimientoClasificado = Pick<
+  FilaMovimientoClasificado,
+  'id' | 'monto' | 'toca_cuenta_admin' | 'es_ingreso_admin' | 'es_egreso_admin'
+>
 
-  // Regla del Account_Firewall: origen **o** destino admin. Antes aqui se exigia
-  // solo destino, y el mismo periodo daba un ingreso distinto en el General.
-  const ingresos = movimientosActivos
-    .filter((m) => esIngresoCajaBrutoAdmin(m.tipo_movimiento))
-    .filter((m) => movimientoTocaCuentaAdmin(m, adminAccountSet))
-    .reduce((sum, m) => sum + m.monto, 0)
-
-  const egresos = calcularEgresosAdmin(movimientosActivos, adminAccountIds)
-
-  const balance = ingresos - egresos
-  return { ingresos, egresos, balance }
-}
-
-async function getAdminAccountIds(): Promise<string[]> {
+/**
+ * Movimientos ya clasificados por la base para el periodo pedido.
+ *
+ * Falla cerrada sin condicional: quien no ve las cuentas del ADMIN recibe las
+ * cuatro banderas en `false`, que es lo mismo que devolvia
+ * `filtrarMovimientosFirewallAdmin` con la lista de cuentas vacia.
+ */
+async function getMovimientosClasificados(
+  fechaInicio?: string,
+  fechaFin?: string
+): Promise<MovimientoClasificado[]> {
   try {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value
-          }
-        }
+    const supabase = await getServerSupabaseClient()
+    const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
+
+    return await fetchTodasLasFilas<MovimientoClasificado>(() => {
+      let query = supabase
+        .from('v_movimiento_clasificado')
+        .select('id, monto, toca_cuenta_admin, es_ingreso_admin, es_egreso_admin')
+
+      if (desde && hastaExclusivo) {
+        query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
       }
-    )
-    const { data: adminEntity, error: adminError } = await supabase
-      .from('entidades')
-      .select('id')
-      .eq('rol', 'ADMIN')
-      .limit(1)
-      .maybeSingle()
-    if (adminError || !adminEntity?.id) return []
 
-    const { data: cuentas, error: cuentasError } = await supabase
-      .from('cuentas_financieras')
-      .select('id')
-      .eq('id_entidad', adminEntity.id)
-    if (cuentasError || !cuentas) return []
-
-    return cuentas.map((cuenta) => cuenta.id)
-  } catch {
+      return query as never
+    }, 'finanzas v_movimiento_clasificado')
+  } catch (error) {
+    console.error('Error in getMovimientosClasificados:', error)
     return []
   }
+}
+
+/** Las tres tarjetas de arriba, sumando las banderas que ya puso la vista. */
+function resumirClasificados(filas: MovimientoClasificado[]): ResumenFinanciero {
+  const ingresos = filas.filter((m) => m.es_ingreso_admin).reduce((sum, m) => sum + Number(m.monto), 0)
+  const egresos = filas.filter((m) => m.es_egreso_admin).reduce((sum, m) => sum + Number(m.monto), 0)
+  return { ingresos, egresos, balance: ingresos - egresos }
 }
 
 function formatCurrency(amount: number): string {
@@ -251,24 +255,28 @@ export default async function FinanzasPage() {
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
 
-  let movimientosHistoricos: MovimientoFinanciero[] = []
   let movimientosPeriodo: MovimientoFinanciero[] = []
+  let clasificadosHistoricos: MovimientoClasificado[] = []
+  let clasificadosPeriodo: MovimientoClasificado[] = []
   let categorias: CategoriaResumen[] = []
   let currentUser: CurrentUser | null = null
-  let adminAccountIds: string[] = []
+  let reservasFiscales = { ivaPorPagar: 0, iepsPorPagar: 0 }
 
   try {
+    // El historico ya no se trae con sus dos joins de nombres: la tabla de abajo
+    // solo pinta el periodo, y las tarjetas del historico solo necesitan monto y
+    // banderas.
     const results = await Promise.allSettled([
-      getMovimientos(),
       getMovimientos(fechaInicio, fechaFin),
-      getCurrentUser(),
-      getAdminAccountIds()
+      getMovimientosClasificados(),
+      getMovimientosClasificados(fechaInicio, fechaFin),
+      getCurrentUser()
     ])
 
-    movimientosHistoricos = results[0].status === 'fulfilled' ? results[0].value : []
-    movimientosPeriodo = results[1].status === 'fulfilled' ? results[1].value : []
-    currentUser = results[2].status === 'fulfilled' ? results[2].value : null
-    adminAccountIds = results[3].status === 'fulfilled' ? results[3].value : []
+    movimientosPeriodo = results[0].status === 'fulfilled' ? results[0].value : []
+    clasificadosHistoricos = results[1].status === 'fulfilled' ? results[1].value : []
+    clasificadosPeriodo = results[2].status === 'fulfilled' ? results[2].value : []
+    currentUser = results[3].status === 'fulfilled' ? results[3].value : null
   } catch (error) {
     console.error('🕵️‍♂️ [OJO DE DIOS] Error obteniendo datos:', error)
     currentUser = null
@@ -286,26 +294,39 @@ export default async function FinanzasPage() {
     categorias = (await getDesgloseCategorias(
       fechaInicio,
       fechaFin,
-      aplicarFirewallFinanzasAdmin ? adminAccountIds : undefined
+      aplicarFirewallFinanzasAdmin
     )) as CategoriaResumen[]
   } catch (error) {
     console.error('Error obteniendo desglose de categorías:', error)
     categorias = []
   }
 
-  const movimientosHistoricosVista = aplicarFirewallFinanzasAdmin
-    ? filtrarMovimientosFirewallAdmin(movimientosHistoricos, adminAccountIds)
-    : movimientosHistoricos
+  try {
+    const pasivo = await leerPasivoFiscal(await getServerSupabaseClient())
+    reservasFiscales = {
+      ivaPorPagar: Number(pasivo?.iva_por_pagar ?? 0),
+      iepsPorPagar: Number(pasivo?.ieps_por_pagar ?? 0)
+    }
+  } catch (error) {
+    console.error('Error obteniendo pasivos fiscales:', error)
+  }
+
+  // El recorte de la tabla ya no recalcula el firewall: usa los `id` que la
+  // vista marco. Con la lista vacia la tabla queda vacia, que es como tiene que
+  // fallar.
+  const idsQueTocanAdmin = new Set(
+    clasificadosPeriodo.filter((m) => m.toca_cuenta_admin).map((m) => m.id)
+  )
   const movimientosPeriodoVista = aplicarFirewallFinanzasAdmin
-    ? filtrarMovimientosFirewallAdmin(movimientosPeriodo, adminAccountIds)
+    ? movimientosPeriodo.filter((m) => idsQueTocanAdmin.has(m.id))
     : movimientosPeriodo
 
-  const resumenHistorico = calcularResumen(movimientosHistoricosVista, adminAccountIds)
-  const resumenPeriodo = calcularResumen(movimientosPeriodoVista, adminAccountIds)
-  const reservasFiscales = calcularPasivosFiscalesAdmin(
-    movimientosHistoricosVista,
-    adminAccountIds
-  )
+  const resumenHistorico = resumirClasificados(clasificadosHistoricos)
+  const resumenPeriodo = resumirClasificados(clasificadosPeriodo)
+  // El estado vacio miraba el historico con firewall: mismas filas, otra fuente.
+  const hayHistorico = aplicarFirewallFinanzasAdmin
+    ? clasificadosHistoricos.some((m) => m.toca_cuenta_admin)
+    : clasificadosHistoricos.length > 0
   const sessionUserMissing = !currentUser
 
   if (process.env.NODE_ENV === 'development') {
@@ -347,7 +368,7 @@ export default async function FinanzasPage() {
           <p className="text-sm text-gray-500">Verificando sesión…</p>
           <FinanzasAuthSkeleton />
         </div>
-      ) : movimientosHistoricosVista.length === 0 ? (
+      ) : !hayHistorico ? (
         <EmptyState />
       ) : (
         <>

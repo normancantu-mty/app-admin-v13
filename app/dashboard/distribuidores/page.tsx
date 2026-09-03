@@ -10,13 +10,29 @@ import {
   calcularUltimoMovimiento,
   getSemaforoMovimiento
 } from '@/lib/risk-utils'
-import {
-  calcularSaldoPendienteInventarioConsignacion,
-  calcularSaldoPorPagarEfectivo
-} from '@/lib/distribuidores-saldos'
 import { getCurrentUser } from '@/lib/auth-utils'
-import { fetchTodasLasFilas } from '@/lib/dashboard-utils'
+import { leerSaldosEntidad } from '@/lib/vistas'
 import DirectoryTableClient, { type DirectoryRow } from './DirectoryTableClient'
+
+/**
+ * Directorio de la red.
+ *
+ * **Las dos columnas de dinero ya no se calculan aqui.** Antes esta pantalla se
+ * traia el `finanzas_ledger` y los `transacciones_tickets` del ambito con
+ * SERVICE ROLE —mas dos consultas para la cuenta legacy del ADMIN y una para
+ * las cuentas de cada nodo— y corria fila por fila
+ * `calcularSaldoPendienteInventarioConsignacion` y
+ * `calcularSaldoPorPagarEfectivo`. Ahora las dos cifras vienen hechas de
+ * `v_saldo_entidad`, en **una** consulta.
+ *
+ * Y se lee con el cliente de la SESION, no con service role: la vista es
+ * `security_invoker`, asi que un DST obtiene su fila y las de sus locales y
+ * nada mas. El recorte deja de depender de un `.in()` que alguien puede
+ * olvidar y pasa a imponerlo el RLS de la base.
+ *
+ * Las dos funciones de `lib/distribuidores-saldos.ts` siguen vivas y probadas:
+ * son la referencia contra la que las pruebas comparan la vista.
+ */
 
 export const revalidate = 0
 
@@ -25,7 +41,6 @@ interface Entidad {
   nombre: string
   nombre_entidad?: string | null
   rol: 'DST' | 'LOC' | 'SOCIO'
-  id_cuenta: string | null
   zona: string
   telefono: string | null
   comision_base: number
@@ -39,15 +54,6 @@ interface Entidad {
   ubicacion_maps?: string | null
   fecha_ultimo_abono?: string | null
   fecha_ultimo_seguimiento?: string | null
-}
-
-interface FinanzaLedger {
-  id: string
-  id_entidad_relacionada: string
-  id_cuenta_destino: string | null
-  tipo_movimiento: string
-  monto: number
-  categoria?: string | null
 }
 
 interface KPIsRed {
@@ -146,30 +152,12 @@ async function getEntidades(
       (data || []).find((entidad) => entidad.nombre === 'prueba01-05') || null
     )
 
-    const entityIds = (data || []).map((entidad) => entidad.id)
-    let cuentasPorEntidad = new Map<string, string>()
-
-    if (entityIds.length > 0) {
-      const { data: cuentasData, error: cuentasError } = await supabaseClient
-        .from('cuentas_financieras')
-        .select('id, id_entidad')
-        .in('id_entidad', entityIds)
-
-      if (cuentasError) {
-        console.error('Error fetching cuentas_financieras for entidades:', cuentasError)
-      } else {
-        cuentasPorEntidad = new Map(
-          (cuentasData || [])
-            .filter((cuenta) => Boolean(cuenta.id_entidad))
-            .map((cuenta) => [cuenta.id_entidad as string, cuenta.id])
-        )
-      }
-    }
-
+    // La consulta a `cuentas_financieras` que habia aqui resolvia `id_cuenta`
+    // para acotar el ledger del directorio. Ese ledger ya no se lee: el saldo
+    // lo da `v_saldo_entidad`, y ninguna columna de la tabla usa la cuenta.
     return (data || []).map((entidad) => ({
       ...entidad,
       rol: entidad.rol as Entidad['rol'],
-      id_cuenta: cuentasPorEntidad.get(entidad.id) ?? null,
       telefono: entidad.telefono ?? null,
       comision_base: entidad.comision_base ?? 0,
       comision_base_local: entidad.comision_base_local ?? 0,
@@ -179,177 +167,6 @@ async function getEntidades(
     }))
   } catch (error) {
     console.error('Error in getEntidades:', error)
-    return []
-  }
-}
-
-async function getFinanzasLedger(
-  serviceRoleClient: SupabaseClient<Database>,
-  entityIds: string[],
-  accountIds: string[]
-): Promise<FinanzaLedger[]> {
-  if (entityIds.length === 0 && accountIds.length === 0) {
-    return []
-  }
-
-  try {
-    // Paginado: de estas filas salen los saldos del directorio, y PostgREST
-    // corta en 1000 sin decir nada.
-    const data = await fetchTodasLasFilas<{
-      id: string
-      id_entidad_relacionada: string | null
-      id_cuenta_destino: string | null
-      tipo_movimiento: string | null
-      monto: number | null
-      categoria: string | null
-    }>(() => {
-      let query = serviceRoleClient
-        .from('finanzas_ledger')
-        .select('id, id_entidad_relacionada, id_cuenta_destino, tipo_movimiento, monto, categoria')
-        .in('status', ['ACTIVO', 'APPROVED'])
-
-      if (entityIds.length > 0 && accountIds.length > 0) {
-        query = query.or(
-          `id_entidad_relacionada.in.(${entityIds.join(',')}),id_cuenta_destino.in.(${accountIds.join(',')})`
-        )
-      } else if (entityIds.length > 0) {
-        query = query.in('id_entidad_relacionada', entityIds)
-      } else {
-        query = query.in('id_cuenta_destino', accountIds)
-      }
-
-      return query
-    }, 'directorio getFinanzasLedger')
-
-    // `categoria` se propaga a proposito: es lo que distingue un ABONO_PENDIENTE
-    // de un abono aprobado. Al perderla aqui, el directorio restaba abonos que
-    // el perfil no restaba, y el mismo saldo daba dos numeros.
-    return (data || []).map((item) => ({
-      id: item.id,
-      id_entidad_relacionada: item.id_entidad_relacionada ?? '',
-      id_cuenta_destino: item.id_cuenta_destino ?? null,
-      tipo_movimiento: item.tipo_movimiento ?? '',
-      monto: item.monto ?? 0,
-      categoria: item.categoria ?? null
-    }))
-  } catch (error) {
-    console.error('Error in getFinanzasLedger:', error)
-    return []
-  }
-}
-
-async function mergeDirectorioLegacyFinanzas(
-  serviceRoleClient: SupabaseClient<Database>,
-  base: FinanzaLedger[],
-  entityIds: string[],
-  adminLegacyAccountId: string | null
-): Promise<FinanzaLedger[]> {
-  if (!adminLegacyAccountId || entityIds.length === 0) return base
-
-  const { data, error } = await serviceRoleClient
-    .from('finanzas_ledger')
-    .select('id, id_entidad_relacionada, id_cuenta_destino, tipo_movimiento, monto, categoria')
-    .in('status', ['ACTIVO', 'APPROVED'])
-    .in('id_entidad_relacionada', entityIds)
-    .eq('id_cuenta_destino', adminLegacyAccountId)
-
-  if (error) {
-    console.error('Error merging legacy finanzas (directorio):', error)
-    return base
-  }
-
-  const byId = new Map(base.map((row) => [row.id, row]))
-  for (const row of data || []) {
-    byId.set(row.id, {
-      id: row.id,
-      id_entidad_relacionada: row.id_entidad_relacionada ?? '',
-      id_cuenta_destino: row.id_cuenta_destino ?? null,
-      tipo_movimiento: row.tipo_movimiento ?? '',
-      monto: row.monto ?? 0,
-      categoria: row.categoria ?? null
-    })
-  }
-  return Array.from(byId.values())
-}
-
-async function getAdminLegacyAccountIdForDirectorio(
-  serviceRoleClient: SupabaseClient<Database>
-): Promise<string | null> {
-  const { data: adminEntity, error: adminError } = await serviceRoleClient
-    .from('entidades')
-    .select('id')
-    .eq('rol', 'ADMIN')
-    .limit(1)
-    .maybeSingle()
-
-  if (adminError || !adminEntity?.id) {
-    return null
-  }
-
-  const { data: adminAccount, error: accountError } = await serviceRoleClient
-    .from('cuentas_financieras')
-    .select('id')
-    .eq('id_entidad', adminEntity.id)
-    .limit(1)
-    .maybeSingle()
-
-  if (accountError) {
-    return null
-  }
-
-  return adminAccount?.id ?? null
-}
-
-async function getTickets(
-  serviceRoleClient: SupabaseClient<Database>,
-  entityIds: string[]
-): Promise<
-  {
-    id_comprador: string | null
-    id_vendedor: string | null
-    total_cobrado_real: number
-    monto_base_ingreso: number
-    condicion_pago: 'CONTADO' | 'CONCESION'
-    status?: string | null
-  }[]
-> {
-  if (entityIds.length === 0) {
-    return []
-  }
-
-  try {
-    // Tickets se cargan con service role (no dependen del cliente SSR/cookies).
-    // Paginado: de aqui sale el Saldo Pendiente de cada nodo.
-    const data = await fetchTodasLasFilas<{
-      id_comprador: string | null
-      id_vendedor: string | null
-      total_cobrado_real: number | null
-      monto_base_ingreso: number | null
-      condicion_pago: string | null
-      status: string | null
-    }>(
-      () =>
-        serviceRoleClient
-          .from('transacciones_tickets')
-          .select('id_comprador, id_vendedor, total_cobrado_real, monto_base_ingreso, condicion_pago, status')
-          .or(`id_comprador.in.(${entityIds.join(',')}),id_vendedor.in.(${entityIds.join(',')})`),
-      'directorio getTickets'
-    )
-
-    return (data || []).map((item) => ({
-      id_comprador: item.id_comprador ?? null,
-      id_vendedor: item.id_vendedor ?? null,
-      total_cobrado_real: item.total_cobrado_real ?? 0,
-      monto_base_ingreso: item.monto_base_ingreso ?? 0,
-      condicion_pago: item.condicion_pago === 'CONCESION' ? 'CONCESION' : 'CONTADO',
-      status: item.status ?? 'ACTIVO'
-    }))
-  } catch (error) {
-    console.error(
-      'Error in getTickets:',
-      error instanceof Error ? error.stack : JSON.stringify(error, Object.getOwnPropertyNames(Object(error)), 2),
-      error instanceof Error ? error.message : undefined
-    )
     return []
   }
 }
@@ -412,33 +229,20 @@ export default async function DistribuidoresPage() {
   const sessionRole = (currentUser?.rol ?? null) as SessionRole | null
   const currentUserEntityId = currentUser?.id ?? null
   const entidades = await getEntidades(supabaseClient, sessionRole, currentUserEntityId)
-  const entityIdsForScope = entidades.map((entidad) => entidad.id)
-  const accountIdsForScope = entidades
-    .map((entidad) => entidad.id_cuenta)
-    .filter((idCuenta): idCuenta is string => Boolean(idCuenta))
 
-  const [
-    finanzasRaw,
-    tickets,
-    movimientosFinanzas,
-    movimientosInventario
-  ] = await Promise.all([
-    getFinanzasLedger(serviceRoleClient, entityIdsForScope, accountIdsForScope),
-    getTickets(serviceRoleClient, entityIdsForScope),
-    // Mismo cliente que las dos lecturas de arriba. Antes estas dos funciones
-    // construian por su cuenta el cliente de NAVEGADOR y respondian
-    // `permission denied` en silencio: los semaforos salian todos rojos.
+  const [saldos, movimientosFinanzas, movimientosInventario] = await Promise.all([
+    // Con el cliente de la SESION: la vista es `security_invoker` y recorta
+    // sola. Con service role devolveria la red entera.
+    leerSaldosEntidad(supabaseClient),
+    // Service role a proposito, igual que antes: estas dos alimentan el
+    // semaforo, no el dinero. Antes construian por su cuenta el cliente de
+    // NAVEGADOR y respondian `permission denied` en silencio: los semaforos
+    // salian todos rojos.
     getMovimientosFinanzas(serviceRoleClient),
     getMovimientosInventario(serviceRoleClient)
   ])
 
-  const adminLegacyAccountId = await getAdminLegacyAccountIdForDirectorio(serviceRoleClient)
-  let finanzas = await mergeDirectorioLegacyFinanzas(
-    serviceRoleClient,
-    finanzasRaw,
-    entityIdsForScope,
-    adminLegacyAccountId
-  )
+  const saldoPorEntidad = new Map(saldos.map((fila) => [fila.id_entidad, fila]))
   const kpis = calcularKPIs(entidades)
   const canMutate = currentUser?.rol !== 'SOCIO'
   const directorioRows: DirectoryRow[] = entidades.map((entidad: Entidad) => {
@@ -446,18 +250,11 @@ export default async function DistribuidoresPage() {
     const parentId = typeof parentIdRaw === 'string' ? parentIdRaw.trim() : null
     const padre = entidades.find((e) => e.id === parentId)
     const isDirectLine = !entidad.id_nodo_padre && !entidad.id_padre
-    const saldoPendiente = calcularSaldoPendienteInventarioConsignacion(
-      entidad,
-      tickets,
-      [entidad.id],
-      finanzas.map((f) => ({
-        tipo_movimiento: f.tipo_movimiento || null,
-        monto: f.monto,
-        id_entidad_relacionada: f.id_entidad_relacionada || null,
-        categoria: f.categoria || null
-      }))
-    )
-    const saldoPorPagar = calcularSaldoPorPagarEfectivo(entidad.id, finanzas)
+    // Las dos cifras vienen calculadas de `v_saldo_entidad`. Si la sesion no
+    // alcanza a ver la fila del nodo, se muestra 0: nunca una cifra inventada.
+    const saldo = saldoPorEntidad.get(entidad.id)
+    const saldoPendiente = Number(saldo?.saldo_pendiente_consignacion ?? 0)
+    const saldoPorPagar = Number(saldo?.saldo_por_pagar_efectivo ?? 0)
 
     const ultimoMovimiento = calcularUltimoMovimiento(
       entidad.id,
