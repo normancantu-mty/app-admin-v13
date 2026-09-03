@@ -275,3 +275,23 @@ export function ordenarCartera(filas: FilaCarteraVista[]): FilaCarteraVista[] {
     return a.nombre.localeCompare(b.nombre, 'es')
   })
 }
+
+/**
+ * El pie de tabla de la cartera: la misma suma que `totalesCartera`
+ * (lib/cartera-utils.ts), sobre las filas de la vista.
+ *
+ * Vive aqui y no en la pagina para que **nadie fuera de este modulo tenga que
+ * saber que `libro_dice` es el `libroDice` de antes**. No recalcula nada: suma
+ * las cuatro columnas que ya vienen calculadas de Postgres.
+ */
+export function totalesCarteraVista(filas: FilaCarteraVista[]) {
+  return filas.reduce(
+    (acc, fila) => ({
+      recibidas: acc.recibidas + Number(fila.recibidas),
+      libroDice: acc.libroDice + Number(fila.libro_dice),
+      estimadoEnPiso: acc.estimadoEnPiso + Number(fila.estimado_en_piso),
+      deuda: acc.deuda + Number(fila.deuda)
+    }),
+    { recibidas: 0, libroDice: 0, estimadoEnPiso: 0, deuda: 0 }
+  )
+}

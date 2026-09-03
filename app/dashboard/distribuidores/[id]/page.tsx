@@ -10,12 +10,8 @@ import { getCurrentUser } from '@/lib/auth-utils'
 import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
 import { cookies } from 'next/headers'
 import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
-import { getStockPorCubetaPorEntidad } from '@/lib/inventario-auditoria'
 import BotonReportarMerma from '@/app/dashboard/inventario/BotonReportarMerma'
-import {
-  calcularSaldoPendienteInventarioConsignacion,
-  calcularSaldoPorPagarEfectivo
-} from '@/lib/distribuidores-saldos'
+import { leerSaldoEntidad, leerStockPorCubeta } from '@/lib/vistas'
 import HistorialActividadTableClient from './HistorialActividadTableClient'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
 
@@ -544,21 +540,32 @@ function enrichActividadesAnulacionUi(
   })
 }
 
-function calcularSaldos(
-  tickets: TransaccionTicket[],
+/**
+ * "Total Ganado" del periodo — **lo unico de esta pantalla que ninguna vista
+ * puede dar hoy.**
+ *
+ * `v_saldo_entidad` trae la comision HISTORICA (`total_ganado_comisiones`), sin
+ * recorte de fechas, porque una vista sin filtro sirve a todos los periodos. La
+ * tarjeta de arriba, en cambio, muestra lo ganado en el rango que el usuario
+ * eligio, y ese recorte se sigue haciendo aqui. Queda anotado como el hueco de
+ * la sesion: si algun dia hace falta, seria una vista con `fecha_movimiento`
+ * expuesta, no mas aritmetica en TypeScript.
+ *
+ * El saldo pendiente y el saldo por pagar que esta funcion calculaba **ya no
+ * salen de aqui**: vienen de `v_saldo_entidad`.
+ */
+function calcularTotalGanadoPeriodo(
   finanzas: FinanzaLedger[],
   entidad: Pick<Entidad, 'id' | 'nombre' | 'rol'>,
-  consolidationScope: Pick<ConsolidationScope, 'entityIds' | 'accountIds' | 'localsCount'>,
+  consolidationScope: Pick<ConsolidationScope, 'entityIds' | 'accountIds'>,
   options?: {
     fechaInicio?: string
     fechaFin?: string
-    debtBuyerEntityIds?: string[]
   }
-) {
+): number {
   const finanzasContables = finanzas.filter((f) => (f.status ?? 'ACTIVO') !== 'ANULADO')
   const consolidatedEntityIds = new Set(consolidationScope.entityIds)
   const consolidatedAccountIds = new Set(consolidationScope.accountIds)
-  const debtBuyerEntityIdsList = options?.debtBuyerEntityIds ?? [entidad.id]
   const fechaInicio = options?.fechaInicio
   const fechaFin = options?.fechaFin
   const aplicarFiltroFecha = shouldApplyDateFilter(fechaInicio, fechaFin)
@@ -598,21 +605,6 @@ function calcularSaldos(
     return fechaMovimiento.getTime() >= inicioLocal.getTime() && fechaMovimiento.getTime() <= finLocal.getTime()
   }
 
-  // `categoria` viaja hasta el calculo: sin ella, `esAbonoPendienteAprobacion`
-  // no puede distinguir un ABONO_PENDIENTE de uno aprobado y el saldo del perfil
-  // resta abonos que todavia no existen contablemente.
-  const saldoPendiente = calcularSaldoPendienteInventarioConsignacion(
-    entidad,
-    tickets,
-    debtBuyerEntityIdsList,
-    finanzasContables.map((f) => ({
-      tipo_movimiento: f.tipo_movimiento,
-      monto: f.monto,
-      id_entidad_relacionada: f.id_entidad_relacionada,
-      categoria: f.categoria ?? null
-    }))
-  )
-
   const movimientosEntidad = finanzasContables.filter((f) => f.id_entidad_relacionada && consolidatedEntityIds.has(f.id_entidad_relacionada))
   const movimientosCuenta = finanzasContables.filter((f) => {
     if (!f.id_cuenta_destino) return false
@@ -627,16 +619,9 @@ function calcularSaldos(
     const st = f.status ?? 'ACTIVO'
     return st === 'APPROVED' || st === 'ACTIVO'
   }
-  const totalGanadoHistorico = movimientosRelevantes
-    .filter((f) => {
-      if (!comisionCuentaEstadoOperativo(f)) return false
-      if (!f.tipo_movimiento) return false
-      if (!['INGRESO_COMISION', 'COMISION_PASIVA'].includes(f.tipo_movimiento)) return false
-      if (f.id_entidad_relacionada !== entidad.id) return false
-      return true
-    })
-    .reduce((sum, f) => sum + f.monto, 0)
-  const totalGanadoPeriodoFiltrado = movimientosRelevantes
+  // El historico que esta funcion tambien devolvia no lo pintaba nadie, y hoy
+  // ademas vive en `v_saldo_entidad.total_ganado_comisiones`.
+  return movimientosRelevantes
     .filter((f) => {
       if (!comisionCuentaEstadoOperativo(f)) return false
       if (!f.tipo_movimiento) return false
@@ -645,13 +630,6 @@ function calcularSaldos(
       return estaEnPeriodo(f.fecha_movimiento)
     })
     .reduce((sum, f) => sum + f.monto, 0)
-
-  return {
-    totalGenerado: saldoPendiente,
-    totalGanadoHistorico,
-    totalGanadoPeriodo: totalGanadoPeriodoFiltrado,
-    saldoPendiente
-  }
 }
 
 function unificarActividades(
@@ -828,30 +806,24 @@ export default async function EstadoCuentaPage({
   const ticketIdsHistorial = Array.from(new Set(ticketsHistoricosSaldo.map((t) => t.id)))
   const desglosePorTicketId = await fetchDesgloseTextoPorTicketId(serviceRoleClient, ticketIdsHistorial)
 
-  const saldos = calcularSaldos(
-    ticketsHistoricosSaldo,
+  const comisionesTotales = calcularTotalGanadoPeriodo(
     finanzasHistoricasSaldo,
     entidad,
     consolidationScope,
-    { fechaInicio, fechaFin, debtBuyerEntityIds: [entidad.id] }
+    { fechaInicio, fechaFin }
   )
-  const comisionesTotales = saldos?.totalGanadoPeriodo || 0
 
-  // ─── Saldo por Pagar = efectivo pendiente de remisión (sin doble ajuste por comisión) ───
-  // DEUDA_A_MATRIZ (+) y CARGO_DEUDA (+) ya reflejan netos de caja respecto a Admin; no restar INGRESO_COMISION / COMISION_PASIVA.
-  // ABONO_DEUDA (-) pagos efectivos a Admin.
-  // Positivo → nodo debe efectivo a Admin. Negativo → saldo a favor (Admin debe al nodo).
-  const saldoPorPagar = calcularSaldoPorPagarEfectivo(
-    entidad.id,
-    finanzasHistoricasSaldo
-      .filter((f) => (f.status ?? 'ACTIVO') !== 'ANULADO')
-      .map((f) => ({
-        tipo_movimiento: f.tipo_movimiento || null,
-        monto: f.monto,
-        id_entidad_relacionada: f.id_entidad_relacionada || null,
-        categoria: f.categoria || null
-      }))
-  )
+  // ─── Las dos tarjetas de saldo, ya calculadas por Postgres ───────────────────
+  // `saldo_pendiente_consignacion` reproduce
+  // `calcularSaldoPendienteInventarioConsignacion`, y `saldo_por_pagar_efectivo`
+  // reproduce `calcularSaldoPorPagarEfectivo`: DEUDA_A_MATRIZ (+) y CARGO_DEUDA
+  // (+) ya reflejan netos de caja respecto a Admin, y no se restan comisiones.
+  // Positivo → el nodo debe efectivo a Admin. Negativo → saldo a favor.
+  // Se lee con el cliente de la SESION: la vista es `security_invoker` y no le
+  // ensena a un DST el saldo de un nodo que no es suyo.
+  const saldoDelNodo = await leerSaldoEntidad(supabaseClient, entidad.id)
+  const saldoPendiente = Number(saldoDelNodo?.saldo_pendiente_consignacion ?? 0)
+  const saldoPorPagar = Number(saldoDelNodo?.saldo_por_pagar_efectivo ?? 0)
 
   // Historial de actividad sin recorte temporal para evitar vacíos por desajuste de zona horaria/rango.
   const actividades = unificarActividades(
@@ -871,13 +843,25 @@ export default async function EstadoCuentaPage({
     dstAnnulScopeOk,
     currentUserEntityId
   )
-  const inventarioBuckets = await getStockPorCubetaPorEntidad(resolvedParams.id)
-    .catch((error) => {
-      console.error('Error fetching stock por cubeta en perfil de entidad:', error)
-      return { stockPagado: [], stockConsignado: [] }
-    })
-  const inventarioPagado = inventarioBuckets.stockPagado
-  const inventarioConsignado = inventarioBuckets.stockConsignado
+  // `v_stock_por_cubeta` reproduce `getStockPorCubetaPorEntidad`: mismo replay
+  // del ledger, mismos productos TERMINADO, misma regla de "solo stock > 0".
+  // Una consulta en lugar de dos, y con la sesion del usuario en vez de service
+  // role. La funcion de `lib/inventario-auditoria.ts` sigue en pie: la usa el
+  // motor de auditoria y es la referencia de la prueba de equivalencia.
+  const filasStock = await leerStockPorCubeta(supabaseClient, resolvedParams.id).catch((error) => {
+    console.error('Error fetching stock por cubeta en perfil de entidad:', error)
+    return []
+  })
+  const aFilaInventario = (cubeta: 'PAGADO' | 'CONSIGNADO') =>
+    filasStock
+      .filter((fila) => fila.cubeta === cubeta)
+      .map((fila) => ({
+        idProducto: fila.id_producto,
+        producto: fila.producto,
+        stockEsperado: Number(fila.stock)
+      }))
+  const inventarioPagado = aFilaInventario('PAGADO')
+  const inventarioConsignado = aFilaInventario('CONSIGNADO')
   const productosReportablesMap = new Map<string, { id: string; idProducto: string; nombre: string }>()
   for (const row of [...inventarioPagado, ...inventarioConsignado]) {
     productosReportablesMap.set(row.idProducto, { id: row.idProducto, idProducto: row.idProducto, nombre: row.producto })
@@ -981,18 +965,18 @@ export default async function EstadoCuentaPage({
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">
-                {saldos.saldoPendiente < 0 ? 'Saldo a Favor' : 'Saldo Pendiente'}
+                {saldoPendiente < 0 ? 'Saldo a Favor' : 'Saldo Pendiente'}
               </p>
-              <p className={`text-3xl font-bold mt-2 ${saldos.saldoPendiente < 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatCurrency(Math.abs(saldos.saldoPendiente))}
+              <p className={`text-3xl font-bold mt-2 ${saldoPendiente < 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {formatCurrency(Math.abs(saldoPendiente))}
               </p>
             </div>
-            <div className={`p-3 rounded-full ${saldos.saldoPendiente < 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-              <span className="text-2xl">{saldos.saldoPendiente < 0 ? '✅' : '⏳'}</span>
+            <div className={`p-3 rounded-full ${saldoPendiente < 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+              <span className="text-2xl">{saldoPendiente < 0 ? '✅' : '⏳'}</span>
             </div>
           </div>
           <p className="text-xs text-gray-500 mt-2">
-            {saldos.saldoPendiente < 0
+            {saldoPendiente < 0
               ? 'Admin le debe a este distribuidor'
               : 'Deuda neta del distribuidor hacia Admin'}
           </p>
