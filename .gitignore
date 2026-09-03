@@ -55,3 +55,7 @@ tests/.auth/
 # ...pero el ejemplo SIN valores si se commitea: es la documentacion de que
 # variables hacen falta. La regla `.env*` de arriba lo tapaba.
 !.env.test.local.example
+
+# respaldos de la base: son los datos del negocio, no del repositorio.
+# El repo es privado, pero un repo privado no es una caja fuerte.
+supabase/_respaldos/
