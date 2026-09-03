@@ -9,8 +9,10 @@
     "start": "next start",
     "lint": "eslint",
     "test": "playwright test",
+    "verificar": "tsc --noEmit && playwright test",
     "test:humo": "playwright test --project=humo",
-    "respaldo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/respaldo.ps1"
+    "respaldo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/respaldo.ps1",
+    "prepare": "git config core.hooksPath .githooks || exit 0"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",

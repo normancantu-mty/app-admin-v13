@@ -1,0 +1,88 @@
+#!/bin/sh
+# ============================================================================
+# pre-push — la red que CI no puede tender (ERP-70)
+# ============================================================================
+# POR QUE EXISTE. El proyecto `equivalencia` de Playwright (23 pruebas, entre
+# `tests/vistas-equivalencia.spec.ts` y `tests/cableado-pantallas.spec.ts`)
+# compara las vistas canonicas de Postgres contra las funciones de TypeScript
+# que dicen reproducir, sobre los datos reales y al centavo. Para eso necesita
+# `SUPABASE_SERVICE_ROLE_KEY`, la llave que puede leerlo TODO saltandose el RLS.
+#
+# Esa llave NO va a entrar a los secrets de GitHub — decision de Norman, y es la
+# correcta: un secret de repo lo puede leer cualquier workflow que alguien
+# agregue despues. Consecuencia: en CI esas 23 pruebas se SALTAN, siempre.
+#
+# Asi que corren aqui, en la maquina de Norman, en el unico momento en que
+# todavia se puede hacer algo: justo antes de que el codigo salga del portatil.
+#
+# COMO SE INSTALA. `package.json` tiene `"prepare": "git config core.hooksPath
+# .githooks"`, y npm corre `prepare` solo despues de cada `npm install`. O sea
+# que un clon limpio queda con el gancho puesto sin que nadie haga nada. El
+# gancho vive en el repo, versionado: no es un archivo suelto en `.git/hooks/`
+# que se pierde en el siguiente clon.
+#
+# COMO SE SALTA. `git push --no-verify`. Esta escrito abajo, en la salida del
+# fallo, a proposito: un gancho sin escape hatch no se respeta, se borra.
+# ============================================================================
+
+set -e
+
+RAIZ="$(git rev-parse --show-toplevel)"
+cd "$RAIZ"
+
+# ----------------------------------------------------------------------------
+# ¿Hay llave? Se mira el entorno primero y `.env` despues, igual que hace
+# `tests/vistas-entorno.ts`, para que las dos partes coincidan siempre.
+# ----------------------------------------------------------------------------
+hay_llave() {
+  if [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then return 0; fi
+  if [ -f "$RAIZ/.env" ] && grep -qE '^[[:space:]]*SUPABASE_SERVICE_ROLE_KEY[[:space:]]*=[[:space:]]*[^[:space:]]' "$RAIZ/.env"; then
+    return 0
+  fi
+  return 1
+}
+
+if ! hay_llave; then
+  # Se avisa fuerte y se DEJA PASAR. Un gancho que impide trabajar se
+  # desinstala el primer dia, y entonces no protege nunca mas.
+  echo ""
+  echo "  ############################################################"
+  echo "  #  AVISO: las 23 pruebas de equivalencia NO CORRIERON      #"
+  echo "  ############################################################"
+  echo ""
+  echo "  Falta SUPABASE_SERVICE_ROLE_KEY en el entorno o en .env."
+  echo ""
+  echo "  El push sigue. Pero nadie acaba de comprobar que las vistas"
+  echo "  canonicas de Postgres y las funciones de TypeScript den la"
+  echo "  misma cifra, y CI tampoco lo va a hacer: ahi se saltan"
+  echo "  siempre, a proposito (la llave no entra a GitHub secrets)."
+  echo ""
+  echo "  Esto no es un fallo, es un hueco. Se tapa poniendo la llave"
+  echo "  en .env — ver .env.test.local.example y el README."
+  echo ""
+  exit 0
+fi
+
+echo ""
+echo "[pre-push] npm run verificar  (tsc --noEmit + las 112 pruebas)"
+echo "[pre-push] Incluye las 23 de equivalencia, que CI no corre."
+echo ""
+
+if npm run verificar; then
+  echo ""
+  echo "[pre-push] Verde. Sale el push."
+  echo ""
+  exit 0
+fi
+
+echo ""
+echo "  ############################################################"
+echo "  #  PUSH DETENIDO: 'npm run verificar' salio en rojo         #"
+echo "  ############################################################"
+echo ""
+echo "  Arriba esta que fallo. Si es una prueba de equivalencia, una"
+echo "  vista y su funcion de TypeScript ya no dan la misma cifra."
+echo ""
+echo "  Con prisa se salta:  git push --no-verify"
+echo ""
+exit 1

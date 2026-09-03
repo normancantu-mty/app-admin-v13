@@ -6,8 +6,21 @@
 #   3. npm run lint   NO bloquea: hay errores preexistentes que se ven pero no detienen.
 #   4. npm run build  solo si hay secretos de Supabase configurados (ver README).
 #
-# Ninguna prueba necesita la llave privada de Supabase. No la agregues aqui:
-# las pruebas son aritmetica pura, sin red y sin base de datos.
+# LA LLAVE PRIVADA DE SUPABASE NO VA AQUI. `SUPABASE_SERVICE_ROLE_KEY` lee todo
+# saltandose el RLS, y un secret de repo lo puede leer cualquier workflow que
+# alguien agregue despues. Decision de Norman; no la subas.
+#
+# Consecuencia, dicha completa: **el proyecto `equivalencia` de Playwright
+# existe y en CI se salta SIEMPRE, a proposito.** Son 23 pruebas
+# (`tests/vistas-equivalencia.spec.ts` + `tests/cableado-pantallas.spec.ts`) que
+# comparan las vistas canonicas de Postgres contra las funciones de TypeScript
+# sobre los datos reales; necesitan esa llave y por eso aqui nunca corren. El
+# `npm test` de arriba las cuenta como "skipped", no como aprobadas.
+#
+# Quien SI las corre: el gancho `.githooks/pre-push`, en la maquina de Norman,
+# en cada `git push` (`npm run verificar`). Ese es el unico lugar donde alguien
+# comprueba que vista y funcion dan la misma cifra. Si ese gancho se desinstala,
+# nadie lo hace — y nada en CI se pondria rojo para avisarlo.
 
 name: CI
 
