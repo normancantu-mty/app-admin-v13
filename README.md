@@ -192,6 +192,113 @@ o cualquier archivo de `app/actions/`, verifica a mano contra Supabase.
 
 ---
 
+## Respaldos de la base
+
+**Hasta el 2026-09-02 este proyecto no tenia ninguno.** Es lo unico de la lista de riesgos que no
+se arregla despues del hecho: un error de calculo se recalcula, un `DROP` sin respaldo no.
+
+### Donde quedan
+
+En `supabase/_respaldos/`, **fuera de git** (esta en `.gitignore`). Son los datos del negocio y de
+los clientes; el repositorio es privado, pero un repositorio privado no es una caja fuerte. Cada
+corrida deja dos archivos con la fecha en el nombre y una linea en `respaldo.log`:
+
+| Archivo | Que trae |
+|---|---|
+| `AAAA-MM-DD_schema.sql` | Tablas, indices, llaves, **las 49 politicas de RLS**, las 4 funciones (`mi_entidad_id`, `mi_rol`, `mis_entidades`, `registrar_logistica_inversa`) y las 5 vistas |
+| `AAAA-MM-DD_datos.sql` | Las filas de las 9 tablas de `public` **y del esquema `auth`** (usuarios e identidades) |
+
+Se conservan los ultimos **12** pares; los mas viejos se purgan solos.
+
+**Que NO trae, y conviene saberlo antes del dia malo.** El DDL es **solo del esquema `public`**:
+no incluye la definicion de `auth` ni de `storage`, porque esas las crea Supabase sola al levantar
+un proyecto. Por eso la restauracion natural es **contra un proyecto nuevo de Supabase**, no contra
+una base Postgres pelada. Tampoco entran Edge Functions, buckets de Storage, secretos del proyecto
+ni la configuracion del panel — nada de eso existe hoy en este proyecto, pero si algun dia se
+agrega, este respaldo no lo cubre.
+
+**El archivo de datos trae `auth.users` con las contrasenas cifradas.** Es otra razon para que
+`supabase/_respaldos/` nunca salga de la maquina por git.
+
+### Como se corre
+
+```bash
+npm run respaldo
+```
+
+**Necesita Docker corriendo.** El servidor es Postgres **17.6** y el CLI hace el volcado con una
+imagen que coincide con esa version. El `pg_dump` 16 que hay instalado en la maquina **no sirve**:
+`pg_dump` se niega a volcar un servidor mas nuevo que el.
+
+No hay contrasenas en el script. El CLI se autentica con la sesion de `supabase login`. Si algun
+dia pide la contrasena de la base (Supabase -> Project Settings -> Database), se le pasa por la
+variable de entorno **`SUPABASE_DB_PASSWORD`**, nunca por un archivo del repo.
+
+El script no se limita a volcar: **verifica lo que volco** y sale con codigo distinto de cero si
+falta algo — si el esquema no trae 49 politicas, o si alguna de las 9 tablas no aparece en los
+datos. Un respaldo que restaura las filas pero deja la base sin RLS es peor que ninguno, porque da
+falsa tranquilidad.
+
+### Cada semana, sin que nadie se acuerde
+
+**Ya esta instalada.** Tarea programada de Windows `ERP - respaldo semanal`, **domingos a las
+21:00**, corriendo como el usuario actual (no hizo falta ser administrador). Se creo asi:
+
+```powershell
+$ruta = 'C:\Users\norma\Documents\Cursor\app-admin\scripts\respaldo.ps1'
+$accion  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $ruta + '"')
+$disparo = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At '21:00'
+$ajustes = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName 'ERP - respaldo semanal' -Action $accion -Trigger $disparo -Settings $ajustes -Force
+```
+
+`-StartWhenAvailable` es lo que hace que **si el domingo la maquina estuvo apagada, el respaldo
+corra al siguiente arranque** en vez de perderse esa semana.
+
+Para revisarla, forzar una corrida de prueba, o quitarla:
+
+```
+schtasks /Query  /TN "ERP - respaldo semanal" /FO LIST
+schtasks /Run    /TN "ERP - respaldo semanal"
+schtasks /Delete /TN "ERP - respaldo semanal" /F
+```
+
+> **La tarea puede fallar en silencio.** Corre sin que nadie la vea, y si Docker no esta arriba,
+> el volcado no se hace. La comprobacion barata: abrir `supabase/_respaldos/` y mirar la fecha del
+> archivo mas nuevo, o la ultima linea de `respaldo.log`. **Si tiene mas de una semana, no hay
+> respaldo — hay un archivo viejo, que no es lo mismo.**
+
+### Como se restaura — el dia malo
+
+**Esto sobreescribe la base de destino. Nunca lo apuntes a produccion sin estar seguro.**
+
+Primero el esquema, despues los datos, en ese orden:
+
+```bash
+psql "$CADENA" --single-transaction --variable ON_ERROR_STOP=1 -f supabase/_respaldos/2026-09-02_schema.sql
+psql "$CADENA" --single-transaction --variable ON_ERROR_STOP=1 -f supabase/_respaldos/2026-09-02_datos.sql
+```
+
+donde `CADENA` es la cadena de conexion de Supabase (Project Settings -> Database -> Connection
+string -> URI), con la contrasena de la base:
+
+```
+postgresql://postgres.gnnqxtsdrbvmlkhfemjw:LA_CONTRASENA@aws-0-us-west-1.pooler.supabase.com:5432/postgres
+```
+
+Notas que importan cuando ya estas nervioso:
+
+- **`entidades` tiene llaves foraneas circulares** (`id_padre` apunta a la misma tabla). El archivo
+  de datos ya empieza con `SET session_replication_role = replica;`, que apaga los triggers y las
+  FK durante la carga. **No quites esa linea** o la restauracion falla a media tabla.
+- Restaurar contra una base que ya tiene datos choca con las llaves primarias. Para volver a cero,
+  lo limpio es crear un proyecto nuevo de Supabase y restaurar ahi, o `supabase db reset --linked`
+  antes de cargar — **eso borra produccion**, asi que solo si es exactamente lo que quieres.
+- Despues de restaurar, la prueba de que salio bien son las cuatro cifras de control:
+  **84 · 468 · 61 · $386,201**.
+
+---
+
 ## Decisiones de diseno, y por que
 
 **El saldo se recalcula, no se guarda.**

@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "playwright test",
-    "test:humo": "playwright test --project=humo"
+    "test:humo": "playwright test --project=humo",
+    "respaldo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/respaldo.ps1"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",
