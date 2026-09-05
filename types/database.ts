@@ -14,6 +14,69 @@ export type Database = {
   }
   public: {
     Tables: {
+      // ERP-59. Escrita a mano y no por `supabase gen types`: la tabla nace en
+      // `supabase/migrations/20260905120000_cola_de_avisos_de_captura.sql` y
+      // los tipos se regeneran cuando esa migracion se aplique. Si al
+      // regenerar este bloque cambia, manda el generado.
+      avisos_captura: {
+        Row: {
+          cerrado_en: string | null
+          cerrado_por: string | null
+          creado_en: string
+          datos_capturados: Json | null
+          estado: string
+          id: string
+          id_entidad: string
+          id_registro: string | null
+          mensaje: string
+          motivo_cierre: string | null
+          severidad: string
+          tabla: string | null
+          tipo: string
+          usuario_creador: string
+        }
+        Insert: {
+          cerrado_en?: string | null
+          cerrado_por?: string | null
+          creado_en?: string
+          datos_capturados?: Json | null
+          estado?: string
+          id?: string
+          id_entidad: string
+          id_registro?: string | null
+          mensaje: string
+          motivo_cierre?: string | null
+          severidad: string
+          tabla?: string | null
+          tipo: string
+          usuario_creador?: string
+        }
+        Update: {
+          cerrado_en?: string | null
+          cerrado_por?: string | null
+          creado_en?: string
+          datos_capturados?: Json | null
+          estado?: string
+          id?: string
+          id_entidad?: string
+          id_registro?: string | null
+          mensaje?: string
+          motivo_cierre?: string | null
+          severidad?: string
+          tabla?: string | null
+          tipo?: string
+          usuario_creador?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "avisos_captura_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       catalogo_productos: {
         Row: {
           costo_unitario: number | null

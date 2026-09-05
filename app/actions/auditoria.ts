@@ -7,7 +7,8 @@ import { getCurrentUser } from '@/lib/auth-utils'
 import { getStockEsperadoPorEntidad } from '@/lib/inventario-auditoria'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
-import type { TablesInsert } from '@/types/database'
+import type { Database, TablesInsert } from '@/types/database'
+import { registrarAviso } from '@/lib/avisos-server'
 
 interface ConteoFisicoPayload {
   idProducto: string
@@ -58,7 +59,7 @@ function normalizeText(value: string): string {
 async function getServerSupabaseClient() {
   const cookieStore = await cookies()
 
-  return createServerClient(
+  return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -185,14 +186,60 @@ export async function procesarCorteInventarioAction(
     }
   })
 
-  const sobregiro = diferencias.find((item) => item.diferencia < 0)
-  if (sobregiro) {
-    throw new Error(`Sobregiro físico detectado en producto ${sobregiro.producto}. Revisar conteo.`)
+  // ── W1 · ERP-59 ───────────────────────────────────────────────────────────
+  // Hasta el 2026-09-05 un solo producto sobregirado tiraba EL CORTE ENTERO:
+  //
+  //     const sobregiro = diferencias.find((item) => item.diferencia < 0)
+  //     if (sobregiro) { throw new Error(`Sobregiro físico detectado...`) }
+  //
+  // Un corte con veinte productos bien contados y uno de mas se perdia completo,
+  // y con el la unica foto del inventario real de esa entidad.
+  //
+  // Ahora las diferencias positivas se procesan normal y la linea sobregirada
+  // **no genera ningun movimiento** — nunca stock negativo (regla 3) — y sale
+  // como aviso con el conteo que se capturo. No se parte ningun asiento: las
+  // lineas que si se cobran escriben sus DOS ledgers completos; la sobregirada
+  // no escribe ninguno.
+  const sobregiros = diferencias.filter((item) => item.diferencia < 0)
+
+  const avisoSobregiro = sobregiros.length === 0 ? null : {
+    mensaje:
+      `Corte con sobregiro fisico en ${sobregiros.length} producto(s): ` +
+      sobregiros
+        .map((item) => `${item.producto} (esperado ${item.stockEsperado}, contado ${item.fisico})`)
+        .join('; ') +
+      '. Esas lineas NO generaron movimiento; el resto del corte si se proceso.',
+    datos: {
+      sobregiros: sobregiros.map((item) => ({
+        producto: item.producto,
+        id_producto: item.idProducto,
+        esperado: item.stockEsperado,
+        contado: item.fisico,
+        diferencia: item.diferencia
+      }))
+    }
   }
 
   const diferenciasVenta = diferencias.filter((item) => item.diferencia > 0)
+
+  // ── W1b · ERP-59 ──────────────────────────────────────────────────────────
+  // Antes: `throw new Error('No hay diferencias positivas para procesar cobranza.')`.
+  // Un corte que cierra en cero es un corte VALIDO — significa "no se vendio
+  // nada desde el ultimo corte" — y esa es informacion, no un error. No hay
+  // fila que escribir, asi que el aviso apunta a la entidad y no a un registro:
+  // es el unico de los diez que no tiene puntero.
   if (diferenciasVenta.length === 0) {
-    throw new Error('No hay diferencias positivas para procesar cobranza.')
+    await registrarAviso(supabase, {
+      tipo: avisoSobregiro ? 'W1' : 'W1b',
+      idEntidad: idEntidadObjetivo,
+      mensaje: avisoSobregiro
+        ? `${avisoSobregiro.mensaje} No quedo ninguna diferencia positiva que cobrar: el corte cerro en cero.`
+        : 'El corte cerro sin diferencias positivas: no hubo nada que cobrar.',
+      datosCapturados: avisoSobregiro?.datos
+    })
+    revalidatePath('/dashboard/avisos')
+    revalidatePath(`/dashboard/distribuidores/${idEntidadObjetivo}`)
+    return { ok: true }
   }
 
   const productosIds = diferenciasVenta.map((item) => item.idProducto)
@@ -459,6 +506,18 @@ export async function procesarCorteInventarioAction(
 
   if (detallesError) {
     throw new Error(`Error al guardar detalles del ticket de cobranza: ${detallesError.message}`)
+  }
+
+  if (avisoSobregiro) {
+    await registrarAviso(supabase, {
+      tipo: 'W1',
+      idEntidad: idEntidadObjetivo,
+      mensaje: avisoSobregiro.mensaje,
+      tabla: 'transacciones_tickets',
+      idRegistro: ticketData.id,
+      datosCapturados: avisoSobregiro.datos
+    })
+    revalidatePath('/dashboard/avisos')
   }
 
   revalidatePath('/dashboard/finanzas')

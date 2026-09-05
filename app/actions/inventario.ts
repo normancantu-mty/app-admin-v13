@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import type { TablesInsert } from '@/types/database'
+import type { Database, TablesInsert } from '@/types/database'
+import { registrarAviso } from '@/lib/avisos-server'
 import type { Cubeta } from '@/lib/inventario-types'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
@@ -44,7 +45,7 @@ export interface RegistrarProduccionResult {
 async function getServerSupabaseClient() {
   const cookieStore = await cookies()
 
-  return createServerClient(
+  return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -139,26 +140,50 @@ export async function registrarProduccionAction(
       return { success: false, error: recetasError.message }
     }
 
-    if (!recetas || recetas.length === 0) {
-      return { success: false, error: 'El producto seleccionado no tiene receta de producción (BOM).' }
+    // ── W3 y W9 · ERP-59 ───────────────────────────────────────────────────
+    // Hasta el 2026-09-05 las dos condiciones tiraban la produccion entera:
+    //
+    //     if (!recetas || recetas.length === 0)  -> 'no tiene receta (BOM)'
+    //     if (contieneInsumosInvalidos)          -> 'receta con insumos invalidos'
+    //
+    // Las botellas EXISTEN. Salieron de la linea, estan en el almacen, y en las
+    // dos ramas el sistema decidia no enterarse. Ahora la produccion se
+    // registra siempre y lo que no se pudo hacer sale como aviso.
+    //
+    // Esto NO cruza la frontera del prompt 18-bis §3: `PRODUCCION` no genera ni
+    // una fila de finanzas — el par que queda cojo es inventario contra
+    // inventario, no fisico contra monetario. La consecuencia esta dicha en el
+    // aviso: **el inventario de insumo se lee mas alto de lo real** hasta que
+    // alguien cargue la receta y descuente a mano.
+    const usuarioCreador = user.email || entidadOperadora.id
+    const lineasReceta = recetas ?? []
+
+    const movimientoProduccion: InventarioInsert = {
+      id_producto: productoTerminadoId,
+      tipo_movimiento: 'PRODUCCION',
+      cantidad: cantidadProduccion,
+      id_entidad_destino: adminId,
+      cubeta: 'PAGADO',
+      status: 'ACTIVO',
+      usuario_creador: usuarioCreador
     }
 
-    const usuarioCreador = user.email || entidadOperadora.id
+    const lineasBOM = lineasReceta.map((receta) => ({
+      id_insumo: receta.id_insumo || '',
+      cantidad: Number(receta.cantidad_requerida || 0) * cantidadProduccion
+    }))
+
+    const lineasValidas = lineasBOM.filter(
+      (linea) => Boolean(linea.id_insumo) && Number.isFinite(linea.cantidad) && linea.cantidad > 0
+    )
+    const lineasInvalidas = lineasBOM.filter((linea) => !lineasValidas.includes(linea))
 
     const movimientosProduccion: InventarioInsert[] = [
-      {
-        id_producto: productoTerminadoId,
-        tipo_movimiento: 'PRODUCCION',
-        cantidad: cantidadProduccion,
-        id_entidad_destino: adminId,
-        cubeta: 'PAGADO',
-        status: 'ACTIVO',
-        usuario_creador: usuarioCreador
-      },
-      ...recetas.map((receta) => ({
-        id_producto: receta.id_insumo || '',
+      movimientoProduccion,
+      ...lineasValidas.map((linea) => ({
+        id_producto: linea.id_insumo,
         tipo_movimiento: 'TRASPASO',
-        cantidad: Number(receta.cantidad_requerida || 0) * cantidadProduccion,
+        cantidad: linea.cantidad,
         id_entidad_origen: adminId,
         cubeta: 'PAGADO' as const,
         status: 'ACTIVO' as const,
@@ -166,20 +191,46 @@ export async function registrarProduccionAction(
       }))
     ]
 
-    const contieneInsumosInvalidos = movimientosProduccion.some(
-      (mov, idx) => idx > 0 && (!mov.id_producto || !Number.isFinite(Number(mov.cantidad)) || Number(mov.cantidad) <= 0)
-    )
-
-    if (contieneInsumosInvalidos) {
-      return { success: false, error: 'La receta contiene insumos inválidos o cantidades no válidas.' }
-    }
-
-    const { error: insertError } = await supabase
+    const { data: filasProduccion, error: insertError } = await supabase
       .from('inventario_ledger')
       .insert(movimientosProduccion)
+      .select('id')
 
     if (insertError) {
       return { success: false, error: insertError.message }
+    }
+
+    const idFilaProduccion = filasProduccion?.[0]?.id
+
+    if (lineasReceta.length === 0) {
+      await registrarAviso(supabase, {
+        tipo: 'W3',
+        idEntidad: entidadOperadora.id,
+        mensaje:
+          `Se produjeron ${cantidadProduccion} unidad(es) sin receta (BOM) cargada. ` +
+          'Ningun insumo se desconto: el inventario de insumo se lee mas alto de lo real.',
+        tabla: 'inventario_ledger',
+        idRegistro: idFilaProduccion,
+        datosCapturados: { id_producto_terminado: productoTerminadoId, cantidad: cantidadProduccion }
+      })
+      revalidatePath('/dashboard/avisos')
+    } else if (lineasInvalidas.length > 0) {
+      await registrarAviso(supabase, {
+        tipo: 'W9',
+        idEntidad: entidadOperadora.id,
+        mensaje:
+          `Produccion registrada con ${lineasInvalidas.length} de ${lineasBOM.length} linea(s) ` +
+          'de receta invalidas (sin insumo o con cantidad <= 0). Esas lineas NO se ' +
+          'descontaron; las validas si.',
+        tabla: 'inventario_ledger',
+        idRegistro: idFilaProduccion,
+        datosCapturados: {
+          id_producto_terminado: productoTerminadoId,
+          cantidad: cantidadProduccion,
+          lineas_saltadas: lineasInvalidas
+        }
+      })
+      revalidatePath('/dashboard/avisos')
     }
 
     revalidatePath('/dashboard/inventario')

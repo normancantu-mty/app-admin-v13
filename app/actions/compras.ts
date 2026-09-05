@@ -23,6 +23,8 @@ import {
   getServerSupabaseClient,
   resolverSesionOperador
 } from '@/lib/server-session'
+import { registrarAviso } from '@/lib/avisos-server'
+import { resolverCuentaOrigenPorDefecto, type CuentaCandidata } from '@/lib/avisos'
 
 type InventarioInsert = TablesInsert<'inventario_ledger'>
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
@@ -115,8 +117,61 @@ export async function registrarCompraInsumosAction(
 
     const idInsumo = String(payload?.idInsumo || '').trim()
     const idCuentaOrigen = String(payload?.idCuentaOrigen || '').trim()
-    if (!idInsumo || !idCuentaOrigen) {
-      return { success: false, error: 'Completa el insumo y la cuenta de origen.' }
+
+    // -- W13 . ERP-59 ---------------------------------------------------------
+    // Hasta el 2026-09-05 este `if` cubria los dos campos a la vez. Se parte
+    // porque **solo el origen se ablanda**: sin insumo no se sabe QUE entro al
+    // almacen y no hay nada que rescatar, pero la cuenta de la que salio el
+    // dinero se puede deducir de la propia entidad.
+    //
+    // OJO CON LA FRONTERA (prompt 18-bis §3): esto NO deja entrar una compra a
+    // medias. La compra sigue escribiendo SUS DOS LEDGERS -- entrada de insumo y
+    // gasto -- y si falla el segundo, el primero se anula como siempre. Lo unico
+    // que cambia es de que cuenta sale el dinero. Por eso `costoTotal <= 0` mas
+    // abajo SIGUE BLOQUEANDO: sin monto no hay forma de escribir el lado
+    // monetario, y media compra es un asiento falso, no una captura incompleta.
+    if (!idInsumo) {
+      return { success: false, error: 'Completa el insumo de la compra.' }
+    }
+
+    let idCuentaOrigenResuelta = idCuentaOrigen
+    let avisoCuentaOrigen: { mensaje: string; capturado: Record<string, unknown> } | null = null
+
+    if (!idCuentaOrigen) {
+      const { data: propiasRaw, error: propiasError } = await supabase
+        .from('cuentas_financieras')
+        .select('id, nombre, id_entidad, tipo_fiscalidad, entidad:entidades!inner(rol)')
+        .eq('id_entidad', sesion.entidadId)
+
+      if (propiasError) {
+        return { success: false, error: `No se pudieron leer las cuentas: ${propiasError.message}` }
+      }
+
+      const candidatas: CuentaCandidata[] = (propiasRaw ?? []).map((fila) => {
+        const dueno = Array.isArray(fila.entidad) ? fila.entidad[0] : fila.entidad
+        return {
+          id: fila.id,
+          nombre: String(fila.nombre ?? ''),
+          id_entidad: fila.id_entidad,
+          rol_entidad: dueno?.rol ? String(dueno.rol).toUpperCase() : null,
+          tipo_fiscalidad: fila.tipo_fiscalidad ?? null
+        }
+      })
+
+      const resolucion = resolverCuentaOrigenPorDefecto(sesion.entidadId, candidatas)
+      if (!resolucion.ok) {
+        return { success: false, error: `Falta la cuenta de origen. ${resolucion.motivo}` }
+      }
+
+      idCuentaOrigenResuelta = resolucion.idCuenta
+      const elegida = candidatas.find((cuenta) => cuenta.id === resolucion.idCuenta)
+      avisoCuentaOrigen = {
+        mensaje:
+          'Compra de insumos capturada sin cuenta de origen. El gasto entro contra ' +
+          `la cuenta propia de la entidad ("${elegida?.nombre ?? resolucion.idCuenta}"), ` +
+          'nunca contra una cuenta ADMIN ni contra la cuenta fiscal.',
+        capturado: { cuenta_origen_capturada: null, cuenta_usada: resolucion.idCuenta }
+      }
     }
 
     const cantidad = Number(payload?.cantidad)
@@ -147,7 +202,7 @@ export async function registrarCompraInsumosAction(
     const { data: cuenta, error: cuentaError } = await supabase
       .from('cuentas_financieras')
       .select('id, id_entidad')
-      .eq('id', idCuentaOrigen)
+      .eq('id', idCuentaOrigenResuelta)
       .maybeSingle()
 
     if (cuentaError) {
@@ -181,7 +236,7 @@ export async function registrarCompraInsumosAction(
 
     // --- PASO B: sale el dinero. Si falla, el PASO A se anula.
     const finanzasPayload: FinanzaInsert = {
-      id_cuenta_origen: idCuentaOrigen,
+      id_cuenta_origen: idCuentaOrigenResuelta,
       tipo_movimiento: 'COMPRA_INSUMOS',
       categoria: 'Insumos',
       monto: costoTotal,
@@ -189,9 +244,11 @@ export async function registrarCompraInsumosAction(
       status: 'ACTIVO'
     }
 
-    const { error: finanzasError } = await supabase
+    const { data: filaFinanzas, error: finanzasError } = await supabase
       .from('finanzas_ledger')
       .insert(finanzasPayload)
+      .select('id')
+      .maybeSingle()
 
     if (finanzasError) {
       const { error: errorCompensacion } = await supabase
@@ -220,6 +277,18 @@ export async function registrarCompraInsumosAction(
         success: false,
         error: `No se pudo registrar el gasto: ${finanzasError.message}. La entrada de inventario se revirtió; no quedó nada a medias.`
       }
+    }
+
+    if (avisoCuentaOrigen) {
+      await registrarAviso(supabase, {
+        tipo: 'W13',
+        idEntidad: sesion.entidadId,
+        mensaje: avisoCuentaOrigen.mensaje,
+        tabla: 'finanzas_ledger',
+        idRegistro: filaFinanzas?.id,
+        datosCapturados: { ...avisoCuentaOrigen.capturado, insumo: insumo.nombre, costo_total: costoTotal }
+      })
+      revalidatePath('/dashboard/avisos')
     }
 
     revalidatePath('/dashboard/inventario')

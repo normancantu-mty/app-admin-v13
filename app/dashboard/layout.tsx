@@ -20,6 +20,11 @@ export default function DashboardLayout({
   const [isLoadingRole, setIsLoadingRole] = useState(true)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isMobileOpen, setIsMobileOpen] = useState(false)
+  // ERP-59. El contador de la cola de captura. Se cuenta desde el cliente
+  // porque este layout ya es un Client Component y el RLS hace el acotado
+  // solo: un DST cuenta los suyos, un ADMIN los de todos. Si falla, se queda
+  // en 0 y el menu se ve sin contador -- nunca revienta la navegacion.
+  const [avisosAbiertos, setAvisosAbiertos] = useState(0)
 
   useEffect(() => {
     const fetchUserRole = async () => {
@@ -61,6 +66,25 @@ export default function DashboardLayout({
   }, [pathname, router])
 
   useEffect(() => {
+    const contarAvisos = async () => {
+      const { count, error } = await supabase
+        .from('avisos_captura')
+        .select('id', { count: 'exact', head: true })
+        .eq('estado', 'ABIERTO')
+
+      // `console.error` y no `alert`: es una lectura de fondo al montar. Un
+      // alert aqui congela la UI (LECCIONES_DE_GUERRA).
+      if (error) {
+        console.error('[avisos] No se pudo contar la cola:', error.message)
+        return
+      }
+      setAvisosAbiertos(count ?? 0)
+    }
+
+    contarAvisos()
+  }, [pathname])
+
+  useEffect(() => {
     setIsMobileOpen(false)
   }, [pathname])
 
@@ -90,6 +114,11 @@ export default function DashboardLayout({
         {
           href: '/dashboard/cartera',
           label: '📋 Cartera'
+        },
+        {
+          href: '/dashboard/avisos',
+          label: '⚠️ Cola de captura',
+          badge: avisosAbiertos
         }
       ]
     } else if (userRole === 'SOCIO') {
@@ -117,6 +146,11 @@ export default function DashboardLayout({
         {
           href: '/dashboard/cartera',
           label: '📋 Cartera'
+        },
+        {
+          href: '/dashboard/avisos',
+          label: '⚠️ Cola de captura',
+          badge: avisosAbiertos
         }
       ]
     } else if (entidadId) {
@@ -133,6 +167,11 @@ export default function DashboardLayout({
           {
             href: '/dashboard/catalogo',
             label: '🏷️ Catálogo / Precios'
+          },
+          {
+            href: '/dashboard/avisos',
+            label: '⚠️ Cola de captura',
+            badge: avisosAbiertos
           }
         ]
       }

@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import type { TablesInsert } from '@/types/database'
+import type { Database, TablesInsert } from '@/types/database'
+import { CATEGORIA_SIN_CATEGORIZAR, normalizarCategoriaGasto } from '@/lib/avisos'
+import { registrarAviso } from '@/lib/avisos-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,9 +34,23 @@ export async function POST(request: Request) {
     if (!tipoMovimiento || !['INGRESO_VENTA', 'GASTO_OPERATIVO', 'TRANSFERENCIA'].includes(tipoMovimiento)) {
       return NextResponse.json({ error: 'tipo_movimiento inválido.' }, { status: 400 })
     }
-    if (tipoMovimiento !== 'TRANSFERENCIA' && !categoria) {
-      return NextResponse.json({ error: 'categoria es obligatoria.' }, { status: 400 })
-    }
+    // ── W14 · ERP-59 ────────────────────────────────────────────────────────
+    // Hasta el 2026-09-05 esta linea decia:
+    //
+    //     if (tipoMovimiento !== 'TRANSFERENCIA' && !categoria) {
+    //       return NextResponse.json({ error: 'categoria es obligatoria.' }, { status: 400 })
+    //     }
+    //
+    // Es la causa mecanica de los $0.00 de gasto capturado desde el 1 de julio
+    // de 2026 (historico: $87,753.57). Un egreso sin categoria es un egreso
+    // CAPTURADO: el dinero salio, y lo unico que falta es la etiqueta. Tirarlo
+    // entero por eso no dejaba el sistema limpio, lo dejaba vacio.
+    //
+    // El egreso entra completo — los dos lados del asiento, monto incluido — y
+    // con categoria `SIN_CATEGORIZAR`. **Nunca `NULL`**: un valor que grita se
+    // revisa; un NULL se pierde entre los legitimos.
+    const categoriaResuelta = normalizarCategoriaGasto(categoria)
+    const faltabaCategoria = categoriaResuelta === CATEGORIA_SIN_CATEGORIZAR
     if (!cuentaDestino) {
       return NextResponse.json({ error: 'cuenta_destino inválida.' }, { status: 400 })
     }
@@ -51,7 +67,7 @@ export async function POST(request: Request) {
     }
 
     const cookieStore = await cookies()
-    const supabase = createServerClient(
+    const supabase = createServerClient<Database>(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
@@ -154,7 +170,7 @@ export async function POST(request: Request) {
 
     const insertPayload: FinanzaInsert = {
       tipo_movimiento: tipoMovimiento,
-      categoria,
+      categoria: categoriaResuelta,
       categoria_gasto: descripcion ?? subcategoria,
       monto,
       id_cuenta_destino: cuentaDestino,
@@ -173,7 +189,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ ok: true, id: data.id })
+    // El aviso se registra DESPUES de que la fila existe, para que pueda
+    // apuntarle. Si el aviso fallara, la fila ya entro: es el orden correcto.
+    if (faltabaCategoria) {
+      await registrarAviso(supabase, {
+        tipo: 'W14',
+        idEntidad: entidad.id,
+        mensaje:
+          `Egreso de $${monto.toFixed(2)} capturado sin categoria. Entro como ` +
+          `${CATEGORIA_SIN_CATEGORIZAR}: hay que clasificarlo.`,
+        tabla: 'finanzas_ledger',
+        idRegistro: data.id,
+        datosCapturados: {
+          tipo_movimiento: tipoMovimiento,
+          monto,
+          descripcion,
+          subcategoria
+        }
+      })
+    }
+
+    return NextResponse.json({ ok: true, id: data.id, aviso: faltabaCategoria ? 'W14' : null })
   } catch (error: any) {
     console.error('🚨 [ERROR CRÍTICO SUPABASE]:', error)
     return NextResponse.json(

@@ -1,6 +1,12 @@
 # ERP-59 — Clasificación de validaciones: qué sigue bloqueando y qué pasa a warning
 
-**Estado: PROPUESTA. No se ha tocado una línea de código.** Este archivo es el paso 1 del
+> ⚠️ **SUPERADO EN PARTE (2026-09-05).** Norman aprobó esta clasificación con
+> correcciones. Lo que cambió — el barrido de `app/api/**`, el aviso nuevo del
+> gasto sin categoría y los cinco que salieron por la frontera de los dos
+> ledgers — está en **`CLASIFICACION_validaciones_ERP-59_delta.md`**, que hay
+> que leer junto con este. El resto de este archivo sigue vigente tal cual.
+
+**Estado original: PROPUESTA. No se ha tocado una línea de código.** Este archivo es el paso 1 del
 PROMPT 18 y existe para que Norman lo revise antes de que se construya nada.
 
 Alcance recorrido: los 8 archivos de `app/actions/` (3,326 líneas), uno por uno, en todos sus

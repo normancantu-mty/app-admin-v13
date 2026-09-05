@@ -5,6 +5,12 @@ import Link from 'next/link'
 export type DashboardNavItem = {
   href: string
   label: string
+  /**
+   * Contador rojo a la derecha del renglon. Hoy solo lo usa la cola de captura
+   * (ERP-59): un aviso que nadie ve no sirve de nada, y esconderlo detras de un
+   * clic es lo mismo que no tenerlo. `0` o ausente no dibuja nada.
+   */
+  badge?: number
 }
 
 type DashboardSidebarProps = {
@@ -28,6 +34,7 @@ function navIconFromLabel(label: string): string {
   if (/distribuidor|directorio|red|locales/i.test(label)) return '👥'
   if (/estado de cuenta/i.test(label)) return '📊'
   if (/catálogo|catalogo|precios/i.test(label)) return '🏷️'
+  if (/cola de captura|avisos/i.test(label)) return '⚠️'
   if (/dashboard general/i.test(label)) return '👁️'
   return '•'
 }
@@ -47,7 +54,7 @@ export function DashboardSidebar({
 }: DashboardSidebarProps) {
   const getLinkClassName = (href: string) => {
     const isActive = pathname === href
-    const base = 'flex items-center gap-3 transition-colors'
+    const base = 'relative flex items-center gap-3 transition-colors'
     const layout = isCollapsed
       ? 'justify-center px-2 py-3 md:px-2'
       : 'px-4 py-3 md:px-6'
@@ -113,6 +120,19 @@ export function DashboardSidebar({
                 <span className={isCollapsed ? 'hidden' : 'block truncate text-sm'}>
                   {item.label}
                 </span>
+                {item.badge ? (
+                  <span
+                    className={[
+                      'shrink-0 rounded-full bg-red-600 text-center text-xs font-bold leading-none text-white',
+                      isCollapsed
+                        ? 'absolute right-1 top-1 min-w-[1.15rem] px-1 py-0.5'
+                        : 'ml-auto min-w-[1.5rem] px-2 py-1'
+                    ].join(' ')}
+                    aria-label={`${item.badge} aviso(s) abierto(s)`}
+                  >
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </span>
+                ) : null}
               </Link>
             )
           })

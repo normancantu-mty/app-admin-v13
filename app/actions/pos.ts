@@ -3,7 +3,9 @@
 import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import type { TablesInsert } from '@/types/database'
+import type { Database, TablesInsert } from '@/types/database'
+import { ENTIDAD_PENDIENTE_DE_ASIGNAR } from '@/lib/avisos'
+import { registrarAviso } from '@/lib/avisos-server'
 import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 import { type Cubeta } from '@/lib/inventario-types'
@@ -142,7 +144,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
   try {
     const timestampTransaccion = new Date().toISOString()
     const cookieStore = await cookies()
-    const supabase = createServerClient(
+    const supabase = createServerClient<Database>(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
@@ -165,9 +167,35 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     if (!vendedorId || payload.items.length === 0) {
       return { ok: false, error: 'Payload POS inválido.' }
     }
-    if (payload.condicion_pago === 'CONCESION' && !payload.idComprador) {
-      throw new Error('La venta en concesión requiere un Comprador identificado (No puede ser Público en General).')
-    }
+    // ── W4 · ERP-59 ─────────────────────────────────────────────────────────
+    // Hasta el 2026-09-05 esta linea decia:
+    //
+    //     if (payload.condicion_pago === 'CONCESION' && !payload.idComprador) {
+    //       throw new Error('La venta en concesión requiere un Comprador identificado...')
+    //     }
+    //
+    // Ese rechazo es la razon por la que hay 72 botellas facturadas fuera del
+    // ERP. La botella SALIO DEL ALMACEN: ese es el hecho, y es fisico. Quien la
+    // debe es el campo que falta, y para eso existe la cola.
+    //
+    // La venta entra a nombre de la entidad centinela "PENDIENTE DE ASIGNAR",
+    // **jamas con `id_comprador = NULL`** (decision del prompt 18-bis §1). Con
+    // entidad real el par de inventario se escribe COMPLETO — salida del
+    // vendedor y entrada al comprador — en vez de quedar cojo, y el aviso se
+    // cuelga de un ticket que existe.
+    //
+    // La concesion no escribe NINGUNA fila de finanzas (mas abajo: el bloque
+    // financiero entero esta dentro de `if (condicion_pago === 'CONTADO')`), asi
+    // que esto no parte ningun asiento en dos: respeta la frontera del §3.
+    //
+    // El aviso W4 NO SE PUEDE CERRAR mientras el ticket siga apuntando al
+    // centinela. Lo impone el trigger `tg_avisos_vigilar_cierre` en Postgres, no
+    // esta funcion: con un token valido, PostgREST atiende un `curl`.
+    const concesionSinComprador =
+      payload.condicion_pago === 'CONCESION' && !payload.idComprador
+    const idCompradorResuelto = concesionSinComprador
+      ? ENTIDAD_PENDIENTE_DE_ASIGNAR
+      : payload.idComprador
 
     const { data: currentUser, error: currentUserError } = await supabase
       .from('entidades')
@@ -290,11 +318,11 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
 
     let compradorInventarioValido: string | null = null
     let compradorEntidad: CompradorEntidad | null = null
-    if (payload.idComprador) {
+    if (idCompradorResuelto) {
       const { data: compradorInventario, error: compradorInventarioError } = await supabase
         .from('entidades')
         .select('id, rol, id_padre, id_nodo_padre, comision_base_local')
-        .eq('id', payload.idComprador)
+        .eq('id', idCompradorResuelto)
         .single()
 
       if (compradorInventarioError || !compradorInventario) {
@@ -426,7 +454,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
 
     const ticketInsert: TicketInsert = {
       id_vendedor: vendedorId,
-      id_comprador: payload.idComprador,
+      id_comprador: idCompradorResuelto,
       condicion_pago: payload.condicion_pago,
       subtotal_catalogo: payload.subtotalCatalogo,
       total_cobrado_real: payload.totalCobradoReal,
@@ -662,13 +690,37 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     revalidatePath('/dashboard/finanzas')
     revalidatePath('/dashboard/inventario')
     revalidatePath('/dashboard/distribuidores')
-    if (payload.idComprador) {
-      revalidatePath(`/dashboard/distribuidores/${payload.idComprador}`)
+    if (idCompradorResuelto) {
+      revalidatePath(`/dashboard/distribuidores/${idCompradorResuelto}`)
     }
     if (origenInventarioId && origenInventarioId !== vendedorId) {
       revalidatePath(`/dashboard/distribuidores/${origenInventarioId}`)
     }
     revalidatePath(`/dashboard/distribuidores/${vendedorId}`)
+
+    // El aviso se escribe AL FINAL, cuando ya no queda nada que pueda disparar
+    // `rollbackTicket`. Registrarlo antes dejaria un aviso apuntando a un ticket
+    // borrado el dia que un insert posterior falle.
+    if (concesionSinComprador) {
+      await registrarAviso(supabase, {
+        tipo: 'W4',
+        idEntidad: vendedorId,
+        mensaje:
+          `Venta en concesion por $${Number(payload.totalCobradoReal).toFixed(2)} sin ` +
+          'comprador identificado. La mercancia salio y quedo a nombre de ' +
+          '"PENDIENTE DE ASIGNAR": nadie la debe todavia. Este aviso no se cierra ' +
+          'sin asignar el comprador real.',
+        tabla: 'transacciones_tickets',
+        idRegistro: ticketData.id,
+        datosCapturados: {
+          vendedor: vendedor.nombre,
+          total_cobrado_real: payload.totalCobradoReal,
+          origen_inventario: origenInventarioId,
+          piezas: itemsNormalizados.reduce((suma, item) => suma + Number(item.cantidad || 0), 0)
+        }
+      })
+      revalidatePath('/dashboard/avisos')
+    }
 
     return { ok: true, ticketId: ticketData.id }
   } catch (error: unknown) {

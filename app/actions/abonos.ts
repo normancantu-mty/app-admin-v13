@@ -33,6 +33,8 @@ import {
   type ClienteServidor,
   type SesionOperador
 } from '@/lib/server-session'
+import { registrarAviso } from '@/lib/avisos-server'
+import { resolverCuentaOrigenPorDefecto, type CuentaCandidata } from '@/lib/avisos'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
 import {
   aCentavos,
@@ -141,29 +143,65 @@ function hoyEnMexico(): string {
  * - Atras -> mediodia de Zacatecas, para que la fila se lea en el dia correcto
  *   tanto en UTC como en UTC-6.
  */
-function resolverFechaMovimiento(
-  fechaPago: string
-): { ok: true; valor: string } | { ok: false; error: string } {
+function resolverFechaMovimiento(fechaPago: string): {
+  valor: string
+  aviso: { tipo: 'W10' | 'W11'; mensaje: string; capturado: string } | null
+} {
   const fecha = String(fechaPago || '').trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
-    return { ok: false, error: 'La fecha del pago debe tener formato AAAA-MM-DD.' }
+
+  // -- W10 y W11 . ERP-59 ---------------------------------------------------
+  // Hasta el 2026-09-05 los tres caminos de abajo devolvian `{ ok: false }` y
+  // el abono se perdia entero. **Un pago mal fechado sigue siendo un pago**: el
+  // dinero se movio. La fecha es la etiqueta, y una etiqueta que falta se
+  // rellena con un default honesto y se grita en la cola.
+  //
+  // Nada de esto parte un asiento en dos: el abono se escribe COMPLETO, con
+  // todas sus filas y su monto. Lo unico que cambia es de que dia se cuelga.
+  const formatoValido = /^\d{4}-\d{2}-\d{2}$/.test(fecha)
+  const hoy = hoyEnMexico()
+
+  if (!formatoValido) {
+    return {
+      valor: new Date().toISOString(),
+      aviso: {
+        tipo: 'W10',
+        mensaje: `Fecha de pago ilegible ("${fecha || '<vacia>'}"). El abono entro con la fecha de hoy.`,
+        capturado: fecha
+      }
+    }
   }
 
-  const hoy = hoyEnMexico()
   if (fecha > hoy) {
-    return { ok: false, error: 'La fecha del pago no puede ser futura.' }
+    // Se ancla a HOY y no se guarda en el futuro a proposito: una fila con
+    // fecha futura desaparece de todo filtro "hasta hoy" -- seria un pago que
+    // existe y no se ve en ninguna pantalla, que es peor que uno mal fechado.
+    return {
+      valor: new Date().toISOString(),
+      aviso: {
+        tipo: 'W11',
+        mensaje: `Fecha de pago futura (${fecha}). El abono se anclo a hoy (${hoy}).`,
+        capturado: fecha
+      }
+    }
   }
 
   if (fecha === hoy) {
-    return { ok: true, valor: new Date().toISOString() }
+    return { valor: new Date().toISOString(), aviso: null }
   }
 
   const anclada = new Date(`${fecha}T12:00:00${OFFSET_MX}`)
   if (Number.isNaN(anclada.getTime())) {
-    return { ok: false, error: 'La fecha del pago no es valida.' }
+    return {
+      valor: new Date().toISOString(),
+      aviso: {
+        tipo: 'W10',
+        mensaje: `Fecha de pago no valida ("${fecha}"). El abono entro con la fecha de hoy.`,
+        capturado: fecha
+      }
+    }
   }
 
-  return { ok: true, valor: anclada.toISOString() }
+  return { valor: anclada.toISOString(), aviso: null }
 }
 
 /**
@@ -306,15 +344,74 @@ export async function registrarAbonoAction(
     const idCuentaOrigen = String(payload?.idCuentaOrigen || '').trim()
     const idCuentaDestino = String(payload?.idCuentaDestino || '').trim()
 
-    if (!idEntidad || !idCuentaOrigen || !idCuentaDestino) {
-      return { success: false, error: 'Completa origen, destino y la entidad.' }
+    // -- W13 . ERP-59 ---------------------------------------------------------
+    // Hasta el 2026-09-05 este `if` era uno solo para los tres campos:
+    //
+    //     if (!idEntidad || !idCuentaOrigen || !idCuentaDestino) return ...
+    //
+    // Se parte en tres porque **solo el origen se ablanda**. Sin entidad, el
+    // abono es una deuda que nadie baja; sin destino, no hay a donde mandar el
+    // dinero. Los dos siguen bloqueando.
+    if (!idEntidad) {
+      return { success: false, error: 'Completa la entidad del movimiento.' }
     }
-    if (idCuentaOrigen === idCuentaDestino) {
-      return { success: false, error: 'Origen y destino deben ser diferentes.' }
+    if (!idCuentaDestino) {
+      return { success: false, error: 'Completa la cuenta de destino.' }
     }
 
     const permiso = await autorizarEntidadObjetivo(supabase, sesion, idEntidad)
     if (!permiso.ok) return { success: false, error: permiso.error }
+
+    // El default: la cuenta de la PROPIA entidad del expediente. Los tres vetos
+    // (nunca ADMIN, nunca FULL_TAX, nunca "fresnillo") viven en
+    // `resolverCuentaOrigenPorDefecto` y estan probados en `tests/avisos.spec.ts`.
+    // Si ninguna cuenta sobrevive a los vetos NO hay default: se rechaza. Mejor
+    // un rechazo que un asiento en la cuenta equivocada -- ahi es donde el
+    // Account_Firewall (regla 1) y el motor de impuesto inverso (regla 2) se
+    // rompen en silencio.
+    let idCuentaOrigenResuelta = idCuentaOrigen
+    let avisoCuentaOrigen: { mensaje: string; capturado: Record<string, unknown> } | null = null
+
+    if (!idCuentaOrigen) {
+      const { data: propiasRaw, error: propiasError } = await supabase
+        .from('cuentas_financieras')
+        .select('id, nombre, id_entidad, tipo_fiscalidad, entidad:entidades!inner(rol)')
+        .eq('id_entidad', idEntidad)
+
+      if (propiasError) {
+        return { success: false, error: `No se pudieron leer las cuentas: ${propiasError.message}` }
+      }
+
+      const candidatas: CuentaCandidata[] = (propiasRaw ?? []).map((fila) => {
+        const dueno = Array.isArray(fila.entidad) ? fila.entidad[0] : fila.entidad
+        return {
+          id: fila.id,
+          nombre: String(fila.nombre ?? ''),
+          id_entidad: fila.id_entidad,
+          rol_entidad: dueno?.rol ? String(dueno.rol).toUpperCase() : null,
+          tipo_fiscalidad: fila.tipo_fiscalidad ?? null
+        }
+      })
+
+      const resolucion = resolverCuentaOrigenPorDefecto(idEntidad, candidatas)
+      if (!resolucion.ok) {
+        return { success: false, error: `Falta la cuenta de origen. ${resolucion.motivo}` }
+      }
+
+      idCuentaOrigenResuelta = resolucion.idCuenta
+      const elegida = candidatas.find((cuenta) => cuenta.id === resolucion.idCuenta)
+      avisoCuentaOrigen = {
+        mensaje:
+          'Abono capturado sin cuenta de origen. Entro contra la cuenta propia de ' +
+          `la entidad ("${elegida?.nombre ?? resolucion.idCuenta}"), nunca contra una ` +
+          'cuenta ADMIN ni contra la cuenta fiscal.',
+        capturado: { cuenta_origen_capturada: null, cuenta_usada: resolucion.idCuenta }
+      }
+    }
+
+    if (idCuentaOrigenResuelta === idCuentaDestino) {
+      return { success: false, error: 'Origen y destino deben ser diferentes.' }
+    }
 
     const montoNum = Number(payload?.monto)
     if (!Number.isFinite(montoNum) || montoNum <= 0) {
@@ -323,19 +420,24 @@ export async function registrarAbonoAction(
     const montoCentavos = aCentavos(montoNum)
 
     const fecha = resolverFechaMovimiento(payload?.fechaPago)
-    if (!fecha.ok) return { success: false, error: fecha.error }
 
+    // -- W12 . ERP-59 ---------------------------------------------------------
+    // Antes: `return { success: false, error: 'Metodo de pago no valido...' }`.
+    // El metodo de pago es una ETIQUETA -- no mueve un peso ni cambia el monto,
+    // el tipo de movimiento o la cuenta. Hoy sale de un `<select>`, pero el bot
+    // de Telegram va a mandar texto libre ("transferencia bancaria"), y perder
+    // el abono entero por no reconocer la palabra es exactamente el problema
+    // que ERP-59 viene a cerrar. El abono entra sin metodo y el texto tal cual
+    // se capturo queda guardado en el aviso.
     const metodoPagoRaw = payload?.metodoPago ? String(payload.metodoPago).trim() : ''
-    if (metodoPagoRaw && !esMetodoPagoValido(metodoPagoRaw)) {
-      return { success: false, error: `Metodo de pago no valido: ${metodoPagoRaw}.` }
-    }
-    const metodoPago = metodoPagoRaw || null
+    const metodoNoReconocido = Boolean(metodoPagoRaw) && !esMetodoPagoValido(metodoPagoRaw)
+    const metodoPago = metodoNoReconocido ? null : metodoPagoRaw || null
 
     // --- Cuentas: la validacion que antes solo existia en el <select> del navegador.
     const { data: cuentasRaw, error: cuentasError } = await supabase
       .from('cuentas_financieras')
       .select('id, id_entidad, entidad:entidades!inner(id, rol)')
-      .in('id', [idCuentaOrigen, idCuentaDestino])
+      .in('id', [idCuentaOrigenResuelta, idCuentaDestino])
 
     if (cuentasError) {
       return { success: false, error: `No se pudieron leer las cuentas: ${cuentasError.message}` }
@@ -356,7 +458,7 @@ export async function registrarAbonoAction(
       })
     }
 
-    const cuentaOrigen = cuentas.get(idCuentaOrigen)
+    const cuentaOrigen = cuentas.get(idCuentaOrigenResuelta)
     const cuentaDestino = cuentas.get(idCuentaDestino)
     if (!cuentaOrigen || !cuentaDestino) {
       return { success: false, error: 'No se pudo resolver origen/destino.' }
@@ -496,9 +598,58 @@ export async function registrarAbonoAction(
     }
 
     // Un solo INSERT multi-fila: una sentencia, atomica. Ver cabecera.
-    const { error: insertError } = await supabase.from('finanzas_ledger').insert(filas)
+    const { data: filasEscritas, error: insertError } = await supabase
+      .from('finanzas_ledger')
+      .insert(filas)
+      .select('id')
     if (insertError) {
       return { success: false, error: `Error al registrar el abono: ${insertError.message}` }
+    }
+
+    // ── Los avisos de ERP-59, ya con el abono dentro ──────────────────────────
+    // Se registran DESPUES del INSERT y apuntan a la primera fila escrita. Los
+    // tres pueden coincidir en un mismo abono (fecha ilegible + metodo raro +
+    // sin cuenta de origen): son avisos distintos porque se arreglan por
+    // separado, y colapsarlos en uno obligaria a reabrirlo al arreglar el primero.
+    const idPrimeraFila = filasEscritas?.[0]?.id
+
+    if (fecha.aviso) {
+      await registrarAviso(supabase, {
+        tipo: fecha.aviso.tipo,
+        idEntidad,
+        mensaje: fecha.aviso.mensaje,
+        tabla: 'finanzas_ledger',
+        idRegistro: idPrimeraFila,
+        datosCapturados: { fecha_capturada: fecha.aviso.capturado, fecha_usada: fecha.valor }
+      })
+    }
+
+    if (metodoNoReconocido) {
+      await registrarAviso(supabase, {
+        tipo: 'W12',
+        idEntidad,
+        mensaje:
+          `Metodo de pago no reconocido ("${metodoPagoRaw}"). El abono entro sin ` +
+          'metodo; el texto capturado quedo guardado aqui.',
+        tabla: 'finanzas_ledger',
+        idRegistro: idPrimeraFila,
+        datosCapturados: { metodo_pago_capturado: metodoPagoRaw }
+      })
+    }
+
+    if (avisoCuentaOrigen) {
+      await registrarAviso(supabase, {
+        tipo: 'W13',
+        idEntidad,
+        mensaje: avisoCuentaOrigen.mensaje,
+        tabla: 'finanzas_ledger',
+        idRegistro: idPrimeraFila,
+        datosCapturados: avisoCuentaOrigen.capturado
+      })
+    }
+
+    if (fecha.aviso || metodoNoReconocido || avisoCuentaOrigen) {
+      revalidatePath('/dashboard/avisos')
     }
 
     revalidatePath(`/dashboard/distribuidores/${idEntidad}`)
