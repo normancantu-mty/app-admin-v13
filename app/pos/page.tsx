@@ -3,7 +3,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { esCompradorSeleccionable } from '@/lib/avisos'
+import {
+  avisoConcesionSinComprador,
+  filtrarCompradoresPermitidos,
+  puedeGenerarTicket
+} from '@/lib/pos-ui'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { calculateWaterfall } from '@/lib/pricing-waterfall'
 import { procesarVentaPOS } from '@/app/actions/pos'
@@ -91,7 +95,10 @@ export default function POSPage() {
   
   const esCompradorDST = compradorSeleccionado?.rol === 'DST'
   const totalVisualCobro = esCompradorDST ? desglose.montoBase : precioFinalTotal
-  const requiereCompradorConcesion = condicionPago === 'CONCESION' && idComprador === ''
+  // ERP-81. Antes esto se llamaba `requiereCompradorConcesion` y APAGABA el
+  // boton: el camino W4 no se podia ejercer desde la aplicacion, o sea que la
+  // cola nacia con su caso estrella muerto. Ahora es un letrero, no un candado.
+  const avisoSinComprador = avisoConcesionSinComprador(condicionPago, idComprador)
 
   // MAPEO INFALIBLE: Buscamos al padre en la memoria local, no dependemos del JOIN de Supabase
   const opcionesCompradores: EntidadCompradorOpcion[] = compradoresPermitidos.map((ent) => {
@@ -215,16 +222,9 @@ export default function POSPage() {
 
       if (!isCancelled) {
         const lista = (data || []) as Entidad[]
-        const compradoresFiltrados = lista.filter((c) => {
-          // ERP-80. El centinela "PENDIENTE DE ASIGNAR" es un LOC, asi que caia
-          // dentro del filtro del ADMIN y se podia elegir como si fuera un
-          // cliente. No lo es: es el marcador de las consignaciones sin dueno.
-          if (!esCompradorSeleccionable(c)) return false
-          if (vendedorActual.rol === 'ADMIN') {
-            return c.rol === 'DST' || c.rol === 'LOC'
-          }
-          return c.id_padre === vendedorActual.id || c.id_nodo_padre === vendedorActual.id
-        })
+        // ERP-80. El filtro vive en `lib/pos-ui.ts` para que se pueda probar sin
+        // navegador: el centinela es un LOC y caia dentro del filtro del ADMIN.
+        const compradoresFiltrados = filtrarCompradoresPermitidos(lista, vendedorActual)
         setCompradoresPermitidos(compradoresFiltrados)
       }
     }
@@ -738,14 +738,22 @@ export default function POSPage() {
 
             <button
               onClick={handleGenerarTicket}
-              disabled={isSubmitting || !idVendedor || carrito.length === 0 || requiereCompradorConcesion}
+              disabled={
+                !puedeGenerarTicket({
+                  isSubmitting,
+                  idVendedor,
+                  itemsEnCarrito: carrito.length,
+                  condicionPago,
+                  idComprador
+                })
+              }
               className="w-full mt-6 bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
             >
               {isSubmitting ? 'Generando...' : '🎫 Generar Ticket'}
             </button>
-            {requiereCompradorConcesion && (
-              <p className="mt-2 text-sm text-amber-700">
-                Identifique al cliente para otorgar concesión
+            {avisoSinComprador && (
+              <p className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800">
+                ⚠️ {avisoSinComprador}
               </p>
             )}
           </div>

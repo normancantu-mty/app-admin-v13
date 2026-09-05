@@ -73,7 +73,13 @@ export default function CobranzaClient({
   }, [rows, conteos])
 
   const hasDiferenciasPositivas = resumen.detalles.some((row) => row.diferencia > 0)
-  const disableSubmit = isPending || resumen.hasSobregiro || !hasDiferenciasPositivas || !idCuentaDestino
+  // ERP-59 · W1 y W1b. Antes esto tambien apagaba el boton con
+  // `resumen.hasSobregiro || !hasDiferenciasPositivas`, y eran los dos casos que
+  // el servidor ya dejo de rechazar: un corte con un producto sobregirado se
+  // procesa igual (esa linea sola no genera movimiento) y un corte en cero es un
+  // corte valido -- significa "no se vendio nada", que es informacion, no error.
+  // Bloquearlos aqui tiraba la unica foto del inventario real de esa entidad.
+  const disableSubmit = isPending || !idCuentaDestino
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -234,9 +240,23 @@ export default function CobranzaClient({
         <p className="text-blue-800">Monto estimado a cobrar: {formatCurrency(resumen.montoEstimado)}</p>
       </div>
 
+      {/*
+        ERP-59 · W1 y W1b. Los dos letreros venian con el boton apagado: eran
+        bloqueos. Ahora dicen QUE VA A PASAR, que es distinto de decir que no se
+        puede seguir.
+      */}
       {resumen.hasSobregiro && (
-        <p className="text-sm text-red-600">
-          Sobregiro físico detectado: hay productos con conteo físico mayor al stock del sistema.
+        <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800">
+          ⚠️ Sobregiro físico: hay productos con conteo mayor al stock del sistema. El corte se
+          procesa igual — esas líneas no generan movimiento (nunca stock negativo) y quedará un
+          aviso abierto con el conteo capturado.
+        </p>
+      )}
+
+      {!hasDiferenciasPositivas && (
+        <p className="rounded border border-gray-300 bg-gray-50 p-2 text-sm text-gray-700">
+          No hay diferencias positivas: el corte cerrará en cero y no se cobrará nada. Queda
+          registrado como aviso informativo.
         </p>
       )}
 

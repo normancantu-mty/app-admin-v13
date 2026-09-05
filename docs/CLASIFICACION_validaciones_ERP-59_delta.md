@@ -143,3 +143,61 @@ apuntando a él **sin aviso W4**. Se arregló por los dos lados, porque
   mismo destino y el mismo W4. En `CONTADO` el centinela **se rechaza** — no es
   captura incompleta sino un valor que vino y está mal, y una venta de contado
   sin comprador ya tiene su forma legítima (comprador vacío = Público en General).
+
+---
+
+## 7. ERP-81 — el barrido del cliente, que faltaba en los dos prompts
+
+> **Un rechazo no deja de serlo por vivir en el cliente.**
+
+Ablandar las once validaciones del servidor no ablandó nada mientras la pantalla
+siguiera diciendo que no. El caso más grave: **W4, el caso estrella de la cola,
+no se podía ejercer desde la aplicación** — el botón "Generar Ticket" seguía
+apagado, así que la única forma de llegar al camino nuevo era llamar a
+`procesarVentaPOS` a mano. La cola nacía con su caso principal muerto.
+
+### Lo que encontré, y qué se hizo con cada uno
+
+| Pantalla | Bloqueo | Punto | Qué se hizo |
+|---|---|---|---|
+| `app/pos/page.tsx` | `disabled={… \|\| requiereCompradorConcesion}` | **W4** | Fuera. El letrero pasa de bloqueo a aviso |
+| `cobranza/CobranzaClient.tsx` | `disableSubmit = … \|\| resumen.hasSobregiro` | **W1** | Fuera del `disabled`; sigue como letrero |
+| `cobranza/CobranzaClient.tsx` | `… \|\| !hasDiferenciasPositivas` | **W1b** | Igual |
+| `inventario/nuevo/page.tsx` | `disabled={… \|\| previewInsumos.length === 0}` | **W3** | Fuera |
+| `inventario/nuevo/page.tsx` | el **mismo guardia otra vez** en `handleRegistrarProduccion` | **W3** | Fuera. *Lo encontró la prueba, no yo* |
+| `inventario/compra/page.tsx` | `disabled={… \|\| !cuentaOrigen}` | **W13** | Fuera. `!costoTotal` **se queda** (W5 salió por la §3) |
+| `abono/page.tsx` | `disabled={… \|\| !idCuentaOrigen}` | **W13** | Fuera |
+| `abono/page.tsx` | el **mismo guardia otra vez** en `handleGuardarTransferencia` | **W13** | Fuera. *También lo encontró la prueba* |
+| `abono/page.tsx` | `max={hoyLocalISO()}` en el `<input type="date">` | **W11** | Fuera: impedía **teclear** la fecha |
+| `abono/page.tsx` | `if (fechaPago > hoyLocalISO()) return` | **W11** | Fuera; ahora es letrero |
+
+**Dos de los diez los encontró la prueba después de que yo diera el barrido por
+terminado**, y los dos eran el mismo patrón: el guardia del `handleSubmit`
+duplicando el del `disabled=`. Quitar uno sin el otro no ablanda nada, solo
+mueve el rechazo a un sitio donde ninguna prueba lo mira.
+
+### Lo que NO se tocó, y por qué
+
+- **`LogisticaInversaModal.tsx`** — `required={isDevolucionFisica}` en distribuidor
+  y monto. Corresponden a **W7 y W8, que salieron de la lista** por la frontera
+  de los dos ledgers. Bloquear ahí ahora es lo correcto.
+- **`inventario/compra`** — `!costoTotal` sigue bloqueando: W5 salió por lo mismo.
+- **`abono`** — `!idCuentaDestino` y `excedeMonto` siguen bloqueando: sin destino
+  no hay a dónde mandar el dinero, y un reparto excedido cobra dos veces el mismo
+  pedido.
+
+### ⬜ Tres que quedan fuera de alcance desde la pantalla, y son tu decisión
+
+No son *bloqueos*: son campos por construcción incapaces de producir el caso.
+Arreglarlos significa cambiar el diseño del formulario, y eso no lo decido yo.
+
+| Punto | Por qué no se puede dar desde la pantalla | Qué haría falta |
+|---|---|---|
+| **W14** — gasto sin categoría | `<select>` de categorías fijas, precargado en `Venta_Directa` y con `required` | Una opción "Sin categorizar (revisar después)" |
+| **W12** — método de pago no reconocido | `<select>` cerrado: no puede emitir un valor inválido | Nada, o permitir texto libre |
+| **W10** — fecha ilegible | `<input type="date">`: no puede emitir una fecha malformada | Nada |
+
+**Los tres siguen siendo alcanzables por el bot de Telegram**, que es para quien
+se construyeron: manda texto libre por HTTP y no pasa por ningún `<select>`.
+W14 es el que más pesa — es el de los $0.00 de gasto — y hoy **solo el bot puede
+ejercerlo**, no una persona en la pantalla.

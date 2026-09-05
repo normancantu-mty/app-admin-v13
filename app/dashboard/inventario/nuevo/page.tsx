@@ -105,8 +105,12 @@ export default function NuevoMovimientoInventarioPage() {
   }, [productoSeleccionado, cantidadProducir, recetas, productos])
 
   const handleRegistrarProduccion = async () => {
-    if (!productoSeleccionado || !cantidadProducir || previewInsumos.length === 0) {
-      alert('Por favor completa todos los campos y asegúrate de que el producto tenga una receta.')
+    // ERP-59 · W3. Este guardia tenia `previewInsumos.length === 0` y sobrevivia
+    // al del boton: quitar uno sin el otro no ablanda nada, solo mueve el
+    // rechazo. La falta de receta ya NO detiene la produccion -- las botellas
+    // existen -- y el servidor deja el aviso de que el insumo quedo sin descontar.
+    if (!productoSeleccionado || !cantidadProducir) {
+      alert('Selecciona el producto terminado y la cantidad producida.')
       return
     }
 
@@ -234,7 +238,10 @@ export default function NuevoMovimientoInventarioPage() {
             <div className="flex gap-4 pt-4">
               <button
                 onClick={handleRegistrarProduccion}
-                disabled={isLoading || !productoSeleccionado || !cantidadProducir || previewInsumos.length === 0}
+                // ERP-59 · W3. `previewInsumos.length === 0` (sin receta) salio de
+                // aqui: las botellas EXISTEN y el servidor ya las registra. Lo que
+                // no pasa es el descuento de insumos, y de eso avisa la cola.
+                disabled={isLoading || !productoSeleccionado || !cantidadProducir}
                 className="flex-1 bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
               >
                 {isLoading ? 'Registrando...' : '✅ Registrar Producción'}

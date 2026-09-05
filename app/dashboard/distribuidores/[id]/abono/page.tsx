@@ -187,20 +187,19 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
   const handleGuardarTransferencia = async () => {
     setFormError(null)
 
-    if (!idCuentaOrigen || !idCuentaDestino || !monto) {
-      setFormError('Completa origen, destino y monto.')
+    // ERP-59 · W13. Igual que en el boton: solo el ORIGEN se ablanda. El
+    // servidor cae a la cuenta propia de la entidad -- nunca a una ADMIN ni a la
+    // fiscal -- y deja el aviso.
+    if (!idCuentaDestino || !monto) {
+      setFormError('Completa destino y monto.')
       return
     }
-    if (idCuentaOrigen === idCuentaDestino) {
+    if (idCuentaOrigen && idCuentaOrigen === idCuentaDestino) {
       setFormError('Origen y destino deben ser diferentes.')
       return
     }
     if (!montoValido) {
       setFormError('El monto debe ser mayor a cero.')
-      return
-    }
-    if (fechaPago > hoyLocalISO()) {
-      setFormError('La fecha del pago no puede ser futura.')
       return
     }
     if (excedeMonto) {
@@ -328,15 +327,27 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
               <label htmlFor="fechaPago" className="block text-sm font-medium text-gray-700 mb-2">
                 Fecha del pago
               </label>
+              {/*
+                ERP-59 · W11. Tenia un tope de fecha en el propio input y un
+                rechazo en el envio: entre los dos, una fecha futura no se podia
+                ni teclear. Ahora entra
+                y el servidor la ancla a hoy dejando el aviso con la original --
+                guardarla en el futuro la haria desaparecer de todo filtro
+                "hasta hoy", que es peor que una fecha mal puesta.
+              */}
               <input
                 id="fechaPago"
                 type="date"
                 value={fechaPago}
-                max={hoyLocalISO()}
                 onChange={(e) => setFechaPago(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               />
               <p className="text-xs text-gray-500 mt-1">Cuándo se recibió el dinero, no cuándo se captura.</p>
+              {fechaPago > hoyLocalISO() && (
+                <p className="mt-1 text-xs text-amber-700">
+                  ⚠️ Fecha futura: el abono se registrará con la fecha de hoy y quedará un aviso abierto.
+                </p>
+              )}
             </div>
           </div>
 
@@ -507,7 +518,10 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
             <button
               type="button"
               onClick={handleGuardarTransferencia}
-              disabled={isLoading || !idCuentaOrigen || !idCuentaDestino || !monto || excedeMonto}
+              // ERP-59 · W13: `!idCuentaOrigen` salio. Destino, monto y el reparto
+              // que no cuadra SE QUEDAN: sin destino no hay a donde mandar el
+              // dinero, y un reparto excedido cobra dos veces el mismo pedido.
+              disabled={isLoading || !idCuentaDestino || !monto || excedeMonto}
               className="flex-1 bg-green-600 text-white py-3 px-4 rounded-md hover:bg-green-700 disabled:bg-gray-400 font-semibold"
             >
               {isLoading ? 'Registrando...' : 'Guardar Transferencia'}

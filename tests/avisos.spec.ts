@@ -310,12 +310,18 @@ test.describe('ERP-80 · el centinela no se puede elegir a mano', () => {
     })
   })
 
-  test('el POS filtra por esCompradorSeleccionable, no por una lista suelta', () => {
+  test('el POS filtra por la funcion compartida, no por una lista suelta', () => {
     // Misma idea que `tests/arquitectura.spec.ts`: leer el fuente. Si alguien
     // reescribe el filtro del desplegable a mano, el centinela vuelve a
     // aparecer y esta prueba lo caza antes que un ticket huerfano.
+    //
+    // El filtro se mudo a `lib/pos-ui.ts` con ERP-81, para poder probarlo sin
+    // navegador; el comportamiento se verifica en `tests/cliente-no-bloquea.spec.ts`.
     const pos = readFileSync(join(process.cwd(), 'app/pos/page.tsx'), 'utf-8')
-    expect(pos).toContain('esCompradorSeleccionable')
+    expect(pos).toContain('filtrarCompradoresPermitidos')
+
+    const posUi = readFileSync(join(process.cwd(), 'lib/pos-ui.ts'), 'utf-8')
+    expect(posUi).toContain('esCompradorSeleccionable')
   })
 
   test('el servidor no le cree a la pantalla: pos.ts resuelve por su cuenta', () => {

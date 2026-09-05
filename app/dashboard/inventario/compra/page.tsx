@@ -187,7 +187,12 @@ export default function CompraInsumosPage() {
             <div className="flex gap-4 pt-4">
               <button
                 onClick={handleRegistrarCompra}
-                disabled={isLoading || !insumoSeleccionado || !cantidad || !costoTotal || !cuentaOrigen}
+                // ERP-59 · W13: `!cuentaOrigen` salio (el servidor cae a la cuenta
+                // propia de la entidad y avisa). `!costoTotal` SE QUEDA a proposito:
+                // W5 salio de la lista por la frontera de los dos ledgers -- sin
+                // monto no se puede escribir el lado monetario, y media compra es
+                // un asiento falso, no una captura incompleta.
+                disabled={isLoading || !insumoSeleccionado || !cantidad || !costoTotal}
                 className="flex-1 bg-green-600 text-white py-3 px-4 rounded-md hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
               >
                 {isLoading ? 'Registrando...' : '💰 Registrar Compra'}
