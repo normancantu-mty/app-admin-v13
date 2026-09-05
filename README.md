@@ -168,14 +168,22 @@ guardados aparte; sigue esa costumbre.
 ### La regla de oro
 
 > **Despues de cada cambio, las cifras historicas de control deben seguir dando
-> `84 · 468 · 61 · $386,201`.**
+> `85 · 474 · 62 · $395,033`.**
 
 | Metrica | Valor |
 |---|---|
-| `finanzas_ledger` con `status='ACTIVO'` | **84** |
-| `inventario_ledger` | **468** |
-| tickets en estado `ACTIVO` | **61** |
-| suma de `total_cobrado_real` de tickets activos | **$386,201.00** |
+| `finanzas_ledger` con `status='ACTIVO'` | **85** |
+| `inventario_ledger` | **474** |
+| tickets en estado `ACTIVO` | **62** |
+| suma de `total_cobrado_real` de tickets activos | **$395,033.00** |
+
+> **Actualizadas el 2026-09-05**, de `84 · 468 · 61 · $386,201`. No las movio ningun
+> cambio de codigo: entro una venta real el 2026-09-03 — CEO Admin -> Aeropuerto,
+> **$8,832.00 CONTADO**, ticket `408465a4`. Cuadra exacto (386,201 + 8,832 = 395,033)
+> y trajo +1 ticket, +1 fila de finanzas y +6 de inventario. **Estas cuatro cifras se
+> mueven con cada venta real: cuando no cuadren, lo primero es comprobar que la
+> diferencia sean ventas, no un error — y solo entonces actualizarlas.** El espejo
+> ejecutable vive en `tests/vistas-equivalencia.spec.ts`.
 
 **Se cuentan las filas activas y no el total de `finanzas_ledger` porque las pruebas manuales
 dejan filas anuladas: el total sube solo, sin que nada este mal, y una cifra que se mueve por si
@@ -295,7 +303,7 @@ Notas que importan cuando ya estas nervioso:
   lo limpio es crear un proyecto nuevo de Supabase y restaurar ahi, o `supabase db reset --linked`
   antes de cargar — **eso borra produccion**, asi que solo si es exactamente lo que quieres.
 - Despues de restaurar, la prueba de que salio bien son las cuatro cifras de control:
-  **84 · 468 · 61 · $386,201**.
+  **85 · 474 · 62 · $395,033**.
 
 ---
 

@@ -7,10 +7,10 @@
 Este ERP no guarda saldos: los reproduce del historico. Un error de calculo no rompe nada
 visible — solo cambia los numeros. Por eso se verifican a mano contra Supabase.
 
-- [ ] `finanzas_ledger` = **118** filas
-- [ ] `inventario_ledger` = **468** filas
-- [ ] Tickets `ACTIVO` = **61**
-- [ ] Ventas activas acumuladas = **$386,201**
+- [ ] `finanzas_ledger` con `status='ACTIVO'` = **85** filas
+- [ ] `inventario_ledger` = **474** filas
+- [ ] Tickets `ACTIVO` = **62**
+- [ ] Ventas activas acumuladas = **$395,033**
 - [ ] No aplica — este cambio no toca dinero, inventario ni agregaciones
 
 <!-- Si alguna cifra cambio A PROPOSITO, di cual y por que. Si cambio sin querer, no lo mandes. -->

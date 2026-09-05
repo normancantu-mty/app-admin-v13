@@ -322,16 +322,44 @@ CREATE TRIGGER trg_cerrar_avisos
 
 
 -- ============================================================================
--- COMO APLICARLA, Y QUE COMPROBAR DESPUES
+-- APLICADA · 2026-09-05 · y esto es lo que se comprobo
 -- ============================================================================
--- NO se aplico con `supabase db push` (ERP-73: 10 migraciones ya vivas figuran
--- como pendientes y el push intentaria recorrerlas). Tampoco por MCP: el
--- clasificador bloquea DDL contra produccion por `apply_migration` Y por
--- `execute_sql`.
+-- Se aplico pegando este archivo en el editor SQL de Supabase, NO con
+-- `supabase db push` (ERP-73: 10 migraciones ya vivas figuran como pendientes)
+-- ni por MCP (el clasificador bloquea DDL contra produccion por los dos
+-- caminos). Es idempotente (IF NOT EXISTS / ON CONFLICT / CREATE OR REPLACE /
+-- DROP POLICY IF EXISTS): volver a correrla no rompe nada.
 --
--- APLICAR: pegar este archivo COMPLETO en el editor SQL de Supabase, de una
--- sola corrida. Es idempotente (IF NOT EXISTS / ON CONFLICT / CREATE OR
--- REPLACE / DROP POLICY IF EXISTS): volver a correrlo no rompe nada.
+-- ─── RESULTADO DE LAS COMPROBACIONES (2026-09-05) ──────────────────────────
+--   1. Cifras intactas: 85 / 474 / 62 / $395,033.00 · entidades 15 -> 16 (el
+--      centinela). Sin cambios en ningun ledger.
+--   2. RLS activo (relrowsecurity = t), 6 politicas, NINGUNA de DELETE,
+--      has_table_privilege('authenticated', ..., 'DELETE') = false.
+--   3. El candado de W4, los cinco casos, todo dentro de una transaccion
+--      deshecha:
+--        3a RESOLVER con el centinela puesto ... RECHAZADO [42501] CONCESION SIN DUENO
+--        3b IGNORAR  con el centinela puesto ... RECHAZADO [42501] (ignorar tampoco cierra)
+--        3c EDITAR el mensaje ................. RECHAZADO [42501] UN AVISO NO SE EDITA
+--        3d RESOLVER despues de reasignar ..... PASO, firmado por el servidor
+--        3e REABRIR lo ya cerrado ............. RECHAZADO [42501] AVISO YA CERRADO
+--   4. RLS simulando a David Flores (DST, auth_id 9aca0f7d-…):
+--        mis_entidades() = David Flores + sus 3 locales
+--        SELECT: ve 1 de 3 avisos sembrados · ajenos visibles: 0
+--        DELETE: RECHAZADO [42501] permission denied
+--   4-bis. El INSERT, que es el unico modo de fallo que deja la escritura
+--      DENTRO y el aviso FUERA, en silencio:
+--        INSERT con entidad PROPIA ............ PASO (el aviso entra)
+--        INSERT con entidad AJENA ............. RECHAZADO [42501] por RLS
+--        usuario_creador mandado por el cliente. el servidor lo piso con
+--        david80ffo@gmail.com
+--      Las politicas `avisos_ins_admin` / `avisos_ins_dst` son EL MISMO ALCANCE
+--      que `finanzas_ins_*` e `inventario_ins_*`. Mientras sigan igual, quien
+--      puede escribir la fila puede escribir su aviso, y ese modo de fallo no
+--      existe. **Si alguien estrecha las de avisos sin tocar las de los ledgers,
+--      lo reabre.**
+--
+-- ─── SI HAY QUE REPLICARLA DE CERO ─────────────────────────────────────────
+-- Pegar el archivo completo, de una sola corrida, y repetir lo de arriba.
 --
 -- LINEA BASE ANTES DE APLICAR (comprobada 2026-09-05):
 --   85 finanzas ACTIVO · 474 inventario · 62 tickets ACTIVO · $395,033.00 · 15 entidades

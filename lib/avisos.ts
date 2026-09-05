@@ -157,6 +157,71 @@ export function exigeAsignacion(tipo: TipoAviso): boolean {
 export const ENTIDAD_PENDIENTE_DE_ASIGNAR = '11111111-1111-1111-1111-111111111111'
 
 /**
+ * ¿Se puede elegir a mano esta entidad como comprador? **El centinela no.**
+ *
+ * ERP-80. El centinela nace con `rol = 'LOC'` para comportarse como cualquier
+ * comprador en los candados de fiscalidad, y eso lo metia derechito en el
+ * desplegable del POS, que para un ADMIN ofrece *todos* los `DST` y `LOC`
+ * (`app/pos/page.tsx`). Elegirlo a mano dejaba el ticket apuntando al centinela
+ * **sin aviso W4**: exactamente la fila que la cola existe para no perder, y en
+ * silencio.
+ *
+ * El filtro de la pantalla usa esta funcion; el servidor no confia en el y
+ * decide aparte (`resolverCompradorDeVenta`). Las dos mitades hacen falta: la
+ * pantalla para que no se pueda elegir, el servidor porque
+ * `procesarVentaPOS` se puede llamar sin pasar por la pantalla.
+ */
+export function esCompradorSeleccionable(entidad: { id: string }): boolean {
+  return entidad.id !== ENTIDAD_PENDIENTE_DE_ASIGNAR
+}
+
+export type ResolucionComprador =
+  | { ok: true; idComprador: string | null; avisoW4: boolean }
+  | { ok: false; error: string }
+
+/**
+ * Quien es el comprador de una venta, y si hay que abrir un W4.
+ *
+ * **La pregunta correcta no es "¿vino vacio el comprador?" sino "¿el ticket va
+ * a quedar apuntando al centinela?"** (ERP-80). Da igual si llego vacio o si
+ * alguien lo eligio del desplegable: el resultado en la base es el mismo — una
+ * consignacion que nadie debe — y por lo tanto el aviso tiene que ser el mismo.
+ *
+ * En CONTADO el centinela **se rechaza**, no se avisa. No es una captura
+ * incompleta: es un valor que vino y esta mal (familia C de la clasificacion).
+ * Una venta de contado sin comprador identificado ya tiene su forma legitima y
+ * soportada desde siempre — dejar el comprador vacio, "Publico en General" —,
+ * asi que el centinela ahi no significa nada y no cobra ninguna deuda a nadie.
+ */
+export function resolverCompradorDeVenta(
+  condicionPago: 'CONTADO' | 'CONCESION',
+  idCompradorCapturado: string | null | undefined
+): ResolucionComprador {
+  const capturado = String(idCompradorCapturado ?? '').trim() || null
+  const esCentinela = capturado === ENTIDAD_PENDIENTE_DE_ASIGNAR
+
+  if (condicionPago === 'CONCESION') {
+    // Vacio o centinela: el mismo destino y el mismo aviso.
+    if (!capturado || esCentinela) {
+      return { ok: true, idComprador: ENTIDAD_PENDIENTE_DE_ASIGNAR, avisoW4: true }
+    }
+    return { ok: true, idComprador: capturado, avisoW4: false }
+  }
+
+  if (esCentinela) {
+    return {
+      ok: false,
+      error:
+        '"PENDIENTE DE ASIGNAR" no es un comprador: es el marcador de las ' +
+        'consignaciones sin dueno. En una venta de contado deja el comprador ' +
+        'vacio (Publico en General).'
+    }
+  }
+
+  return { ok: true, idComprador: capturado, avisoW4: false }
+}
+
+/**
  * La categoria que grita. **Nunca `NULL`**: un valor explicito se revisa, un
  * `NULL` se pierde entre los legitimos (hoy hay 1 fila con `categoria` nula en
  * `finanzas_ledger`, y nadie sabe cual es).

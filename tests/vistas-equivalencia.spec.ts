@@ -103,10 +103,24 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
   test.setTimeout(120_000)
 
   // ─── Cifras de control del README ─────────────────────────────────────────
-  const FINANZAS_ACTIVAS = 84
-  const INVENTARIO_FILAS = 468
-  const TICKETS_ACTIVOS = 61
-  const VENTAS_ACTIVAS = 386_201
+  // ACTUALIZADAS EL 2026-09-05, de 84 / 468 / 61 / 386_201 a las de abajo.
+  //
+  // No se movieron por ningun cambio de codigo: entro **una venta real** el
+  // 2026-09-03 15:55 UTC — CEO Admin -> Aeropuerto, $8,832.00 CONTADO, ticket
+  // 408465a4, capturada por normancantu@gmail.com. Cuadra exactamente:
+  // 386,201 + 8,832 = 395,033, y con ella +1 ticket, +1 fila de finanzas y
+  // +6 de inventario.
+  //
+  // Estas constantes son la linea base de una prueba, no la verdad del negocio:
+  // cada venta nueva las mueve. Cuando `npm run verificar` falle aqui, lo
+  // primero es comprobar que la diferencia sea explicable por ventas reales
+  // (`SELECT ... FROM transacciones_tickets ORDER BY fecha_transaccion DESC`)
+  // ANTES de actualizarlas. Subirlas sin mirar convierte esta prueba en un
+  // sello de goma.
+  const FINANZAS_ACTIVAS = 85
+  const INVENTARIO_FILAS = 474
+  const TICKETS_ACTIVOS = 62
+  const VENTAS_ACTIVAS = 395_033
 
   // ─── Casos con nombre y apellido ──────────────────────────────────────────
   const DELIRIO_85 = 'Delirio 85'
@@ -198,7 +212,7 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
   // 0. Las cifras de control. Si estas se movieron, nada de lo de abajo
   //    significa nada: se estaria comparando contra una base distinta.
   // ══════════════════════════════════════════════════════════════════════════
-  test('cifras de control intactas: 84 activas · 468 · 61 · $386,201', () => {
+  test('cifras de control intactas: 85 activas · 474 · 62 · $395,033', () => {
     const finanzasActivas = finanzasTodas.filter((f) => f.status === 'ACTIVO')
     const ticketsActivos = ticketsTodos.filter((t) => t.status === 'ACTIVO')
     const ventas = ticketsActivos.reduce((suma, t) => suma + Number(t.total_cobrado_real || 0), 0)

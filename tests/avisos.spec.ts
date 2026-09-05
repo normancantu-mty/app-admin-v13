@@ -6,9 +6,11 @@ import {
   CATEGORIA_SIN_CATEGORIZAR,
   ENTIDAD_PENDIENTE_DE_ASIGNAR,
   cuentaVetadaComoDefault,
+  esCompradorSeleccionable,
   exigeAsignacion,
   normalizarCategoriaGasto,
   ordenarColaAvisos,
+  resolverCompradorDeVenta,
   resolverCuentaOrigenPorDefecto,
   resumenDiarioAvisos,
   severidadDeAviso,
@@ -235,7 +237,104 @@ test.describe('W13 · el default de la cuenta de origen', () => {
 })
 
 // ────────────────────────────────────────────────────────────────────────────
-// 4. LO QUE ESTA DUPLICADO A PROPOSITO
+// 4. ERP-80 — el centinela elegido A MANO
+//
+// El hueco: el centinela nace con rol LOC (para portarse como cualquier
+// comprador ante el candado de la cuenta fiscal), y el desplegable del POS le
+// ofrece a un ADMIN *todos* los DST y LOC. Elegirlo del desplegable dejaba el
+// ticket apuntando al centinela **sin aviso W4**: la consignacion sin dueno
+// entraba igual, pero ya sin nada que la delatara.
+// ────────────────────────────────────────────────────────────────────────────
+
+test.describe('ERP-80 · el centinela no se puede elegir a mano', () => {
+  test('no es seleccionable como comprador; cualquier otra entidad si', () => {
+    expect(esCompradorSeleccionable({ id: ENTIDAD_PENDIENTE_DE_ASIGNAR })).toBe(false)
+    expect(esCompradorSeleccionable({ id: DST })).toBe(true)
+    expect(esCompradorSeleccionable({ id: ADMIN })).toBe(true)
+  })
+
+  test('CONCESION sin comprador: al centinela, con aviso W4', () => {
+    expect(resolverCompradorDeVenta('CONCESION', null)).toEqual({
+      ok: true,
+      idComprador: ENTIDAD_PENDIENTE_DE_ASIGNAR,
+      avisoW4: true
+    })
+    // Cadena vacia y espacios cuentan como ausente.
+    expect(resolverCompradorDeVenta('CONCESION', '   ')).toEqual({
+      ok: true,
+      idComprador: ENTIDAD_PENDIENTE_DE_ASIGNAR,
+      avisoW4: true
+    })
+  })
+
+  test('EL HUECO: CONCESION con el centinela ELEGIDO A MANO tambien genera W4', () => {
+    // Antes de ERP-80 esto devolvia avisoW4 = false y el ticket quedaba
+    // apuntando al centinela en silencio. La fila termina EXACTAMENTE igual que
+    // en el caso de arriba, asi que el aviso tiene que ser el mismo.
+    const aMano = resolverCompradorDeVenta('CONCESION', ENTIDAD_PENDIENTE_DE_ASIGNAR)
+    expect(aMano).toEqual({
+      ok: true,
+      idComprador: ENTIDAD_PENDIENTE_DE_ASIGNAR,
+      avisoW4: true
+    })
+    expect(aMano).toEqual(resolverCompradorDeVenta('CONCESION', null))
+  })
+
+  test('CONCESION con un comprador de verdad: sin aviso', () => {
+    expect(resolverCompradorDeVenta('CONCESION', DST)).toEqual({
+      ok: true,
+      idComprador: DST,
+      avisoW4: false
+    })
+  })
+
+  test('CONTADO con el centinela: se RECHAZA, no se avisa', () => {
+    // No es captura incompleta, es un valor que vino y esta mal: una venta de
+    // contado sin comprador ya tiene su forma legitima (comprador vacio =
+    // Publico en General), asi que el centinela ahi no significa nada.
+    const r = resolverCompradorDeVenta('CONTADO', ENTIDAD_PENDIENTE_DE_ASIGNAR)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('Publico en General')
+  })
+
+  test('CONTADO normal: comprador tal cual, o null si no vino', () => {
+    expect(resolverCompradorDeVenta('CONTADO', DST)).toEqual({
+      ok: true,
+      idComprador: DST,
+      avisoW4: false
+    })
+    expect(resolverCompradorDeVenta('CONTADO', null)).toEqual({
+      ok: true,
+      idComprador: null,
+      avisoW4: false
+    })
+  })
+
+  test('el POS filtra por esCompradorSeleccionable, no por una lista suelta', () => {
+    // Misma idea que `tests/arquitectura.spec.ts`: leer el fuente. Si alguien
+    // reescribe el filtro del desplegable a mano, el centinela vuelve a
+    // aparecer y esta prueba lo caza antes que un ticket huerfano.
+    const pos = readFileSync(join(process.cwd(), 'app/pos/page.tsx'), 'utf-8')
+    expect(pos).toContain('esCompradorSeleccionable')
+  })
+
+  test('el servidor no le cree a la pantalla: pos.ts resuelve por su cuenta', () => {
+    const accion = readFileSync(join(process.cwd(), 'app/actions/pos.ts'), 'utf-8')
+    expect(accion).toContain('resolverCompradorDeVenta')
+
+    // Y ya no decide con la pregunta vieja, que era el hueco. Se miran solo las
+    // lineas de CODIGO: el bloque de arriba cita la version rota a proposito,
+    // para que se entienda que se arreglo, y un `toContain` a secas la caza.
+    const codigoVivo = accion
+      .split('\n')
+      .filter((linea) => !linea.trim().startsWith('//'))
+      .join('\n')
+    expect(codigoVivo).not.toContain("=== 'CONCESION' && !payload.idComprador")
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// 5. LO QUE ESTA DUPLICADO A PROPOSITO
 // ────────────────────────────────────────────────────────────────────────────
 
 test.describe('El UUID del centinela no puede divergir entre TypeScript y Postgres', () => {

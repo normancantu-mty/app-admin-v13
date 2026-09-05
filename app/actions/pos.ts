@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import type { Database, TablesInsert } from '@/types/database'
-import { ENTIDAD_PENDIENTE_DE_ASIGNAR } from '@/lib/avisos'
+import { resolverCompradorDeVenta } from '@/lib/avisos'
 import { registrarAviso } from '@/lib/avisos-server'
 import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
@@ -191,11 +191,29 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     // El aviso W4 NO SE PUEDE CERRAR mientras el ticket siga apuntando al
     // centinela. Lo impone el trigger `tg_avisos_vigilar_cierre` en Postgres, no
     // esta funcion: con un token valido, PostgREST atiende un `curl`.
-    const concesionSinComprador =
-      payload.condicion_pago === 'CONCESION' && !payload.idComprador
-    const idCompradorResuelto = concesionSinComprador
-      ? ENTIDAD_PENDIENTE_DE_ASIGNAR
-      : payload.idComprador
+    // ERP-80 · LA PREGUNTA CORRECTA NO ES SI VINO VACIO.
+    // La primera version de esto decia:
+    //
+    //     const concesionSinComprador =
+    //       payload.condicion_pago === 'CONCESION' && !payload.idComprador
+    //
+    // y tenia un hueco silencioso: el centinela nace con rol LOC, y el
+    // desplegable del POS le ofrece a un ADMIN *todos* los DST y LOC. Elegirlo
+    // a mano dejaba `payload.idComprador` lleno, la bandera en `false`, y el
+    // ticket apuntando al centinela **sin aviso W4**. La consignacion sin dueno
+    // entraba igual, pero ya sin nada que la delatara -- justo lo contrario de
+    // lo que la cola viene a hacer.
+    //
+    // Lo que decide es el ESTADO EN QUE VA A QUEDAR LA FILA, no como llego.
+    // La regla vive en `resolverCompradorDeVenta` (pura, probada) y la usan las
+    // dos mitades: la pantalla para no ofrecerlo, y esto para no creerle a la
+    // pantalla -- `procesarVentaPOS` se puede llamar sin pasar por ella.
+    const comprador = resolverCompradorDeVenta(payload.condicion_pago, payload.idComprador)
+    if (!comprador.ok) {
+      return { ok: false, error: comprador.error }
+    }
+    const concesionSinComprador = comprador.avisoW4
+    const idCompradorResuelto = comprador.idComprador
 
     const { data: currentUser, error: currentUserError } = await supabase
       .from('entidades')

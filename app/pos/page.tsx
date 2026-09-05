@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { esCompradorSeleccionable } from '@/lib/avisos'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { calculateWaterfall } from '@/lib/pricing-waterfall'
 import { procesarVentaPOS } from '@/app/actions/pos'
@@ -215,6 +216,10 @@ export default function POSPage() {
       if (!isCancelled) {
         const lista = (data || []) as Entidad[]
         const compradoresFiltrados = lista.filter((c) => {
+          // ERP-80. El centinela "PENDIENTE DE ASIGNAR" es un LOC, asi que caia
+          // dentro del filtro del ADMIN y se podia elegir como si fuera un
+          // cliente. No lo es: es el marcador de las consignaciones sin dueno.
+          if (!esCompradorSeleccionable(c)) return false
           if (vendedorActual.rol === 'ADMIN') {
             return c.rol === 'DST' || c.rol === 'LOC'
           }

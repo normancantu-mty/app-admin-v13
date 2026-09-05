@@ -4,8 +4,9 @@
 `CLASIFICACION_validaciones_ERP-59.md` después de las cuatro decisiones del
 prompt 18-bis. Para el resto, ese archivo sigue vigente tal cual.
 
-**Estado: APLICADO.** Los once puntos que quedan ya están construidos en código;
-la migración está escrita y **sin aplicar** (ver el pie de este archivo).
+**Estado: EN PRODUCCIÓN.** Los once puntos están construidos en código y la
+migración **se aplicó el 2026-09-05**; sus comprobaciones, con el resultado
+literal de cada una, están al pie del archivo de migración y resumidas en la §5.
 
 ---
 
@@ -116,14 +117,29 @@ de que quien captura sea el propio ADMIN.
 
 ---
 
-## 5. Lo que falta para que esto corra
+## 5. La migración, aplicada y comprobada
 
-La migración **está escrita y NO aplicada**:
-`supabase/migrations/20260905120000_cola_de_avisos_de_captura.sql`.
-No corrí `supabase db push` (ERP-73) ni DDL por MCP. El SQL exacto para pegar y
-las comprobaciones de después están al pie del informe de la sesión.
+`supabase/migrations/20260905120000_cola_de_avisos_de_captura.sql` **se aplicó el
+2026-09-05**. Las comprobaciones y su resultado literal están al pie de ese
+archivo: las cifras no se movieron, el candado de W4 rechaza tanto resolver como
+ignorar, y el RLS acota a un DST tanto al leer como al **escribir**.
 
-Hasta que se aplique, la cola no puede recibir avisos: los `INSERT` a
-`avisos_captura` fallarán y `registrarAviso` los dejará en `console.error` **sin
-tumbar la escritura que los generó** — que es como tiene que ser, pero significa
-que los avisos de esos días se pierden. Aplicarla es el siguiente paso.
+La comprobación del `INSERT` (4-bis) se agregó porque era el único modo de fallo
+que dejaba **la escritura dentro y el aviso fuera, en silencio**. No se da: las
+políticas `avisos_ins_*` tienen exactamente el mismo alcance que las de los dos
+ledgers, así que quien puede escribir la fila puede escribir su aviso. Queda
+anotado en la migración para que nadie estreche unas sin las otras.
+
+## 6. ERP-80 — el centinela era seleccionable
+
+Cerrado en el mismo commit. El centinela nace con rol `LOC` y el desplegable del
+POS ofrece a un ADMIN *todos* los `DST` y `LOC`: elegirlo a mano dejaba el ticket
+apuntando a él **sin aviso W4**. Se arregló por los dos lados, porque
+`procesarVentaPOS` se puede llamar sin pasar por la pantalla:
+
+- **Pantalla** — `esCompradorSeleccionable()` lo saca del desplegable.
+- **Servidor** — `resolverCompradorDeVenta()` decide por el **estado en que va a
+  quedar la fila**, no por cómo llegó: en `CONCESION`, vacío y centinela dan el
+  mismo destino y el mismo W4. En `CONTADO` el centinela **se rechaza** — no es
+  captura incompleta sino un valor que vino y está mal, y una venta de contado
+  sin comprador ya tiene su forma legítima (comprador vacío = Público en General).
