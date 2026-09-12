@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { getStockEsperadoPorEntidad } from '@/lib/inventario-auditoria'
 import CobranzaClient from './CobranzaClient'
+import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
 
 export const dynamic = 'force-dynamic'
 
@@ -104,10 +105,8 @@ export default async function CobranzaPage({ params }: { params: Promise<{ id: s
 
   const rows = stockEsperado.map((item) => {
     const producto = (productos || []).find((p) => p.id === item.idProducto)
-    // If it's already a decimal (0.15), use it directly. If it's a whole number (15), divide by 100.
     const precioRetail = Number(producto?.listas_precios?.[0]?.precio_final || 0)
-    const rawComision = Number(entidadObjetivo.comision_base_local || 0.15)
-    const comisionDecimal = rawComision < 1 ? rawComision : (rawComision / 100)
+    const comisionDecimal = comisionBaseLocalDecimal(entidadObjetivo.comision_base_local)
     const precioCobroUnitario = precioRetail * (1 - comisionDecimal)
     return {
       ...item,
