@@ -2,7 +2,8 @@
 #
 # Que corre, y por que en este orden:
 #   1. tsc --noEmit   bloquea. El repo esta en strict mode.
-#   2. npm test       bloquea. Son las pruebas puras de calculo (dinero e inventario).
+#   2. npm test       bloquea. Son las 242 pruebas puras de calculo (dinero e
+#                     inventario). Medido el 2026-09-12: 242 de las 268 del repo.
 #   3. npm run lint   NO bloquea: hay errores preexistentes que se ven pero no detienen.
 #   4. npm run build  solo si hay secretos de Supabase configurados (ver README).
 #
@@ -11,7 +12,7 @@
 # alguien agregue despues. Decision de Norman; no la subas.
 #
 # Consecuencia, dicha completa: **el proyecto `equivalencia` de Playwright
-# existe y en CI se salta SIEMPRE, a proposito.** Son 23 pruebas
+# existe y en CI se salta SIEMPRE, a proposito.** Son 26 pruebas
 # (`tests/vistas-equivalencia.spec.ts` + `tests/cableado-pantallas.spec.ts`) que
 # comparan las vistas canonicas de Postgres contra las funciones de TypeScript
 # sobre los datos reales; necesitan esa llave y por eso aqui nunca corren. El
