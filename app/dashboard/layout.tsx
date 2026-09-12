@@ -116,6 +116,10 @@ export default function DashboardLayout({
           label: '📋 Cartera'
         },
         {
+          href: '/dashboard/conteo',
+          label: '🔢 Conteo fisico'
+        },
+        {
           href: '/dashboard/avisos',
           label: '⚠️ Cola de captura',
           badge: avisosAbiertos
@@ -167,6 +171,10 @@ export default function DashboardLayout({
           {
             href: '/dashboard/catalogo',
             label: '🏷️ Catálogo / Precios'
+          },
+          {
+            href: '/dashboard/conteo',
+            label: '🔢 Conteo fisico'
           },
           {
             href: '/dashboard/avisos',

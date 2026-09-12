@@ -18,6 +18,63 @@ export type Database = {
       // `supabase/migrations/20260905120000_cola_de_avisos_de_captura.sql` y
       // los tipos se regeneran cuando esa migracion se aplique. Si al
       // regenerar este bloque cambia, manda el generado.
+      conteos_fisicos: {
+        Row: {
+          creado_en: string
+          fecha_conteo: string
+          id: string
+          id_entidad: string
+          notas: string | null
+          status: string
+          usuario_creador: string | null
+        }
+        Insert: {
+          creado_en?: string
+          fecha_conteo: string
+          id?: string
+          id_entidad: string
+          notas?: string | null
+          status?: string
+          usuario_creador?: string | null
+        }
+        Update: {
+          creado_en?: string
+          fecha_conteo?: string
+          id?: string
+          id_entidad?: string
+          notas?: string | null
+          status?: string
+          usuario_creador?: string | null
+        }
+        Relationships: []
+      }
+      conteo_detalles: {
+        Row: {
+          cubeta: string
+          id: string
+          id_conteo: string
+          id_producto: string
+          libro_decia: number
+          piezas_contadas: number
+        }
+        Insert: {
+          cubeta?: string
+          id?: string
+          id_conteo: string
+          id_producto: string
+          libro_decia: number
+          piezas_contadas: number
+        }
+        Update: {
+          cubeta?: string
+          id?: string
+          id_conteo?: string
+          id_producto?: string
+          libro_decia?: number
+          piezas_contadas?: number
+        }
+        Relationships: []
+      }
       avisos_captura: {
         Row: {
           cerrado_en: string | null

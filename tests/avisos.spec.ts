@@ -36,8 +36,12 @@ import {
 const TIPOS = Object.keys(CATALOGO_AVISOS) as TipoAviso[]
 
 test.describe('Catalogo de avisos', () => {
-  test('los diez tipos tienen severidad, titulo y consecuencia', () => {
-    expect(TIPOS).toHaveLength(10)
+  test('los once tipos tienen severidad, titulo y consecuencia', () => {
+    // El numero SI se congela a proposito, al reves que las cifras de negocio
+    // de ERP-78: el catalogo es cerrado y lo reviso Norman. Que crezca tiene que
+    // costar editar esta linea; que la operacion diaria lo mueva, no.
+    // 10 -> 11 el 2026-09-12: entra W15 (conteo fisico que no cuadra), ERP-54.
+    expect(TIPOS).toHaveLength(11)
 
     for (const tipo of TIPOS) {
       const definicion = CATALOGO_AVISOS[tipo]

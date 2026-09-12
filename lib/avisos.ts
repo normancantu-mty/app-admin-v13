@@ -37,6 +37,7 @@ export type TipoAviso =
   | 'W12'  // metodo de pago no reconocido
   | 'W13'  // cuenta de origen ausente
   | 'W14'  // gasto sin categoria
+  | 'W15'  // conteo fisico que no cuadra con el libro
 
 export interface DefinicionAviso {
   severidad: SeveridadAviso
@@ -133,6 +134,14 @@ export const CATALOGO_AVISOS: Record<TipoAviso, DefinicionAviso> = {
     consecuencia:
       'El egreso entro completo, con categoria SIN_CATEGORIZAR. Antes se perdia ' +
       'entero: es la causa mecanica de los $0.00 de gasto capturado desde el 1 de julio.'
+  },
+  W15: {
+    severidad: 'REVISAR',
+    titulo: 'El conteo fisico no cuadra con el libro',
+    consecuencia:
+      'El conteo quedo registrado tal cual se conto. El libro NO se ajusto solo ' +
+      '(D-E28): la diferencia es justo lo que este aviso viene a poner enfrente, ' +
+      'y quien la cierra decide si fue merma, venta sin capturar o error de conteo.'
   }
 }
 
