@@ -417,7 +417,7 @@ test.describe('El UUID del centinela no puede divergir entre TypeScript y Postgr
 // 6. EL CABLE ENTRE ANULAR Y LA COLA
 // ────────────────────────────────────────────────────────────────────────────
 
-const MIGRACION_HUERFANOS = 'supabase/PENDIENTE_cerrar_avisos_de_fila_anulada.sql'
+const MIGRACION_HUERFANOS = 'supabase/migrations/20260912221935_cerrar_avisos_de_fila_anulada.sql'
 
 /**
  * Tablas a las que un aviso puede apuntar y que NO llevan trigger, con su

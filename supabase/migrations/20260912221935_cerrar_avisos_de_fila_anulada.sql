@@ -73,13 +73,25 @@
 --   DROP FUNCTION IF EXISTS public.tg_cerrar_avisos_de_fila_anulada();
 -- Los avisos ya cerrados se quedan cerrados: regla 6, no se reabren.
 --
--- ─── POR QUE ESTE ARCHIVO NO ESTA EN `supabase/migrations/` TODAVIA ─────────
--- Porque **el archivo se nombra DESPUES de aplicar**, no antes: `apply_migration`
--- sella con SU hora UTC y no con la del nombre que uno invente. Un archivo en
--- `migrations/` que la base no reconoce pone en rojo la prueba de sincronia de
--- ERP-73 (`tests/salud-del-sistema.spec.ts:82`) y con ella el `pre-push` entero.
--- Mismo sitio que `supabase/tkt-051-status-symmetry.sql`, por la misma razon.
--- Cuando Norman lo aplique, se mueve y se renombra con el sello real.
+-- ─── COMO SE APLICO, Y EL TROPIEZO QUE VALE LA PENA NO REPETIR ──────────────
+-- El archivo se nombra DESPUES de aplicar, porque `apply_migration` sella con
+-- SU hora UTC y no con la del nombre que uno invente. El sello de esta es
+-- `20260912221935`, y es el real: lo asigno la base, no yo.
+--
+-- Se aplico DOS VECES, y la segunda no sobra:
+--   1. Pegada a mano en el editor SQL (Norman, 2026-09-12). Creo la funcion y
+--      los dos triggers, y devolvio "Success. No rows returned".
+--   2. Con `apply_migration` del MCP, con este mismo SQL. **Pegar en el editor
+--      crea los objetos pero NO registra nada en
+--      `supabase_migrations.schema_migrations`**, asi que la base seguia
+--      diciendo 25 migraciones con 26 en el repo. Es idempotente
+--      (CREATE OR REPLACE / DROP TRIGGER IF EXISTS), asi que correrla de nuevo
+--      no rompio nada — solo la anoto en el registro.
+--
+-- LA LECCION: "aplicada" y "registrada" son dos cosas distintas, y la prueba
+-- de sincronia de ERP-73 solo ve la segunda. Un objeto vivo y sin registrar es
+-- drift invisible: el unico que lo habria notado es quien reconstruyera la base
+-- desde cero y se encontrara sin triggers.
 -- ============================================================================
 
 
@@ -174,12 +186,26 @@ COMMENT ON TRIGGER trg_avisos_de_fila_anulada_inventario ON public.inventario_le
 
 
 -- ============================================================================
--- COMO SE APLICA, Y QUE SE COMPRUEBA — PENDIENTE (la aplica Norman)
+-- APLICADA - 2026-09-12 - sello 20260912221935 - QUE SE COMPROBO Y QUE NO
 -- ============================================================================
--- Se aplica pegando este archivo completo en el editor SQL de Supabase, de una
+-- YA ESTA APLICADA Y REGISTRADA (el detalle, arriba).
+--
+-- COMPROBADO: la base reporta 26 migraciones y el repo tiene 26 archivos; la
+-- prueba de sincronia de ERP-73 pasa en verde con este archivo ya dentro de
+-- `supabase/migrations/`. Eso confirma que la migracion existe y esta anotada.
+--
+-- NO COMPROBADO, y se dice en vez de fingirlo: las comprobaciones 2 y 3 de
+-- abajo -las unicas que EJERCITAN el trigger con una fila real- no se
+-- corrieron. Exigen anular una fila de produccion, y eso es decision de
+-- Norman, no del agente. Quedan escritas y listas para pegar. Hasta que
+-- alguien las corra, lo que sabemos es que el trigger EXISTE, no que FUNCIONA.
+--
+-- Si hay que replicarla de cero: se pega este archivo completo, de una
 -- sola corrida. **NO con `supabase db push`** (ERP-73: 10 migraciones ya vivas
--- figuran como pendientes) ni por MCP (el clasificador bloquea DDL contra
--- produccion por los dos caminos). Es idempotente —CREATE OR REPLACE y DROP
+-- figuran como pendientes). **Si por `apply_migration` del MCP**: comprobado
+-- hoy, funciona y ademas REGISTRA -que es lo que el editor SQL no hace-.
+-- (La migracion de la cola de avisos, del 2026-09-05, decia que el MCP
+-- bloqueaba DDL contra produccion. Hoy no bloqueo.) Es idempotente —CREATE OR REPLACE y DROP
 -- TRIGGER IF EXISTS—: volver a correrla no rompe nada.
 --
 -- ─── COMPROBACION 1 · los dos triggers existen y disparan donde deben ───────
