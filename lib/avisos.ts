@@ -38,6 +38,8 @@ export type TipoAviso =
   | 'W13'  // cuenta de origen ausente
   | 'W14'  // gasto sin categoria
   | 'W15'  // conteo fisico que no cuadra con el libro
+  | 'W16'  // abono con sobrante que quedo a cuenta
+  | 'W17'  // texto fiscal desactivado en la nota de un abono
 
 export interface DefinicionAviso {
   severidad: SeveridadAviso
@@ -142,6 +144,33 @@ export const CATALOGO_AVISOS: Record<TipoAviso, DefinicionAviso> = {
       'El conteo quedo registrado tal cual se conto. El libro NO se ajusto solo ' +
       '(D-E28): la diferencia es justo lo que este aviso viene a poner enfrente, ' +
       'y quien la cierra decide si fue merma, venta sin capturar o error de conteo.'
+  },
+  // ─── W16 y W17: por que NO se reuso W14 ────────────────────────────────────
+  // La Fase 2 del bot nacio mandando sus dos avisos de abono por `W14`, que en
+  // este catalogo significa **"gasto sin categoria"**. El codigo del aviso no es
+  // una etiqueta suelta: **elige el titulo y la consecuencia que lee quien abre
+  // la cola**. El resultado, que Norman vio el 2026-09-12, era una tarjeta que
+  // decia *"Gasto sin categoria · El egreso entro completo, con categoria
+  // SIN_CATEGORIZAR"* encima de un mensaje sobre un ABONO. **El titulo mentia y
+  // la consecuencia describia otra cosa.**
+  //
+  // Mandar por un codigo existente un caso que no le corresponde es barato de
+  // escribir y caro de leer: la cola se vuelve inutil justo cuando crece.
+  W16: {
+    severidad: 'INFO',
+    titulo: 'Abono con dinero a cuenta',
+    consecuencia:
+      'El abono entro COMPLETO y la deuda bajo por el total. Lo que sobro despues ' +
+      'de cubrir los pedidos abiertos quedo en una fila sin pedido: cuenta como ' +
+      'abono, pero no cuelga de ninguna venta. Aqui se ve de cual entidad es.'
+  },
+  W17: {
+    severidad: 'REVISAR',
+    titulo: 'Nota de abono con texto que el ERP lee como impuesto',
+    consecuencia:
+      'El abono entro completo. La nota se guardo DESACTIVADA para no mover el ' +
+      'pasivo fiscal con un pago que nadie hizo, y el texto original queda aqui ' +
+      'para poder recuperarlo.'
   }
 }
 

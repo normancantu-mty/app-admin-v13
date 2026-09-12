@@ -36,12 +36,18 @@ import {
 const TIPOS = Object.keys(CATALOGO_AVISOS) as TipoAviso[]
 
 test.describe('Catalogo de avisos', () => {
-  test('los once tipos tienen severidad, titulo y consecuencia', () => {
+  test('los trece tipos tienen severidad, titulo y consecuencia', () => {
     // El numero SI se congela a proposito, al reves que las cifras de negocio
     // de ERP-78: el catalogo es cerrado y lo reviso Norman. Que crezca tiene que
     // costar editar esta linea; que la operacion diaria lo mueva, no.
     // 10 -> 11 el 2026-09-12: entra W15 (conteo fisico que no cuadra), ERP-54.
-    expect(TIPOS).toHaveLength(11)
+    // 11 -> 13 el 2026-09-12: entran W16 y W17, los dos avisos del abono por
+    // Telegram. **Nacieron mandados por W14 y eso fue E-248**: el codigo elige
+    // el titulo que lee quien abre la cola, asi que reusar el mas parecido le
+    // pone a un abono el encabezado "Gasto sin categoria". Esta linea es justo
+    // la friccion que hace que agregar un aviso sea una decision y no un
+    // descuido.
+    expect(TIPOS).toHaveLength(13)
 
     for (const tipo of TIPOS) {
       const definicion = CATALOGO_AVISOS[tipo]
@@ -53,9 +59,13 @@ test.describe('Catalogo de avisos', () => {
     }
   })
 
-  test('solo W1b, W10 y W12 son INFO: los demas mueven dinero o inventario', () => {
+  test('solo W1b, W10, W12 y W16 son INFO: los demas mueven dinero o inventario', () => {
     const informativos = TIPOS.filter((tipo) => severidadDeAviso(tipo) === 'INFO')
-    expect(informativos.sort()).toEqual(['W10', 'W12', 'W1b'])
+    // W16 (abono con dinero a cuenta) es INFO y no REVISAR a proposito: **nada
+    // quedo sin hacer**. El abono entro completo y la deuda bajo por el total;
+    // lo unico que dice el aviso es que una parte no cuelga de ningun pedido.
+    // Su hermano W17 SI es REVISAR, porque ahi si se cambio un texto.
+    expect(informativos.sort()).toEqual(['W10', 'W12', 'W16', 'W1b'])
   })
 
   test('solo W4 exige asignacion antes de cerrarse', () => {

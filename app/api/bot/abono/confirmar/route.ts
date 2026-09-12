@@ -230,7 +230,7 @@ export async function POST(request: Request) {
     // raspada.
     if (guardado.meta.nota_original && guardado.meta.nota_original !== abono.nota) {
       await registrarAviso(supabase, {
-        tipo: 'W14',
+        tipo: 'W17',
         idEntidad: abono.id_entidad,
         mensaje:
           'La nota del abono traia una frase que el ERP lee como pago de impuesto. Se guardo ' +
@@ -249,7 +249,7 @@ export async function POST(request: Request) {
     // dinero cobrado que no cuelga de ningun pedido.
     if (abono.sobrante > 0 && abono.aplicaciones.length > 0) {
       await registrarAviso(supabase, {
-        tipo: 'W14',
+        tipo: 'W16',
         idEntidad: abono.id_entidad,
         mensaje:
           `Abono de $${abono.monto.toFixed(2)} capturado por Telegram: $${abono.sobrante.toFixed(2)} ` +
