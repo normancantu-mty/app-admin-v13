@@ -43,6 +43,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extraer import CATEGORIAS, extraer  # noqa: E402
+from consultar import clasificar  # noqa: E402
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -139,6 +140,38 @@ def _refrescar_catalogo(respuesta):
         _catalogo = list(vivas)
 
 
+async def _contestar_consulta(update, chat, texto):
+    """Fase 3. Devuelve True si contesto una consulta.
+
+    EL MODELO NO VE NI UN NUMERO. Clasifica la intencion, el servidor lee la
+    vista y **devuelve el texto ya formateado**; aqui solo se reenvia. Por eso
+    una consulta no puede contestar una cifra inventada: no hay ningun punto del
+    camino donde el LLM pueda escribirla.
+    """
+    ok, obj = await asyncio.to_thread(clasificar, texto)
+    if not ok or not obj.get("consulta"):
+        return False
+
+    estado, r = _post("/api/bot/consulta", {
+        "telegram_id": chat,
+        "consulta": obj["consulta"],
+        "filtro": obj.get("filtro"),
+    })
+    # Se registra QUE se consulto y COMO salio, nunca la respuesta: el log ya
+    # lleva el token del bot en cada linea de la libreria y no se le agregan
+    # cifras del negocio. Sin esta linea, un uso real del bot no dejaba rastro
+    # del lado de la maquina y no habia con que comprobarlo despues.
+    log.info("consulta por voz/texto: %s filtro=%s -> %s",
+             obj["consulta"], obj.get("filtro"), estado)
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(
+            r.get("error", "No pude consultarlo."))
+        return True
+
+    await update.effective_message.reply_text(r["texto"])
+    return True
+
+
 async def _proponer(update, texto, pendiente):
     """Del lenguaje natural al borrador sellado. Devuelve True si propuso."""
     chat = update.effective_chat.id
@@ -152,9 +185,18 @@ async def _proponer(update, texto, pendiente):
     if obj.get("monto") in (None, "", 0) or not obj.get("descripcion"):
         falta = obj.get("falta") or "el monto"
         if falta == "esto no parece un gasto":
+            # AG-04 Fase 3. **Este es el unico punto donde entra una consulta**,
+            # y entra DESPUES de descartar el gasto, no antes. El orden importa:
+            # si se preguntara primero "es una consulta?", un gasto mal dictado
+            # podria contestarse como pregunta y no quedar registrado. Al reves,
+            # lo peor que pasa es que una pregunta se intente leer como gasto y
+            # el extractor la rechace, que es justo lo que acaba de ocurrir.
+            if await _contestar_consulta(update, chat, texto):
+                return False
             await update.effective_message.reply_text(
-                "Eso no lo lei como un gasto. Por ahora solo se capturar gastos: "
-                "dime cuanto y en que fue.")
+                "Eso no lo lei como un gasto ni como una pregunta que sepa contestar. "
+                "Para capturar: dime cuanto y en que fue. "
+                "Para preguntar: stock, cartera (quien debe) o ventas.")
             return False
         pendiente[chat] = texto
         await update.effective_message.reply_text("Me falta " + str(falta) + ". Me lo dices?")
@@ -370,12 +412,52 @@ async def manejar_boton(update, context):
         await _reproponer(update, chat, {"id_cuenta": elegida["id"]})
 
 
+async def _consulta_directa(update, consulta, filtro=None):
+    """Los comandos /stock /cartera /ventas: la consulta SIN pasar por el modelo.
+
+    Existe por latencia, no por seguridad: el camino de lenguaje natural paga
+    DOS llamadas al modelo (una para descartar el gasto y otra para clasificar
+    la pregunta). Lo que se usa a diario no tiene por que pagar eso, y ademas
+    un comando escrito no se puede clasificar mal.
+    """
+    chat = update.effective_chat.id
+    await update.effective_message.chat.send_action("typing")
+    estado, r = _post("/api/bot/consulta", {
+        "telegram_id": chat, "consulta": consulta, "filtro": filtro,
+    })
+    log.info("comando /%s filtro=%s -> %s", consulta, filtro, estado)
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude consultarlo."))
+        return
+    await update.effective_message.reply_text(r["texto"])
+
+
+async def comando_stock(update, context):
+    await _consulta_directa(update, "stock", " ".join(context.args or []).strip() or None)
+
+
+async def comando_cartera(update, context):
+    await _consulta_directa(update, "cartera")
+
+
+async def comando_ventas(update, context):
+    await _consulta_directa(update, "ventas")
+
+
 async def comando_inicio(update, context):
     await update.message.reply_text(
-        "Soy el capturador de gastos del ERP." + NL + NL
-        + "Dime lo que gastaste como lo dirias en persona, por texto o nota de voz:" + NL
-        + '  "gaste 340 de gasolina yendo a Zacatecas"' + NL + NL
-        + "Te enseno la fila exacta antes de escribir nada. Nada entra sin tu VA.")
+        "Soy el bot del ERP. Capturo y consulto." + NL + NL
+        + "PARA CAPTURAR, dime lo que gastaste como lo dirias en persona, por"
+          " texto o nota de voz:" + NL
+        + '  "gaste 340 de gasolina yendo a Zacatecas"' + NL
+        + "Te enseno la fila exacta antes de escribir nada. Nada entra sin tu VA." + NL + NL
+        + "PARA CONSULTAR:" + NL
+        + "  /stock            que hay, y donde" + NL
+        + "  /stock chile 750  solo de un producto, o de un punto de venta" + NL
+        + "  /cartera          quien debe, cuanto, y desde cuando" + NL
+        + "  /ventas           los ultimos 6 meses" + NL
+        + "Tambien puedes preguntarlo hablando: \"cuanto me debe Delirio\"." + NL + NL
+        + "Los numeros salen de las vistas del ERP, nunca del modelo.")
 
 
 async def manejar_no_autorizado(update, context):
@@ -418,6 +500,9 @@ def main():
 
     app = Application.builder().token(TOKEN_TG).post_init(_al_arrancar).build()
     app.add_handler(CommandHandler("start", comando_inicio))
+    app.add_handler(CommandHandler("stock", comando_stock))
+    app.add_handler(CommandHandler("cartera", comando_cartera))
+    app.add_handler(CommandHandler("ventas", comando_ventas))
     app.add_handler(CallbackQueryHandler(manejar_boton))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))

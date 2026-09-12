@@ -110,7 +110,14 @@ export interface FilaCarteraVista {
   libro_dice: number
   generado: number
   abonado: number
-  /** `null` cuando no genero deuda: no es 0%, es "no aplica". */
+  /**
+   * ⚠️ **FRACCION 0-1, no un porcentaje**, pese al nombre. `0.757` es 75.7%.
+   * Quien lo muestre multiplica por 100 — asi lo hace `formateaPorcentaje` en
+   * la pantalla de Cartera. Omitirlo ya produjo un "1% pagado" donde lo real
+   * era 75.7% (2026-09-12, E-243).
+   *
+   * `null` cuando no genero deuda: no es 0%, es "no aplica".
+   */
   porcentaje_pagado: number | null
   estimado_en_piso: number
   deuda: number
