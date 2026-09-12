@@ -194,11 +194,27 @@ COMMENT ON TRIGGER trg_avisos_de_fila_anulada_inventario ON public.inventario_le
 -- prueba de sincronia de ERP-73 pasa en verde con este archivo ya dentro de
 -- `supabase/migrations/`. Eso confirma que la migracion existe y esta anotada.
 --
--- NO COMPROBADO, y se dice en vez de fingirlo: las comprobaciones 2 y 3 de
--- abajo -las unicas que EJERCITAN el trigger con una fila real- no se
--- corrieron. Exigen anular una fila de produccion, y eso es decision de
--- Norman, no del agente. Quedan escritas y listas para pegar. Hasta que
--- alguien las corra, lo que sabemos es que el trigger EXISTE, no que FUNCIONA.
+-- COMPROBADO TAMBIEN -2026-09-12 22:24 UTC- que el trigger FUNCIONA, no solo
+-- que existe. Las tres comprobaciones se corrieron contra produccion dentro de
+-- un bloque que termina en RAISE EXCEPTION, o sea rollback forzado: cero filas
+-- escritas. Lo medido, textual:
+--
+--   COMPROBACION 1  los dos triggers existen y estan activos (tgenabled='O',
+--                   tgtype=17 = ROW+UPDATE+AFTER) en finanzas_ledger y en
+--                   inventario_ledger.
+--   COMPROBACION 2  aviso sembrado sobre la fila 009d4317-...ea9e6b: ABIERTO
+--                   antes, IGNORADO despues de anularla, cerrado_por='sistema',
+--                   cerrado_en sellado, y el motivo automatico NOMBRA la fila.
+--   COMPROBACION 3  control positivo en la MISMA pasada: un segundo aviso
+--                   apuntando a otra fila que se quedo ACTIVA siguio ABIERTO.
+--                   Sin este, la 2 no distingue "el trigger funciono" de "el
+--                   instrumento marca todo como IGNORADO".
+--   LIMPIEZA        tras el rollback: 0 avisos de prueba, la fila tocada sigue
+--                   en ACTIVO, 87 filas activas -igual que antes-.
+--
+-- Lo unico que sigue SIN comprobar contra la base: el camino de
+-- `inventario_ledger`. Se leyo el codigo y es el mismo trigger sobre la misma
+-- funcion, pero no se ejercito con una fila real.
 --
 -- Si hay que replicarla de cero: se pega este archivo completo, de una
 -- sola corrida. **NO con `supabase db push`** (ERP-73: 10 migraciones ya vivas
