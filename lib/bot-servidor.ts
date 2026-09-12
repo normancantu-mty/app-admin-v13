@@ -73,6 +73,14 @@ export interface IdentidadBot {
   idCuenta: string
   etiqueta: string
   nombreEntidad: string
+  /**
+   * El rol de la entidad (`ADMIN`, `DST`, `LOC`). **Solo lo usa la Fase 3**,
+   * y decide el ALCANCE de una consulta: `ADMIN` ve todo, cualquier otro ve
+   * solo lo suyo. Se trae aqui, con la identidad, para que ningun endpoint
+   * tenga que volver a preguntarlo — un alcance que se recalcula en dos
+   * lugares es un alcance que algun dia discrepa.
+   */
+  rolEntidad: string
   nombreCuenta: string
   /**
    * Las OTRAS cuentas de la misma entidad que el bot puede usar. Es una lista
@@ -121,7 +129,7 @@ export async function resolverIdentidad(
   if (error || !data) return null
 
   const [entidad, cuentas] = await Promise.all([
-    supabase.from('entidades').select('nombre').eq('id', data.id_entidad).maybeSingle(),
+    supabase.from('entidades').select('nombre, rol').eq('id', data.id_entidad).maybeSingle(),
     supabase
       .from('cuentas_financieras')
       .select('id, nombre, tipo_fiscalidad')
@@ -136,6 +144,9 @@ export async function resolverIdentidad(
     idCuenta: data.id_cuenta_destino,
     etiqueta: data.etiqueta,
     nombreEntidad: entidad.data?.nombre ?? '(entidad)',
+    // Si la lectura fallo, el rol por defecto es el MAS restrictivo. Un
+    // default permisivo convierte un error de red en una fuga de datos.
+    rolEntidad: entidad.data?.rol ?? 'DESCONOCIDO',
     nombreCuenta,
     cuentas: usables.map((c) => ({ id: c.id, nombre: c.nombre ?? '(cuenta)' }))
   }
