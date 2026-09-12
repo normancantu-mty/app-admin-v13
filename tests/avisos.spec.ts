@@ -353,6 +353,41 @@ test.describe('ERP-80 · el centinela no se puede elegir a mano', () => {
   })
 })
 
+// --------------------------------------------------------------------------
+// 5-bis. EL CABLE ENTRE EL RESOLUTOR Y LA FILA
+// --------------------------------------------------------------------------
+
+test.describe('W13/ERP-59 . el abono escribe la cuenta que valido', () => {
+  test('la fila que va a finanzas_ledger usa idCuentaOrigenResuelta', () => {
+    // ── EL HUECO QUE ESTA PRUEBA TAPA ─────────────────────────────────────
+    // ERP-59 ablando el origen a proposito el 2026-09-05: la pantalla puede
+    // NO mandar cuenta y el servidor resuelve el default. Eso convierte
+    // `idCuentaOrigen` en una variable que **normalmente llega vacia**, y
+    // `idCuentaOrigenResuelta` en la unica que vale.
+    //
+    // Todo lo que VALIDA ya usaba la resuelta -- el chequeo de origen igual a
+    // destino, la lectura de `cuentas_financieras`, el veto de FULL_TAX. Lo
+    // unico que usaba la cruda era **la fila que se escribe**. Se validaba una
+    // cuenta y se escribia otra: `''` contra una columna `uuid` tumba el
+    // insert con 22P02, asi que no ensucia datos -- tira el abono entero.
+    //
+    // Por que sobrevivio a 267 pruebas: `resolverCuentaOrigenPorDefecto` SI
+    // esta probada (arriba, en este mismo archivo). Lo que nadie miraba era el
+    // cable entre el resolutor y la fila. **Una funcion correcta conectada al
+    // campo equivocado da verde en la prueba de la funcion.**
+    const accion = readFileSync(join(process.cwd(), 'app/actions/abonos.ts'), 'utf-8')
+
+    const codigoVivo = accion
+      .split('\n')
+      .filter((linea) => !linea.trim().startsWith('//'))
+      .join('\n')
+
+    // El `base` del insert es lo unico que importa: es lo que acaba en
+    // `finanzas_ledger`. Se exige la resuelta en esa linea exacta.
+    expect(codigoVivo).toContain('id_cuenta_origen: idCuentaOrigenResuelta')
+    expect(codigoVivo).not.toContain('id_cuenta_origen: idCuentaOrigen,')
+  })
+})
 // ────────────────────────────────────────────────────────────────────────────
 // 5. LO QUE ESTA DUPLICADO A PROPOSITO
 // ────────────────────────────────────────────────────────────────────────────

@@ -600,7 +600,7 @@ export async function registrarAbonoAction(
 
     const base: Omit<FinanzaInsert, 'monto' | 'id_ticket'> = {
       tipo_movimiento: tipoMovimiento,
-      id_cuenta_origen: idCuentaOrigen,
+      id_cuenta_origen: idCuentaOrigenResuelta,
       id_cuenta_destino: idCuentaDestino,
       id_entidad_relacionada: idEntidad,
       categoria,
