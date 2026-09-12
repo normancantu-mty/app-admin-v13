@@ -157,6 +157,12 @@ async def _contestar_consulta(update, chat, texto):
         "consulta": obj["consulta"],
         "filtro": obj.get("filtro"),
     })
+    # Se registra QUE se consulto y COMO salio, nunca la respuesta: el log ya
+    # lleva el token del bot en cada linea de la libreria y no se le agregan
+    # cifras del negocio. Sin esta linea, un uso real del bot no dejaba rastro
+    # del lado de la maquina y no habia con que comprobarlo despues.
+    log.info("consulta por voz/texto: %s filtro=%s -> %s",
+             obj["consulta"], obj.get("filtro"), estado)
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(
             r.get("error", "No pude consultarlo."))
@@ -419,6 +425,7 @@ async def _consulta_directa(update, consulta, filtro=None):
     estado, r = _post("/api/bot/consulta", {
         "telegram_id": chat, "consulta": consulta, "filtro": filtro,
     })
+    log.info("comando /%s filtro=%s -> %s", consulta, filtro, estado)
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(r.get("error", "No pude consultarlo."))
         return
