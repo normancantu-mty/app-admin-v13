@@ -61,12 +61,43 @@ const TICKETS_GILBERTO: TicketAbierto[] = [
   { id_ticket: 't-gil-1', fecha: '2026-08-31T18:00:00.000Z', saldo: 8496.0 }
 ]
 
-/** Delirio 85: varios pedidos. Los saldos suman su deuda de $19,476. */
+/**
+ * Delirio 85, **ESCENARIO INVENTADO**, y hay que decirlo porque la cabecera de
+ * este archivo promete fixtures copiados de produccion.
+ *
+ * Estos tres saldos los construi yo para que **sumaran su deuda de cartera**
+ * ($19,476), suponiendo que "los pedidos abiertos suman lo que debe". **Medido
+ * el 2026-09-12 contra produccion: es falso.** Delirio tiene 8 pedidos abiertos
+ * que suman **$68,708** contra una deuda real de **$7,992** — la diferencia son
+ * abonos "a cuenta" (`id_ticket` NULL) que ni el bot ni la accion original del
+ * ERP restan de ningun pedido. Ver `TICKETS_DELIRIO_REALES` aqui abajo y E-246.
+ *
+ * Se queda **para las pruebas de reparto**, donde lo que importa es la aritmetica
+ * del FIFO y no de donde salen los numeros, pero **con el nombre que le toca**:
+ * un escenario, no una copia.
+ */
 const TICKETS_DELIRIO: TicketAbierto[] = [
   { id_ticket: 't-del-1', fecha: '2026-06-09T18:00:00.000Z', saldo: 4000.0 },
   { id_ticket: 't-del-2', fecha: '2026-07-18T18:00:00.000Z', saldo: 6476.0 },
   { id_ticket: 't-del-3', fecha: '2026-08-25T18:00:00.000Z', saldo: 9000.0 }
 ]
+
+/**
+ * Delirio 85 **COMO ES**, copiado de `transacciones_tickets` el 2026-09-12
+ * despues del primer abono real por Telegram. Ocho pedidos, $68,708 de saldo.
+ */
+const TICKETS_DELIRIO_REALES: TicketAbierto[] = [
+  { id_ticket: '9d31dd82', fecha: '2026-05-23T01:04:50.710Z', saldo: 3924.0 },
+  { id_ticket: '84251bf0', fecha: '2026-06-01T21:07:02.762Z', saldo: 16208.0 },
+  { id_ticket: 'a91d7ec1', fecha: '2026-06-23T01:24:43.694Z', saldo: 12664.0 },
+  { id_ticket: '3403735a', fecha: '2026-07-17T22:54:41.198Z', saldo: 8832.0 },
+  { id_ticket: 'a6b26a43', fecha: '2026-07-18T01:33:51.179Z', saldo: 3248.0 },
+  { id_ticket: 'ff74f26e', fecha: '2026-08-11T17:28:00.392Z', saldo: 7680.0 },
+  { id_ticket: 'e7f3484f', fecha: '2026-08-11T19:52:06.423Z', saldo: 8160.0 },
+  { id_ticket: '74a0f1b7', fecha: '2026-08-26T22:21:30.493Z', saldo: 7992.0 }
+]
+/** Su deuda real en `v_cartera` el 2026-09-12, despues del abono de $11,484. */
+const DEUDA_REAL_DELIRIO = 7992.0
 
 function contexto(deudor: Deudor, tickets: TicketAbierto[]): ContextoAbono {
   return {
@@ -487,4 +518,53 @@ test('el JSON canonico del abono, a la vista y clavado', () => {
       '"referencia":"' + REFERENCIA_POR_DEFECTO + '",' +
       '"sobrante":40,"usuario_creador":"telegram:norman"}'
   )
+})
+
+
+// ─── LO QUE EL BOT VE DE MAS: los abonos "a cuenta" no bajan ningun pedido ───
+// E-246. Esto NO prueba que el codigo este bien: **clava lo que hace hoy**, que
+// es lo unico honesto mientras la decision de fondo (si un abono sin pedido debe
+// atribuirse a los pedidos viejos) es de Norman y no mia.
+
+test('el universo de pedidos que ve el bot es 8.6 veces la deuda real de Delirio', () => {
+  const sumaPedidos = TICKETS_DELIRIO_REALES.reduce((t, x) => t + x.saldo, 0)
+  expect(sumaPedidos).toBeCloseTo(68708.0, 2)
+  expect(DEUDA_REAL_DELIRIO).toBeCloseTo(7992.0, 2)
+  // La cifra que importa: el bot cree que hay 60,716 pesos de pedidos abiertos
+  // que la cartera ya da por cobrados. Son los abonos con `id_ticket` NULL.
+  expect(sumaPedidos - DEUDA_REAL_DELIRIO).toBeCloseTo(60716.0, 2)
+})
+
+test('pagar la deuda ENTERA no salda ningun pedido, y por eso no avisa de sobrante', () => {
+  // Norman abona exactamente lo que Delirio debe. La cartera queda en cero...
+  const r = abonoDe(
+    { ...DEUDORES[0], deuda: DEUDA_REAL_DELIRIO },
+    TICKETS_DELIRIO_REALES,
+    DEUDA_REAL_DELIRIO
+  )
+  // ...pero el reparto lo mete en los dos pedidos mas viejos y **no sobra nada**,
+  // porque quedan 60,716 de pedidos que el bot cree abiertos.
+  expect(r.payload.sobrante).toBe(0)
+  expect(r.payload.aplicaciones.length).toBe(2)
+  // El total SIEMPRE cuadra: eso es lo que hace que el dinero nunca se pierda.
+  expect(sumaCuadra(r.payload)).toBe(true)
+})
+
+test('el aviso de "es MAS de lo que debe" SI funciona: es la red que queda puesta', () => {
+  // El control positivo de la red de seguridad. Aunque el universo de pedidos
+  // este inflado, pasarse de la deuda de cartera **si se avisa**, porque ese
+  // aviso se calcula contra `v_cartera` y no contra los pedidos.
+  const r = abonoDe(
+    { ...DEUDORES[0], deuda: DEUDA_REAL_DELIRIO },
+    TICKETS_DELIRIO_REALES,
+    DEUDA_REAL_DELIRIO + 5000
+  )
+  expect(r.avisos.some((a) => a.includes('MAS de lo que debe'))).toBe(true)
+  // Y el control negativo, en la misma pasada: justo la deuda NO avisa.
+  const justo = abonoDe(
+    { ...DEUDORES[0], deuda: DEUDA_REAL_DELIRIO },
+    TICKETS_DELIRIO_REALES,
+    DEUDA_REAL_DELIRIO
+  )
+  expect(justo.avisos.some((a) => a.includes('MAS de lo que debe'))).toBe(false)
 })
