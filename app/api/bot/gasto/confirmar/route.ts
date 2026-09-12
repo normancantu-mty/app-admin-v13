@@ -32,6 +32,12 @@ import { registrarAviso } from '@/lib/avisos-server'
 export const dynamic = 'force-dynamic'
 
 interface BorradorGuardado {
+  /**
+   * El discriminador. Los borradores de la Fase 1 se guardaron SIN el, asi que
+   * `undefined` cuenta como gasto: una guarda que invalidara lo ya escrito
+   * rompeira las capturas a medias en vez de protegerlas.
+   */
+  tipo?: string
   fila: PayloadGasto
   meta: {
     id_entidad: string
@@ -91,6 +97,13 @@ export async function POST(request: Request) {
     }
 
     const guardado = borrador.payload as unknown as BorradorGuardado
+    // AG-02: un borrador de ABONO que llegue aqui se rechaza diciendo la verdad.
+    // Sin esta linea caeria por sello roto —el hash de un abono nunca empata con
+    // el de un gasto— y de paso lo CANCELARIA, que es un dano real por un
+    // enrutamiento equivocado.
+    if (guardado?.tipo && guardado.tipo !== 'gasto') {
+      return NextResponse.json({ error: 'Ese borrador no es un gasto.' }, { status: 409 })
+    }
     const fila = guardado?.fila
 
     // ── LOS DOS SELLOS ──────────────────────────────────────────────────────

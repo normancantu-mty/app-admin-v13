@@ -44,6 +44,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extraer import CATEGORIAS, extraer  # noqa: E402
 from consultar import clasificar  # noqa: E402
+from extraer_abono import extraer_abono  # noqa: E402
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -105,6 +106,34 @@ def _teclado_categorias(borrador_id, categorias=None):
              for nombre in (categorias or CATEGORIAS)]
     filas.append([InlineKeyboardButton("Ninguna (dejar sin categorizar)",
                                        callback_data="setcat:" + borrador_id + ":SIN_CATEGORIZAR")])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_confirmar_abono(borrador_id):
+    """El mismo VA de la Fase 1, con los campos que de verdad se corrigen aqui.
+
+    No hay "cambiar categoria" porque un abono no tiene: lo que se equivoca es
+    el DEUDOR o el MONTO. Y no hay "cambiar cuenta" del deudor porque esa la
+    resuelve el servidor y es una sola (medido el 2026-09-12).
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, escribelo", callback_data="vaab:" + borrador_id)],
+        [InlineKeyboardButton("Otro deudor", callback_data="deu:" + borrador_id),
+         InlineKeyboardButton("Cambiar monto", callback_data="montoab:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_deudores(opciones):
+    """Los deudores van POR INDICE, por la misma razon que las cuentas.
+
+    `callback_data` topa en 64 bytes, y el indice solo puede apuntar a algo que
+    el servidor acaba de declarar como candidato: el proceso del bot no tiene
+    forma de nombrar una entidad que no este en esa lista.
+    """
+    filas = [[InlineKeyboardButton(
+        o["nombre"] + " (" + o["rol"] + ")",
+        callback_data="setdeu:" + str(i))] for i, o in enumerate(opciones)]
     return InlineKeyboardMarkup(filas)
 
 
@@ -172,6 +201,99 @@ async def _contestar_consulta(update, chat, texto):
     return True
 
 
+async def _proponer_abono(update, chat, texto, id_deudor=None, propuesta=None, nombre=None):
+    """Fase 2. Devuelve True si propuso un abono (o si pidio elegir deudor).
+
+    EL MODELO NO ELIGE A NADIE: devuelve un NOMBRE y el servidor lo empata
+    contra la cartera viva. Si hay mas de un candidato, o ninguno, vuelve con
+    `hay_que_elegir` y lo resuelve un boton. Escribir dinero en la entidad
+    equivocada no se corrige solo: hay que anular la fila y recapturar.
+    """
+    if propuesta is None:
+        ok, obj = await asyncio.to_thread(extraer_abono, texto, _nombres_deudores())
+        if not ok:
+            return False
+        if obj.get("falta") == "esto no parece un abono":
+            return False
+        if obj.get("monto") in (None, "", 0):
+            # Falta el monto: se PREGUNTA. Un abono a medias no se adivina, y
+            # tampoco se deja caer al camino de la consulta.
+            _pendiente[chat] = texto
+            await update.effective_message.reply_text(
+                "Me falta " + str(obj.get("falta") or "de cuanto fue") + ". Me lo dices?")
+            return True
+        propuesta = {
+            "monto": obj.get("monto"),
+            "metodo_pago": obj.get("metodo_pago"),
+            "nota": obj.get("nota"),
+            "fecha": obj.get("fecha"),
+        }
+        nombre_dicho = obj.get("deudor")
+    else:
+        # Cuando la propuesta viene armada (comando directo, o correccion de
+        # monto) el nombre llega por parametro. Si tampoco hay, es porque ya se
+        # resolvio el deudor por uuid.
+        nombre_dicho = nombre
+
+    cuerpo = {"telegram_id": chat, "propuesta": propuesta}
+    if id_deudor:
+        cuerpo["id_deudor"] = id_deudor
+    else:
+        cuerpo["deudor"] = nombre_dicho
+
+    estado, r = _post("/api/bot/abono/proponer", cuerpo)
+    _refrescar_deudores(r)
+    log.info("abono propuesto: deudor=%s monto=%s -> %s",
+             nombre_dicho or id_deudor, propuesta.get("monto"), estado)
+
+    if estado == 200 and r.get("hay_que_elegir"):
+        _memoria[chat] = {"tipo": "abono_eligiendo",
+                          "opciones": r.get("opciones", list(_deudores)),
+                          "propuesta": propuesta}
+        await update.effective_message.reply_text(
+            r.get("mensaje", "Quien te pago?"),
+            reply_markup=_teclado_deudores(r.get("opciones", [])))
+        return True
+
+    if estado != 200 or not r.get("ok"):
+        # 422 y 403 SI se dicen: llegamos aqui porque el extractor lo leyo como
+        # abono, asi que callarse dejaria a la persona sin saber por que no paso
+        # nada. Solo un "no es un abono" (arriba) sigue de largo a la consulta.
+        await update.effective_message.reply_text(r.get("error", "No pude proponer el abono."))
+        return True
+
+    _memoria[chat] = {
+        "tipo": "abono",
+        "borrador_id": r["borrador_id"],
+        "sello": r["sello"],
+        "id_deudor": r.get("id_deudor"),
+        "propuesta": propuesta,
+        # La lista completa viaja con el borrador para que "Otro deudor" no
+        # tenga que volver a preguntarle al servidor.
+        "opciones": r.get("opciones", list(_deudores)),
+    }
+    await update.effective_message.reply_text(
+        r["mensaje"], reply_markup=_teclado_confirmar_abono(r["borrador_id"]))
+    return True
+
+
+def _refrescar_deudores(respuesta):
+    """La cartera viva que reporto el servidor, para dos usos.
+
+    Vocabulario para el extractor (solo los NOMBRES) y la lista de "otro
+    deudor". **La base manda**: el servidor vuelve a empatar contra su propia
+    lista en cada peticion, asi que esto no es autoridad, es comodidad.
+    """
+    global _deudores
+    vivos = respuesta.get("opciones")
+    if isinstance(vivos, list) and vivos:
+        _deudores = list(vivos)
+
+
+def _nombres_deudores():
+    return [d.get("nombre") for d in _deudores if isinstance(d, dict) and d.get("nombre")]
+
+
 async def _proponer(update, texto, pendiente):
     """Del lenguaje natural al borrador sellado. Devuelve True si propuso."""
     chat = update.effective_chat.id
@@ -191,6 +313,16 @@ async def _proponer(update, texto, pendiente):
             # podria contestarse como pregunta y no quedar registrado. Al reves,
             # lo peor que pasa es que una pregunta se intente leer como gasto y
             # el extractor la rechace, que es justo lo que acaba de ocurrir.
+            # AG-02 Fase 2. **El abono va ANTES que la consulta y DESPUES que
+            # el gasto**, y el orden no es arbitrario: los dos primeros
+            # ESCRIBEN, y una escritura que se pierde no deja rastro de que se
+            # perdio. Si una pregunta se intenta leer como abono, el extractor
+            # la rechaza y seguimos; al reves, un pago dictado se habria
+            # contestado como si fuera una consulta de cartera.
+            # El costo es latencia: una pregunta en lenguaje natural paga tres
+            # llamadas al modelo. Por eso existen /cartera, /stock y /abono.
+            if await _proponer_abono(update, chat, texto):
+                return False
             if await _contestar_consulta(update, chat, texto):
                 return False
             await update.effective_message.reply_text(
@@ -249,6 +381,10 @@ _esperando_monto = {}
 # del diccionario local y se actualiza sola: **la autoridad es la base**, esto
 # es solo para que el extractor tenga el vocabulario completo la proxima vez.
 _catalogo = list(CATEGORIAS)
+# Los nombres de la cartera viva (Fase 2). Arranca VACIO a proposito: no hay
+# una lista local de deudores que pudiera caducar. Hasta la primera respuesta
+# del servidor, el extractor trabaja sin vocabulario y el servidor empata igual.
+_deudores = []
 
 
 async def manejar_texto(update, context):
@@ -273,6 +409,15 @@ async def manejar_texto(update, context):
         except ValueError:
             _esperando_monto[chat] = True
             await update.message.reply_text("No lo lei como numero. Solo la cifra, por favor.")
+            return
+        dato = _memoria.get(chat) or {}
+        if dato.get("tipo") == "abono":
+            propuesta = dict(dato.get("propuesta") or {})
+            propuesta["monto"] = monto
+            # Se repropone con el MISMO deudor ya resuelto (por uuid), no con el
+            # nombre: cambiar el monto no puede cambiar a quien se le abona.
+            await _proponer_abono(update, chat, texto,
+                                  id_deudor=dato.get("id_deudor"), propuesta=propuesta)
             return
         await _reproponer(update, chat, {"propuesta": {"monto": monto}})
         return
@@ -311,10 +456,47 @@ async def manejar_voz(update, context):
 # PASO 5 — confirmar. Aqui no hay LLM, y no puede haberlo.
 # ===========================================================================
 
+async def _confirmar_abono(update, chat):
+    """El "va" de un abono. Aqui tampoco hay LLM, y no puede haberlo: solo
+    viajan `{telegram_id, borrador_id, sello}`."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "abono":
+        await update.effective_message.reply_text("No tengo ningun abono pendiente que escribir.")
+        return
+    estado, r = _post("/api/bot/abono/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("abono confirmado: borrador=%s -> %s filas=%s",
+             dato["borrador_id"], estado, r.get("filas_escritas"))
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        cubiertos = r.get("pedidos_cubiertos") or 0
+        sobrante = r.get("sobrante") or 0
+        detalle = "Listo. Quedo registrado"
+        if cubiertos:
+            detalle += " y cubre " + str(cubiertos) + " pedido(s)"
+        if sobrante:
+            detalle += "; " + ("{:,.2f}".format(sobrante)) + " quedaron a cuenta"
+        await update.effective_message.reply_text(detalle + ".")
+    else:
+        await update.effective_message.reply_text(r.get("error", "No pude escribir el abono."))
+
+
 async def _confirmar(update, chat):
     dato = _memoria.get(chat)
     if not dato:
         await update.effective_message.reply_text("No tengo nada pendiente que escribir.")
+        return
+    # Un "va" escrito vale para lo que este pendiente, sea gasto o abono: la
+    # persona contesta como habla y no tiene por que saber que hay dos caminos.
+    if dato.get("tipo") == "abono":
+        await _confirmar_abono(update, chat)
+        return
+    if dato.get("tipo") == "abono_eligiendo":
+        await update.effective_message.reply_text(
+            "Primero dime de quien fue el pago, con uno de los botones.")
         return
     estado, r = _post("/api/bot/gasto/confirmar", {
         "telegram_id": chat,
@@ -377,7 +559,31 @@ async def manejar_boton(update, context):
     partes = q.data.split(":", 2)
     accion = partes[0]
 
-    if accion == "va":
+    if accion == "vaab":
+        await _confirmar_abono(update, chat)
+    elif accion == "deu":
+        # "Otro deudor": se vuelve a preguntar con la lista COMPLETA que el
+        # servidor mando la ultima vez.
+        dato = _memoria.get(chat) or {}
+        opciones = dato.get("opciones") or []
+        if not opciones:
+            await q.message.reply_text("Dictamelo otra vez diciendo de quien fue el pago.")
+        else:
+            await q.message.reply_text("De quien fue?", reply_markup=_teclado_deudores(opciones))
+    elif accion == "setdeu":
+        dato = _memoria.get(chat) or {}
+        opciones = dato.get("opciones") or []
+        try:
+            elegido = opciones[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            await q.message.reply_text("Ese ya no esta en la lista. Dictamelo otra vez.")
+            return
+        await _proponer_abono(update, chat, "", id_deudor=elegido["id_entidad"],
+                              propuesta=dato.get("propuesta"))
+    elif accion == "montoab":
+        _esperando_monto[chat] = True
+        await q.message.reply_text("De cuanto fue el abono? Solo el numero.")
+    elif accion == "va":
         await _confirmar(update, chat)
     elif accion == "no":
         _memoria.pop(chat, None)
@@ -444,6 +650,42 @@ async def comando_ventas(update, context):
     await _consulta_directa(update, "ventas")
 
 
+async def comando_abono(update, context):
+    """`/abono <nombre> <monto>` — la cobranza SIN pasar por el modelo.
+
+    Existe por la misma razon que /stock y /cartera: latencia. El camino de
+    lenguaje natural paga DOS llamadas al modelo antes de llegar aqui (una para
+    descartar el gasto, otra para leer el abono), y lo que se usa a diario no
+    tiene por que pagar eso. Ademas un comando escrito no se puede clasificar
+    mal — y aqui una clasificacion mala mueve dinero.
+
+    El monto es el ULTIMO token; todo lo anterior es el nombre. El servidor
+    sigue empatando el nombre contra la cartera y sigue preguntando si hay duda:
+    este atajo se salta el modelo, **no las defensas**.
+    """
+    chat = update.effective_chat.id
+    args = list(context.args or [])
+    if len(args) < 2:
+        await update.effective_message.reply_text(
+            "Se usa asi: /abono Gilberto 5000" + NL
+            + "(el ultimo numero es el monto; lo de antes, de quien fue el pago)")
+        return
+    crudo = args[-1].replace("$", "").replace(",", "")
+    try:
+        monto = float(crudo)
+    except ValueError:
+        await update.effective_message.reply_text(
+            "No lei \"" + args[-1] + "\" como monto. El ultimo dato tiene que ser el numero.")
+        return
+    nombre = " ".join(args[:-1]).strip()
+    await update.effective_message.chat.send_action("typing")
+    # El nombre no se resuelve aqui: viaja al servidor como se tecleo, y el
+    # servidor lo empata o pregunta. Es el mismo camino que el de la voz.
+    await _proponer_abono(update, chat, nombre, nombre=nombre,
+                          propuesta={"monto": monto, "metodo_pago": None,
+                                     "nota": None, "fecha": None})
+
+
 async def comando_inicio(update, context):
     await update.message.reply_text(
         "Soy el bot del ERP. Capturo y consulto." + NL + NL
@@ -455,7 +697,10 @@ async def comando_inicio(update, context):
         + "  /stock            que hay, y donde" + NL
         + "  /stock chile 750  solo de un producto, o de un punto de venta" + NL
         + "  /cartera          quien debe, cuanto, y desde cuando" + NL
-        + "  /ventas           los ultimos 6 meses" + NL
+        + "  /ventas           los ultimos 6 meses" + NL + NL
+        + "PARA REGISTRAR UN PAGO QUE TE HICIERON:" + NL
+        + "  /abono Gilberto 5000   o dilo hablando: \"me deposito Gilberto 5 mil\"" + NL
+        + "Te enseno a que pedidos se aplica ANTES de escribir nada." + NL
         + "Tambien puedes preguntarlo hablando: \"cuanto me debe Delirio\"." + NL + NL
         + "Los numeros salen de las vistas del ERP, nunca del modelo.")
 
@@ -503,6 +748,7 @@ def main():
     app.add_handler(CommandHandler("stock", comando_stock))
     app.add_handler(CommandHandler("cartera", comando_cartera))
     app.add_handler(CommandHandler("ventas", comando_ventas))
+    app.add_handler(CommandHandler("abono", comando_abono))
     app.add_handler(CallbackQueryHandler(manejar_boton))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))

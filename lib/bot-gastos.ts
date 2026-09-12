@@ -12,7 +12,7 @@
  * escribe es ese objeto exacto.
  */
 
-import { createHash } from 'node:crypto'
+import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
 
 // ============================================================================
 // 1. LA LISTA CERRADA
@@ -314,11 +314,7 @@ export interface PayloadGasto {
  * que se hashea.
  */
 export function payloadCanonico(payload: PayloadGasto): string {
-  const orden: Record<string, unknown> = {}
-  for (const llave of LLAVES_PAYLOAD) {
-    orden[llave] = (payload as unknown as Record<string, unknown>)[llave]
-  }
-  return JSON.stringify(orden)
+  return canonizar(payload, LLAVES_PAYLOAD)
 }
 
 /**
@@ -330,12 +326,12 @@ export function payloadCanonico(payload: PayloadGasto): string {
  * dice asi para no inventar uno.
  */
 export function sellarPayload(payload: PayloadGasto): string {
-  return createHash('sha256').update(payloadCanonico(payload), 'utf8').digest('hex')
+  return sellar(payload, LLAVES_PAYLOAD)
 }
 
 /** El sello empata. Si no, no se escribe: se vuelve a proponer. */
 export function selloCoincide(payload: PayloadGasto, sello: string): boolean {
-  return sellarPayload(payload) === String(sello ?? '').trim().toLowerCase()
+  return selloEmpata(payload, LLAVES_PAYLOAD, sello)
 }
 
 // ============================================================================

@@ -23,6 +23,8 @@ import { createClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { CATALOGO_SEMILLA, type CategoriaDelCatalogo } from '@/lib/bot-gastos'
+import { aCentavos, aPesos } from '@/lib/abonos'
+import type { TicketAbierto } from '@/lib/bot-abonos'
 
 export type ClienteServicio = SupabaseClient<Database>
 
@@ -176,4 +178,128 @@ export async function leerCatalogo(
     tipo_movimiento: c.tipo_movimiento as 'GASTO_OPERATIVO' | 'COMPRA_INSUMOS',
     columna: c.columna as 'origen' | 'destino'
   }))
+}
+
+
+// ============================================================================
+// AG-02 Fase 2 — las dos lecturas que comparten proponer y confirmar
+// ============================================================================
+
+export interface CuentaDelDeudor {
+  ok: true
+  idCuenta: string
+  nombre: string
+}
+
+export interface CuentaDelDeudorFallida {
+  ok: false
+  motivo: string
+}
+
+/**
+ * La cuenta propia del deudor: la que va en `id_cuenta_origen` de un abono.
+ *
+ * La regla que reproduce (`app/actions/abonos.ts`): en un `ABONO_DEUDA` la
+ * cuenta que NO es de ADMIN tiene que pertenecer a la entidad del movimiento.
+ * Verificado contra las 36 filas historicas del formulario: origen es siempre
+ * `Efectivo (<deudor>)` y destino la cuenta ADMIN de CEO Admin.
+ *
+ * **Si no hay exactamente una, NO se adivina.** Medido el 2026-09-12, los 9
+ * deudores con saldo tienen una sola cuenta cada uno, asi que la ambiguedad no
+ * existe hoy; construir un selector para un caso que no ocurre es lo que la
+ * puerta ofensiva mata [Filtro: DOC02 - YAGNI]. El dia que ocurra, esto se
+ * detiene con un mensaje que nombra las cuentas en vez de escribir en una.
+ */
+export async function leerCuentaDelDeudor(
+  supabase: ClienteServicio,
+  idEntidad: string
+): Promise<CuentaDelDeudor | CuentaDelDeudorFallida> {
+  const { data, error } = await supabase
+    .from('cuentas_financieras')
+    .select('id, nombre, tipo_fiscalidad')
+    .eq('id_entidad', idEntidad)
+
+  if (error) return { ok: false, motivo: 'no pude leer sus cuentas: ' + error.message }
+
+  const usables = (data ?? []).filter(cuentaUsableporElBot)
+  if (usables.length === 0) {
+    return {
+      ok: false,
+      motivo:
+        (data ?? []).length === 0
+          ? 'no tiene ninguna cuenta dada de alta, y el abono necesita de donde sale el dinero'
+          : 'sus cuentas estan vetadas por la regla fiscal'
+    }
+  }
+  if (usables.length > 1) {
+    const nombres = usables.map((c) => '"' + (c.nombre ?? '(sin nombre)') + '"').join(', ')
+    return {
+      ok: false,
+      motivo: 'tiene mas de una cuenta (' + nombres + ') y no voy a adivinar cual. Captúralo en la pantalla'
+    }
+  }
+  return { ok: true, idCuenta: usables[0].id, nombre: usables[0].nombre ?? '(cuenta)' }
+}
+
+/**
+ * Los pedidos en concesion con saldo, del mas antiguo al mas nuevo.
+ *
+ * Replica `cargarTicketsPendientes` de `app/actions/abonos.ts` — que no se puede
+ * llamar desde aqui porque vive en un archivo `'use server'` que exige sesion de
+ * operador. **Mismo criterio, a proposito**: `total_cobrado_real` menos lo ya
+ * aplicado, contando los `ABONO_DEUDA` no anulados **incluidos los pendientes de
+ * aprobacion** (un abono pendiente ya reclamo ese pedido; sin contarlo, dos
+ * capturas seguidas propondrian pagar dos veces el mismo ticket).
+ *
+ * ⚠️ DISCREPANCIA CONOCIDA, medida el 2026-09-12 y DOCUMENTADA, no parchada:
+ * `v_cartera` usa `monto_base_ingreso` para los DST y `total_cobrado_real` para
+ * los LOC; esto usa `total_cobrado_real` siempre, igual que la accion original.
+ * Hoy las dos columnas dan el MISMO numero en los 9 deudores con saldo, asi que
+ * no muerde. El dia que difieran, la propuesta por pedido y el total de la
+ * cartera van a discrepar — y el lugar de arreglarlo es la accion original, no
+ * una copia del bot que se desvie de ella.
+ */
+export async function leerTicketsAbiertos(
+  supabase: ClienteServicio,
+  idEntidad: string
+): Promise<TicketAbierto[]> {
+  const { data: ticketsRaw, error } = await supabase
+    .from('transacciones_tickets')
+    .select('id, fecha_transaccion, total_cobrado_real, condicion_pago, status')
+    .eq('id_comprador', idEntidad)
+    .eq('condicion_pago', 'CONCESION')
+    .in('status', ['ACTIVO', 'APPROVED'])
+    .order('fecha_transaccion', { ascending: true })
+
+  if (error) throw new Error('No se pudieron leer los pedidos: ' + error.message)
+
+  const tickets = ticketsRaw ?? []
+  if (!tickets.length) return []
+
+  const { data: aplicadosRaw, error: errorAplicados } = await supabase
+    .from('finanzas_ledger')
+    .select('id_ticket, monto')
+    .in('id_ticket', tickets.map((t) => t.id))
+    .eq('tipo_movimiento', 'ABONO_DEUDA')
+    .in('status', ['ACTIVO', 'APPROVED'])
+
+  if (errorAplicados) throw new Error('No se pudo leer lo ya aplicado: ' + errorAplicados.message)
+
+  const aplicado = new Map<string, number>()
+  for (const fila of aplicadosRaw ?? []) {
+    if (!fila.id_ticket) continue
+    aplicado.set(fila.id_ticket, (aplicado.get(fila.id_ticket) ?? 0) + aCentavos(Number(fila.monto) || 0))
+  }
+
+  const abiertos: TicketAbierto[] = []
+  for (const ticket of tickets) {
+    const saldoCentavos = aCentavos(Number(ticket.total_cobrado_real) || 0) - (aplicado.get(ticket.id) ?? 0)
+    if (saldoCentavos <= 0) continue
+    abiertos.push({
+      id_ticket: ticket.id,
+      fecha: ticket.fecha_transaccion,
+      saldo: aPesos(saldoCentavos)
+    })
+  }
+  return abiertos
 }
