@@ -412,3 +412,118 @@ test.describe('El UUID del centinela no puede divergir entre TypeScript y Postgr
     expect(sql).toContain(`VALUES ('${ENTIDAD_PENDIENTE_DE_ASIGNAR}', 'PENDIENTE DE ASIGNAR'`)
   })
 })
+
+// ────────────────────────────────────────────────────────────────────────────
+// 6. EL CABLE ENTRE ANULAR Y LA COLA
+// ────────────────────────────────────────────────────────────────────────────
+
+const MIGRACION_HUERFANOS = 'supabase/PENDIENTE_cerrar_avisos_de_fila_anulada.sql'
+
+/**
+ * Tablas a las que un aviso puede apuntar y que NO llevan trigger, con su
+ * motivo escrito. Exentar algo cuesta editar esta lista y explicar por que —
+ * que es exactamente lo que no paso con `inventario_ledger` la primera vez.
+ */
+const EXENTAS: Record<string, string> = {
+  // El candado de W4 (`tg_avisos_vigilar_cierre`) revienta si se intenta
+  // cerrar un aviso de concesion sin comprador. Un trigger aqui tumbaria la
+  // anulacion del ticket entero. Aflojar ese candado es decision de Norman.
+  transacciones_tickets: 'el candado de W4 haria fallar la anulacion del ticket'
+}
+
+/** Los archivos donde nace un aviso con puntero. */
+function fuentesQueRegistranAvisos(): string[] {
+  return [
+    'app/actions/abonos.ts',
+    'app/actions/auditoria.ts',
+    'app/actions/compras.ts',
+    'app/actions/inventario.ts',
+    'app/actions/pos.ts',
+    'app/api/bot/abono/confirmar/route.ts',
+    'app/api/bot/gasto/confirmar/route.ts',
+    'app/api/finanzas/nuevo/route.ts'
+  ]
+}
+
+test.describe('Anular una fila cierra sus avisos', () => {
+  test('LA CLASE DE DEFECTO: toda tabla a la que apunta un aviso esta cubierta o exenta', () => {
+    // ── EL HUECO QUE ESTA PRUEBA TAPA ─────────────────────────────────────
+    // El 2026-09-12 se anulo una fila de `finanzas_ledger` y su aviso se quedo
+    // vivo en la cola, describiendo una fila que ya no cuenta. El arreglo es un
+    // trigger; el problema del trigger es que es **invisible desde el codigo**:
+    // quien agregue manana un `tabla: 'otra_cosa'` a un `registrarAviso` no
+    // tiene forma de enterarse de que hay una migracion que cubrir.
+    //
+    // Es la misma clase de defecto de W13/ERP-59, arriba: *integration gap*.
+    // El trigger esta bien y el `registrarAviso` esta bien; lo que nadie mira
+    // es el CABLE entre los dos. Esta prueba es ese cable.
+    const raiz = process.cwd()
+
+    const apuntadas = new Set<string>()
+    for (const archivo of fuentesQueRegistranAvisos()) {
+      const fuente = readFileSync(join(raiz, archivo), 'utf-8')
+      const vivo = fuente
+        .split('\n')
+        .filter((linea) => !linea.trim().startsWith('//') && !linea.trim().startsWith('*'))
+        .join('\n')
+      for (const hallazgo of vivo.matchAll(/tabla:\s*'([a-z_]+)'/g)) {
+        apuntadas.add(hallazgo[1])
+      }
+    }
+
+    // Control positivo: si el barrido no encuentra nada, la prueba pasaria
+    // vacia y no mediria nada. Un instrumento roto y un cero dan la misma
+    // observacion.
+    expect(apuntadas.size, 'el barrido no encontro ninguna tabla: el regex o la lista se rompio')
+      .toBeGreaterThanOrEqual(3)
+
+    const sql = readFileSync(join(raiz, MIGRACION_HUERFANOS), 'utf-8')
+    const cubiertas = new Set(
+      [...sql.matchAll(/AFTER UPDATE OF status ON public\.([a-z_]+)/g)].map((m) => m[1])
+    )
+
+    for (const tabla of apuntadas) {
+      const tieneTrigger = cubiertas.has(tabla)
+      const estaExenta = Object.prototype.hasOwnProperty.call(EXENTAS, tabla)
+      expect(
+        tieneTrigger || estaExenta,
+        `la tabla "${tabla}" recibe avisos y no tiene trigger de anulacion ni motivo de exencion. ` +
+          `Agregale el trigger en ${MIGRACION_HUERFANOS} o exentala con su razon.`
+      ).toBe(true)
+    }
+  })
+
+  test('el trigger solo mueve estado y motivo_cierre, que es lo unico que la base deja mover', () => {
+    // `tg_avisos_vigilar_cierre` revienta con 42501 si un UPDATE toca cualquier
+    // otra columna. Si alguien agrega un `severidad =` aqui, la anulacion entera
+    // empieza a fallar en produccion y ninguna prueba sin base lo veria.
+    const sql = readFileSync(join(process.cwd(), MIGRACION_HUERFANOS), 'utf-8')
+    // Solo el tramo SET...WHERE: las comparaciones del WHERE tambien llevan '=',
+    // y contarlas como asignaciones es exactamente el falso positivo que esta
+    // prueba fallo la primera vez que se corrio.
+    const set = sql.match(/UPDATE public\.avisos_captura\s+SET([\s\S]*?)WHERE/)
+    expect(set, 'no se encontro el SET del UPDATE sobre avisos_captura').not.toBeNull()
+
+    const asignaciones = [...set![1].matchAll(/(\w+)\s*=/g)].map((m) => m[1])
+    expect(asignaciones.sort()).toEqual(['estado', 'motivo_cierre'])
+  })
+
+  test('dispara en la TRANSICION a ANULADO, no cada vez que se toca una fila anulada', () => {
+    // Sin `OLD.status IS DISTINCT FROM`, cualquier UPDATE posterior sobre una
+    // fila ya anulada volveria a disparar. No rompe nada hoy —el WHERE exige
+    // estado ABIERTO— pero es la clase de cable que se afloja solo.
+    const sql = readFileSync(join(process.cwd(), MIGRACION_HUERFANOS), 'utf-8')
+    const whens = [...sql.matchAll(/WHEN \(([^)]*\)?[^)]*)\)\s*\n\s*EXECUTE FUNCTION/g)]
+    expect(whens.length, 'no se encontro ningun WHEN de trigger').toBeGreaterThan(0)
+    for (const when of whens) {
+      expect(when[1]).toContain("NEW.status = 'ANULADO'")
+      expect(when[1]).toContain("OLD.status IS DISTINCT FROM 'ANULADO'")
+    }
+  })
+
+  test('el motivo automatico dice DE QUE FILA venia: sin eso, el IGNORADO parece de un humano', () => {
+    const sql = readFileSync(join(process.cwd(), MIGRACION_HUERFANOS), 'utf-8')
+    expect(sql).toContain("'Cerrado automaticamente: la fila de ' || TG_TABLE_NAME")
+    expect(sql).toContain('NEW.id::text')
+  })
+})
