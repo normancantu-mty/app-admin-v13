@@ -1,0 +1,33 @@
+-- ============================================================================
+-- ERP-54 · Hueco propio, cerrado el mismo dia
+-- ============================================================================
+-- El advisor 0028/0029 de Supabase cazo esto horas despues de aplicar el conteo
+-- fisico: `tg_conteos_solo_anular()` quedo ejecutable por `anon` **y** por
+-- `authenticated`, publicada como `/rest/v1/rpc/tg_conteos_solo_anular`. Es una
+-- funcion de TRIGGER: nadie tiene por que poder llamarla.
+--
+-- Las otras cuatro funciones `tg_*` del ERP —`tg_forzar_autor`, `tg_bitacora`,
+-- `tg_vigilar_update_no_admin`, `tg_avisos_vigilar_cierre`— ya tenian el
+-- EXECUTE revocado. Esta se escribio sin copiar ese REVOKE.
+--
+-- LA CAUSA RAIZ, que es lo unico interesante aqui: **el patron no estaba
+-- escrito en ningun lado, solo repetido cuatro veces.** Un patron que vive en
+-- la memoria de quien copia el archivo anterior se rompe a la primera funcion
+-- que se escribe desde cero — y eso fue exactamente lo que paso.
+--
+-- Por eso este commit trae tambien la prueba `candados-base.spec.ts` que exige
+-- el REVOKE en la MISMA migracion que crea la funcion. La defensa no es este
+-- archivo: es la prueba.
+--
+-- El riesgo concreto era bajo —Postgres rechaza llamar una funcion de trigger
+-- fuera de un trigger— pero se cierra igual: una superficie publicada sin
+-- motivo es una superficie, y el advisor la marca EXTERNAL.
+--
+-- ROLLBACK: no se necesita. Nada la llama por RPC.
+--
+-- COMPROBACION DESPUES DE APLICAR — las dos en `false`:
+--   SELECT has_function_privilege('anon', 'public.tg_conteos_solo_anular()', 'EXECUTE'),
+--          has_function_privilege('authenticated', 'public.tg_conteos_solo_anular()', 'EXECUTE');
+-- ============================================================================
+
+REVOKE EXECUTE ON FUNCTION public.tg_conteos_solo_anular() FROM PUBLIC, anon, authenticated;

@@ -349,3 +349,70 @@ test.describe('Los indices de llave foranea', () => {
     )
   })
 })
+
+/**
+ * --- TODA FUNCION DE TRIGGER NACE SIN `EXECUTE` PUBLICO ---------------------
+ *
+ * El error, con fecha: el **2026-09-12**, la migracion del conteo fisico creo
+ * `tg_conteos_solo_anular()` y **no copio el REVOKE** que las otras cuatro
+ * funciones `tg_*` del ERP si traian. Quedo publicada como
+ * `/rest/v1/rpc/tg_conteos_solo_anular`, ejecutable por `anon`. Lo cazo el
+ * advisor 0028 de Supabase horas despues de aplicar — no esta suite.
+ *
+ * **La causa raiz no fue el descuido: fue que el patron no estaba escrito.**
+ * Vivia en la memoria de quien copiaba el archivo anterior, y se rompio a la
+ * primera funcion escrita desde cero. Esta prueba es donde queda escrito.
+ *
+ * Se revisa estaticamente, sobre el texto de las migraciones, para que falle
+ * **antes** de aplicar y no despues. El riesgo real de una funcion de trigger
+ * suelta es bajo —Postgres rechaza llamarla fuera de un trigger— pero la clase
+ * de defecto (superficie publicada sin querer) no lo es.
+ *
+ * La comprobacion del REVOKE se hace con texto plano, no con una expresion
+ * regular construida al vuelo: el nombre de la funcion se interpola, y un
+ * nombre con un caracter especial volveria la prueba un error de sintaxis en
+ * vez de un fallo legible.
+ */
+test.describe('Ninguna funcion de trigger queda publicada en la API', () => {
+  test('cada `tg_*` creada trae su REVOKE EXECUTE en la misma migracion', () => {
+    const sinRevoke: string[] = []
+
+    // Se mira el ESTADO FINAL, no archivo por archivo: una funcion creada en
+    // una migracion y revocada en otra posterior acaba cerrada, que es lo que
+    // importa. Lo que esta prueba prohibe es que NO se revoque en ningun lado.
+    // (El 2026-09-12 el REVOKE de `tg_conteos_solo_anular` tuvo que ir en una
+    // migracion aparte justo porque la que la creo ya estaba aplicada: editar
+    // una migracion aplicada rompe la reproducibilidad, que es el defecto que
+    // `salud-del-sistema.spec.ts` vigila.)
+    const todoElSql = migraciones()
+      .map((archivo) => sinComentarios(leerMigracion(archivo)))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+
+    const zonasDeRevoke = todoElSql.split('REVOKE').slice(1).join(' ')
+    const revocaTodo = todoElSql.includes('REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public')
+
+    for (const archivo of migraciones()) {
+      const sql = sinComentarios(leerMigracion(archivo))
+
+      const creadas = new Set(
+        [...sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+public\.(tg_\w+)/gi)].map(
+          (m) => m[1]
+        )
+      )
+
+      for (const funcion of creadas) {
+        const nombrada = zonasDeRevoke.includes(`ON FUNCTION public.${funcion}`)
+        if (!nombrada && !revocaTodo) sinRevoke.push(`${funcion} (${archivo})`)
+      }
+    }
+
+    expect(
+      sinRevoke.join(' | '),
+      'Hay funciones de trigger que se crean sin revocar EXECUTE, asi que PostgREST las ' +
+        'publica como /rest/v1/rpc/<nombre>. En la MISMA migracion que la crea hay que poner: ' +
+        'REVOKE EXECUTE ON FUNCTION public.<nombre>() FROM PUBLIC, anon, authenticated; ' +
+        'Ya paso el 2026-09-12 con tg_conteos_solo_anular.'
+    ).toBe('')
+  })
+})
