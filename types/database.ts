@@ -14,6 +14,76 @@ export type Database = {
   }
   public: {
     Tables: {
+      // AG-01 Fase 1. Escritas a mano por la misma razon que `avisos_captura`:
+      // las tablas nacen en `20260912163850_bot_identidades_y_borradores.sql`.
+      // Si al regenerar con `supabase gen types` este bloque cambia, manda el
+      // generado.
+      bot_identidades: {
+        Row: {
+          activo: boolean
+          creado_en: string
+          creado_por: string | null
+          etiqueta: string
+          id: string
+          id_cuenta_destino: string
+          id_entidad: string
+          telegram_id: number
+        }
+        Insert: {
+          activo?: boolean
+          creado_en?: string
+          creado_por?: string | null
+          etiqueta: string
+          id?: string
+          id_cuenta_destino: string
+          id_entidad: string
+          telegram_id: number
+        }
+        Update: {
+          activo?: boolean
+          creado_en?: string
+          creado_por?: string | null
+          etiqueta?: string
+          id?: string
+          id_cuenta_destino?: string
+          id_entidad?: string
+          telegram_id?: number
+        }
+        Relationships: []
+      }
+      bot_borradores: {
+        Row: {
+          creado_en: string
+          estado: string
+          id: string
+          id_registro: string | null
+          payload: Json
+          resuelto_en: string | null
+          sello: string
+          telegram_id: number
+        }
+        Insert: {
+          creado_en?: string
+          estado?: string
+          id?: string
+          id_registro?: string | null
+          payload: Json
+          resuelto_en?: string | null
+          sello: string
+          telegram_id: number
+        }
+        Update: {
+          creado_en?: string
+          estado?: string
+          id?: string
+          id_registro?: string | null
+          payload?: Json
+          resuelto_en?: string | null
+          sello?: string
+          telegram_id?: number
+        }
+        Relationships: []
+      }
       // ERP-59. Escrita a mano y no por `supabase gen types`: la tabla nace en
       // `supabase/migrations/20260905120000_cola_de_avisos_de_captura.sql` y
       // los tipos se regeneran cuando esa migracion se aplique. Si al
