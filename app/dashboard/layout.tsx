@@ -120,6 +120,10 @@ export default function DashboardLayout({
           label: '🔢 Conteo fisico'
         },
         {
+          href: '/dashboard/ventas',
+          label: '📈 Ventas por mes'
+        },
+        {
           href: '/dashboard/avisos',
           label: '⚠️ Cola de captura',
           badge: avisosAbiertos
@@ -175,6 +179,10 @@ export default function DashboardLayout({
           {
             href: '/dashboard/conteo',
             label: '🔢 Conteo fisico'
+          },
+          {
+            href: '/dashboard/ventas',
+            label: '📈 Ventas por mes'
           },
           {
             href: '/dashboard/avisos',

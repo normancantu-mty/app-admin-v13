@@ -65,8 +65,31 @@ function sinComentarios(sql: string): string {
     .join('\n')
 }
 
+/**
+ * Lee una migracion **por su nombre, sin el sello de tiempo**.
+ *
+ * El 2026-09-12 se renombraron 10 migraciones para que el repo coincidiera con
+ * lo registrado en el servidor (ERP-73), y estas pruebas se pusieron rojas de
+ * golpe: buscaban el archivo por su nombre completo, sello incluido. **El
+ * sello no es dato estable** — `apply_migration` lo asigna con SU hora UTC al
+ * aplicar, no con la del archivo. Lo estable es el nombre.
+ *
+ * Por eso se busca por sufijo y se exige que haya **exactamente uno**: dos
+ * migraciones con el mismo nombre y distinto sello serian un duplicado real, y
+ * fallar es lo correcto.
+ */
 function leerMigracion(nombre: string): string {
-  return readFileSync(path.join(MIGRACIONES, nombre), 'utf8')
+  const sinSello = nombre.replace(/^\d{14}_/, '')
+  const candidatos = migraciones().filter((f) => f.replace(/^\d{14}_/, '') === sinSello)
+
+  if (candidatos.length !== 1) {
+    throw new Error(
+      `Se esperaba EXACTAMENTE una migracion llamada "${sinSello}" y hay ${candidatos.length}` +
+        (candidatos.length ? `: ${candidatos.join(', ')}` : '. Revisa supabase/migrations/.')
+    )
+  }
+
+  return readFileSync(path.join(MIGRACIONES, candidatos[0]), 'utf8')
 }
 
 /** Todas las migraciones, ordenadas por nombre (que es su orden de aplicacion). */
@@ -231,9 +254,13 @@ test.describe('La identidad ya no se resuelve por correo', () => {
     const cierra = desdeLaFuncion.indexOf('$$', abre + 2)
     const cuerpo = desdeLaFuncion.slice(abre + 2, cierra)
 
-    expect(ultima, 'la ultima redefinicion no es la que quita el correo').toBe(
-      '20260902235500_identidad_solo_por_auth_id.sql'
-    )
+    // Se compara SIN el sello de tiempo: el sello lo pone el servidor al
+    // aplicar, no el archivo. Congelarlo aqui volveria a poner roja esta prueba
+    // el dia que las migraciones se resincronicen (paso el 2026-09-12).
+    expect(
+      ultima.replace(/^\d{14}_/, ''),
+      'la ultima redefinicion no es la que quita el correo'
+    ).toBe('identidad_solo_por_auth_id.sql')
     expect(abre, 'no se encontro el cuerpo de la funcion').toBeGreaterThan(-1)
     expect(cuerpo).toContain('auth_id = auth.uid()')
     expect(cuerpo.toLowerCase()).not.toContain('email')

@@ -38,7 +38,12 @@ export const RAIZ = path.resolve(__dirname, '..')
  */
 export const ARCHIVOS_DE_EQUIVALENCIA = [
   '**/vistas-equivalencia.spec.ts',
-  '**/cableado-pantallas.spec.ts'
+  '**/cableado-pantallas.spec.ts',
+  // `salud-del-sistema` no compara cifras: compara el REPO contra la BASE
+  // (que migraciones estan aplicadas) y mete un aviso a proposito para
+  // comprobar que la cola de ERP-59 recibe. Necesita service role igual que
+  // las otras dos, asi que vive en este mismo proyecto.
+  '**/salud-del-sistema.spec.ts'
 ]
 
 export const VARIABLES_DE_EQUIVALENCIA = ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'] as const

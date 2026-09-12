@@ -295,3 +295,40 @@ export function totalesCarteraVista(filas: FilaCarteraVista[]) {
     { recibidas: 0, libroDice: 0, estimadoEnPiso: 0, deuda: 0 }
   )
 }
+
+// ─── v_ventas_por_mes ───────────────────────────────────────────────────────
+
+/**
+ * Una fila de `v_ventas_por_mes`. **No reproduce ninguna funcion de
+ * TypeScript**, a diferencia de las otras cinco: este dato no se calculaba en
+ * ningun lado porque no se enseñaba en ningun lado.
+ */
+export interface FilaVentasPorMes {
+  /** Primer dia del mes, ya en hora de Mexico. `2026-08-01`. */
+  mes: string
+  tickets: number
+  vendido: number
+  vendido_contado: number | null
+  vendido_concesion: number | null
+  tickets_concesion: number
+  /** Cuantos compradores distintos hubo ese mes. */
+  compradores: number
+}
+
+/**
+ * La venta mes a mes, del mas reciente al mas viejo.
+ *
+ * **La agrupacion por mes la hace Postgres, no este codigo, y es a proposito:**
+ * `fecha_transaccion` es `timestamptz` y agruparla en JavaScript la meteria en
+ * el huso del servidor —que en Vercel es UTC—, moviendo cada venta de la tarde
+ * al mes siguiente. Ese error ya se cometio una vez midiendo a mano.
+ */
+export async function leerVentasPorMes(
+  client: SupabaseClient<Database>
+): Promise<FilaVentasPorMes[]> {
+  const c = comoClienteConVistas(client)
+  return leerTodo<FilaVentasPorMes>(
+    () => c.from('v_ventas_por_mes').select('*'),
+    'v_ventas_por_mes'
+  )
+}

@@ -610,6 +610,15 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: string[]
       }
+      /**
+       * ERP-73. Solo `service_role`. La consume
+       * `tests/salud-del-sistema.spec.ts` para comparar los archivos del repo
+       * contra lo que de verdad esta aplicado en la base. No devuelve el SQL.
+       */
+      migraciones_aplicadas: {
+        Args: Record<PropertyKey, never>
+        Returns: { version: string; name: string }[]
+      }
     }
     Enums: {
       [_ in never]: never
