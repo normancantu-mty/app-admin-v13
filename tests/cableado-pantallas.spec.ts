@@ -493,10 +493,29 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     )
     expect(centavos(generadaDavid), 'el bruto no es el neto').toBeGreaterThan(centavos(netoDavid))
     expect(centavos(generadaDavid), 'lo generado no decrece').toBeGreaterThanOrEqual(centavos(58_000))
+    // ─── 2026-09-12: esta asercion se cayo, y la tumbo un COBRO DE VERDAD ────
+    // Decia `saldo_pendiente_consignacion >= 19,476` — "no baja de su piso sin
+    // abonos"—, y el 2026-09-12 Norman registro por Telegram el primer abono de
+    // Delirio, $11,484. El saldo bajo a $7,992 y la prueba fallo.
+    //
+    // **Es el MISMO defecto que el comentario de arriba ya documenta para David
+    // el 2026-09-07**, y se corrigio ahi y no aqui: un piso puesto sobre el NETO
+    // convierte cada cobro en una prueba roja. **Cobrar es el objetivo del
+    // negocio; una prueba que se rompe cuando el negocio funciona esta mal
+    // escrita.** El piso va sobre lo BRUTO (`deuda_generada_tickets`), que solo
+    // crece cuando entra un pedido, y la relacion entre las tres columnas se
+    // comprueba con una igualdad, igual que en David.
+    const generadaDelirio = Number(delirio!.deuda_generada_tickets)
+    const abonosDelirio = Number(delirio!.abonos_aprobados)
+    const netoDelirio = Number(delirio!.saldo_pendiente_consignacion)
+
+    expect(centavos(netoDelirio), 'Delirio: generada - abonos = saldo').toBe(
+      centavos(generadaDelirio - abonosDelirio)
+    )
     expect(
-      centavos(Number(delirio!.saldo_pendiente_consignacion)),
-      'Delirio 85 no baja de su piso sin abonos'
-    ).toBeGreaterThanOrEqual(centavos(19_476))
+      centavos(generadaDelirio),
+      'Delirio 85: lo generado en pedidos no decrece'
+    ).toBeGreaterThanOrEqual(centavos(80_192))
   })
 
   // ══════════════════════════════════════════════════════════════════════════

@@ -41,7 +41,8 @@ import {
   aPesos,
   esMetodoPagoValido,
   repartirAbonoFifo,
-  type TicketPendienteCentavos
+  type TicketPendienteCentavos,
+  netearAbonosSinPedido
 } from '@/lib/abonos'
 
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
@@ -254,11 +255,43 @@ async function cargarTicketsPendientes(
     )
   }
 
+  // ── Lo cobrado SIN decir de que pedido era ───────────────────────────────
+  // Baja el saldo de la cartera pero no bajaba el de ningun pedido, asi que el
+  // reparto ofrecia pedidos que ya estaban cobrados. Medido el 2026-09-12 en 7
+  // de los 9 deudores; en Delirio 85, $60,716 de diferencia (E-246).
+  // **Se netea contra los mas viejos** — decision de Norman, 2026-09-12.
+  const { data: aCuentaRaw, error: aCuentaError } = await supabase
+    .from('finanzas_ledger')
+    .select('monto')
+    .eq('id_entidad_relacionada', idEntidad)
+    .eq('tipo_movimiento', 'ABONO_DEUDA')
+    .in('status', ['ACTIVO', 'APPROVED'])
+    .is('id_ticket', null)
+
+  if (aCuentaError) {
+    return { ok: false, error: `No se pudo leer lo abonado a cuenta: ${aCuentaError.message}` }
+  }
+
+  const aCuentaCentavos = (aCuentaRaw ?? []).reduce(
+    (total, fila) => total + aCentavos(Number(fila.monto) || 0),
+    0
+  )
+
+  const saldoNeteado = new Map(
+    netearAbonosSinPedido(
+      tickets.map((t) => ({
+        id_ticket: t.id,
+        saldo_centavos: aCentavos(Number(t.total_cobrado_real) || 0) - (aplicadoPorTicket.get(t.id) ?? 0)
+      })),
+      aCuentaCentavos
+    ).map((t) => [t.id_ticket, t.saldo_centavos])
+  )
+
   const pendientes: PropuestaTicketAbono[] = []
   for (const ticket of tickets) {
     const totalCentavos = aCentavos(Number(ticket.total_cobrado_real) || 0)
-    const aplicadoCentavos = aplicadoPorTicket.get(ticket.id) ?? 0
-    const saldoCentavos = totalCentavos - aplicadoCentavos
+    const aplicadoCentavos = totalCentavos - (saldoNeteado.get(ticket.id) ?? 0)
+    const saldoCentavos = saldoNeteado.get(ticket.id) ?? 0
     if (saldoCentavos <= 0) continue
 
     pendientes.push({

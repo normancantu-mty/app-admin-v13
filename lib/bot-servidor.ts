@@ -23,7 +23,7 @@ import { createClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { CATALOGO_SEMILLA, type CategoriaDelCatalogo } from '@/lib/bot-gastos'
-import { aCentavos, aPesos } from '@/lib/abonos'
+import { aCentavos, aPesos, netearAbonosSinPedido } from '@/lib/abonos'
 import type { TicketAbierto } from '@/lib/bot-abonos'
 
 export type ClienteServicio = SupabaseClient<Database>
@@ -285,15 +285,44 @@ export async function leerTicketsAbiertos(
 
   if (errorAplicados) throw new Error('No se pudo leer lo ya aplicado: ' + errorAplicados.message)
 
+  // ── El dinero que se cobro SIN decir de que pedido era ───────────────────
+  // Sin esto el reparto cree que hay pedidos abiertos que la cartera ya da por
+  // cobrados: 7 de 9 deudores el 2026-09-12, y en Delirio 85 la diferencia era
+  // de $60,716 (E-246). Va a los mas viejos por decision de Norman.
+  const { data: aCuentaRaw, error: errorACuenta } = await supabase
+    .from('finanzas_ledger')
+    .select('monto')
+    .eq('id_entidad_relacionada', idEntidad)
+    .eq('tipo_movimiento', 'ABONO_DEUDA')
+    .in('status', ['ACTIVO', 'APPROVED'])
+    .is('id_ticket', null)
+
+  if (errorACuenta) throw new Error('No se pudo leer lo abonado a cuenta: ' + errorACuenta.message)
+
+  const aCuentaCentavos = (aCuentaRaw ?? []).reduce(
+    (total, fila) => total + aCentavos(Number(fila.monto) || 0),
+    0
+  )
+
   const aplicado = new Map<string, number>()
   for (const fila of aplicadosRaw ?? []) {
     if (!fila.id_ticket) continue
     aplicado.set(fila.id_ticket, (aplicado.get(fila.id_ticket) ?? 0) + aCentavos(Number(fila.monto) || 0))
   }
 
+  // Los saldos CRUDOS, ya en el orden del mas viejo al mas nuevo, y luego el
+  // neteo de lo cobrado a cuenta contra los primeros de esa lista.
+  const crudos = tickets.map((t) => ({
+    id_ticket: t.id,
+    saldo_centavos: aCentavos(Number(t.total_cobrado_real) || 0) - (aplicado.get(t.id) ?? 0)
+  }))
+  const neteados = new Map(
+    netearAbonosSinPedido(crudos, aCuentaCentavos).map((t) => [t.id_ticket, t.saldo_centavos])
+  )
+
   const abiertos: TicketAbierto[] = []
   for (const ticket of tickets) {
-    const saldoCentavos = aCentavos(Number(ticket.total_cobrado_real) || 0) - (aplicado.get(ticket.id) ?? 0)
+    const saldoCentavos = neteados.get(ticket.id) ?? 0
     if (saldoCentavos <= 0) continue
     abiertos.push({
       id_ticket: ticket.id,

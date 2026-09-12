@@ -37,7 +37,7 @@ import {
 } from '@/lib/bot-abonos'
 import { DISPARADORES_FISCALES, LLAVES_PAYLOAD, payloadCanonico, sellarPayload } from '@/lib/bot-gastos'
 import { canonizar, sellar } from '@/lib/bot-sello'
-import { METODOS_PAGO } from '@/lib/abonos'
+import { aCentavos, aPesos, METODOS_PAGO, netearAbonosSinPedido } from '@/lib/abonos'
 import { createHash } from 'node:crypto'
 
 // ─── Fixtures copiados de produccion ────────────────────────────────────────
@@ -567,4 +567,64 @@ test('el aviso de "es MAS de lo que debe" SI funciona: es la red que queda puest
     DEUDA_REAL_DELIRIO
   )
   expect(justo.avisos.some((a) => a.includes('MAS de lo que debe'))).toBe(false)
+})
+
+// ─── EL NETEO DE LO COBRADO "A CUENTA" (decision de Norman, 2026-09-12) ──────
+
+test('lo cobrado a cuenta se come los pedidos mas viejos, y puede partir el segundo', () => {
+  const crudos = TICKETS_DELIRIO_REALES.map((t) => ({
+    id_ticket: t.id_ticket,
+    saldo_centavos: aCentavos(t.saldo)
+  }))
+  // Los $13,188 que Delirio abono sin decir de que pedido eran.
+  const neto = netearAbonosSinPedido(crudos, aCentavos(13188))
+
+  // El mas viejo queda saldado...
+  expect(neto[0].saldo_centavos).toBe(0)
+  // ...y el segundo sale A LA MITAD, que es lo que Norman dijo que pasa:
+  // "muchas veces puede ser la mezcla de 2".
+  expect(aPesos(neto[1].saldo_centavos)).toBeCloseTo(6944.0, 2)
+  // Del tercero en adelante, intactos.
+  expect(aPesos(neto[2].saldo_centavos)).toBeCloseTo(12664.0, 2)
+
+  // Y el invariante: no se crea ni se destruye dinero.
+  const antes = crudos.reduce((t, x) => t + x.saldo_centavos, 0)
+  const despues = neto.reduce((t, x) => t + x.saldo_centavos, 0)
+  expect(antes - despues).toBe(aCentavos(13188))
+})
+
+test('despues del neteo, los pedidos abiertos cuadran con la cartera y lo de CONTADO', () => {
+  // El careo que cierra el diagnostico de E-246, con los dos numeros de
+  // produccion del 2026-09-12:
+  //   pedidos abiertos crudos        $68,708
+  //   menos abonos a cuenta          $13,188  -> $55,520
+  //   deuda que muestra el ERP        $7,992
+  //   pagos de ventas de CONTADO     $47,528  -> $55,520
+  // Que las dos restas caigan en el MISMO numero es lo que demuestra que la
+  // diferencia entera son esas dos cosas y no una tercera sin identificar.
+  const crudos = TICKETS_DELIRIO_REALES.map((t) => ({
+    id_ticket: t.id_ticket,
+    saldo_centavos: aCentavos(t.saldo)
+  }))
+  const neto = netearAbonosSinPedido(crudos, aCentavos(13188))
+  const abiertoTrasNeteo = aPesos(neto.reduce((t, x) => t + x.saldo_centavos, 0))
+
+  expect(abiertoTrasNeteo).toBeCloseTo(55520.0, 2)
+  expect(DEUDA_REAL_DELIRIO + 47528.0).toBeCloseTo(abiertoTrasNeteo, 2)
+})
+
+test('netear no rompe al que no debe nada a cuenta: control negativo', () => {
+  // Ale Ortega no tiene un solo abono sin pedido. Netear cero tiene que ser
+  // exactamente no hacer nada, o la correccion estaria moviendo saldos ajenos.
+  const crudos = [{ id_ticket: 't-ale', saldo_centavos: aCentavos(2040) }]
+  expect(netearAbonosSinPedido(crudos, 0)).toEqual(crudos)
+})
+
+test('a cuenta mayor que todos los pedidos: los deja en cero y no en negativo', () => {
+  const crudos = [
+    { id_ticket: 'a', saldo_centavos: aCentavos(100) },
+    { id_ticket: 'b', saldo_centavos: aCentavos(200) }
+  ]
+  const neto = netearAbonosSinPedido(crudos, aCentavos(5000))
+  expect(neto.every((t) => t.saldo_centavos === 0)).toBe(true)
 })
