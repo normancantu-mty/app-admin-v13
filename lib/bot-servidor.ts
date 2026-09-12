@@ -57,12 +57,47 @@ export function tokenValido(request: Request): boolean {
   return diferencia === 0
 }
 
+export interface CuentaDelBot {
+  id: string
+  nombre: string
+}
+
 export interface IdentidadBot {
   idEntidad: string
-  idCuentaDestino: string
+  /**
+   * La cuenta contra la que se asienta. **Una sola, y su significado depende
+   * del tipo de movimiento**: destino en un gasto, origen en una compra de
+   * insumos. Lo decide `formaDeFila()`, nunca el LLM.
+   */
+  idCuenta: string
   etiqueta: string
   nombreEntidad: string
   nombreCuenta: string
+  /**
+   * Las OTRAS cuentas de la misma entidad que el bot puede usar. Es una lista
+   * cerrada calculada en el servidor: el boton "cambiar cuenta" elige de aqui
+   * por indice, asi que ni el modelo ni el proceso del bot pueden nombrar una
+   * cuenta que este vetada o que sea de otra entidad.
+   *
+   * Existe porque el default no puede ser correcto: medido el 2026-09-12, los
+   * gastos activos se reparten 10/10 entre Cuenta personal y Efectivo. Un
+   * default fijo estaria mal la mitad de las veces, y una confirmacion que hay
+   * que cancelar la mitad de las veces se vuelve reflejo (automation bias).
+   */
+  cuentas: CuentaDelBot[]
+}
+
+/**
+ * Los mismos tres vetos que `cuentaVetadaComoDefault` (lib/avisos.ts) y que el
+ * trigger `tg_bot_vetar_cuenta_fiscal`, aplicados aqui porque esta lista es lo
+ * que se le ofrece a la persona. Repetido a proposito en las tres capas: el
+ * veto barato se paga tres veces, la fuga fiscal una sola y no se deshace.
+ */
+export function cuentaUsableporElBot(c: { nombre: string | null; tipo_fiscalidad: string | null }): boolean {
+  const nombre = (c.nombre ?? '').toLowerCase()
+  if (nombre.includes('fresnillo')) return false
+  if ((c.tipo_fiscalidad ?? '').toUpperCase() === 'FULL_TAX') return false
+  return true
 }
 
 /**
@@ -84,16 +119,23 @@ export async function resolverIdentidad(
 
   if (error || !data) return null
 
-  const [entidad, cuenta] = await Promise.all([
+  const [entidad, cuentas] = await Promise.all([
     supabase.from('entidades').select('nombre').eq('id', data.id_entidad).maybeSingle(),
-    supabase.from('cuentas_financieras').select('nombre').eq('id', data.id_cuenta_destino).maybeSingle()
+    supabase
+      .from('cuentas_financieras')
+      .select('id, nombre, tipo_fiscalidad')
+      .eq('id_entidad', data.id_entidad)
   ])
+
+  const usables = (cuentas.data ?? []).filter(cuentaUsableporElBot)
+  const nombreCuenta = usables.find((c) => c.id === data.id_cuenta_destino)?.nombre ?? '(cuenta)'
 
   return {
     idEntidad: data.id_entidad,
-    idCuentaDestino: data.id_cuenta_destino,
+    idCuenta: data.id_cuenta_destino,
     etiqueta: data.etiqueta,
     nombreEntidad: entidad.data?.nombre ?? '(entidad)',
-    nombreCuenta: cuenta.data?.nombre ?? '(cuenta)'
+    nombreCuenta,
+    cuentas: usables.map((c) => ({ id: c.id, nombre: c.nombre ?? '(cuenta)' }))
   }
 }

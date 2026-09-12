@@ -1,12 +1,21 @@
 # El bot de gastos del ERP — Fase 1 (AG-01)
 
-**Que hace:** Kevin (o quien este de turno en planta) manda *"gaste 340 de gasolina
-yendo a Zacatecas"* por texto o nota de voz. El bot ensena la fila exacta que va a
-escribir, y **solo escribe despues del "va"**.
+**Que hace:** Norman manda *"gaste 340 de gasolina yendo a Zacatecas"* por texto o
+nota de voz. El bot ensena la fila exacta que va a escribir, y **solo escribe
+despues del "va"**.
+
+**Quien captura:** Norman. *(Lo dijo el 2026-09-12: "Kevin no va a ser la ingesta
+de datos, yo lo voy a hacer".)* El alta de mas personas sigue siendo posible y es
+manual; la de abajo explica como.
+
+**Compra de insumos SI entra**, desde el 2026-09-12. Es la unica categoria con
+otra forma de fila: `COMPRA_INSUMOS` con la cuenta en `id_cuenta_origen`, porque
+el dinero **sale**. La confirmacion se lo dice en palabras: *"el dinero SALE de
+aqui"*. La tabla que manda es `FORMA_DE_FILA` en `lib/bot-gastos.ts`, y **no se
+deduce del nombre de la categoria** — deducirlo fue E-237.
 
 **Que NO hace todavia:** abonos (Fase 2), consultas (Fase 3), ventas (Fase 4,
-bloqueada por ERP-11). Tampoco compra de insumos: eso es `COMPRA_INSUMOS`, otra
-forma de fila.
+bloqueada por ERP-11).
 
 ---
 
@@ -56,7 +65,7 @@ Nadie se auto-registra. Para dar de alta a alguien hace falta su `telegram_id`
 
 ```sql
 insert into public.bot_identidades (telegram_id, etiqueta, id_entidad, id_cuenta_destino)
-select <telegram_id>, 'kevin', e.id, c.id
+select <telegram_id>, 'norman', e.id, c.id
   from public.entidades e
   join public.cuentas_financieras c on c.id_entidad = e.id and c.nombre = 'Efectivo'
  where e.rol = 'ADMIN';
@@ -64,8 +73,14 @@ select <telegram_id>, 'kevin', e.id, c.id
 
 - **`etiqueta`** es lo que queda en `usuario_creador = 'telegram:<etiqueta>'`.
   Minusculas, sin espacios. Es lo unico que dice **quien** de planta capturo.
-- Las tres personas de planta apuntan a la **misma entidad** (la Matriz): la
+- Si algun dia entra mas de una persona, todas apuntan a la **misma entidad**: la
   captura es un puesto, no una persona. No se crea rol nuevo en el ERP.
+- **`id_cuenta_destino` es la cuenta POR DEFECTO, no la unica.** El boton
+  *"Cambiar cuenta"* ofrece las demas cuentas de la misma entidad que no esten
+  vetadas, y **cambiar de cuenta vuelve a sellar**: el "va" nunca cubre una
+  cuenta distinta de la que se enseno. Existe porque el default no puede ser
+  correcto — medido el 2026-09-12, los gastos activos se reparten 10/10 entre
+  Cuenta personal y Efectivo.
 - La base **rechaza sola** una cuenta `FULL_TAX`, una cuenta con "fresnillo" en el
   nombre, o una cuenta que no sea de esa entidad. Probado el 2026-09-12 con los
   tres casos y un control positivo.

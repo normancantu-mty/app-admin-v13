@@ -30,6 +30,7 @@ interface BorradorGuardado {
   fila: PayloadGasto
   meta: {
     id_entidad: string
+    id_cuenta?: string
     descripcion_original: string
     avisos: string[]
     duplicado_de: string | null
@@ -113,8 +114,17 @@ export async function POST(request: Request) {
     // La identidad se vuelve a comprobar contra la fila sellada: si a alguien le
     // cambiaron la cuenta o la etiqueta despues de proponer, la fila vieja ya no
     // se escribe.
+    // Exactamente UNA columna lleva cuenta. La otra en null, o la fila es
+    // ambigua y no se escribe: un ledger con las dos puestas no dice de donde
+    // salio el dinero.
+    const cuentaDeLaFila = fila.id_cuenta_origen ?? fila.id_cuenta_destino
+    const columnasLlenas = [fila.id_cuenta_origen, fila.id_cuenta_destino].filter(
+      (v) => v !== null && v !== undefined
+    ).length
     if (
-      fila.id_cuenta_destino !== identidad.idCuentaDestino ||
+      columnasLlenas !== 1 ||
+      !cuentaDeLaFila ||
+      !identidad.cuentas.some((c) => c.id === cuentaDeLaFila) ||
       fila.usuario_creador !== `telegram:${identidad.etiqueta}`
     ) {
       return NextResponse.json(

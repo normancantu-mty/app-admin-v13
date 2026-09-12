@@ -8,6 +8,7 @@ import {
   disparadoresFiscalesEn,
   normalizarCategoriaBot,
   normalizarPropuesta,
+  formaDeFila,
   payloadCanonico,
   sellarPayload,
   selloCoincide,
@@ -22,7 +23,7 @@ import {
  * texto que mueve el pasivo fiscal, y el sello del payload.
  */
 
-const IDENTIDAD = { idCuentaDestino: 'cta-matriz-efectivo', etiqueta: 'kevin' }
+const IDENTIDAD = { idCuenta: 'cta-matriz-efectivo', etiqueta: 'kevin' }
 const AHORA = new Date('2026-09-12T18:00:00.000Z')
 
 test.describe('la categoria sale de una lista cerrada y nunca del LLM', () => {
@@ -42,15 +43,14 @@ test.describe('la categoria sale de una lista cerrada y nunca del LLM', () => {
     expect(normalizarCategoriaBot({ categoria: 'Insumos' })).toBe(CATEGORIA_SIN_CATEGORIZAR_BOT)
   })
 
-  test('Insumos NO es alcanzable por este camino, y es a proposito', () => {
-    // Medido contra produccion el 2026-09-12: `Insumos` es categoria de
-    // `COMPRA_INSUMOS` (18 filas, escriben `id_cuenta_origen`), no de
-    // `GASTO_OPERATIVO` (que escribe `id_cuenta_destino`). Son dos formas de
-    // fila distintas. Si alguien mete `Insumos` a esta lista sin cambiar que
-    // columna se llena, esta prueba truena y le dice por que.
-    expect(CATEGORIAS_GASTO_BOT).not.toContain('Insumos')
+  test('Insumos SI es alcanzable, pero con SU forma de fila', () => {
+    // Norman cerro D-E32 el 2026-09-12: un solo nombre, `Insumos`. Lo que esta
+    // prueba impide es que vuelva a colarse como si fuera un `GASTO_OPERATIVO`
+    // — que fue exactamente E-237. La forma vive en `formaDeFila`, y hay un
+    // describe entero abajo que la vigila.
+    expect(CATEGORIAS_GASTO_BOT).toContain('Insumos')
     expect(CATEGORIAS_GASTO_BOT).not.toContain('Compra_Insumos')
-    expect(normalizarCategoriaBot('Insumos')).toBe(CATEGORIA_SIN_CATEGORIZAR_BOT)
+    expect(normalizarCategoriaBot('Insumos')).toBe('Insumos')
   })
 })
 
@@ -120,6 +120,7 @@ function payloadDePrueba(): PayloadGasto {
     monto: 340,
     fecha_movimiento: '2026-09-12T18:00:00.000Z',
     id_cuenta_destino: 'cta-matriz-efectivo',
+    id_cuenta_origen: null,
     usuario_creador: 'telegram:kevin',
     status: 'ACTIVO'
   }
@@ -134,6 +135,7 @@ test.describe('el sello vigila el contenido, no el formato', () => {
       usuario_creador: 'telegram:kevin',
       descripcion: 'gasolina yendo a Zacatecas',
       id_cuenta_destino: 'cta-matriz-efectivo',
+      id_cuenta_origen: null,
       categoria_gasto: null,
       fecha_movimiento: '2026-09-12T18:00:00.000Z',
       tipo_movimiento: 'GASTO_OPERATIVO',
@@ -180,6 +182,7 @@ test.describe('lo que el LLM manda NO decide los campos del sistema', () => {
         categoria: 'Logistica_Envios',
         descripcion: 'gasolina',
         id_cuenta_destino: 'cta-fresnillo',
+        id_cuenta_origen: null,
         usuario_creador: 'telegram:ceo',
         status: 'ANULADO',
         tipo_movimiento: 'INGRESO_VENTA'
@@ -189,7 +192,7 @@ test.describe('lo que el LLM manda NO decide los campos del sistema', () => {
     )
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.payload.id_cuenta_destino).toBe(IDENTIDAD.idCuentaDestino)
+    expect(r.payload.id_cuenta_destino).toBe(IDENTIDAD.idCuenta)
     expect(r.payload.usuario_creador).toBe('telegram:kevin')
     expect(r.payload.status).toBe('ACTIVO')
     expect(r.payload.tipo_movimiento).toBe('GASTO_OPERATIVO')
@@ -198,7 +201,7 @@ test.describe('lo que el LLM manda NO decide los campos del sistema', () => {
   test('el autor dice QUIEN de planta, no solo la entidad', () => {
     const r = normalizarPropuesta(
       { monto: 10, categoria: 'Servicios_Basicos', descripcion: 'internet' },
-      { idCuentaDestino: 'cta-matriz-efectivo', etiqueta: 'martin' },
+      { idCuenta: 'cta-matriz-efectivo', etiqueta: 'martin' },
       AHORA
     )
     expect(r.ok).toBe(true)
@@ -287,5 +290,103 @@ test.describe('duplicados: avisa, no bloquea', () => {
       AHORA
     )
     expect(d?.monto).toBe(341)
+  })
+})
+
+/**
+ * D-E32 cerrada por Norman el 2026-09-12: *"Solamente dejalo como insumos, no
+ * hay por que duplicarlo."* Lo que estas pruebas vigilan NO es el nombre — es
+ * que el nombre y la FORMA DE FILA no se vuelvan a separar, que es lo que
+ * produjo E-237.
+ */
+test.describe('Insumos escribe la columna opuesta, y eso esta sellado', () => {
+  test('Insumos es COMPRA_INSUMOS y el dinero SALE de la cuenta', () => {
+    const r = normalizarPropuesta(
+      { monto: 1200, categoria: 'Insumos', descripcion: 'agave para el lote 12' },
+      IDENTIDAD,
+      AHORA
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.tipo_movimiento).toBe('COMPRA_INSUMOS')
+    expect(r.payload.id_cuenta_origen).toBe(IDENTIDAD.idCuenta)
+    expect(r.payload.id_cuenta_destino).toBeNull()
+  })
+
+  test('un gasto normal sigue escribiendo destino y deja origen en null', () => {
+    const r = normalizarPropuesta(
+      { monto: 300, categoria: 'Logistica_Envios', descripcion: 'casetas a Zacatecas' },
+      IDENTIDAD,
+      AHORA
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.tipo_movimiento).toBe('GASTO_OPERATIVO')
+    expect(r.payload.id_cuenta_destino).toBe(IDENTIDAD.idCuenta)
+    expect(r.payload.id_cuenta_origen).toBeNull()
+  })
+
+  test('SIEMPRE exactamente una columna con cuenta, en toda la lista cerrada', () => {
+    for (const categoria of CATEGORIAS_GASTO_BOT) {
+      const r = normalizarPropuesta(
+        { monto: 100, categoria, descripcion: 'x' },
+        IDENTIDAD,
+        AHORA
+      )
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      const llenas = [r.payload.id_cuenta_origen, r.payload.id_cuenta_destino].filter(
+        (v) => v !== null
+      )
+      expect(llenas, `categoria ${categoria}`).toHaveLength(1)
+    }
+  })
+
+  test('`Compra_Insumos` NO se acepta: era el duplicado que Norman mando quitar', () => {
+    expect(normalizarCategoriaBot('Compra_Insumos')).toBe(CATEGORIA_SIN_CATEGORIZAR_BOT)
+    expect(CATEGORIAS_GASTO_BOT).not.toContain('Compra_Insumos')
+  })
+
+  test('mover la cuenta de columna CAMBIA el sello', () => {
+    const base: PayloadGasto = {
+      tipo_movimiento: 'GASTO_OPERATIVO',
+      categoria: 'Logistica_Envios',
+      categoria_gasto: null,
+      descripcion: 'casetas',
+      monto: 300,
+      fecha_movimiento: AHORA.toISOString(),
+      id_cuenta_destino: 'cta-a',
+      id_cuenta_origen: null,
+      usuario_creador: 'telegram:kevin',
+      status: 'ACTIVO'
+    }
+    const movida: PayloadGasto = { ...base, id_cuenta_destino: null, id_cuenta_origen: 'cta-a' }
+    expect(sellarPayload(movida)).not.toBe(sellarPayload(base))
+    expect(selloCoincide(movida, sellarPayload(base))).toBe(false)
+  })
+
+  test('cambiar de cuenta CAMBIA el sello: el boton no puede colarse tras el va', () => {
+    const a = normalizarPropuesta(
+      { monto: 300, categoria: 'Logistica_Envios', descripcion: 'casetas' },
+      { idCuenta: 'cta-a', etiqueta: 'kevin' },
+      AHORA
+    )
+    const b = normalizarPropuesta(
+      { monto: 300, categoria: 'Logistica_Envios', descripcion: 'casetas' },
+      { idCuenta: 'cta-b', etiqueta: 'kevin' },
+      AHORA
+    )
+    expect(a.ok && b.ok).toBe(true)
+    if (!a.ok || !b.ok) return
+    expect(sellarPayload(a.payload)).not.toBe(sellarPayload(b.payload))
+  })
+
+  test('la forma NO se deduce del nombre: es una tabla, y SIN_CATEGORIZAR cae en gasto', () => {
+    expect(formaDeFila('Insumos')).toEqual({ tipo: 'COMPRA_INSUMOS', columna: 'origen' })
+    expect(formaDeFila(CATEGORIA_SIN_CATEGORIZAR_BOT)).toEqual({
+      tipo: 'GASTO_OPERATIVO',
+      columna: 'destino'
+    })
+    expect(formaDeFila('Compra_Insumos')).toEqual({ tipo: 'GASTO_OPERATIVO', columna: 'destino' })
   })
 })

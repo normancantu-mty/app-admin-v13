@@ -29,6 +29,7 @@ export async function POST(request: Request) {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
       propuesta?: Record<string, unknown>
+      id_cuenta?: unknown
     }
 
     const telegramId = Number(cuerpo.telegram_id)
@@ -48,9 +49,22 @@ export async function POST(request: Request) {
       )
     }
 
+    // La cuenta, si viene, se valida contra la LISTA CERRADA de la identidad y
+    // no contra la base: un id que no este en `identidad.cuentas` no existe
+    // para este endpoint, venga de donde venga. Sin esto, el boton "cambiar
+    // cuenta" seria un campo de texto libre apuntando a `cuentas_financieras`.
+    const pedida = String(cuerpo.id_cuenta ?? '')
+    const idCuenta =
+      pedida !== '' && identidad.cuentas.some((c) => c.id === pedida) ? pedida : identidad.idCuenta
+    if (pedida !== '' && idCuenta !== pedida) {
+      return NextResponse.json({ error: 'Esa cuenta no es tuya o esta vetada.' }, { status: 422 })
+    }
+    const nombreCuenta =
+      identidad.cuentas.find((c) => c.id === idCuenta)?.nombre ?? identidad.nombreCuenta
+
     const normalizada = normalizarPropuesta(
       cuerpo.propuesta ?? {},
-      { idCuentaDestino: identidad.idCuentaDestino, etiqueta: identidad.etiqueta },
+      { idCuenta, etiqueta: identidad.etiqueta },
       new Date()
     )
     if (!normalizada.ok) {
@@ -59,13 +73,22 @@ export async function POST(request: Request) {
 
     // ── Duplicados: avisa, no bloquea ───────────────────────────────────────
     const desde = new Date(Date.now() - VENTANA_DUPLICADO_HORAS * 60 * 60 * 1000).toISOString()
-    const { data: recientes } = await supabase
+    const fila = normalizada.payload
+    // Se busca en la MISMA columna que va a escribir. Buscar duplicados de una
+    // compra de insumos entre los gastos con `id_cuenta_destino` no encontraria
+    // nunca nada, y un detector que nunca encuentra nada es indistinguible de
+    // uno apagado.
+    let consulta = supabase
       .from('finanzas_ledger')
       .select('id, monto, categoria, descripcion, fecha_movimiento, usuario_creador')
-      .eq('tipo_movimiento', 'GASTO_OPERATIVO')
+      .eq('tipo_movimiento', fila.tipo_movimiento)
       .eq('status', 'ACTIVO')
-      .eq('id_cuenta_destino', identidad.idCuentaDestino)
       .gte('fecha_movimiento', desde)
+    consulta =
+      fila.id_cuenta_origen !== null
+        ? consulta.eq('id_cuenta_origen', fila.id_cuenta_origen)
+        : consulta.eq('id_cuenta_destino', fila.id_cuenta_destino as string)
+    const { data: recientes } = await consulta
 
     const duplicado = buscarDuplicado(
       { monto: normalizada.payload.monto, categoria: normalizada.payload.categoria },
@@ -94,6 +117,7 @@ export async function POST(request: Request) {
           fila: normalizada.payload,
           meta: {
             id_entidad: identidad.idEntidad,
+            id_cuenta: idCuenta,
             descripcion_original: normalizada.descripcionOriginal,
             avisos: normalizada.avisos,
             duplicado_de: duplicado?.id ?? null
@@ -112,9 +136,11 @@ export async function POST(request: Request) {
       ok: true,
       borrador_id: borrador.id,
       sello,
+      id_cuenta: idCuenta,
+      cuentas: identidad.cuentas,
       mensaje: mensajeDeConfirmacion(
         normalizada.payload,
-        { nombreCuenta: identidad.nombreCuenta, nombreEntidad: identidad.nombreEntidad },
+        { nombreCuenta, nombreEntidad: identidad.nombreEntidad },
         normalizada.avisos,
         duplicado
       )

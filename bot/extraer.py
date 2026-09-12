@@ -36,6 +36,7 @@ CATEGORIAS = {
     "Logistica_Envios": "gasolina, casetas, paqueteria, fletes, viaticos de ruta",
     "Nomina_y_Honorarios": "sueldos, honorarios, pagos a terceros por trabajo",
     "Gastos_Personales_Socio": "retiros y gastos personales de un socio",
+    "Insumos": "materia prima: agave, botella, corcho, etiqueta, todo lo que entra al producto",
 }
 
 _LISTA = NL.join("- " + k + ": " + v for k, v in CATEGORIAS.items())

@@ -94,6 +94,7 @@ def _teclado_confirmar(borrador_id):
         [InlineKeyboardButton("VA, escribelo", callback_data="va:" + borrador_id)],
         [InlineKeyboardButton("Cambiar categoria", callback_data="cat:" + borrador_id),
          InlineKeyboardButton("Cambiar monto", callback_data="monto:" + borrador_id)],
+        [InlineKeyboardButton("Cambiar cuenta", callback_data="cta:" + borrador_id)],
         [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
     ])
 
@@ -103,6 +104,20 @@ def _teclado_categorias(borrador_id):
              for nombre in CATEGORIAS]
     filas.append([InlineKeyboardButton("Ninguna (dejar sin categorizar)",
                                        callback_data="setcat:" + borrador_id + ":SIN_CATEGORIZAR")])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_cuentas(cuentas):
+    """Las cuentas van POR INDICE, no por uuid.
+
+    Dos razones, y las dos importan. La de bulto: `callback_data` topa en 64
+    bytes y "setcta:<uuid de borrador>:<uuid de cuenta>" son 80. La de fondo:
+    el indice solo puede apuntar a algo que el servidor ya declaro usable en
+    esta propuesta, asi que el proceso del bot no tiene forma de nombrar una
+    cuenta que no este en esa lista.
+    """
+    filas = [[InlineKeyboardButton(c["nombre"], callback_data="setcta:" + str(i))]
+             for i, c in enumerate(cuentas)]
     return InlineKeyboardMarkup(filas)
 
 
@@ -147,6 +162,8 @@ async def _proponer(update, texto, pendiente):
     _memoria[chat] = {
         "borrador_id": r["borrador_id"],
         "sello": r["sello"],
+        "cuentas": r.get("cuentas", []),
+        "id_cuenta": r.get("id_cuenta"),
         # La propuesta cruda se guarda para poder cambiar UN campo sin volver a
         # llamar al modelo. Es memoria del proceso, no autoridad: la fila que se
         # escribe es la sellada en la base, no esta.
@@ -193,7 +210,7 @@ async def manejar_texto(update, context):
             _esperando_monto[chat] = True
             await update.message.reply_text("No lo lei como numero. Solo la cifra, por favor.")
             return
-        await _reproponer(update, chat, {"monto": monto})
+        await _reproponer(update, chat, {"propuesta": {"monto": monto}})
         return
 
     # Si veniamos preguntando un dato que faltaba, se junta con lo anterior.
@@ -258,14 +275,23 @@ async def _reproponer(update, chat, cambios):
         await update.effective_message.reply_text("Ya no tengo esa propuesta. Dictamelo otra vez.")
         return
     propuesta = dict(dato["propuesta"])
-    propuesta.update(cambios)
+    propuesta.update(cambios.get("propuesta", {}))
+    id_cuenta = cambios.get("id_cuenta", dato.get("id_cuenta"))
 
-    estado, r = _post("/api/bot/gasto/proponer",
-                      {"telegram_id": chat, "propuesta": propuesta})
+    cuerpo = {"telegram_id": chat, "propuesta": propuesta}
+    if id_cuenta:
+        cuerpo["id_cuenta"] = id_cuenta
+    estado, r = _post("/api/bot/gasto/proponer", cuerpo)
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(r.get("error", "No pude reproponerlo."))
         return
-    _memoria[chat] = {"borrador_id": r["borrador_id"], "sello": r["sello"], "propuesta": propuesta}
+    _memoria[chat] = {
+        "borrador_id": r["borrador_id"],
+        "sello": r["sello"],
+        "propuesta": propuesta,
+        "cuentas": r.get("cuentas", dato.get("cuentas", [])),
+        "id_cuenta": r.get("id_cuenta"),
+    }
     await update.effective_message.reply_text(
         r["mensaje"], reply_markup=_teclado_confirmar(r["borrador_id"]))
 
@@ -286,10 +312,28 @@ async def manejar_boton(update, context):
         await q.message.reply_text("Cual es?", reply_markup=_teclado_categorias(partes[1]))
     elif accion == "setcat":
         nueva = partes[2] if len(partes) > 2 else None
-        await _reproponer(update, chat, {"categoria": None if nueva == "SIN_CATEGORIZAR" else nueva})
+        await _reproponer(
+            update, chat,
+            {"propuesta": {"categoria": None if nueva == "SIN_CATEGORIZAR" else nueva}})
     elif accion == "monto":
         _esperando_monto[chat] = True
         await q.message.reply_text("De cuanto fue? Solo el numero.")
+    elif accion == "cta":
+        dato = _memoria.get(chat) or {}
+        cuentas = dato.get("cuentas") or []
+        if len(cuentas) < 2:
+            await q.message.reply_text("Solo tienes una cuenta dada de alta; no hay a cual cambiar.")
+        else:
+            await q.message.reply_text("Contra cual?", reply_markup=_teclado_cuentas(cuentas))
+    elif accion == "setcta":
+        dato = _memoria.get(chat) or {}
+        cuentas = dato.get("cuentas") or []
+        try:
+            elegida = cuentas[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            await q.message.reply_text("Esa cuenta ya no esta en la lista. Dictamelo otra vez.")
+            return
+        await _reproponer(update, chat, {"id_cuenta": elegida["id"]})
 
 
 async def comando_inicio(update, context):

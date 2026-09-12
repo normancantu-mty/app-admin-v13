@@ -22,23 +22,25 @@ import { createHash } from 'node:crypto'
  * Las categorias que el bot puede escribir. **Medidas contra produccion el
  * 2026-09-12**, no copiadas de un `.md`.
  *
- * ─── POR QUE `Insumos` NO ESTA, contra lo que decia PROMPT 21 ───────────────
+ * ─── `Insumos` SI ESTA, Y ESCRIBE OTRA COLUMNA ──────────────────────────────
  *
- * D-E32 decidio "la categoria es `Insumos`, `Compra_Insumos` queda muerta". Esa
- * decision se tomo creyendo que las dos eran categorias de `GASTO_OPERATIVO`.
- * **No lo son, y se midio:**
+ * Norman, 2026-09-12: *"Solamente dejalo como insumos, no hay por que
+ * duplicarlo."* Cierra D-E32 **con el hallazgo medido encima**, que era lo que
+ * faltaba:
  *
- *   - `COMPRA_INSUMOS | Insumos` — 18 filas, y escriben `id_cuenta_origen`
- *     (con `id_cuenta_destino` NULL).
- *   - `GASTO_OPERATIVO | Compra_Insumos` — 1 fila, y escribe
- *     `id_cuenta_destino` (con `id_cuenta_origen` NULL).
+ *   - `COMPRA_INSUMOS | Insumos` — 18 filas, escriben `id_cuenta_origen`
+ *     (13 de 14 activas salen de Efectivo).
+ *   - `GASTO_OPERATIVO | Compra_Insumos` — 1 fila suelta, escribe
+ *     `id_cuenta_destino`.
  *
- * Son **dos tipos de movimiento con forma distinta**, no dos nombres de lo
- * mismo. El bot escribe `GASTO_OPERATIVO`, o sea `id_cuenta_destino`: por ese
- * camino `Insumos` es inalcanzable sin cambiar que columna se llena. Comprar
- * insumos por chat es otra fase, no un renglon de esta lista.
+ * No son dos nombres de lo mismo: son **dos formas de fila**. La decision es
+ * que el nombre unico es `Insumos`, y que el bot lo escribe con SU forma —
+ * `COMPRA_INSUMOS` y la cuenta en `id_cuenta_origen`, porque el dinero SALE.
+ * `Compra_Insumos` no se ofrece ni se acepta como entrada. La fila historica
+ * no se toca: su forma es real y reescribirle la etiqueta seria mentir sobre
+ * lo que fue.
  *
- * `Ajuste_Caja` tampoco entra: su unica fila esta ANULADA y es un ajuste
+ * `Ajuste_Caja` sigue fuera: su unica fila esta ANULADA y es un ajuste
  * contable, no un gasto que alguien captura desde la planta.
  *
  * Lo que no mapea **no se adivina**: entra como `SIN_CATEGORIZAR` con aviso
@@ -50,7 +52,8 @@ export const CATEGORIAS_GASTO_BOT = [
   'Servicios_Basicos',
   'Logistica_Envios',
   'Nomina_y_Honorarios',
-  'Gastos_Personales_Socio'
+  'Gastos_Personales_Socio',
+  'Insumos'
 ] as const
 
 export type CategoriaGastoBot = (typeof CATEGORIAS_GASTO_BOT)[number]
@@ -66,7 +69,34 @@ export const AYUDA_CATEGORIAS: Record<CategoriaGastoBot, string> = {
   Servicios_Basicos: 'luz, agua, internet, telefono, renta, software',
   Logistica_Envios: 'gasolina, casetas, paqueteria, fletes, viaticos de ruta',
   Nomina_y_Honorarios: 'sueldos, honorarios, pagos a terceros por trabajo',
-  Gastos_Personales_Socio: 'retiros y gastos personales de un socio'
+  Gastos_Personales_Socio: 'retiros y gastos personales de un socio',
+  Insumos: 'materia prima, agave, botella, corcho, etiqueta, todo lo que entra al producto'
+}
+
+/**
+ * La FORMA DE FILA de cada categoria. **No se infiere del nombre** — ese fue
+ * exactamente el error de D-E32 (E-237): se dedujo el tipo de movimiento de
+ * como se llamaba la categoria, en vez de medir que columna escribe.
+ *
+ * `columna` dice donde va la cuenta de la identidad: `destino` cuando el
+ * dinero entra al concepto de gasto, `origen` cuando SALE de la cuenta para
+ * comprar algo. Una sola cuenta en la identidad, dos significados segun el
+ * tipo, y la confirmacion se lo dice a la persona en palabras.
+ */
+export const FORMA_DE_FILA: Record<
+  string,
+  { tipo: 'GASTO_OPERATIVO' | 'COMPRA_INSUMOS'; columna: 'origen' | 'destino' }
+> = {
+  Insumos: { tipo: 'COMPRA_INSUMOS', columna: 'origen' }
+}
+
+export const FORMA_POR_DEFECTO = {
+  tipo: 'GASTO_OPERATIVO' as const,
+  columna: 'destino' as const
+}
+
+export function formaDeFila(categoria: string) {
+  return FORMA_DE_FILA[categoria] ?? FORMA_POR_DEFECTO
 }
 
 /**
@@ -166,6 +196,7 @@ export const LLAVES_PAYLOAD = [
   'descripcion',
   'fecha_movimiento',
   'id_cuenta_destino',
+  'id_cuenta_origen',
   'monto',
   'status',
   'tipo_movimiento',
@@ -173,13 +204,17 @@ export const LLAVES_PAYLOAD = [
 ] as const
 
 export interface PayloadGasto {
-  tipo_movimiento: 'GASTO_OPERATIVO'
+  tipo_movimiento: 'GASTO_OPERATIVO' | 'COMPRA_INSUMOS'
   categoria: string
   categoria_gasto: null
   descripcion: string
   monto: number
   fecha_movimiento: string
-  id_cuenta_destino: string
+  // Exactamente UNA de las dos lleva cuenta; la otra va en null. Cual, lo
+  // decide `formaDeFila(categoria)` y nunca el LLM. Las dos entran al sello:
+  // si no, mover el dinero de columna no cambiaria el hash.
+  id_cuenta_destino: string | null
+  id_cuenta_origen: string | null
   usuario_creador: string
   status: 'ACTIVO'
 }
@@ -301,7 +336,7 @@ export const TOPE_MONTO = 500000
  */
 export function normalizarPropuesta(
   propuesta: PropuestaLLM,
-  identidad: { idCuentaDestino: string; etiqueta: string },
+  identidad: { idCuenta: string; etiqueta: string },
   ahora: Date
 ): ResultadoNormalizacion | NormalizacionFallida {
   const avisos: string[] = []
@@ -323,6 +358,7 @@ export function normalizarPropuesta(
   const montoRedondeado = Math.round(monto * 100) / 100
 
   const categoria = normalizarCategoriaBot(propuesta.categoria)
+  const forma = formaDeFila(categoria)
   const faltaCategoria = categoria === CATEGORIA_SIN_CATEGORIZAR_BOT
   if (faltaCategoria) {
     avisos.push(
@@ -366,7 +402,7 @@ export function normalizarPropuesta(
     faltaCategoria,
     avisos,
     payload: {
-      tipo_movimiento: 'GASTO_OPERATIVO',
+      tipo_movimiento: forma.tipo,
       categoria,
       // NUNCA la descripcion aqui. `app/api/finanzas/nuevo/route.ts:155` si lo
       // hace (`categoria_gasto: descripcion ?? subcategoria`) y es la mitad del
@@ -375,7 +411,8 @@ export function normalizarPropuesta(
       descripcion,
       monto: montoRedondeado,
       fecha_movimiento: fecha.toISOString(),
-      id_cuenta_destino: identidad.idCuentaDestino,
+      id_cuenta_destino: forma.columna === 'destino' ? identidad.idCuenta : null,
+      id_cuenta_origen: forma.columna === 'origen' ? identidad.idCuenta : null,
       usuario_creador: `telegram:${identidad.etiqueta}`,
       status: 'ACTIVO'
     }
@@ -412,6 +449,13 @@ export function mensajeDeConfirmacion(
   const dia = `${String(fecha.getDate()).padStart(2, '0')}/${String(fecha.getMonth() + 1).padStart(2, '0')}/${fecha.getFullYear()}`
   const monto = payload.monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+  // La direccion del dinero, en palabras. Un `COMPRA_INSUMOS` descuenta de la
+  // cuenta y un `GASTO_OPERATIVO` se asienta contra ella: son columnas
+  // distintas del ledger, y quien confirma tiene que poder ver cual de las dos
+  // va a moverse sin saber que existe una columna.
+  const flecha =
+    payload.tipo_movimiento === 'COMPRA_INSUMOS' ? '(el dinero SALE de aqui)' : '(se asienta aqui)'
+
   const lineas = [
     'Esto es lo que voy a escribir. Revisalo:',
     '',
@@ -419,8 +463,9 @@ export function mensajeDeConfirmacion(
     `CATEGORIA:  ${payload.categoria}`,
     `CONCEPTO:   ${payload.descripcion}`,
     `FECHA:      ${dia}`,
+    `CUENTA:     ${contexto.nombreCuenta} ${flecha}`,
     '',
-    `(fijo, no lo elegi yo: sale de ${contexto.nombreEntidad}, cuenta ${contexto.nombreCuenta})`
+    `(la cuenta no la elige el modelo: sale de tu alta en ${contexto.nombreEntidad}, y si esta mal la cambias con el boton)`
   ]
 
   if (duplicado) {
