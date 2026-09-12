@@ -155,7 +155,7 @@ CREATE TRIGGER trg_avisos_de_fila_anulada_finanzas
 
 COMMENT ON TRIGGER trg_avisos_de_fila_anulada_finanzas ON public.finanzas_ledger IS
   'Anular arrastra los avisos de esa fila a IGNORADO. Aqui apuntan W10-W14, W16 '
-  'y W17. Ver la migracion 20260912190000.';
+  'y W17. Ver la migracion cerrar_avisos_de_fila_anulada.';
 
 -- `inventario_ledger` entra por el mismo defecto y con el mismo codigo: los
 -- avisos de `app/actions/inventario.ts` apuntan ahi (tabla: 'inventario_ledger')
@@ -170,7 +170,7 @@ CREATE TRIGGER trg_avisos_de_fila_anulada_inventario
 
 COMMENT ON TRIGGER trg_avisos_de_fila_anulada_inventario ON public.inventario_ledger IS
   'Anular arrastra los avisos de esa fila a IGNORADO. Aqui apuntan W1 y W3. '
-  'Ver la migracion 20260912190000.';
+  'Ver la migracion cerrar_avisos_de_fila_anulada.';
 
 
 -- ============================================================================
