@@ -25,28 +25,85 @@ procesos piden ~10 GB de VRAM en la misma tarjeta. Por eso hay caida a CPU y por
 eso el modelo se carga una sola vez y se queda cargado.
 """
 
+import logging
+import os
 from pathlib import Path
 
+log = logging.getLogger("transcribir_nota")
+
 _MODELO = None
+_DISPOSITIVO = None
 _NOMBRE = "large-v3"
 
 
+def _registrar_dlls_nvidia():
+    """`pip install nvidia-cublas-cu12` deja los .dll en site-packages, y
+    **Windows no busca ahi**. Hay que registrarlos con `os.add_dll_directory`.
+
+    Esto ya estaba resuelto en `Socio/asistente/transcribir.py` desde el error
+    del 2026-08-03 (*"Library cublas64_12.dll is not found"*), y **yo me traje
+    de ahi la caida a CPU y deje fuera justo esta parte**, que es la que hace
+    que la GPU funcione. Le costo a Norman un audio que no se transcribio.
+    """
+    try:
+        import site
+        raices = list(site.getsitepackages()) + [site.getusersitepackages()]
+    except Exception:
+        return 0
+    encontradas = 0
+    for raiz in raices:
+        base = Path(raiz) / "nvidia"
+        if not base.is_dir():
+            continue
+        for bin_dir in base.glob("*/bin"):
+            if any(bin_dir.glob("*.dll")):
+                try:
+                    os.add_dll_directory(str(bin_dir))
+                    os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+                    encontradas += 1
+                except Exception:
+                    pass
+    return encontradas
+
+
+def _construir(device, compute_type):
+    from faster_whisper import WhisperModel
+    modelo = WhisperModel(_NOMBRE, device=device, compute_type=compute_type)
+    # ── LA SONDA, y por que existe ──────────────────────────────────────────
+    # `WhisperModel(device="cuda")` **no falla al construirse**: la carga es
+    # perezosa y el "cublas64_12.dll is not found" salta hasta la primera
+    # inferencia. Un try/except alrededor del constructor —que es lo que este
+    # archivo tenia— no atrapa nada y la caida a CPU nunca se dispara.
+    # Medio segundo de silencio obliga a que CUDA se use de verdad AQUI, donde
+    # el except si puede hacer algo.
+    import numpy as np
+    list(modelo.transcribe(np.zeros(8000, dtype=np.float32), language="es")[0])
+    return modelo
+
+
 def _cargar():
-    global _MODELO
+    global _MODELO, _DISPOSITIVO
     if _MODELO is not None:
         return _MODELO
-    from faster_whisper import WhisperModel
+    _registrar_dlls_nvidia()
     try:
-        _MODELO = WhisperModel(_NOMBRE, device="cuda", compute_type="float16")
-    except Exception:
-        # Un 403, un driver o la VRAM ocupada por el otro bot. Se sigue en CPU:
-        # tarda mas y funciona, que es infinitamente mejor que no contestar.
-        _MODELO = WhisperModel(_NOMBRE, device="cpu", compute_type="int8")
+        _MODELO = _construir("cuda", "float16")
+        _DISPOSITIVO = "cuda"
+        log.info("transcripcion en GPU (cuda/float16)")
+    except Exception as e:
+        # Un driver, la VRAM ocupada por el bot del Socio, o las DLLs ausentes.
+        # Se sigue en CPU: tarda mas y funciona, que es infinitamente mejor que
+        # no contestar.
+        log.warning("CUDA no disponible (%s). Caigo a CPU.", e)
+        _MODELO = _construir("cpu", "int8")
+        _DISPOSITIVO = "cpu"
+        log.info("transcripcion en CPU (int8)")
     return _MODELO
 
 
 def transcribir(ruta):
     """Devuelve (ok, texto_o_error). Nunca lanza."""
+    global _MODELO, _DISPOSITIVO
     audio = Path(ruta)
     if not audio.exists():
         return False, "no encuentro el audio"
@@ -55,7 +112,20 @@ def transcribir(ruta):
         segmentos, _info = modelo.transcribe(str(audio), language="es", vad_filter=True)
         texto = " ".join(s.text.strip() for s in segmentos).strip()
     except Exception as e:
-        return False, "no pude transcribir: " + str(e)
+        # Segunda red: si la GPU se cae A MITAD de una nota (la otra transcripcion
+        # le gano la VRAM), se reconstruye en CPU y se reintenta UNA vez. Sin
+        # esto, un pico de memoria ajeno pierde el audio de quien esta hablando.
+        if _DISPOSITIVO == "cuda":
+            log.warning("la GPU fallo a mitad (%s). Reintento en CPU.", e)
+            try:
+                _MODELO = _construir("cpu", "int8")
+                _DISPOSITIVO = "cpu"
+                segmentos, _info = _MODELO.transcribe(str(audio), language="es", vad_filter=True)
+                texto = " ".join(s.text.strip() for s in segmentos).strip()
+            except Exception as e2:
+                return False, "no pude transcribir: " + str(e2)
+        else:
+            return False, "no pude transcribir: " + str(e)
     if not texto:
         return False, "no le entendi nada al audio"
     return True, texto
