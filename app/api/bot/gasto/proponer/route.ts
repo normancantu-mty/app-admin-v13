@@ -8,7 +8,7 @@
 
 import { NextResponse } from 'next/server'
 import type { Json } from '@/types/database'
-import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { clienteDeServicio, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import {
   buscarDuplicado,
   mensajeDeConfirmacion,
@@ -62,10 +62,16 @@ export async function POST(request: Request) {
     const nombreCuenta =
       identidad.cuentas.find((c) => c.id === idCuenta)?.nombre ?? identidad.nombreCuenta
 
+    // El catalogo se lee en CADA propuesta, no se cachea: crece con el uso y una
+    // copia en memoria haria que el bot no viera la categoria que el mismo acaba
+    // de crear hace un minuto.
+    const catalogo = await leerCatalogo(supabase)
+
     const normalizada = normalizarPropuesta(
       cuerpo.propuesta ?? {},
       { idCuenta, etiqueta: identidad.etiqueta },
-      new Date()
+      new Date(),
+      catalogo
     )
     if (!normalizada.ok) {
       return NextResponse.json({ error: normalizada.error }, { status: 422 })
@@ -119,6 +125,7 @@ export async function POST(request: Request) {
             id_entidad: identidad.idEntidad,
             id_cuenta: idCuenta,
             descripcion_original: normalizada.descripcionOriginal,
+            categoria_nueva: normalizada.categoriaNueva,
             avisos: normalizada.avisos,
             duplicado_de: duplicado?.id ?? null
           }
@@ -138,6 +145,8 @@ export async function POST(request: Request) {
       sello,
       id_cuenta: idCuenta,
       cuentas: identidad.cuentas,
+      categorias: catalogo.map((c) => c.nombre),
+      categoria_nueva: normalizada.categoriaNueva,
       mensaje: mensajeDeConfirmacion(
         normalizada.payload,
         { nombreCuenta, nombreEntidad: identidad.nombreEntidad },

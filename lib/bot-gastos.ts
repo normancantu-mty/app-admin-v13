@@ -95,7 +95,12 @@ export const FORMA_POR_DEFECTO = {
   columna: 'destino' as const
 }
 
-export function formaDeFila(categoria: string) {
+export function formaDeFila(
+  categoria: string,
+  catalogo?: readonly { nombre: string; tipo_movimiento: 'GASTO_OPERATIVO' | 'COMPRA_INSUMOS'; columna: 'origen' | 'destino' }[]
+) {
+  const delCatalogo = catalogo?.find((c) => c.nombre === categoria)
+  if (delCatalogo) return { tipo: delCatalogo.tipo_movimiento, columna: delCatalogo.columna }
   return FORMA_DE_FILA[categoria] ?? FORMA_POR_DEFECTO
 }
 
@@ -108,10 +113,95 @@ export function formaDeFila(categoria: string) {
  * exactamente lo que produce las 20 variantes de texto libre que ya tiene
  * `categoria_gasto` en produccion (`gas`/`Gas`, `publicidad`/`Publicidad`...).
  */
-export function normalizarCategoriaBot(sugerida: unknown): string {
+export interface CategoriaDelCatalogo {
+  nombre: string
+  ayuda?: string
+  tipo_movimiento: 'GASTO_OPERATIVO' | 'COMPRA_INSUMOS'
+  columna: 'origen' | 'destino'
+}
+
+/**
+ * El catalogo semilla, derivado de las constantes de arriba. **Es el respaldo,
+ * no la autoridad**: la lista viva esta en la tabla `bot_categorias` y crece
+ * con el uso (Norman, 2026-09-12: *"va a tener que salir con la marcha"*). Si
+ * la base no contesta, el bot sigue trabajando con estas seis en vez de
+ * quedarse mudo.
+ */
+export const CATALOGO_SEMILLA: CategoriaDelCatalogo[] = CATEGORIAS_GASTO_BOT.map((nombre) => {
+  const forma = FORMA_DE_FILA[nombre] ?? FORMA_POR_DEFECTO
+  return {
+    nombre: nombre as string,
+    ayuda: AYUDA_CATEGORIAS[nombre],
+    tipo_movimiento: forma.tipo,
+    columna: forma.columna
+  }
+})
+
+export function normalizarCategoriaBot(
+  sugerida: unknown,
+  catalogo: readonly CategoriaDelCatalogo[] = CATALOGO_SEMILLA
+): string {
   const limpia = String(sugerida ?? '').trim()
-  const encontrada = CATEGORIAS_GASTO_BOT.find((c) => c === limpia)
-  return encontrada ?? CATEGORIA_SIN_CATEGORIZAR_BOT
+  const encontrada = catalogo.find((c) => c.nombre === limpia)
+  return encontrada?.nombre ?? CATEGORIA_SIN_CATEGORIZAR_BOT
+}
+
+export const TOPE_NOMBRE_CATEGORIA = 40
+const FORMA_NOMBRE_CATEGORIA = /^[A-Za-z][A-Za-z0-9_]{2,39}$/
+
+/**
+ * Compara nombres ignorando mayusculas y guiones bajos. `Comidas_Y_Viajes` y
+ * `comidasyviajes` son **la misma categoria** para efectos de duplicado: si se
+ * dejaran convivir, el tablero tendria dos renglones para una sola cosa, que es
+ * exactamente el desorden que ya tiene `categoria_gasto` en produccion
+ * (`gas`/`Gas`, `publicidad`/`Publicidad`, `Envio Fresnillo`/`envio fresnillo`).
+ */
+function llaveDeCategoria(nombre: string): string {
+  return nombre.toLowerCase().replace(/_/g, '')
+}
+
+/**
+ * ─── LA PUERTA DE LA CATEGORIA NUEVA ────────────────────────────────────────
+ *
+ * Que el catalogo crezca solo NO puede significar que el LLM escriba lo que
+ * quiera en `categoria`, y la razon es medible, no de principio:
+ * **`v_pasivo_fiscal` arma su texto como
+ * `categoria || ' ' || categoria_gasto || ' ' || descripcion`**, asi que la
+ * columna `categoria` **alimenta al clasificador fiscal**. Una categoria nueva
+ * llamada `Pago_IVA_Proveedores` inventaria un pago de impuesto que nadie hizo.
+ *
+ * Por eso el nombre pasa por aqui **y ademas por un CHECK en la base**: la
+ * defensa que solo vive en la aplicacion se salta escribiendo por otro camino.
+ */
+export function validarCategoriaNueva(
+  sugerida: unknown,
+  catalogo: readonly CategoriaDelCatalogo[]
+): { ok: true; nombre: string } | { ok: false; motivo: string } {
+  const nombre = String(sugerida ?? '').trim()
+  if (nombre === '') return { ok: false, motivo: 'vacia' }
+  if (!FORMA_NOMBRE_CATEGORIA.test(nombre)) {
+    return {
+      ok: false,
+      motivo:
+        'el nombre tiene que empezar con letra y usar solo letras, numeros y guion bajo ' +
+        `(3 a ${TOPE_NOMBRE_CATEGORIA} caracteres)`
+    }
+  }
+  if (llaveDeCategoria(nombre) === llaveDeCategoria(CATEGORIA_SIN_CATEGORIZAR_BOT)) {
+    return { ok: false, motivo: 'ese nombre esta reservado' }
+  }
+  // El disparador fiscal se busca sobre el TEXTO QUE VA A VER LA VISTA, no
+  // sobre el nombre pelado: es la unica comprobacion que mide lo que importa.
+  const textoQueVeriaLaVista = `${nombre} ${nombre.replace(/_/g, ' ')}`
+  if (disparadoresFiscalesEn(textoQueVeriaLaVista).length > 0) {
+    return {
+      ok: false,
+      motivo: 'ese nombre es justo lo que el ERP lee para dar por pagado un impuesto'
+    }
+  }
+  const yaEsta = catalogo.find((c) => llaveDeCategoria(c.nombre) === llaveDeCategoria(nombre))
+  if (yaEsta) return { ok: false, motivo: `ya existe como "${yaEsta.nombre}"` }
+  return { ok: true, nombre }
 }
 
 // ============================================================================
@@ -315,6 +405,13 @@ export interface ResultadoNormalizacion {
   /** El texto tal cual lo dijo la persona. Viaja al aviso, no a la fila. */
   descripcionOriginal: string
   faltaCategoria: boolean
+  /**
+   * El nombre de la categoria que NO existia y que se creara si la persona dice
+   * "va". `null` cuando la categoria ya estaba en el catalogo. Viaja fuera del
+   * payload a proposito: la fila es la misma se cree o no la categoria, y el
+   * confirmar decide mirando el catalogo, no creyendole a esta bandera.
+   */
+  categoriaNueva: string | null
 }
 export interface NormalizacionFallida {
   ok: false
@@ -337,7 +434,8 @@ export const TOPE_MONTO = 500000
 export function normalizarPropuesta(
   propuesta: PropuestaLLM,
   identidad: { idCuenta: string; etiqueta: string },
-  ahora: Date
+  ahora: Date,
+  catalogo: readonly CategoriaDelCatalogo[] = CATALOGO_SEMILLA
 ): ResultadoNormalizacion | NormalizacionFallida {
   const avisos: string[] = []
 
@@ -357,13 +455,41 @@ export function normalizarPropuesta(
   // vez que alguien lo re-imprime y el sello dejaria de empatar consigo mismo.
   const montoRedondeado = Math.round(monto * 100) / 100
 
-  const categoria = normalizarCategoriaBot(propuesta.categoria)
-  const forma = formaDeFila(categoria)
+  // ── LA CATEGORIA, EN DOS PASOS ──────────────────────────────────────────
+  // 1) empata exacto contra el catalogo vivo. 2) SOLO si no empato, se mira si
+  // el modelo propuso una categoria NUEVA, y esa pasa por su propia puerta.
+  // El orden importa: una categoria nueva jamas puede pisar a una existente.
+  let categoria = normalizarCategoriaBot(propuesta.categoria, catalogo)
+  let categoriaNueva: string | null = null
+
+  if (categoria === CATEGORIA_SIN_CATEGORIZAR_BOT) {
+    const propuestaNueva = (propuesta as Record<string, unknown>).categoria_nueva
+    if (propuestaNueva != null && String(propuestaNueva).trim() !== '') {
+      const juicio = validarCategoriaNueva(propuestaNueva, catalogo)
+      if (juicio.ok) {
+        categoria = juicio.nombre
+        categoriaNueva = juicio.nombre
+      } else {
+        avisos.push(
+          `El modelo propuso la categoria "${String(propuestaNueva).trim()}" y no la acepto: ` +
+            `${juicio.motivo}. Entra como SIN_CATEGORIZAR.`
+        )
+      }
+    }
+  }
+
+  const forma = formaDeFila(categoria, catalogo)
   const faltaCategoria = categoria === CATEGORIA_SIN_CATEGORIZAR_BOT
   if (faltaCategoria) {
     avisos.push(
       'No pude ubicar la categoria, asi que entra como SIN_CATEGORIZAR ' +
         'y queda en la cola para clasificarla. El gasto SI se registra.'
+    )
+  }
+  if (categoriaNueva) {
+    avisos.push(
+      `"${categoriaNueva}" es una categoria NUEVA: hoy no existe. Si das VA, ` +
+        'queda creada y desde entonces el bot la puede usar sola.'
     )
   }
 
@@ -400,6 +526,7 @@ export function normalizarPropuesta(
     ok: true,
     descripcionOriginal,
     faltaCategoria,
+    categoriaNueva,
     avisos,
     payload: {
       tipo_movimiento: forma.tipo,

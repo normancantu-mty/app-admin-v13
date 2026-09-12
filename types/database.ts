@@ -14,6 +14,38 @@ export type Database = {
   }
   public: {
     Tables: {
+      // Escrito a mano, igual que `avisos_captura` y `bot_identidades`: este
+      // archivo se mantiene a mano en este repo. Migracion 20260912172851.
+      bot_categorias: {
+        Row: {
+          nombre: string
+          ayuda: string
+          tipo_movimiento: string
+          columna: string
+          activa: boolean
+          creada_por: string
+          creada_en: string
+        }
+        Insert: {
+          nombre: string
+          ayuda?: string
+          tipo_movimiento?: string
+          columna?: string
+          activa?: boolean
+          creada_por?: string
+          creada_en?: string
+        }
+        Update: {
+          nombre?: string
+          ayuda?: string
+          tipo_movimiento?: string
+          columna?: string
+          activa?: boolean
+          creada_por?: string
+          creada_en?: string
+        }
+        Relationships: []
+      }
       // AG-01 Fase 1. Escritas a mano por la misma razon que `avisos_captura`:
       // las tablas nacen en `20260912163850_bot_identidades_y_borradores.sql`.
       // Si al regenerar con `supabase gen types` este bloque cambia, manda el

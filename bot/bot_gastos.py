@@ -99,9 +99,9 @@ def _teclado_confirmar(borrador_id):
     ])
 
 
-def _teclado_categorias(borrador_id):
+def _teclado_categorias(borrador_id, categorias=None):
     filas = [[InlineKeyboardButton(nombre, callback_data="setcat:" + borrador_id + ":" + nombre)]
-             for nombre in CATEGORIAS]
+             for nombre in (categorias or CATEGORIAS)]
     filas.append([InlineKeyboardButton("Ninguna (dejar sin categorizar)",
                                        callback_data="setcat:" + borrador_id + ":SIN_CATEGORIZAR")])
     return InlineKeyboardMarkup(filas)
@@ -125,11 +125,25 @@ def _teclado_cuentas(cuentas):
 # EL CAMINO PRINCIPAL
 # ===========================================================================
 
+def _refrescar_catalogo(respuesta):
+    """El catalogo del proceso se pone al dia con lo que dijo el servidor.
+
+    **La base manda.** Esto existe solo para que el extractor conozca las
+    categorias creadas con el uso; si se desincroniza, lo peor que pasa es que
+    el modelo proponga como nueva una que ya existe, y la puerta del servidor
+    la rechaza sin escribir nada.
+    """
+    global _catalogo
+    vivas = respuesta.get("categorias")
+    if isinstance(vivas, list) and vivas:
+        _catalogo = list(vivas)
+
+
 async def _proponer(update, texto, pendiente):
     """Del lenguaje natural al borrador sellado. Devuelve True si propuso."""
     chat = update.effective_chat.id
 
-    ok, obj = await asyncio.to_thread(extraer, texto)
+    ok, obj = await asyncio.to_thread(extraer, texto, list(_catalogo))
     if not ok:
         await update.effective_message.reply_text("No pude procesarlo: " + str(obj))
         return False
@@ -151,6 +165,7 @@ async def _proponer(update, texto, pendiente):
         "propuesta": {
             "monto": obj.get("monto"),
             "categoria": obj.get("categoria"),
+            "categoria_nueva": obj.get("categoria_nueva"),
             "descripcion": obj.get("descripcion"),
             "fecha": obj.get("fecha"),
         },
@@ -164,16 +179,19 @@ async def _proponer(update, texto, pendiente):
         "sello": r["sello"],
         "cuentas": r.get("cuentas", []),
         "id_cuenta": r.get("id_cuenta"),
+        "categorias": r.get("categorias", list(_catalogo)),
         # La propuesta cruda se guarda para poder cambiar UN campo sin volver a
         # llamar al modelo. Es memoria del proceso, no autoridad: la fila que se
         # escribe es la sellada en la base, no esta.
         "propuesta": {
             "monto": obj.get("monto"),
             "categoria": obj.get("categoria"),
+            "categoria_nueva": obj.get("categoria_nueva"),
             "descripcion": obj.get("descripcion"),
             "fecha": obj.get("fecha"),
         },
     }
+    _refrescar_catalogo(r)
     await update.effective_message.reply_text(
         r["mensaje"], reply_markup=_teclado_confirmar(r["borrador_id"]))
     return True
@@ -185,6 +203,10 @@ async def _proponer(update, texto, pendiente):
 _memoria = {}
 _pendiente = {}
 _esperando_monto = {}
+# Las categorias que el servidor reporto en la ultima propuesta. Arranca con las
+# del diccionario local y se actualiza sola: **la autoridad es la base**, esto
+# es solo para que el extractor tenga el vocabulario completo la proxima vez.
+_catalogo = list(CATEGORIAS)
 
 
 async def manejar_texto(update, context):
@@ -259,7 +281,15 @@ async def _confirmar(update, chat):
     })
     if estado == 200 and r.get("ok"):
         _memoria.pop(chat, None)
-        await update.effective_message.reply_text("Listo. Quedo escrito.")
+        creada = r.get("categoria_creada")
+        if creada:
+            if creada not in _catalogo:
+                _catalogo.append(creada)
+            await update.effective_message.reply_text(
+                "Listo. Quedo escrito, y la categoria " + str(creada) +
+                " quedo creada: desde ahora la uso sola.")
+        else:
+            await update.effective_message.reply_text("Listo. Quedo escrito.")
     else:
         await update.effective_message.reply_text(r.get("error", "No pude escribirlo."))
 
@@ -291,7 +321,9 @@ async def _reproponer(update, chat, cambios):
         "propuesta": propuesta,
         "cuentas": r.get("cuentas", dato.get("cuentas", [])),
         "id_cuenta": r.get("id_cuenta"),
+        "categorias": r.get("categorias", list(_catalogo)),
     }
+    _refrescar_catalogo(r)
     await update.effective_message.reply_text(
         r["mensaje"], reply_markup=_teclado_confirmar(r["borrador_id"]))
 
@@ -309,7 +341,9 @@ async def manejar_boton(update, context):
         _memoria.pop(chat, None)
         await q.message.reply_text("Cancelado. No escribi nada.")
     elif accion == "cat":
-        await q.message.reply_text("Cual es?", reply_markup=_teclado_categorias(partes[1]))
+        vivas = (_memoria.get(chat) or {}).get("categorias") or list(_catalogo)
+        await q.message.reply_text(
+            "Cual es?", reply_markup=_teclado_categorias(partes[1], vivas))
     elif accion == "setcat":
         nueva = partes[2] if len(partes) > 2 else None
         await _reproponer(

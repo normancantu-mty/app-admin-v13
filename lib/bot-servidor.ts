@@ -22,6 +22,7 @@
 import { createClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { CATALOGO_SEMILLA, type CategoriaDelCatalogo } from '@/lib/bot-gastos'
 
 export type ClienteServicio = SupabaseClient<Database>
 
@@ -138,4 +139,30 @@ export async function resolverIdentidad(
     nombreCuenta,
     cuentas: usables.map((c) => ({ id: c.id, nombre: c.nombre ?? '(cuenta)' }))
   }
+}
+
+/**
+ * El catalogo VIVO de categorias. Si la base no contesta, devuelve la semilla
+ * en vez de una lista vacia: una lista vacia mandaria **todo** a
+ * `SIN_CATEGORIZAR` en silencio, que es peor que trabajar con seis categorias.
+ */
+export async function leerCatalogo(
+  supabase: ClienteServicio
+): Promise<CategoriaDelCatalogo[]> {
+  const { data, error } = await supabase
+    .from('bot_categorias')
+    .select('nombre, ayuda, tipo_movimiento, columna')
+    .eq('activa', true)
+    .order('nombre')
+
+  if (error || !data || data.length === 0) {
+    if (error) console.error('[bot] no pude leer bot_categorias, uso la semilla:', error)
+    return CATALOGO_SEMILLA
+  }
+  return data.map((c) => ({
+    nombre: c.nombre,
+    ayuda: c.ayuda ?? '',
+    tipo_movimiento: c.tipo_movimiento as 'GASTO_OPERATIVO' | 'COMPRA_INSUMOS',
+    columna: c.columna as 'origen' | 'destino'
+  }))
 }

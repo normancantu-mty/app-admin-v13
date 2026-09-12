@@ -9,6 +9,8 @@ import {
   normalizarCategoriaBot,
   normalizarPropuesta,
   formaDeFila,
+  validarCategoriaNueva,
+  CATALOGO_SEMILLA,
   payloadCanonico,
   sellarPayload,
   selloCoincide,
@@ -388,5 +390,116 @@ test.describe('Insumos escribe la columna opuesta, y eso esta sellado', () => {
       columna: 'destino'
     })
     expect(formaDeFila('Compra_Insumos')).toEqual({ tipo: 'GASTO_OPERATIVO', columna: 'destino' })
+  })
+})
+
+/**
+ * La lista cerrada crece con el uso (Norman, 2026-09-12: *"los gastos de ahora
+ * no son representativos, va a tener que salir con la marcha"*), y ESTA es la
+ * puerta por la que crece.
+ *
+ * Lo que estas pruebas vigilan no es el formato del nombre: es que el nombre
+ * no pueda inventar un pago de impuesto. `v_pasivo_fiscal` arma su texto como
+ * `categoria || ' ' || categoria_gasto || ' ' || descripcion` — **la columna
+ * `categoria` alimenta al clasificador fiscal.**
+ */
+test.describe('una categoria nueva no puede inventar un pago de impuesto', () => {
+  test('un nombre normal pasa', () => {
+    const r = validarCategoriaNueva('Comidas_De_Trabajo', CATALOGO_SEMILLA)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.nombre).toBe('Comidas_De_Trabajo')
+  })
+
+  test('ningun nombre aceptado dispara la vista fiscal, ni con la descripcion pegada', () => {
+    // El control que importa: se arma el MISMO texto que concatena la vista y
+    // se comprueba sobre el, no sobre el nombre suelto.
+    for (const nombre of ['Comidas_De_Trabajo', 'Mantenimiento', 'Impuestos_Y_Tramites']) {
+      const r = validarCategoriaNueva(nombre, CATALOGO_SEMILLA)
+      expect(r.ok, nombre).toBe(true)
+      const textoDeLaVista = `${nombre} ${''} ${'pago de la renta de septiembre'}`.toUpperCase()
+      expect(disparadoresFiscalesEn(textoDeLaVista), nombre).toHaveLength(0)
+    }
+  })
+
+  test('y el control positivo: un nombre fiscal SI se rechaza', () => {
+    for (const malo of ['Pago_IVA', 'pago_iva_proveedores', 'FUGA_FISCAL_IVA', 'Pago_IEPS']) {
+      const r = validarCategoriaNueva(malo, CATALOGO_SEMILLA)
+      expect(r.ok, malo).toBe(false)
+    }
+  })
+
+  test('no se cuela un duplicado con otra grafia', () => {
+    for (const dupe of ['insumos', 'INSUMOS', 'Insumos', 'In_sumos']) {
+      const r = validarCategoriaNueva(dupe, CATALOGO_SEMILLA)
+      expect(r.ok, dupe).toBe(false)
+      if (!r.ok) expect(r.motivo).toContain('ya existe')
+    }
+  })
+
+  test('formato: nada de espacios, acentos, ni nombres de una letra', () => {
+    for (const malo of ['Comidas de trabajo', 'Comidas-Trabajo', 'Ñ', 'ab', '', '1Categoria']) {
+      expect(validarCategoriaNueva(malo, CATALOGO_SEMILLA).ok, JSON.stringify(malo)).toBe(false)
+    }
+  })
+
+  test('SIN_CATEGORIZAR esta reservado', () => {
+    expect(validarCategoriaNueva('SIN_CATEGORIZAR', CATALOGO_SEMILLA).ok).toBe(false)
+    expect(validarCategoriaNueva('sincategorizar', CATALOGO_SEMILLA).ok).toBe(false)
+  })
+
+  test('la categoria nueva NO pisa a una existente: primero se empata', () => {
+    // Aunque el modelo mande las dos cosas, gana la que ya existe.
+    const r = normalizarPropuesta(
+      {
+        monto: 300,
+        categoria: 'Logistica_Envios',
+        categoria_nueva: 'Gasolinas',
+        descripcion: 'casetas'
+      } as Record<string, unknown>,
+      IDENTIDAD,
+      AHORA
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.categoria).toBe('Logistica_Envios')
+    expect(r.categoriaNueva).toBeNull()
+  })
+
+  test('una nueva valida entra, se marca, y nace con forma de GASTO', () => {
+    const r = normalizarPropuesta(
+      {
+        monto: 600,
+        categoria: null,
+        categoria_nueva: 'Comidas_De_Trabajo',
+        descripcion: 'comimos Kevin y yo'
+      } as Record<string, unknown>,
+      IDENTIDAD,
+      AHORA
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.categoria).toBe('Comidas_De_Trabajo')
+    expect(r.categoriaNueva).toBe('Comidas_De_Trabajo')
+    expect(r.payload.tipo_movimiento).toBe('GASTO_OPERATIVO')
+    expect(r.payload.id_cuenta_destino).toBe(IDENTIDAD.idCuenta)
+    expect(r.avisos.join(' ')).toContain('NUEVA')
+  })
+
+  test('una nueva fiscal NO entra: cae a SIN_CATEGORIZAR y lo dice', () => {
+    const r = normalizarPropuesta(
+      {
+        monto: 600,
+        categoria: null,
+        categoria_nueva: 'Pago_IVA_Proveedores',
+        descripcion: 'lo de siempre'
+      } as Record<string, unknown>,
+      IDENTIDAD,
+      AHORA
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.categoria).toBe(CATEGORIA_SIN_CATEGORIZAR_BOT)
+    expect(r.categoriaNueva).toBeNull()
+    expect(r.avisos.join(' ')).toContain('impuesto')
   })
 })

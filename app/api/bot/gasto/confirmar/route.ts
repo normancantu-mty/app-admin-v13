@@ -20,8 +20,13 @@
  */
 
 import { NextResponse } from 'next/server'
-import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { CATEGORIA_SIN_CATEGORIZAR_BOT, selloCoincide, type PayloadGasto } from '@/lib/bot-gastos'
+import { clienteDeServicio, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import {
+  CATEGORIA_SIN_CATEGORIZAR_BOT,
+  selloCoincide,
+  validarCategoriaNueva,
+  type PayloadGasto
+} from '@/lib/bot-gastos'
 import { registrarAviso } from '@/lib/avisos-server'
 
 export const dynamic = 'force-dynamic'
@@ -133,6 +138,45 @@ export async function POST(request: Request) {
       )
     }
 
+    // ── LA CATEGORIA NUEVA, SI LA HAY ───────────────────────────────────────
+    // No se le cree a la bandera que dejo el proponer: se mira el catalogo AQUI.
+    // Si la categoria sellada no esta en el catalogo, es nueva, y **se vuelve a
+    // validar antes de crearla**. Esa segunda pasada no es paranoia: el nombre
+    // entra a la columna `categoria`, que `v_pasivo_fiscal` concatena para
+    // decidir si hubo un pago de impuesto. Una defensa que solo corre en el
+    // camino feliz no es una defensa.
+    const catalogo = await leerCatalogo(supabase)
+    const esNueva =
+      fila.categoria !== CATEGORIA_SIN_CATEGORIZAR_BOT &&
+      !catalogo.some((c) => c.nombre === fila.categoria)
+
+    if (esNueva) {
+      const juicio = validarCategoriaNueva(fila.categoria, catalogo)
+      if (!juicio.ok) {
+        return NextResponse.json(
+          { error: `No puedo crear la categoria "${fila.categoria}": ${juicio.motivo}.` },
+          { status: 422 }
+        )
+      }
+      // La forma de fila de una categoria nueva es SIEMPRE la de gasto. Comprar
+      // insumos mueve otra columna y eso no se infiere de un nombre (E-237):
+      // si algun dia hace falta otra `COMPRA_INSUMOS`, se declara a mano.
+      const { error: errorCat } = await supabase.from('bot_categorias').insert({
+        nombre: juicio.nombre,
+        ayuda: '',
+        tipo_movimiento: 'GASTO_OPERATIVO',
+        columna: 'destino',
+        creada_por: fila.usuario_creador
+      })
+      if (errorCat) {
+        console.error('[bot] no pude crear la categoria', juicio.nombre, errorCat)
+        return NextResponse.json(
+          { error: 'No pude crear esa categoria. No escribi nada.' },
+          { status: 500 }
+        )
+      }
+    }
+
     // ── EL INSERT. Nada entre el sello y esta linea toca el payload. ─────────
     const { data: creada, error } = await supabase
       .from('finanzas_ledger')
@@ -194,7 +238,7 @@ export async function POST(request: Request) {
       })
     }
 
-    return NextResponse.json({ ok: true, id: creada.id })
+    return NextResponse.json({ ok: true, id: creada.id, categoria_creada: esNueva ? fila.categoria : null })
   } catch (e) {
     console.error('[bot] confirmar reviento:', e)
     return NextResponse.json({ error: 'Error interno.' }, { status: 500 })

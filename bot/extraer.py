@@ -45,7 +45,7 @@ PROMPT = """Eres un extractor. Recibes lo que dijo una persona de la planta de
 una destileria sobre UN gasto, y devuelves UN objeto JSON. Nada mas.
 
 DEVUELVE EXACTAMENTE ESTE OBJETO, sin texto antes ni despues, sin markdown:
-{"monto": <numero>, "categoria": "<una de la lista o null>", "descripcion": "<lo que fue el gasto, en las palabras de la persona>", "fecha": "<AAAA-MM-DD o null>", "falta": "<que dato falta, o null>"}
+{"monto": <numero>, "categoria": "<una de la lista o null>", "categoria_nueva": "<nombre para una categoria que no existe, o null>", "descripcion": "<lo que fue el gasto, en las palabras de la persona>", "fecha": "<AAAA-MM-DD o null>", "falta": "<que dato falta, o null>"}
 
 LAS CATEGORIAS. Son las UNICAS validas. Si lo que te dicen no cae claramente en
 una, pon null. NO INVENTES UNA CATEGORIA NUEVA y NO ELIJAS LA MAS PARECIDA:
@@ -65,6 +65,24 @@ Antes de elegir una categoria, preguntate: "si quito la palabra que coincide,
 sigue siendo esta categoria?". Si la respuesta es no, la categoria es null.
 Que la persona use una palabra ("ponlo de viaticos") NO te obliga: ella esta
 describiendo, no clasificando. El que clasifica eres tu, y si dudas, null.
+
+CUANDO NINGUNA CATEGORIA SIRVE: "categoria_nueva"
+La lista de arriba **no esta terminada**: crece con el uso. Si el gasto es real
+y claro pero NINGUNA categoria le queda, deja "categoria" en null y propon un
+nombre en "categoria_nueva". Una persona lo va a aprobar o rechazar; no se crea
+sola.
+
+  - Formato: empieza con letra, solo letras, numeros y guion bajo, 3 a 40
+    caracteres. Ejemplo: Comidas_Y_Atenciones, Mantenimiento, Impuestos_Y_Tramites.
+  - Que sea la CLASE de gasto, no este gasto: "Comidas_De_Trabajo", no
+    "Comida_Con_Kevin_El_Viernes". Una categoria que sirve una sola vez no es
+    una categoria.
+  - NO propongas una que ya existe con otro nombre. Si dudas entre proponer una
+    nueva y usar una existente, **usa la existente**.
+  - NUNCA uses las palabras IVA ni IEPS en el nombre: el ERP lee esa columna
+    para decidir si se pago un impuesto, y un nombre asi inventa un pago.
+  - Si el gasto es confuso o no sabes que es, deja las DOS en null. Proponer una
+    categoria nueva a ciegas es peor que no proponer nada.
 """ + _LISTA + """
 
 REGLAS:
@@ -75,7 +93,7 @@ REGLAS:
 - "falta" es para lo que no puedes saber y hace falta preguntar. Si no falta
   nada, null.
 - Si el mensaje NO es un gasto (una pregunta, un saludo, una venta), devuelve
-  {"monto": null, "categoria": null, "descripcion": null, "fecha": null, "falta": "esto no parece un gasto"}
+  {"monto": null, "categoria": null, "categoria_nueva": null, "descripcion": null, "fecha": null, "falta": "esto no parece un gasto"}
 
 EL MENSAJE:
 """
@@ -94,14 +112,26 @@ def _claude():
     return [ruta, "-p", "--model", "sonnet"]
 
 
-def extraer(texto):
-    """Devuelve (ok, objeto_o_error). Nunca lanza por culpa del modelo."""
+def extraer(texto, extras=None):
+    """Devuelve (ok, objeto_o_error). Nunca lanza por culpa del modelo.
+
+    `extras` son las categorias que existen en la base y **no** en el
+    diccionario de este archivo: las que se fueron creando con el uso. Sin
+    ellas el modelo volveria a proponer como "nueva" una que ya existe, y la
+    puerta del servidor la rechazaria — correcto pero inutil, porque el gasto
+    se quedaria sin clasificar por un problema de vocabulario y no de criterio.
+    """
     if not str(texto or "").strip():
         return False, "mensaje vacio"
+    prompt = PROMPT
+    faltantes = [c for c in (extras or []) if c not in CATEGORIAS]
+    if faltantes:
+        prompt = prompt.replace(
+            _LISTA, _LISTA + NL + NL.join("- " + c for c in sorted(faltantes)))
     try:
         salida = subprocess.run(
             _claude(),
-            input=PROMPT + str(texto).strip(),
+            input=prompt + str(texto).strip(),
             capture_output=True,
             text=True,
             encoding="utf-8",
