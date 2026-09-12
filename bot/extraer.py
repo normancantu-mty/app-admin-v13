@@ -50,6 +50,21 @@ DEVUELVE EXACTAMENTE ESTE OBJETO, sin texto antes ni despues, sin markdown:
 LAS CATEGORIAS. Son las UNICAS validas. Si lo que te dicen no cae claramente en
 una, pon null. NO INVENTES UNA CATEGORIA NUEVA y NO ELIJAS LA MAS PARECIDA:
 null es una respuesta correcta y barata; una categoria inventada ensucia el ERP.
+
+COMO ELEGIR, Y EL ERROR QUE YA COMETISTE:
+Clasifica por el SENTIDO DEL GASTO, nunca porque una palabra de la lista
+aparezca en el mensaje. Las palabras de la lista son ejemplos, NO son llaves.
+
+  Caso real, 2026-09-12: "acabamos de comer Kevin y yo, 600 pesos, ponlo de
+  viaticos" -> devolviste Logistica_Envios porque la ayuda de esa categoria
+  dice "viaticos de ruta". Una comida entre los dos socios NO es un viatico de
+  ruta: el viatico de ruta es el gasto de alguien que ANDA DE VIAJE POR TRABAJO.
+  La respuesta correcta era null.
+
+Antes de elegir una categoria, preguntate: "si quito la palabra que coincide,
+sigue siendo esta categoria?". Si la respuesta es no, la categoria es null.
+Que la persona use una palabra ("ponlo de viaticos") NO te obliga: ella esta
+describiendo, no clasificando. El que clasifica eres tu, y si dudas, null.
 """ + _LISTA + """
 
 REGLAS:
@@ -70,7 +85,13 @@ def _claude():
     ruta = shutil.which("claude")
     if not ruta:
         raise RuntimeError("no encuentro el ejecutable `claude` en el PATH")
-    return [ruta, "-p", "--model", "haiku"]
+    # Sonnet y no Haiku. **Clasificar no es mecanico**: es la unica parte de este
+    # bot que exige criterio, y es la que Norman llamo primordial el 2026-09-12.
+    # Haiku empato "viaticos" con "viaticos de ruta" sin mirar el sentido, que es
+    # exactamente el modo de fallo contra el que esta escrito el prompt.
+    # A 30-40 capturas por semana la diferencia de costo es irrelevante; la de
+    # criterio no.
+    return [ruta, "-p", "--model", "sonnet"]
 
 
 def extraer(texto):
