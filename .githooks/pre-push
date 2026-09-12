@@ -2,7 +2,15 @@
 # ============================================================================
 # pre-push — la red que CI no puede tender (ERP-70)
 # ============================================================================
-# POR QUE EXISTE. El proyecto `equivalencia` de Playwright (23 pruebas, entre
+# QUE CORRE DONDE, medido el 2026-09-12 y no recordado:
+#
+#   proyecto        pruebas   CI (GitHub Actions)   aqui (pre-push)
+#   -------------   -------   -------------------   ---------------
+#   puras             242     SI, en cada push      SI, siempre
+#   equivalencia       26     NO, nunca             solo si hay llave
+#   humo + sesion       4     solo con secrets      solo con .env.test.local
+#
+# POR QUE EXISTE. El proyecto `equivalencia` (26 pruebas, entre
 # `tests/vistas-equivalencia.spec.ts` y `tests/cableado-pantallas.spec.ts`)
 # compara las vistas canonicas de Postgres contra las funciones de TypeScript
 # que dicen reproducir, sobre los datos reales y al centavo. Para eso necesita
@@ -10,16 +18,38 @@
 #
 # Esa llave NO va a entrar a los secrets de GitHub — decision de Norman, y es la
 # correcta: un secret de repo lo puede leer cualquier workflow que alguien
-# agregue despues. Consecuencia: en CI esas 23 pruebas se SALTAN, siempre.
+# agregue despues. Consecuencia: en CI esas 26 pruebas se SALTAN, siempre.
 #
 # Asi que corren aqui, en la maquina de Norman, en el unico momento en que
 # todavia se puede hacer algo: justo antes de que el codigo salga del portatil.
+#
+# ─── EL HUECO QUE ESTE ARCHIVO TAPO (2026-09-12) ────────────────────────────
+# Hasta hoy, la primera pregunta de este gancho era "¿hay llave?", y si no la
+# habia hacia `exit 0` SIN CORRER NADA. O sea que sin la llave no corrian las 26
+# de equivalencia —que es lo esperado— pero TAMPOCO las 242 puras, que no
+# necesitan llave, ni `tsc`, que no necesita nada. Un push con el codigo roto
+# salia en verde y en silencio: exactamente el modo de fallo que el gancho venia
+# a cerrar, y el mismo de `--no-verify` que documenta ERP-78.
+#
+# La regla que lo ordena, y que aqui se habia aplicado de mas: "una medicion
+# negativa y un instrumento roto producen la misma observacion". Faltar la llave
+# es un HUECO en una parte, no permiso para no medir nada.
+#
+# AHORA: lo que no necesita llave corre SIEMPRE y puede detener el push. Lo que
+# si la necesita se salta diciendo cual falto, y no detiene nada.
 #
 # COMO SE INSTALA. `package.json` tiene `"prepare": "git config core.hooksPath
 # .githooks"`, y npm corre `prepare` solo despues de cada `npm install`. O sea
 # que un clon limpio queda con el gancho puesto sin que nadie haga nada. El
 # gancho vive en el repo, versionado: no es un archivo suelto en `.git/hooks/`
 # que se pierde en el siguiente clon.
+#
+# CUANTO TARDA. Medido el 2026-09-12 en la maquina de Norman:
+#   tsc --noEmit ......... 3 s
+#   242 puras ............ 2 s
+#   + 26 equivalencia .... 13 s en total
+# El que espera aqui es NORMAN, y por eso el presupuesto importa: 13 segundos
+# valen; diez minutos no. Si algun dia esto pasa de ~60 s, se parte.
 #
 # COMO SE SALTA. `git push --no-verify`. Esta escrito abajo, en la salida del
 # fallo, a proposito: un gancho sin escape hatch no se respeta, se borra.
@@ -42,42 +72,55 @@ hay_llave() {
   return 1
 }
 
-if ! hay_llave; then
-  # Se avisa fuerte y se DEJA PASAR. Un gancho que impide trabajar se
-  # desinstala el primer dia, y entonces no protege nunca mas.
-  echo ""
-  echo "  ############################################################"
-  echo "  #  AVISO: las 23 pruebas de equivalencia NO CORRIERON      #"
-  echo "  ############################################################"
-  echo ""
-  echo "  Falta SUPABASE_SERVICE_ROLE_KEY en el entorno o en .env."
-  echo ""
-  echo "  El push sigue. Pero nadie acaba de comprobar que las vistas"
-  echo "  canonicas de Postgres y las funciones de TypeScript den la"
-  echo "  misma cifra, y CI tampoco lo va a hacer: ahi se saltan"
-  echo "  siempre, a proposito (la llave no entra a GitHub secrets)."
-  echo ""
-  echo "  Esto no es un fallo, es un hueco. Se tapa poniendo la llave"
-  echo "  en .env — ver .env.test.local.example y el README."
-  echo ""
-  exit 0
+# ----------------------------------------------------------------------------
+# Lo que corre SIEMPRE. No depende de ninguna credencial, no toca red ni base,
+# y son 5 segundos. Si esto sale en rojo, el push se detiene, haya llave o no.
+# ----------------------------------------------------------------------------
+if hay_llave; then
+  QUE="npm run verificar  (tsc + las 242 puras + las 26 de equivalencia)"
+  CORRIDA="npm run verificar"
+  CON_EQUIVALENCIA=1
+else
+  QUE="tsc + las 242 puras. SIN las 26 de equivalencia: falta la llave."
+  CORRIDA="npx tsc --noEmit && npx playwright test --project=puras"
+  CON_EQUIVALENCIA=0
 fi
 
 echo ""
-echo "[pre-push] npm run verificar  (tsc --noEmit + las 112 pruebas)"
-echo "[pre-push] Incluye las 23 de equivalencia, que CI no corre."
+echo "[pre-push] $QUE"
+if [ "$CON_EQUIVALENCIA" = "1" ]; then
+  echo "[pre-push] Las 26 de equivalencia CI no las corre nunca. Este es el unico lugar."
+fi
 echo ""
 
-if npm run verificar; then
+if sh -c "$CORRIDA"; then
   echo ""
   echo "[pre-push] Verde. Sale el push."
+  if [ "$CON_EQUIVALENCIA" = "0" ]; then
+    echo ""
+    echo "  ############################################################"
+    echo "  #  AVISO: las 26 pruebas de equivalencia NO CORRIERON      #"
+    echo "  ############################################################"
+    echo ""
+    echo "  Falta SUPABASE_SERVICE_ROLE_KEY en el entorno o en .env."
+    echo ""
+    echo "  Las 242 puras y los tipos SI corrieron y pasaron. Lo que"
+    echo "  nadie acaba de comprobar es que las vistas canonicas de"
+    echo "  Postgres y las funciones de TypeScript den la misma cifra,"
+    echo "  y CI tampoco lo va a hacer: ahi se saltan siempre, a"
+    echo "  proposito (la llave no entra a GitHub secrets)."
+    echo ""
+    echo "  Esto no es un fallo, es un hueco. Se tapa poniendo la llave"
+    echo "  en .env — ver .env.test.local.example y el README."
+    echo ""
+  fi
   echo ""
   exit 0
 fi
 
 echo ""
 echo "  ############################################################"
-echo "  #  PUSH DETENIDO: 'npm run verificar' salio en rojo         #"
+echo "  #  PUSH DETENIDO: la verificacion salio en rojo             #"
 echo "  ############################################################"
 echo ""
 echo "  Arriba esta que fallo. Si es una prueba de equivalencia, una"

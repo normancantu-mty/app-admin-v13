@@ -109,10 +109,11 @@ npx tsc --noEmit   # verificacion de tipos (strict mode)
 npm run lint       # eslint (hoy con errores preexistentes conocidos)
 ```
 
-`npm test` corre las pruebas de calculo de `tests/calculo.spec.ts`: el motor fiscal inverso,
-la cascada de deduccion de inventario y la clasificacion de tipos de movimiento. No piden
-navegador, asi que no hace falta `playwright install`. Los e2e que si lo necesitan estan
-marcados con `test.describe.skip`.
+`npm test` corre el proyecto `puras` de Playwright: **242 pruebas de aritmetica y de lectura del
+codigo fuente**, sin red, sin base, sin navegador y sin sesion. Terminan en 2 segundos y no hace
+falta `playwright install`. Las otras 26 —el proyecto `equivalencia`— comparan las vistas
+canonicas de Postgres contra las funciones de TypeScript sobre los datos reales, y **necesitan la
+llave privada; por eso no corren aqui ni en CI** (ver la tabla de la seccion CI).
 
 ### Por que `dev` corre con webpack y no con Turbopack
 
@@ -138,16 +139,37 @@ El costo es que el dev server es mas lento. **Es un rodeo, no un arreglo de raiz
 probar Turbopack despues de actualizar Next: `npm run dev:turbo`. Si `/login` da 200, el rodeo
 sobra y `dev` puede regresar a `next dev`.
 
-### CI
+### CI — que corre solo, y donde
 
-`.github/workflows/ci.yml` corre en cada push y cada pull request: tipos, pruebas, lint
-(informativo) y build.
+Hay **dos** redes, y no cubren lo mismo. La tabla es lo que se comprobo el 2026-09-12, no lo que
+se recuerda:
 
-**El build necesita `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY` como secretos
-del repositorio.** Si no estan configurados, el workflow **se salta el build con un aviso** en
-vez de fallar en rojo — tipos y pruebas si corren igual. Para configurarlos:
+| proyecto | pruebas | CI (`.github/workflows/ci.yml`) | `pre-push` (maquina de Norman) |
+|---|---|---|---|
+| `puras` | 242 | **si, en cada push y cada PR** | **si, siempre** |
+| `equivalencia` | 26 | **nunca** | solo si hay `SUPABASE_SERVICE_ROLE_KEY` |
+| `humo` + `sesion` | 4 | solo con secrets del repo | solo con `.env.test.local` |
 
-**Settings -> Secrets and variables -> Actions -> New repository secret**, uno por cada nombre.
+**Por que `equivalencia` no corre en CI.** Necesita `SUPABASE_SERVICE_ROLE_KEY`, la llave que lee
+todo saltandose el RLS, y esa llave no entra a los secrets de GitHub: un secret de repo lo puede
+leer cualquier workflow que alguien agregue despues. La consecuencia, dicha completa: **el unico
+lugar del mundo donde alguien comprueba que una vista de Postgres y su funcion de TypeScript den
+la misma cifra es el gancho `pre-push` de esta maquina.** Si ese gancho se desinstala, nadie lo
+hace, y nada en CI se pondria rojo para avisarlo.
+
+**El gancho se instala solo:** `package.json` tiene `"prepare": "git config core.hooksPath
+.githooks"`, asi que un clon limpio queda protegido despues del primer `npm install`. Tarda 13
+segundos con llave y 5 sin ella. Se salta con `git push --no-verify`.
+
+**Que bloquea y que solo avisa.** Bloquean los tipos y las pruebas — lo que de verdad rompe el
+sistema. Avisan, sin poner nada en rojo: el lint (tiene errores preexistentes), el build cuando
+faltan `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`, las de humo cuando faltan
+`E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD`, y las de equivalencia cuando falta la llave. Los avisos
+dicen **cual** credencial falto, en el resumen del job: saltarse algo en silencio es lo que
+volvio inutiles a las de humo mientras el Dashboard General pintaba ceros.
+
+Los secrets se agregan en **Settings -> Secrets and variables -> Actions -> New repository
+secret**, uno por cada nombre.
 
 ---
 
