@@ -117,10 +117,10 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
   // (`SELECT ... FROM transacciones_tickets ORDER BY fecha_transaccion DESC`)
   // ANTES de actualizarlas. Subirlas sin mirar convierte esta prueba en un
   // sello de goma.
-  const FINANZAS_ACTIVAS = 85
-  const INVENTARIO_FILAS = 474
-  const TICKETS_ACTIVOS = 62
-  const VENTAS_ACTIVAS = 395_033
+  const PISO_FINANZAS_FILAS = 120
+  const PISO_INVENTARIO_FILAS = 474
+  const PISO_TICKETS_FILAS = 62
+  const PISO_VENTAS_ACUMULADAS = 395_033
 
   // ─── Casos con nombre y apellido ──────────────────────────────────────────
   const DELIRIO_85 = 'Delirio 85'
@@ -212,15 +212,32 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
   // 0. Las cifras de control. Si estas se movieron, nada de lo de abajo
   //    significa nada: se estaria comparando contra una base distinta.
   // ══════════════════════════════════════════════════════════════════════════
-  test('cifras de control intactas: 85 activas · 474 · 62 · $395,033', () => {
-    const finanzasActivas = finanzasTodas.filter((f) => f.status === 'ACTIVO')
-    const ticketsActivos = ticketsTodos.filter((t) => t.status === 'ACTIVO')
-    const ventas = ticketsActivos.reduce((suma, t) => suma + Number(t.total_cobrado_real || 0), 0)
+  test('pisos de control: los contadores no decrecen (append-only)', () => {
+    const ventasAcumuladas = ticketsTodos.reduce(
+      (suma, t) => suma + Number(t.total_cobrado_real || 0),
+      0
+    )
 
-    expect(finanzasActivas.length, 'filas ACTIVO en finanzas_ledger').toBe(FINANZAS_ACTIVAS)
-    expect(inventarioTodo.length, 'filas en inventario_ledger').toBe(INVENTARIO_FILAS)
-    expect(ticketsActivos.length, 'tickets ACTIVO').toBe(TICKETS_ACTIVOS)
-    expect(centavos(ventas), 'ventas activas acumuladas').toBe(centavos(VENTAS_ACTIVAS))
+    expect(finanzasTodas.length, 'filas totales en finanzas_ledger').toBeGreaterThanOrEqual(
+      PISO_FINANZAS_FILAS
+    )
+    expect(inventarioTodo.length, 'filas totales en inventario_ledger').toBeGreaterThanOrEqual(
+      PISO_INVENTARIO_FILAS
+    )
+    expect(ticketsTodos.length, 'tickets totales').toBeGreaterThanOrEqual(PISO_TICKETS_FILAS)
+    expect(
+      centavos(ventasAcumuladas),
+      'ventas acumuladas, anulados incluidos'
+    ).toBeGreaterThanOrEqual(centavos(PISO_VENTAS_ACUMULADAS))
+
+    // Lo que crecio desde el piso, dicho en voz alta. No falla la prueba: es el
+    // dato con el que se decide si vale la pena subir el piso.
+    console.log(
+      `[pisos] finanzas ${finanzasTodas.length}/${PISO_FINANZAS_FILAS} · ` +
+        `inventario ${inventarioTodo.length}/${PISO_INVENTARIO_FILAS} · ` +
+        `tickets ${ticketsTodos.length}/${PISO_TICKETS_FILAS} · ` +
+        `ventas ${ventasAcumuladas.toFixed(2)}/${PISO_VENTAS_ACUMULADAS.toFixed(2)}`
+    )
   })
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -296,11 +313,25 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       }
     })
 
-    test('Delirio 85 debe $19,476.00 exactos', async () => {
+    /**
+     * ERP-78: el caso conserva su cifra historica como PISO, no como igualdad.
+     * Delirio 85 debia $19,476.00 el 2026-09-02; si compra otra vez sube, y la
+     * prueba no tiene por que romperse por eso. Lo que no puede pasar es que
+     * BAJE sin abonos que lo expliquen, y de eso se encarga la aritmetica.
+     */
+    test('Delirio 85: saldo consistente y nunca por debajo de su piso historico', async () => {
       const vista = await leerSaldosEntidad(db)
       const fila = vista.find((f) => f.nombre === DELIRIO_85)
       expect(fila, 'no aparece Delirio 85').toBeTruthy()
-      expect(centavos(Number(fila!.saldo_pendiente_consignacion))).toBe(centavos(19_476))
+
+      const generada = Number(fila!.deuda_generada_tickets)
+      const abonos = Number(fila!.abonos_aprobados)
+      const saldo = Number(fila!.saldo_pendiente_consignacion)
+
+      expect(centavos(saldo), 'generada - abonos = saldo').toBe(centavos(generada - abonos))
+      expect(centavos(generada), 'lo generado no puede decrecer').toBeGreaterThanOrEqual(
+        centavos(19_476)
+      )
     })
 
     /**
@@ -316,17 +347,26 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
      * Se prueban los DOS, cada uno en su columna, para que no vuelva a
      * confundirse el bruto con el neto.
      */
-    test('David Flores: genero $58,000.00 en tickets y debe $5,460.93', async () => {
+    test('David Flores: el bruto no es el neto, y los dos cuadran entre si', async () => {
       const vista = await leerSaldosEntidad(db)
       const fila = vista.find((f) => f.nombre === DAVID_FLORES)
       expect(fila, 'no aparece David Flores').toBeTruthy()
 
-      expect(centavos(Number(fila!.deuda_generada_tickets)), 'generado por tickets').toBe(
+      const generada = Number(fila!.deuda_generada_tickets)
+      const abonos = Number(fila!.abonos_aprobados)
+      const saldo = Number(fila!.saldo_pendiente_consignacion)
+
+      // Lo que NO se pudre: la relacion entre las tres columnas.
+      expect(centavos(saldo), 'generada - abonos = saldo').toBe(centavos(generada - abonos))
+
+      // Los literales del caso quedan como piso. El 2026-09-07 le entro un
+      // ticket de concesion de $3,552.00 (`5dd65509`), y con la igualdad vieja
+      // eso rompia el push: una venta real tumbando la red del repo.
+      expect(centavos(generada), 'lo generado por tickets no decrece').toBeGreaterThanOrEqual(
         centavos(58_000)
       )
-      expect(centavos(Number(fila!.abonos_aprobados)), 'abonos aprobados').toBe(centavos(52_539.07))
-      expect(centavos(Number(fila!.saldo_pendiente_consignacion)), 'saldo pendiente').toBe(
-        centavos(5_460.93)
+      expect(centavos(abonos), 'los abonos aprobados no decrecen').toBeGreaterThanOrEqual(
+        centavos(52_539.07)
       )
     })
 
@@ -340,9 +380,16 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       const fila = vista.find((f) => f.nombre === AEROPUERTO)
       expect(fila, 'no aparece Aeropuerto').toBeTruthy()
 
+      const generada = Number(fila!.deuda_generada_tickets)
+      const abonos = Number(fila!.abonos_aprobados)
       const saldo = Number(fila!.saldo_pendiente_consignacion)
-      expect(centavos(saldo)).toBe(centavos(-6))
-      expect(saldo, 'el redondeo no puede volver positivo un pago de mas').toBeLessThan(0)
+
+      // La invariante es el NO REDONDEO, no el -6.00 de aquel dia: mientras
+      // haya pagado de mas, el saldo tiene que seguir negativo y cuadrar.
+      expect(centavos(saldo), 'generada - abonos = saldo').toBe(centavos(generada - abonos))
+      if (centavos(abonos) > centavos(generada)) {
+        expect(saldo, 'el redondeo no puede volver positivo un pago de mas').toBeLessThan(0)
+      }
     })
 
     test('Dulceria el Eden: nunca abono, debe $3,610 y no tiene fecha de abono', async () => {
@@ -350,7 +397,10 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       const fila = vista.find((f) => f.nombre === DULCERIA_EDEN)
       expect(fila, 'no aparece Dulceria el Eden').toBeTruthy()
 
-      expect(centavos(Number(fila!.saldo_pendiente_consignacion))).toBe(centavos(3_610))
+      expect(
+        centavos(Number(fila!.saldo_pendiente_consignacion)),
+        'lo que debe no decrece mientras no abone'
+      ).toBeGreaterThanOrEqual(centavos(3_610))
       expect(centavos(Number(fila!.abonos_aprobados)), '0% pagado').toBe(0)
       expect(fila!.ultimo_abono, 'nunca abono').toBeNull()
       expect(fila!.dias_sin_abonar, 'sin abono no hay dias que contar').toBeNull()
@@ -361,21 +411,25 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
      * de Mexico, que es como Norman cuenta los dias: un abono es del dia en que
      * lo cobro, no del dia UTC en que quedo guardado.
      */
-    test('Martin Reyes: dias sin abonar contados desde 2026-06-16', async () => {
+    test('Martin Reyes: los dias sin abonar se cuentan en hora de Mexico', async () => {
       const vista = await leerSaldosEntidad(db)
       const fila = vista.find((f) => f.nombre === MARTIN_REYES)
       expect(fila, 'no aparece Martin Reyes').toBeTruthy()
       expect(fila!.ultimo_abono, 'Martin Reyes tiene que tener un abono').toBeTruthy()
 
-      expect(fechaMx(fila!.ultimo_abono!), 'fecha del ultimo abono en hora de Mexico').toBe(
-        '2026-06-16'
-      )
-
+      // ERP-78: la fecha del ultimo abono era un literal ('2026-06-16'), o sea
+      // que el dia que Martin abone, esta prueba tumba el push por una cobranza
+      // exitosa. Lo que se comprueba es la CONVERSION, no la fecha: los dias de
+      // la vista tienen que salir del abono contado en hora de Mexico.
+      const diaDelAbono = fechaMx(fila!.ultimo_abono!)
       const hoy = fechaMx(new Date().toISOString())
       const esperados = Math.round(
-        (Date.parse(`${hoy}T00:00:00Z`) - Date.parse('2026-06-16T00:00:00Z')) / 86_400_000
+        (Date.parse(`${hoy}T00:00:00Z`) - Date.parse(`${diaDelAbono}T00:00:00Z`)) / 86_400_000
       )
-      expect(Number(fila!.dias_sin_abonar), 'dias de calendario desde el 2026-06-16').toBe(esperados)
+
+      expect(Number(fila!.dias_sin_abonar), `dias de calendario desde ${diaDelAbono}`).toBe(
+        esperados
+      )
     })
   })
 

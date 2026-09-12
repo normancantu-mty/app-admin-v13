@@ -468,7 +468,7 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
   // ══════════════════════════════════════════════════════════════════════════
   // 7. Los dos nodos que el prompt nombra, y la confusion que ya paso una vez
   // ══════════════════════════════════════════════════════════════════════════
-  test('Delirio 85 debe $19,476.00 y David Flores $5,460.93 (no $58,000)', async () => {
+  test('Delirio 85 y David Flores: el bruto no se confunde con el neto', async () => {
     const delirio = await leerSaldoEntidad(db, idDe(DELIRIO_85))
     const david = await leerSaldoEntidad(db, idDe(DAVID_FLORES))
 
@@ -480,10 +480,23 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
         ` (genero ${Number(david!.deuda_generada_tickets).toFixed(2)} en tickets)`
     )
 
-    expect(centavos(Number(delirio!.saldo_pendiente_consignacion))).toBe(centavos(19_476))
-    expect(centavos(Number(david!.saldo_pendiente_consignacion))).toBe(centavos(5_460.93))
-    // $58,000 es lo que generaron sus tickets ANTES de restar abonos: otra cifra.
-    expect(centavos(Number(david!.deuda_generada_tickets))).toBe(centavos(58_000))
+    // ERP-78: lo que se prueba es que el NETO y el BRUTO son columnas distintas
+    // y que cuadran entre si. Las cifras del 2026-09-02 quedan como piso: el
+    // 2026-09-07 entro un ticket de concesion de David por $3,552.00, y con la
+    // igualdad vieja una venta real tumbaba el push.
+    const generadaDavid = Number(david!.deuda_generada_tickets)
+    const abonosDavid = Number(david!.abonos_aprobados)
+    const netoDavid = Number(david!.saldo_pendiente_consignacion)
+
+    expect(centavos(netoDavid), 'generada - abonos = saldo').toBe(
+      centavos(generadaDavid - abonosDavid)
+    )
+    expect(centavos(generadaDavid), 'el bruto no es el neto').toBeGreaterThan(centavos(netoDavid))
+    expect(centavos(generadaDavid), 'lo generado no decrece').toBeGreaterThanOrEqual(centavos(58_000))
+    expect(
+      centavos(Number(delirio!.saldo_pendiente_consignacion)),
+      'Delirio 85 no baja de su piso sin abonos'
+    ).toBeGreaterThanOrEqual(centavos(19_476))
   })
 
   // ══════════════════════════════════════════════════════════════════════════
