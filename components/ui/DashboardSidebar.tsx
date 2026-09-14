@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { filaDeMenu } from '@/lib/nav-menu'
 
 export type DashboardNavItem = {
   href: string
@@ -21,26 +22,6 @@ type DashboardSidebarProps = {
   isMobileOpen: boolean
   onToggleCollapse: () => void
   onCloseMobile: () => void
-}
-
-function navIconFromLabel(label: string): string {
-  const trimmed = label.trim()
-  const firstToken = trimmed.split(/\s+/)[0] ?? ''
-  if (firstToken && /\p{Extended_Pictographic}/u.test(firstToken)) {
-    return firstToken
-  }
-  if (/finanzas/i.test(label)) return '💰'
-  if (/inventario/i.test(label)) return '📦'
-  if (/distribuidor|directorio|red|locales/i.test(label)) return '👥'
-  if (/estado de cuenta/i.test(label)) return '📊'
-  if (/catálogo|catalogo|precios/i.test(label)) return '🏷️'
-  if (/cola de captura|avisos/i.test(label)) return '⚠️'
-  if (/dashboard general/i.test(label)) return '👁️'
-  return '•'
-}
-
-function labelWithoutLeadingEmoji(label: string): string {
-  return label.replace(/^(\p{Extended_Pictographic}+\s*)+/u, '').trim() || label
 }
 
 export function DashboardSidebar({
@@ -104,21 +85,29 @@ export function DashboardSidebar({
           </div>
         ) : (
           navItems.map((item) => {
-            const icon = navIconFromLabel(item.label)
-            const textLabel = labelWithoutLeadingEmoji(item.label)
+            // Las dos mitades salen de `lib/nav-menu.ts`, que es donde se
+            // pueden probar sin navegador. Ver tests/menu-lateral.spec.ts.
+            const { icono, texto } = filaDeMenu(item.label)
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 className={getLinkClassName(item.href)}
-                title={textLabel}
+                title={texto}
                 onClick={onCloseMobile}
               >
                 <span className="shrink-0 text-lg leading-none" aria-hidden="true">
-                  {icon}
+                  {icono}
                 </span>
+                {/* `texto`, NUNCA `item.label`: el icono de arriba ya pinto ese
+                    mismo emoji. Aqui iba item.label y por eso cada renglon salia
+                    con el emoji doble -- menos Finanzas, Inventario y
+                    Distribuidores, las unicas tres etiquetas del bloque ADMIN
+                    que no empiezan con emoji. El centinela que lo impide de
+                    vuelta es tests/menu-lateral.spec.ts, que lee las etiquetas
+                    REALES de app/dashboard/layout.tsx. */}
                 <span className={isCollapsed ? 'hidden' : 'block truncate text-sm'}>
-                  {item.label}
+                  {texto}
                 </span>
                 {item.badge ? (
                   <span
