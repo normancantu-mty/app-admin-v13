@@ -11,6 +11,8 @@ import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 
 type TipoLogisticaInversa = 'MERMA' | 'DEVOLUCION_FISICA'
 type InventarioInsert = TablesInsert<'inventario_ledger'>
+
+import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 type TipoSalidaCascada = 'SALIDA_VENTA' | 'MERMA' | 'DEVOLUCION_FISICA' | 'SALIDA_CONCESION'
 
@@ -191,6 +193,8 @@ export async function registrarProduccionAction(
       }))
     ]
 
+    exigirEntidadDelMovimiento(movimientosProduccion, 'inventario.registrarProduccionAction')
+
     const { data: filasProduccion, error: insertError } = await supabase
       .from('inventario_ledger')
       .insert(movimientosProduccion)
@@ -357,6 +361,10 @@ export async function registrarSalidaCascada(
       return { success: false, error: 'No se generó ninguna deducción de inventario.' }
     }
 
+    // `tipo_movimiento` aqui es una variable, no un literal: el compilador no
+    // puede saber si la entidad que trae le corresponde. Por eso la puerta.
+    exigirEntidadDelMovimiento(payloadArray, 'inventario.deduccionCascada')
+
     const { error: insertError } = await supabase
       .from('inventario_ledger')
       .insert(payloadArray)
@@ -455,6 +463,8 @@ export async function registrarLogisticaInversaAction(
       id_entidad_origen: tipoMovimiento === 'DEVOLUCION_FISICA' ? distribuidorId : entidad.id,
       id_entidad_destino: tipoMovimiento === 'DEVOLUCION_FISICA' ? entidad.id : null
     }
+
+    exigirEntidadDelMovimiento(inventarioPayload, 'inventario.registrarMovimientoConAbono')
 
     const { error: inventarioError } = await supabase
       .from('inventario_ledger')

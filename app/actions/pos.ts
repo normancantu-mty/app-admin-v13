@@ -55,6 +55,8 @@ type TicketDetalleInsert = TablesInsert<'ticket_detalles'>
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 type InventarioInsert = TablesInsert<'inventario_ledger'>
 
+import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
+
 function roundTo2(value: number): number {
   return Number(value.toFixed(2))
 }
@@ -723,6 +725,8 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
         ...row,
         notas: notasConIdTicket(ticketData.id, row.notas)
       }))
+      exigirEntidadDelMovimiento(inventarioConTicket, 'pos.registrarVenta')
+
       const { error: inventarioError } = await supabase.from('inventario_ledger').insert(inventarioConTicket)
       if (inventarioError) {
         await rollbackTicket(ticketData.id)

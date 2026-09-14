@@ -19,6 +19,7 @@
 
 import { revalidatePath } from 'next/cache'
 import type { TablesInsert } from '@/types/database'
+import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
 import {
   getServerSupabaseClient,
   resolverSesionOperador
@@ -213,13 +214,28 @@ export async function registrarCompraInsumosAction(
     }
 
     // --- PASO A: entra el insumo.
+    //
+    // ERP-16 · `id_entidad_destino`. El insumo entra al almacen de la entidad
+    // que lo compro, y esa entidad no es negociable: doce lineas arriba este
+    // mismo archivo rechaza la captura si la cuenta de origen no le pertenece
+    // (`cuenta.id_entidad !== sesion.entidadId`). El dinero ya salia de la
+    // entidad de la sesion; la mercancia se quedaba sin dueno.
+    //
+    // Hasta hoy este campo iba nulo, y NO es que el tablero lo ignorara: lo lee
+    // como si fuera la Matriz (`!destino || destino.rol === 'ADMIN'`, en
+    // app/dashboard/inventario/page.tsx). Con una sola entidad ADMIN el default
+    // acertaba por accidente. Con locales que compren lo suyo, la compra del
+    // local engordaba el inventario de la Matriz sin error y sin aviso.
     const inventarioPayload: InventarioInsert = {
       id_producto: idInsumo,
       tipo_movimiento: 'ENTRADA_COMPRA',
       cantidad,
+      id_entidad_destino: sesion.entidadId,
       usuario_creador: sesion.email, // de la sesion, NUNCA del cliente
       status: 'ACTIVO'
     }
+
+    exigirEntidadDelMovimiento(inventarioPayload, 'compras.registrarCompraInsumoAction')
 
     const { data: filaInventario, error: inventarioError } = await supabase
       .from('inventario_ledger')

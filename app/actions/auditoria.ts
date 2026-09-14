@@ -30,6 +30,8 @@ interface ProcesarCorteInventarioResult {
 }
 
 type InventarioInsert = TablesInsert<'inventario_ledger'>
+
+import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 type TicketInsert = TablesInsert<'transacciones_tickets'>
 type TicketDetalleInsert = TablesInsert<'ticket_detalles'>
@@ -406,6 +408,8 @@ export async function procesarCorteInventarioAction(
     ...row,
     notas: notasConIdTicket(ticketData.id, row.notas || '')
   }))
+
+  exigirEntidadDelMovimiento(inventarioConTicket, 'auditoria.cobranzaFisica')
 
   const { error: inventarioError } = await supabase
     .from('inventario_ledger')

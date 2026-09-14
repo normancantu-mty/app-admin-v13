@@ -21,6 +21,7 @@
 
 import { revalidatePath } from 'next/cache'
 import type { TablesInsert } from '@/types/database'
+import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
 import {
   getServerSupabaseClient,
   resolverSesionOperador,
@@ -230,14 +231,30 @@ export async function registrarDevolucionAction(
     const monto = precioFinal * cantidad
 
     // --- PASO A: el producto vuelve al almacen.
+    //
+    // ERP-16 · `id_entidad_destino`. ESTE ARCHIVO NO ESTABA EN EL TICKET, y
+    // tiene exactamente el mismo defecto que `compras.ts`: escribia una
+    // `ENTRADA_COMPRA` sin destino Y sin origen. "Vuelve al almacen" no decia
+    // a cual. Es el destino el que lo dice, y es el de la sesion: quien captura
+    // la devolucion es quien recibe la mercancia.
+    //
+    // ⚠️ PENDIENTE APARTE, y NO se toca aqui porque es decision de Norman: el
+    // tipo deberia ser `DEVOLUCION_FISICA`, no `ENTRADA_COMPRA`. Con el tipo
+    // actual la mercancia entra al almacen pero NUNCA sale del libro del
+    // distribuidor -`lib/inventario-auditoria.ts` solo resta los tipos de
+    // SALIDA-, asi que el producto existe en los dos lados a la vez. Cambiar el
+    // tipo reclasifica filas ya escritas; eso se decide, no se parchea.
     const inventarioPayload: InventarioInsert = {
       id_producto: idProducto,
       tipo_movimiento: 'ENTRADA_COMPRA',
       cantidad,
+      id_entidad_destino: sesion.entidadId,
       notas: 'Devolución de Distribuidor',
       usuario_creador: sesion.email, // de la sesion, NUNCA del cliente
       status: 'ACTIVO'
     }
+
+    exigirEntidadDelMovimiento(inventarioPayload, 'devoluciones.registrarDevolucionAction')
 
     const { data: filaInventario, error: errorInventario } = await supabase
       .from('inventario_ledger')
