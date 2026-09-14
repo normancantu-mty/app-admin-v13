@@ -11,6 +11,7 @@ import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
+import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
 
 interface POSItemPayload {
   id_producto: string
@@ -601,7 +602,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
         // Rounding: Math.floor for node's share, exact complement for admin's share.
         const comisionDecimal = vendedor.rol === 'DST'
           ? Number(vendedor.comision_base ?? 0)
-          : Number(vendedor.comision_base_local ?? 0)
+          : comisionBaseLocalDecimal(vendedor.comision_base_local)
         const aplicaRedondeo = vendedor.aplica_redondeo_costo ?? true
         const ticketRef = `Ticket #${ticketData.id.slice(0, 8).toUpperCase()}`
 

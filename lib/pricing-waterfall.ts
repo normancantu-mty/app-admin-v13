@@ -1,4 +1,5 @@
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
+import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
 
 export interface WaterfallResult {
   precioPublico: number;
@@ -36,7 +37,7 @@ export function calculateWaterfall(
     if (localEntidad) {
       const comisionAsignada = localEntidad.rol === 'DST'
         ? (localEntidad.comision_base || 0)
-        : (localEntidad.comision_base_local || 0)
+        : comisionBaseLocalDecimal(localEntidad.comision_base_local)
       const costoCrudoEntidad = baseIngreso * (1 - comisionAsignada)
       precioLocal = aplicaRedondeoCosto ? Math.ceil(costoCrudoEntidad) : costoCrudoEntidad
       gananciaNeta = precioLocal - tuCostoNeto
@@ -54,7 +55,7 @@ export function calculateWaterfall(
   }
 
   // 1. Ganancia Propia (Sobre la BASE)
-  const comisionPropia = rol === 'DST' ? (entidad.comision_base || 0) : (entidad.comision_base_local || 0)
+  const comisionPropia = rol === 'DST' ? (entidad.comision_base || 0) : comisionBaseLocalDecimal(entidad.comision_base_local)
   const gananciaNeta = baseIngreso * comisionPropia
 
   // 2. Costo Operativo NETO (Solo el liquido, sin impuestos)
@@ -66,7 +67,7 @@ export function calculateWaterfall(
   let comisionPasiva = 0
 
   if (rol === 'DST' && localEntidad) {
-    const gananciaLocal = baseIngreso * (localEntidad.comision_base_local || 0)
+    const gananciaLocal = baseIngreso * comisionBaseLocalDecimal(localEntidad.comision_base_local)
     precioLocal = precioPublico - gananciaLocal
     comisionPasiva = (precioLocal - (tuCostoNeto + impuestos) > 0)
       ? (precioLocal - (tuCostoNeto + impuestos))

@@ -9,6 +9,7 @@ import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import type { Database, TablesInsert } from '@/types/database'
 import { registrarAviso } from '@/lib/avisos-server'
+import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
 
 interface ConteoFisicoPayload {
   idProducto: string
@@ -40,13 +41,6 @@ interface ProductoAuditoria {
 
 function roundTo2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100
-}
-
-function normalizePercentage(rawValue: number | null | undefined, defaultValue: number): number {
-  const safeDefault = Number(defaultValue)
-  const safeValue = Number(rawValue ?? safeDefault)
-  if (!Number.isFinite(safeValue)) return safeDefault
-  return safeValue <= 1 ? safeValue : (safeValue / 100)
 }
 
 function normalizeText(value: string): string {
@@ -303,10 +297,7 @@ export async function procesarCorteInventarioAction(
     const costoEmergencia = roundTo2(Number(producto.costo_unitario ?? 0))
     const basePrecio =
       precioLista != null && Number.isFinite(precioLista) && precioLista > 0 ? precioLista : costoEmergencia
-    const comisionDecimal =
-      Number(entidadObjetivo.comision_base_local) > 1
-        ? Number(entidadObjetivo.comision_base_local) / 100
-        : Number(entidadObjetivo.comision_base_local || 0)
+    const comisionDecimal = comisionBaseLocalDecimal(entidadObjetivo.comision_base_local)
     const precioDescontado = basePrecio * (1 - comisionDecimal)
     const aplicaRedondeoPrecioUnitario = entidadObjetivo.aplica_redondeo_costo ?? true
     const precioUnitario = aplicaRedondeoPrecioUnitario
@@ -440,8 +431,7 @@ export async function procesarCorteInventarioAction(
 
   const isDstAuditingLoc = entidadOperadora.rol === 'DST' && entidadObjetivo.rol === 'LOC'
   if (isDstAuditingLoc) {
-    const rawComision = Number(entidadObjetivo.comision_base_local ?? 15)
-    const comisionDecimal = normalizePercentage(rawComision, 15)
+    const comisionDecimal = comisionBaseLocalDecimal(entidadObjetivo.comision_base_local)
     const aplicaRedondeo = entidadObjetivo.aplica_redondeo_costo ?? true
 
     let montoAdmin: number
