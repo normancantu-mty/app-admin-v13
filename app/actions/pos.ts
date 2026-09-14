@@ -10,7 +10,7 @@ import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
-import { validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
+import { esCuentaFiscal, validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
 
 interface POSItemPayload {
@@ -123,22 +123,26 @@ function normalizeText(value: string): string {
     .toLowerCase()
 }
 
-function toTipoFiscalidad(value: string): TipoFiscalidad {
-  if (value === 'FULL_TAX' || value === 'IVA_ONLY' || value === 'LIBRE') {
-    return value
+/**
+ * ERP-21: el regimen fiscal sale de la columna `tipo_fiscalidad` y de ningun otro lado.
+ *
+ * Lo que habia antes no era un atajo para leer la columna: era una compuerta que la anulaba
+ * (si el nombre no decia "fresnillo" devolvia 'LIBRE' y tiraba la columna a la basura), y el
+ * default de la conversion adivinaba 'FULL_TAX' ante un valor desconocido. Quitar la compuerta
+ * sin quitar ese default habria hecho que una cuenta con `tipo_fiscalidad` vacio o corrupto
+ * empezara a INVENTAR IVA e IEPS. Por eso aqui se rechaza la venta en vez de adivinar.
+ */
+function resolveTipoFiscalidadCuenta(tipoFiscalidadRaw: string | null | undefined): TipoFiscalidad {
+  const valor = (tipoFiscalidadRaw ?? '').toUpperCase()
+
+  if (valor === 'FULL_TAX' || valor === 'IVA_ONLY' || valor === 'LIBRE') {
+    return valor
   }
-  return 'FULL_TAX'
-}
 
-function resolveTipoFiscalidadCuenta(cuentaNombre: string, tipoFiscalidadRaw: string): TipoFiscalidad {
-  const cuentaNormalizada = normalizeText(cuentaNombre)
-  const esCuentaFresnillo = cuentaNormalizada.includes('fresnillo')
-
-  if (!esCuentaFresnillo) {
-    return 'LIBRE'
-  }
-
-  return toTipoFiscalidad(tipoFiscalidadRaw)
+  throw new Error(
+    `La cuenta destino tiene un tipo_fiscalidad invalido (${tipoFiscalidadRaw || '(vacio)'}). ` +
+      'No se captura la venta: adivinar el regimen aqui inventa impuestos.'
+  )
 }
 
 export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promise<ProcesarVentaPOSResult> {
@@ -258,7 +262,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       return { ok: false, error: 'No se pudo validar el origen de inventario seleccionado.' }
     }
 
-    let cuentaData: { id: string; nombre: string; tipo_fiscalidad: string } | null = null
+    let cuentaData: { id: string; nombre: string; tipo_fiscalidad: string; id_entidad: string | null } | null = null
 
     if (payload.idCuentaDestino) {
       const { data: cuentaSeleccionada, error: cuentaSeleccionadaError } = await supabase
@@ -271,20 +275,23 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
         return { ok: false, error: 'La cuenta destino seleccionada no existe o no es válida.' }
       }
 
-      const esCuentaFresnillo = normalizeText(cuentaSeleccionada.nombre).includes('fresnillo')
-      if (cuentaSeleccionada.id_entidad !== vendedorId && !esCuentaFresnillo) {
+      // ERP-21: la excepcion es "es la cuenta fiscal de la empresa", que cualquier vendedor
+      // puede usar como destino. Eso lo dice la columna, no el nombre.
+      const esLaCuentaFiscal = esCuentaFiscal(cuentaSeleccionada.tipo_fiscalidad)
+      if (cuentaSeleccionada.id_entidad !== vendedorId && !esLaCuentaFiscal) {
         return { ok: false, error: 'La cuenta destino no pertenece al vendedor seleccionado.' }
       }
 
       cuentaData = {
         id: cuentaSeleccionada.id,
         nombre: cuentaSeleccionada.nombre,
-        tipo_fiscalidad: cuentaSeleccionada.tipo_fiscalidad
+        tipo_fiscalidad: cuentaSeleccionada.tipo_fiscalidad,
+        id_entidad: cuentaSeleccionada.id_entidad
       }
     } else {
       const { data: cuentasEntidad, error: cuentaError } = await supabase
         .from('cuentas_financieras')
-        .select('id, nombre, tipo_fiscalidad')
+        .select('id, nombre, tipo_fiscalidad, id_entidad')
         .eq('id_entidad', vendedorId)
         .order('nombre', { ascending: true })
 
@@ -295,8 +302,9 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       let cuentaFallback = cuentasEntidad.find((cuenta) => normalizeText(cuenta.nombre).startsWith('cta-'))
 
       if (vendedor.rol === 'ADMIN') {
-        const cuentaFresnillo = cuentasEntidad.find((cuenta) => normalizeText(cuenta.nombre).includes('fresnillo'))
-        cuentaFallback = cuentaFresnillo ?? cuentaFallback ?? cuentasEntidad[0]
+        // ERP-21: la cuenta fiscal se busca por la columna. Renombrarla ya no mueve el default.
+        const cuentaFiscal = cuentasEntidad.find((cuenta) => esCuentaFiscal(cuenta.tipo_fiscalidad))
+        cuentaFallback = cuentaFiscal ?? cuentaFallback ?? cuentasEntidad[0]
       } else {
         cuentaFallback = cuentaFallback ?? cuentasEntidad[0]
       }
@@ -304,11 +312,28 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       cuentaData = cuentaFallback
     }
 
-    const tipoFiscalidadCuenta = resolveTipoFiscalidadCuenta(cuentaData.nombre, cuentaData.tipo_fiscalidad)
+    const tipoFiscalidadCuenta = resolveTipoFiscalidadCuenta(cuentaData.tipo_fiscalidad)
+
     // True when the cash destination is the Admin's own account (e.g. "Cuenta Fresnillo").
     // In this scenario the DST never holds physical cash, so no ABONO_DEUDA should be
     // generated for them — only their commission leg is valid.
-    const cuentaEsDeAdmin = normalizeText(cuentaData.nombre).includes('fresnillo')
+    //
+    // ERP-21: esto es PROPIEDAD, no fiscalidad, y antes se preguntaba por el nombre — que las
+    // confundia a las dos. Se pregunta por el dueno de la cuenta: si es una entidad ADMIN, el
+    // efectivo nunca paso por las manos del DST.
+    let cuentaEsDeAdmin = false
+    if (cuentaData.id_entidad) {
+      if (cuentaData.id_entidad === vendedorId) {
+        cuentaEsDeAdmin = vendedor.rol === 'ADMIN'
+      } else {
+        const { data: duenoCuenta } = await supabase
+          .from('entidades')
+          .select('rol')
+          .eq('id', cuentaData.id_entidad)
+          .single()
+        cuentaEsDeAdmin = duenoCuenta?.rol === 'ADMIN'
+      }
+    }
     const desgloseFiscal = calculateReverseTaxes(payload.totalCobradoReal, tipoFiscalidadCuenta)
     const montoBaseIngreso = roundTo2(desgloseFiscal.montoBase)
     const impuestoIepsCalculado = roundTo2(desgloseFiscal.ieps)
@@ -354,9 +379,8 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       // La cuenta fiscal factura al LOCAL, no al distribuidor: cuando el local paga, se le paga
       // al DST por su servicio. Un ticket contra la cuenta fiscal con un DST de comprador es
       // error de captura, y el motor de impuesto inverso le separa IVA/IEPS que no existen.
-      // TODO ERP-21: detectar la cuenta fiscal por `tipo_fiscalidad`, no por el nombre.
       const errorCuentaFiscal = validarCompradorContraCuentaFiscal(
-        cuentaData.nombre,
+        cuentaData.tipo_fiscalidad,
         compradorInventario.rol
       )
       if (errorCuentaFiscal) {

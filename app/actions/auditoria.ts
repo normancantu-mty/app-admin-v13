@@ -10,6 +10,7 @@ import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import type { Database, TablesInsert } from '@/types/database'
 import { registrarAviso } from '@/lib/avisos-server'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
+import { esCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 
 interface ConteoFisicoPayload {
   idProducto: string
@@ -111,8 +112,9 @@ async function resolveCuentaDestinoAuditoria(
 
   let cuentaFallback = cuentasDisponibles.find((cuenta) => normalizeText(cuenta.nombre).startsWith('cta-'))
   if (entidadOperadora.rol === 'ADMIN') {
-    const cuentaFresnillo = cuentasDisponibles.find((cuenta) => normalizeText(cuenta.nombre).includes('fresnillo'))
-    cuentaFallback = cuentaFresnillo ?? cuentaFallback ?? cuentasDisponibles[0]
+    // ERP-21: la cuenta fiscal la dice la columna, no el nombre.
+    const cuentaFiscal = cuentasDisponibles.find((cuenta) => esCuentaFiscal(cuenta.tipo_fiscalidad))
+    cuentaFallback = cuentaFiscal ?? cuentaFallback ?? cuentasDisponibles[0]
   } else {
     cuentaFallback = cuentaFallback ?? cuentasDisponibles[0]
   }

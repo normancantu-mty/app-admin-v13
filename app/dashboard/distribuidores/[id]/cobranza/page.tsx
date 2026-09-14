@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { getStockEsperadoPorEntidad } from '@/lib/inventario-auditoria'
+import { esCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 import CobranzaClient from './CobranzaClient'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
 
@@ -87,8 +88,9 @@ export default async function CobranzaPage({ params }: { params: Promise<{ id: s
 
   let cuentaDefault = cuentas.find((cuenta) => normalizeText(cuenta.nombre).startsWith('cta-'))
   if (currentUser.rol === 'ADMIN') {
-    const cuentaFresnillo = cuentas.find((cuenta) => normalizeText(cuenta.nombre).includes('fresnillo'))
-    cuentaDefault = cuentaFresnillo ?? cuentaDefault ?? cuentas[0]
+    // ERP-21: la cuenta fiscal la dice la columna, no el nombre.
+    const cuentaFiscal = cuentas.find((cuenta) => esCuentaFiscal(cuenta.tipo_fiscalidad))
+    cuentaDefault = cuentaFiscal ?? cuentaDefault ?? cuentas[0]
   } else {
     cuentaDefault = cuentaDefault ?? cuentas[0]
   }
