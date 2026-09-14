@@ -209,12 +209,18 @@ COMMENT ON TRIGGER trg_avisos_de_fila_anulada_inventario ON public.inventario_le
 --                   apuntando a otra fila que se quedo ACTIVA siguio ABIERTO.
 --                   Sin este, la 2 no distingue "el trigger funciono" de "el
 --                   instrumento marca todo como IGNORADO".
---   LIMPIEZA        tras el rollback: 0 avisos de prueba, la fila tocada sigue
---                   en ACTIVO, 87 filas activas -igual que antes-.
---
--- Lo unico que sigue SIN comprobar contra la base: el camino de
--- `inventario_ledger`. Se leyo el codigo y es el mismo trigger sobre la misma
--- funcion, pero no se ejercito con una fila real.
+--   COMPROBACION 4  el mismo caso sobre `inventario_ledger`, con fila real:
+--                   00cadb8e-...34ba59 -> el aviso paso a IGNORADO y el de la
+--                   otra fila siguio ABIERTO. Los DOS caminos ejercitados.
+--   COMPROBACION 5  control de FALSO POSITIVO, tres UPDATE seguidos sobre la
+--                   misma fila con un aviso abierto encima:
+--                     (a) UPDATE que no toca `status`  -> sigue ABIERTO
+--                     (b) `status := 'ACTIVO'`         -> sigue ABIERTO
+--                     (c) `status := 'ANULADO'`        -> IGNORADO
+--                   El trigger DISCRIMINA. Sin esto, un trigger que cerrara
+--                   avisos en cualquier UPDATE daria el mismo PASA en la 2.
+--   LIMPIEZA        tras los rollback: 0 avisos de prueba, 87 filas activas en
+--                   finanzas y 426 en inventario -las mismas de antes-.
 --
 -- Si hay que replicarla de cero: se pega este archivo completo, de una
 -- sola corrida. **NO con `supabase db push`** (ERP-73: 10 migraciones ya vivas
