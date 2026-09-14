@@ -54,3 +54,28 @@ body {
 .dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
   border-color: rgb(55 65 81);
 }
+
+/* ==========================================================================
+   MODO PRIVADO — el "ojito" de la TopBar (lib/privacidad.ts)
+   ==========================================================================
+   El enmascarador de `EnmascararCifras.tsx` recorre NODOS DE TEXTO, y el
+   contenido de un <input> no es uno: vive en su propiedad `value`. Sin esta
+   regla, el POS ensenia el precio tecleado con el modo privado encendido.
+
+   `-webkit-text-security` solo cambia el PINTADO: el `value` sigue intacto,
+   asi que el formulario se puede seguir usando con las cifras tapadas.
+
+   Lo mismo con <progress> y las barras de ancho proporcional: el numero no se
+   lee, pero la GEOMETRIA lo delata. Se difuminan. */
+html[data-privado='1'] input[type='number'],
+html[data-privado='1'] input[inputmode='decimal'],
+html[data-privado='1'] input[inputmode='numeric'],
+html[data-privado='1'] input[data-cifra='1'] {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+html[data-privado='1'] [data-grafica],
+html[data-privado='1'] progress {
+  filter: blur(6px);
+}

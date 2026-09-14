@@ -28,7 +28,11 @@ export const RAIZ = path.resolve(__dirname, '..')
 export const ARCHIVO_SESION = path.join(RAIZ, 'tests', '.auth', 'admin.json')
 
 /** Los dos archivos que necesitan navegador, servidor y sesion. */
-export const ARCHIVOS_DE_HUMO = ['**/humo-dashboards.spec.ts', '**/finanzas.spec.ts']
+export const ARCHIVOS_DE_HUMO = [
+  '**/humo-dashboards.spec.ts',
+  '**/finanzas.spec.ts',
+  '**/humo-privacidad.spec.ts'
+]
 
 export const VARIABLES_DE_HUMO = ['E2E_ADMIN_EMAIL', 'E2E_ADMIN_PASSWORD'] as const
 

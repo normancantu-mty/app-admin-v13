@@ -1,6 +1,7 @@
 'use client'
 
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { PrivacidadToggle } from '@/components/ui/PrivacidadToggle'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
@@ -50,6 +51,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        <PrivacidadToggle />
         <ThemeToggle />
         <select
           value={rango}

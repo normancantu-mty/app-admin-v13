@@ -40,6 +40,7 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
+from telegram.error import NetworkError, TimedOut  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extraer import CATEGORIAS, extraer  # noqa: E402
@@ -59,12 +60,46 @@ API = os.environ.get("ERP_API_URL", "http://localhost:3000").rstrip("/")
 TOKEN_API = os.environ.get("BOT_API_TOKEN", "")
 TOKEN_TG = os.environ.get("BOT_GASTOS_TELEGRAM_TOKEN", "")
 
+class _TapaSecretos(logging.Filter):
+    """Tapa el token de Telegram en CUALQUIER linea que pase por el log.
+
+    No es hipotetico: el 2026-09-14 se conto el token **2,540 veces en claro**
+    dentro de `bot_gastos.log` -- una por cada `getUpdates`, que `httpx` loguea
+    con la URL completa, y la URL de Telegram LLEVA el token dentro. El archivo
+    esta en `.gitignore`, asi que no se filtro a git; pero cualquiera a quien se
+    le pase ese log para depurar se lleva el bot entero.
+
+    Va como filtro y no solo callando a `httpx` porque el que calla a `httpx`
+    depende de que nadie suba el nivel de vuelta. Esto tapa aunque eso pase.
+    """
+
+    def filter(self, record):
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        if TOKEN_TG and TOKEN_TG in msg:
+            record.msg = msg.replace(TOKEN_TG, "<TOKEN>")
+            record.args = ()
+        return True
+
+
+_manejadores = [logging.FileHandler(RAIZ / "bot_gastos.log", encoding="utf-8"),
+                logging.StreamHandler()]
+for _m in _manejadores:
+    _m.addFilter(_TapaSecretos())
+
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
     level=logging.INFO,
-    handlers=[logging.FileHandler(RAIZ / "bot_gastos.log", encoding="utf-8"),
-              logging.StreamHandler()],
+    handlers=_manejadores,
 )
+# `httpx` en INFO escribia una linea por sondeo: **el 81% del log era ruido**
+# (2,540 de 3,136 lineas), y ese ruido es justo el que llevaba el token. En
+# WARNING se siguen viendo los fallos de red, que es lo unico que ahi servia.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 log = logging.getLogger("bot_gastos")
 
 
@@ -101,11 +136,29 @@ def _teclado_confirmar(borrador_id):
     ])
 
 
-def _teclado_categorias(borrador_id, categorias=None):
-    filas = [[InlineKeyboardButton(nombre, callback_data="setcat:" + borrador_id + ":" + nombre)]
-             for nombre in (categorias or CATEGORIAS)]
+def _teclado_categorias(categorias):
+    """Las categorias van POR INDICE, por la misma razon que cuentas y deudores.
+
+    Lo que habia antes era "setcat:<uuid de borrador>:<nombre>": 44 bytes fijos
+    mas el nombre, contra el tope de 64 de `callback_data`. Una categoria de mas
+    de 20 caracteres tumbaba el teclado entero con Button_data_invalid -- y el
+    usuario no veia un error, veia que el bot no contestaba. Paso de verdad el
+    2026-09-12 11:22:15 (`bot_gastos.log`, desde la linea 312).
+
+    El uuid tampoco hacia falta: el borrador vivo es el de `_memoria[chat]`, que
+    es la unica autoridad que `_reproponer` consulta. Mandarlo por el boton solo
+    gastaba bytes.
+
+    El indice apunta a la lista que ESTE teclado ofrecio, que queda guardada en
+    `_memoria[chat]["categorias_ofrecidas"]`: asi el boton no puede nombrar una
+    categoria que el servidor no acabe de declarar viva.
+    """
+    filas = [[InlineKeyboardButton(nombre, callback_data="setcat:" + str(i))]
+             for i, nombre in enumerate(categorias)]
+    # -1 es "ninguna". Va como indice y no como palabra para que el handler
+    # tenga UN solo formato que interpretar.
     filas.append([InlineKeyboardButton("Ninguna (dejar sin categorizar)",
-                                       callback_data="setcat:" + borrador_id + ":SIN_CATEGORIZAR")])
+                                       callback_data="setcat:-1")])
     return InlineKeyboardMarkup(filas)
 
 
@@ -440,7 +493,15 @@ async def manejar_voz(update, context):
 
     await update.message.chat.send_action("typing")
     from transcribir_nota import transcribir
-    ok, texto = await asyncio.to_thread(transcribir, str(destino))
+    # El vocabulario VIVO: lo que el servidor ya declaro en esta sesion. Sin
+    # esto Whisper llega a un nombre propio de la cartera sin haberlo oido
+    # nunca. La lista se arma aqui y no en el transcriptor porque la autoridad
+    # sobre que existe es del servidor, no del proceso del bot.
+    dato = _memoria.get(chat) or {}
+    vocab = list(_catalogo)
+    vocab += [d.get("nombre") for d in (_deudores or []) if isinstance(d, dict)]
+    vocab += [c.get("nombre") for c in (dato.get("cuentas") or []) if isinstance(c, dict)]
+    ok, texto = await asyncio.to_thread(transcribir, str(destino), [v for v in vocab if v])
     if not ok:
         await update.message.reply_text(str(texto))
         return
@@ -589,14 +650,32 @@ async def manejar_boton(update, context):
         _memoria.pop(chat, None)
         await q.message.reply_text("Cancelado. No escribi nada.")
     elif accion == "cat":
-        vivas = (_memoria.get(chat) or {}).get("categorias") or list(_catalogo)
-        await q.message.reply_text(
-            "Cual es?", reply_markup=_teclado_categorias(partes[1], vivas))
+        dato = _memoria.get(chat)
+        if not dato:
+            await q.message.reply_text("Ya no tengo ese borrador. Dictamelo otra vez.")
+            return
+        vivas = dato.get("categorias") or list(_catalogo)
+        # Se guarda la lista EXACTA que se ofrecio: el indice del boton solo
+        # significa algo contra ella, no contra lo que el catalogo diga despues.
+        dato["categorias_ofrecidas"] = list(vivas)
+        await q.message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
     elif accion == "setcat":
-        nueva = partes[2] if len(partes) > 2 else None
-        await _reproponer(
-            update, chat,
-            {"propuesta": {"categoria": None if nueva == "SIN_CATEGORIZAR" else nueva}})
+        dato = _memoria.get(chat) or {}
+        ofrecidas = dato.get("categorias_ofrecidas") or dato.get("categorias") or []
+        try:
+            i = int(partes[1])
+        except (ValueError, IndexError, TypeError):
+            await q.message.reply_text("No entendi ese boton. Dictamelo otra vez.")
+            return
+        if i == -1:
+            nueva = None
+        else:
+            try:
+                nueva = ofrecidas[i]
+            except IndexError:
+                await q.message.reply_text("Esa categoria ya no esta en la lista. Dictamelo otra vez.")
+                return
+        await _reproponer(update, chat, {"propuesta": {"categoria": nueva}})
     elif accion == "monto":
         _esperando_monto[chat] = True
         await q.message.reply_text("De cuanto fue? Solo el numero.")
@@ -732,6 +811,34 @@ def _candado():
     return s
 
 
+async def manejar_error(update, context):
+    """Sin esto, python-telegram-bot escribe *"No error handlers are
+    registered"* y vuelca un traceback de 30 lineas por cada hipo de la red.
+
+    El 2026-09-12 hubo 9 de esos, todos por `Bad Gateway` o `ReadError` de
+    api.telegram.org -- transitorios, que la libreria ya reintenta sola. El
+    traceback no aportaba nada y enterraba lo que si importaba.
+
+    **Y la mitad que de verdad cuenta:** si el error salta a medio encargo, el
+    usuario se queda mirando una pantalla que no contesta. Aqui al menos se le
+    dice, que es lo unico peor que fallar: fallar en silencio.
+    """
+    err = context.error
+    transitorio = isinstance(err, (NetworkError, TimedOut))
+    if transitorio:
+        log.warning("red inestable con Telegram (%s). La libreria reintenta.",
+                    type(err).__name__)
+        return
+    log.error("error no atendido: %s", err, exc_info=err)
+    try:
+        if isinstance(update, Update) and update.effective_message:
+            await update.effective_message.reply_text(
+                "Algo se me rompio aqui adentro y NO escribi nada. "
+                "Vuelve a dictarmelo, porfa.")
+    except Exception:
+        pass
+
+
 def main():
     if not TOKEN_TG:
         print("Falta BOT_GASTOS_TELEGRAM_TOKEN. Ver bot/LEEME.md")
@@ -752,6 +859,7 @@ def main():
     app.add_handler(CallbackQueryHandler(manejar_boton))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))
+    app.add_error_handler(manejar_error)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

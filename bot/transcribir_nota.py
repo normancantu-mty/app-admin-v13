@@ -27,6 +27,7 @@ eso el modelo se carga una sola vez y se queda cargado.
 
 import logging
 import os
+import unicodedata
 from pathlib import Path
 
 log = logging.getLogger("transcribir_nota")
@@ -101,15 +102,93 @@ def _cargar():
     return _MODELO
 
 
-def transcribir(ruta):
-    """Devuelve (ok, texto_o_error). Nunca lanza."""
+# Lo que Whisper NO puede adivinar solo. `initial_prompt` sesga el decodificador
+# hacia este vocabulario sin obligarlo a usarlo.
+#
+# LO QUE MIDIO, contra las 6 notas de voz reales que Norman ya habia mandado
+# (2026-09-14), y las dos mitades no dieron lo mismo:
+#
+#   - **Solo con este vocabulario base**: cambio 4 de 6 y SOLO en puntuacion y
+#     mayusculas. Cero palabras corregidas.
+#   - **Con el vocabulario VIVO** que el bot pasa desde `_memoria` (categorias,
+#     deudores, cuentas): corrigio un nombre propio de verdad --
+#     *"las deudas del IR-85"* paso a *"las deudas de Delirio 85"*. Delirio es
+#     un distribuidor real y Whisper no tenia forma de saberlo.
+#
+# Es decir: la ganancia no esta en la lista fija de aqui, esta en que la lista
+# la mande el SERVIDOR. La de aqui es el piso para cuando no hay sesion viva.
+_VOCABULARIO_BASE = (
+    "Contabilidad de The Fresnillo Distillery, destileria de chile. "
+    "Nombres: Norman, Kevin, Fany, Gilberto, Charly, Fresnillo, Zacatecas. "
+    "Terminos: distribuidor, abono, cartera, marbete, agave, mosto, destilado, "
+    "botella, caja, insumo, flete, caseta, viaticos, IVA, IEPS, traspaso."
+)
+
+# Umbral de la puerta de confianza. Calibrado contra esas mismas 6 notas: la
+# peor dio avg_logprob = -0.363, asi que -1.0 deja pasar TODAS las reales y solo
+# muerde cuando Whisper esta adivinando. Un umbral que nunca se dispara no mide
+# nada; uno que muerde una nota buena es peor que no tenerlo.
+_LOGPROB_MINIMO = -1.0
+
+
+def _es_alucinacion(texto):
+    """Las frases fantasma que Whisper escupe sobre silencio o ruido.
+
+    No es paranoia: son de su corpus de entrenamiento (subtitulos de YouTube) y
+    salen con confianza alta, que es justo lo que la puerta de logprob NO caza.
+    """
+    t = texto.lower().strip(" .,!")
+    fantasmas = (
+        "subtitulos realizados por la comunidad de amara.org",
+        "subtitulos realizados por",
+        "gracias por ver el video",
+        "gracias por ver el v",
+        "mas informacion en www",
+        "subtitulado por",
+        "amara.org",
+    )
+    plano = "".join(c for c in unicodedata.normalize("NFD", t)
+                    if unicodedata.category(c) != "Mn")
+    return any(f in plano for f in fantasmas)
+
+
+def transcribir(ruta, vocabulario=None):
+    """Devuelve (ok, texto_o_error). Nunca lanza.
+
+    `vocabulario` son las palabras vivas que el servidor ya declaro en esta
+    sesion -- categorias reales, nombres de deudores, nombres de cuentas. Van
+    al `initial_prompt` junto con el vocabulario base. **Se actualizan solas**:
+    la autoridad es la base, igual que en `_refrescar_catalogo`.
+    """
     global _MODELO, _DISPOSITIVO
     audio = Path(ruta)
     if not audio.exists():
         return False, "no encuentro el audio"
+
+    prompt = _VOCABULARIO_BASE
+    extra = [str(v).replace("_", " ") for v in (vocabulario or []) if str(v).strip()]
+    if extra:
+        # Se recorta: `initial_prompt` compite por la ventana del decodificador
+        # y una lista larga empeora, no mejora.
+        prompt = prompt + " Tambien: " + ", ".join(sorted(set(extra))[:40]) + "."
+
+    opciones = dict(
+        language="es",
+        vad_filter=True,
+        initial_prompt=prompt,
+        # Sin esto, el texto de un segmento condiciona al siguiente y Whisper
+        # entra en bucle repitiendo la misma frase hasta el final del audio.
+        # Es el modo de fallo clasico en notas con pausas largas.
+        condition_on_previous_text=False,
+        no_speech_threshold=0.6,
+        log_prob_threshold=-1.0,
+        hallucination_silence_threshold=2.0,
+    )
+
     try:
         modelo = _cargar()
-        segmentos, _info = modelo.transcribe(str(audio), language="es", vad_filter=True)
+        segmentos, _info = modelo.transcribe(str(audio), **opciones)
+        segmentos = list(segmentos)
         texto = " ".join(s.text.strip() for s in segmentos).strip()
     except Exception as e:
         # Segunda red: si la GPU se cae A MITAD de una nota (la otra transcripcion
@@ -120,12 +199,26 @@ def transcribir(ruta):
             try:
                 _MODELO = _construir("cpu", "int8")
                 _DISPOSITIVO = "cpu"
-                segmentos, _info = _MODELO.transcribe(str(audio), language="es", vad_filter=True)
+                segmentos, _info = _MODELO.transcribe(str(audio), **opciones)
+                segmentos = list(segmentos)
                 texto = " ".join(s.text.strip() for s in segmentos).strip()
             except Exception as e2:
                 return False, "no pude transcribir: " + str(e2)
         else:
             return False, "no pude transcribir: " + str(e)
+
     if not texto:
         return False, "no le entendi nada al audio"
+
+    # --- Las dos puertas. Un gasto mal transcrito entra como dato bueno.
+    if _es_alucinacion(texto):
+        log.warning("descarto alucinacion de Whisper: %r", texto)
+        return False, "no le entendi nada al audio (solo ruido). Repitelo, porfa."
+
+    peor = min([s.avg_logprob for s in segmentos], default=0.0)
+    if peor < _LOGPROB_MINIMO:
+        log.warning("transcripcion de baja confianza (%.3f): %r", peor, texto)
+        return False, ('No estoy seguro de haber entendido. Crei oir: "' + texto +
+                       '". Repitelo o escribelo, mejor que adivinar el monto.')
+
     return True, texto

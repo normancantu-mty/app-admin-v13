@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
+import { EnmascararCifras } from "@/components/ui/EnmascararCifras";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,6 +29,10 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100`}
       >
+        {/* El modo privado (el ojito de la TopBar). Va en el layout RAIZ
+            y no en el del dashboard porque /pos y /ticket quedan fuera de
+            ese layout, y son pantallas que se ensenian en una demo. */}
+        <EnmascararCifras />
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

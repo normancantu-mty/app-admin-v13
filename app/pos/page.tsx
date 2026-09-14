@@ -12,6 +12,7 @@ import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { calculateWaterfall } from '@/lib/pricing-waterfall'
 import { procesarVentaPOS } from '@/app/actions/pos'
 import type { Tables } from '@/types/database'
+import { PrivacidadToggle } from '@/components/ui/PrivacidadToggle'
 
 type Entidad = Tables<'entidades'>
 
@@ -539,9 +540,15 @@ export default function POSPage() {
         >
           ← Volver
         </button>
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-800">Punto de Venta (POS)</h1>
-          <p className="text-gray-600 mt-2">Sistema de generación de tickets con carrito de compras</p>
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800">Punto de Venta (POS)</h1>
+            <p className="text-gray-600 mt-2">Sistema de generación de tickets con carrito de compras</p>
+          </div>
+          {/* El POS no vive bajo el layout del dashboard, asi que no tiene
+              TopBar. El ojito se repite aqui porque es LA pantalla que se
+              ensenia en una demo. El estado es el mismo: vive en el <html>. */}
+          <PrivacidadToggle />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
