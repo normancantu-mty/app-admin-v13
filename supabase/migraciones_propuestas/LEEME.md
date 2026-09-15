@@ -27,3 +27,13 @@ apretar un candado sobre datos que ya existen es el, no el agente.
    EXACTAMENTE el nombre con que quedo sellado -version UTC del sello, no la
    del nombre de aqui-, y se corre `npm run verificar` para que la prueba de
    sincronia lo confirme.
+
+## Bitacora de promociones — la prueba de que el procedimiento de arriba funciona
+
+| Propuesta | Aplicada | Quedo sellada como | Comprobado |
+|---|---|---|---|
+| `erp16_entidad_obligatoria_en_inventario.sql` | 2026-09-14, con el "va" de Norman en el chat | `20260915000928_erp16_entidad_obligatoria_en_inventario` | md5 del archivo = md5 de `statements` en la base (`4521e3cf...`). Control positivo: INSERT sin destino rechazado con **23514**. Control negativo: el mismo INSERT **con** destino si entra. Los dos dentro de un bloque que termina en `raise exception`, asi que no quedo ni una fila de prueba (`usuario_creador='prueba-erp16'` -> 0 filas). |
+
+**Ojo con el desfase de fecha, y no es un error:** la propuesta se escribio el **14** y quedo
+sellada con version del **15**. `apply_migration` sella con SU hora UTC, que a esa hora de Mexico
+ya es el dia siguiente. Por eso el archivo se nombra DESPUES de aplicar y nunca antes.
