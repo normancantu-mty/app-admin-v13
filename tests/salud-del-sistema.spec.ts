@@ -11,6 +11,7 @@ import {
   motivoDeSalto,
   urlSupabase
 } from './vistas-entorno'
+import { recetaDeRecuperacion } from './receta-migracion'
 
 /**
  * ════════════════════════════════════════════════════════════════════════════
@@ -94,12 +95,14 @@ test.describe('ERP-73 · sincronia de migraciones', () => {
     const soloEnLaBase = enLaBase.filter((m) => !enElRepo.includes(m))
     const soloEnElRepo = enElRepo.filter((m) => !enLaBase.includes(m))
 
+    const receta = recetaDeRecuperacion(soloEnLaBase)
+
     expect(
       soloEnLaBase,
       'APLICADAS EN PRODUCCION Y SIN ARCHIVO. Su SQL solo existe dentro de la base: si la ' +
-        'base se pierde, se pierde con ella. Se recupera con un SELECT de statements sobre ' +
-        'supabase_migrations.schema_migrations, y se escribe como archivo con EXACTAMENTE ' +
-        'ese nombre.'
+        'base se pierde, se pierde con ella. Casi nunca la aplico quien esta empujando: ' +
+        '`apply_migration` sella la base y NO escribe el archivo del repo (ERP-83).' +
+        receta
     ).toEqual([])
 
     expect(
