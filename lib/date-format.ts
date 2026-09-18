@@ -71,9 +71,18 @@ function offsetMinutosMX(instante: Date): number {
   return (comoUTC - instante.getTime()) / 60000
 }
 
-/** 'YYYY-MM-DD' del día de hoy **en México**, no en UTC. */
-export function hoyEnMX(): string {
-  const p = partesEnMX(new Date())
+/**
+ * 'YYYY-MM-DD' del día de hoy **en México**, no en UTC.
+ *
+ * `ahora` entra por parámetro (ERP-23), y no es una comodidad: mientras la hora
+ * la leía la propia función, **el defecto no se podía escribir como prueba** —
+ * había que correr la suite después de las 18:00 de Zacatecas para verlo, y eso
+ * no es una prueba, es una casualidad. Con el instante inyectado, las dos
+ * orillas del corte se comprueban en milisegundos y a cualquier hora. El
+ * default deja intactas a todas las llamadas que ya existen.
+ */
+export function hoyEnMX(ahora: Date = new Date()): string {
+  const p = partesEnMX(ahora)
   return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`
 }
 
@@ -132,9 +141,9 @@ export function limitesRangoMX(fechaInicio?: string, fechaFin?: string): Limites
  * Traduce el selector global de la TopBar a días locales de México.
  * Devuelve 'YYYY-MM-DD' (no instantes): quien consulta usa `limitesRangoMX`.
  */
-export function calcularFechasPorRango(rango: string): RangoFechas {
-  const hoy = hoyEnMX()
-  const p = partesEnMX(new Date())
+export function calcularFechasPorRango(rango: string, ahora: Date = new Date()): RangoFechas {
+  const hoy = hoyEnMX(ahora)
+  const p = partesEnMX(ahora)
   const primerDiaDelMes = `${p.year}-${String(p.month).padStart(2, '0')}-01`
 
   switch (rango) {

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { formatCurrency } from '@/lib/utils'
+import { hoyEnMX } from '@/lib/date-format'
 import { METODOS_PAGO } from '@/lib/abonos'
 import {
   getPropuestaAbonoAction,
@@ -24,11 +25,20 @@ interface CuentaOption {
   ownerNombre: string | null
 }
 
-/** Hoy en hora local del navegador (Zacatecas), no en UTC. */
+/**
+ * Hoy **en hora de Mexico**, que no es lo mismo que "en hora del navegador".
+ *
+ * ERP-23: esto leia `getTimezoneOffset()`, o sea el reloj de la maquina de
+ * quien abre la pantalla. Acierta en una laptop puesta en Zacatecas y falla en
+ * cualquier otra — y falla de la peor forma, porque **el servidor nunca
+ * compartio ese criterio**: `hoyEnMexico()` en `app/actions/abonos.ts` siempre
+ * midio en hora de Mexico. Con los dos relojes en desacuerdo, el formulario
+ * proponia por default una fecha que el servidor recibia como futura y
+ * levantaba un aviso W10/W11 sobre un pago que no tenia nada de malo. Ahora los
+ * dos lados dicen `hoyEnMX`.
+ */
 function hoyLocalISO(): string {
-  const ahora = new Date()
-  const local = new Date(ahora.getTime() - ahora.getTimezoneOffset() * 60000)
-  return local.toISOString().slice(0, 10)
+  return hoyEnMX()
 }
 
 function formatFechaTicket(fecha: string | null): string {
