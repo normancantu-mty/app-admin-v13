@@ -13,30 +13,68 @@ export interface CurrentUser {
 }
 
 /**
+ * El cliente de SOLO LECTURA por peticion. No escribe cookies a proposito: un
+ * Server Component no puede hacerlo —Next lanza al intentarlo— y no le hace
+ * falta, porque el refresco del token lo hace `proxy.ts`, que si puede.
+ */
+async function crearClienteDeLectura() {
+  const cookieStore = await cookies()
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value
+        },
+        set() {
+          // No-op en SSR
+        },
+        remove() {
+          // No-op en SSR
+        }
+      }
+    }
+  )
+}
+
+/**
+ * ¿Hay sesion valida? Devuelve el usuario de `auth`, o `null`.
+ *
+ * ERP-07: existe para que `app/dashboard/layout.tsx` distinga los dos "no" que
+ * `getCurrentUser` junta en un solo `null` — **no hay sesion** (rebota a
+ * `/login`) y **hay sesion pero el usuario no tiene fila en `entidades`** (NO
+ * rebota: seria el bucle login → dashboard → login, y esa cuenta ya entraba
+ * antes al tablero, con el menu vacio).
+ *
+ * `getUser()` y no `getSession()`: el primero valida el token contra el
+ * servidor de auth, el segundo le cree a la cookie.
+ */
+export async function getAuthUser(): Promise<{ id: string; email: string } | null> {
+  try {
+    const supabase = await crearClienteDeLectura()
+    const {
+      data: { user },
+      error
+    } = await supabase.auth.getUser()
+
+    if (error || !user?.email) return null
+    return { id: user.id, email: user.email }
+  } catch (e) {
+    // Falla cerrada: si no se pudo comprobar, no hay sesion.
+    console.error('Error in getAuthUser:', e)
+    return null
+  }
+}
+
+/**
  * Get current logged-in user from server-side
  * Use this in Server Components to fetch user role and apply permissions
  */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   try {
-    const cookieStore = await cookies()
-
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value
-          },
-          set() {
-            // No-op en SSR
-          },
-          remove() {
-            // No-op en SSR
-          }
-        }
-      }
-    )
+    const supabase = await crearClienteDeLectura()
 
     const {
       data: { user },

@@ -1,241 +1,191 @@
-'use client'
+/**
+ * LA PUERTA DE `/dashboard`, EN EL SERVIDOR — ERP-07.
+ *
+ * Antes este archivo era `'use client'` y decidia el permiso dentro de un
+ * `useEffect`: `supabase.auth.getSession()` en el navegador, la entidad
+ * resuelta **por correo**, y un `router.replace` si no cuadraba. Eso no es una
+ * puerta. Cuando el `useEffect` corre, el HTML del Server Component y sus datos
+ * ya viajaron: el `replace` cambia lo que se VE, no lo que se ENTREGO.
+ *
+ * Ahora la sesion se resuelve ANTES de renderizar, en dos capas:
+ *
+ *  1. `proxy.ts` — rebota a `/login` con el cuerpo vacio. Es la puerta.
+ *  2. este layout — vuelve a preguntar (defensa en profundidad: si un dia el
+ *     `matcher` deja de casar, la puerta sigue cerrada) y ademas resuelve rol y
+ *     entidad **por `entidades.auth_id`**, no por correo.
+ *
+ * Lo de abajo, `<DashboardShell/>`, es `'use client'` y solo dibuja. Ahi ya no
+ * se decide ningun permiso: el rol le llega resuelto como prop.
+ *
+ * POR QUE EL MENU SIGUE DECLARADO AQUI. `tests/menu-lateral.spec.ts` lee las 24
+ * etiquetas de ESTE archivo a proposito — una prueba que se escribe sus propios
+ * datos de entrada se califica con su propio examen. Moverlas al componente
+ * habria dejado esa prueba midiendo cero etiquetas, y en verde.
+ */
 
-import { usePathname, useRouter } from 'next/navigation'
-import { ReactNode, useEffect, useState } from 'react'
-import ProtectedRoute from '@/components/ProtectedRoute'
-import { supabase } from '@/lib/supabase'
-import { DateFilterProvider } from '@/components/providers/DateFilterProvider'
-import { DashboardSidebar } from '@/components/ui/DashboardSidebar'
-import { TopBar } from '@/components/ui/TopBar'
+import { redirect } from 'next/navigation'
+import { headers } from 'next/headers'
+import { ReactNode } from 'react'
+import { getAuthUser, getCurrentUser } from '@/lib/auth-utils'
+import { CABECERA_RUTA, destinoPorRol, RUTA_LOGIN } from '@/lib/puerta-dashboard'
+import type { DashboardNavItem } from '@/components/ui/DashboardSidebar'
+import DashboardShell from '@/components/DashboardShell'
 
-export default function DashboardLayout({
-  children,
+/**
+ * La puerta lee cookies: esta pantalla no se puede prerenderizar estatica. Sin
+ * esto, Next podria servir un HTML cacheado que nadie vuelve a comprobar.
+ */
+export const dynamic = 'force-dynamic'
+
+/** El menu de cada rol. El contador de avisos lo pega el cliente (ERP-59). */
+function itemsDeMenu(rol: string | null, entidadId: string | null): DashboardNavItem[] {
+  if (rol === 'ADMIN') {
+    return [
+      {
+        href: '/dashboard/general',
+        label: '👁️ Dashboard General'
+      },
+      {
+        href: '/dashboard/finanzas',
+        label: 'Finanzas'
+      },
+      {
+        href: '/dashboard/inventario',
+        label: 'Inventario'
+      },
+      {
+        href: '/dashboard/catalogo',
+        label: '🏷️ Catálogo / Precios'
+      },
+      {
+        href: '/dashboard/distribuidores',
+        label: 'Distribuidores'
+      },
+      {
+        href: '/dashboard/cartera',
+        label: '📋 Cartera'
+      },
+      {
+        href: '/dashboard/conteo',
+        label: '🔢 Conteo fisico'
+      },
+      {
+        href: '/dashboard/ventas',
+        label: '📈 Ventas por mes'
+      },
+      {
+        href: '/dashboard/avisos',
+        label: '⚠️ Cola de captura'
+      }
+    ]
+  }
+
+  if (rol === 'SOCIO') {
+    return [
+      {
+        href: '/dashboard/general',
+        label: '👁️ Dashboard General'
+      },
+      {
+        href: '/dashboard/finanzas',
+        label: '💰 Finanzas'
+      },
+      {
+        href: '/dashboard/inventario',
+        label: '📦 Inventario'
+      },
+      {
+        href: '/dashboard/catalogo',
+        label: '🏷️ Catálogo / Precios'
+      },
+      {
+        href: '/dashboard/distribuidores',
+        label: '👥 Distribuidores'
+      },
+      {
+        href: '/dashboard/cartera',
+        label: '📋 Cartera'
+      },
+      {
+        href: '/dashboard/avisos',
+        label: '⚠️ Cola de captura'
+      }
+    ]
+  }
+
+  if (!entidadId) return []
+
+  if (rol === 'DST') {
+    return [
+      {
+        href: '/dashboard/distribuidores',
+        label: 'Directorio de Red / Mis Locales'
+      },
+      {
+        href: `/dashboard/distribuidores/${entidadId}`,
+        label: 'Mi Estado de Cuenta'
+      },
+      {
+        href: '/dashboard/catalogo',
+        label: '🏷️ Catálogo / Precios'
+      },
+      {
+        href: '/dashboard/conteo',
+        label: '🔢 Conteo fisico'
+      },
+      {
+        href: '/dashboard/ventas',
+        label: '📈 Ventas por mes'
+      },
+      {
+        href: '/dashboard/avisos',
+        label: '⚠️ Cola de captura'
+      }
+    ]
+  }
+
+  return [
+    {
+      href: `/dashboard/distribuidores/${entidadId}`,
+      label: 'Mi Estado de Cuenta'
+    },
+    {
+      href: '/dashboard/catalogo',
+      label: '🏷️ Catálogo / Precios'
+    }
+  ]
+}
+
+export default async function DashboardLayout({
+  children
 }: {
   children: ReactNode
 }) {
-  const pathname = usePathname()
-  const router = useRouter()
-  const [userRole, setUserRole] = useState<string | null>(null)
-  const [entidadId, setEntidadId] = useState<string | null>(null)
-  const [isLoadingRole, setIsLoadingRole] = useState(true)
-  const [isCollapsed, setIsCollapsed] = useState(false)
-  const [isMobileOpen, setIsMobileOpen] = useState(false)
-  // ERP-59. El contador de la cola de captura. Se cuenta desde el cliente
-  // porque este layout ya es un Client Component y el RLS hace el acotado
-  // solo: un DST cuenta los suyos, un ADMIN los de todos. Si falla, se queda
-  // en 0 y el menu se ve sin contador -- nunca revienta la navegacion.
-  const [avisosAbiertos, setAvisosAbiertos] = useState(0)
+  // 1. ¿Hay sesion? Si no, no se pinta nada.
+  const usuarioAuth = await getAuthUser()
+  if (!usuarioAuth) redirect(RUTA_LOGIN)
 
-  useEffect(() => {
-    const fetchUserRole = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session && session.user.email) {
-          const { data: entidad } = await supabase
-            .from('entidades')
-            .select('id, rol')
-            .eq('email', session.user.email)
-            .single()
-          
-          if (entidad) {
-            setUserRole(entidad.rol)
-            setEntidadId(entidad.id)
-            
-            if (entidad.rol !== 'ADMIN' && entidad.rol !== 'SOCIO') {
-              const protectedPaths = ['/dashboard/finanzas', '/dashboard/inventario', '/dashboard/general']
-              const isProtectedPath = protectedPaths.some(path => pathname.includes(path))
-              
-              if (isProtectedPath) {
-                const dest =
-                  entidad.rol === 'DST'
-                    ? '/dashboard/distribuidores'
-                    : `/dashboard/distribuidores/${entidad.id}`
-                router.replace(dest)
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching user role:', error)
-      } finally {
-        setIsLoadingRole(false)
-      }
-    }
-    
-    fetchUserRole()
-  }, [pathname, router])
+  // 2. Rol y entidad, por `auth_id`. Puede venir `null` si la cuenta existe en
+  //    `auth` pero no tiene fila en `entidades`: ese caso NO rebota -seria el
+  //    bucle login → dashboard → login- y entra con el menu vacio, igual que
+  //    antes.
+  const usuario = await getCurrentUser()
+  const rol = usuario?.rol ?? null
+  const entidadId = usuario?.id ?? null
 
-  useEffect(() => {
-    const contarAvisos = async () => {
-      const { count, error } = await supabase
-        .from('avisos_captura')
-        .select('id', { count: 'exact', head: true })
-        .eq('estado', 'ABIERTO')
-
-      // `console.error` y no `alert`: es una lectura de fondo al montar. Un
-      // alert aqui congela la UI (LECCIONES_DE_GUERRA).
-      if (error) {
-        console.error('[avisos] No se pudo contar la cola:', error.message)
-        return
-      }
-      setAvisosAbiertos(count ?? 0)
-    }
-
-    contarAvisos()
-  }, [pathname])
-
-  useEffect(() => {
-    setIsMobileOpen(false)
-  }, [pathname])
-
-  const getNavItems = () => {
-    if (userRole === 'ADMIN') {
-      return [
-        {
-          href: '/dashboard/general',
-          label: '👁️ Dashboard General'
-        },
-        {
-          href: '/dashboard/finanzas',
-          label: 'Finanzas'
-        },
-        {
-          href: '/dashboard/inventario',
-          label: 'Inventario'
-        },
-        {
-          href: '/dashboard/catalogo',
-          label: '🏷️ Catálogo / Precios'
-        },
-        {
-          href: '/dashboard/distribuidores',
-          label: 'Distribuidores'
-        },
-        {
-          href: '/dashboard/cartera',
-          label: '📋 Cartera'
-        },
-        {
-          href: '/dashboard/conteo',
-          label: '🔢 Conteo fisico'
-        },
-        {
-          href: '/dashboard/ventas',
-          label: '📈 Ventas por mes'
-        },
-        {
-          href: '/dashboard/avisos',
-          label: '⚠️ Cola de captura',
-          badge: avisosAbiertos
-        }
-      ]
-    } else if (userRole === 'SOCIO') {
-      return [
-        {
-          href: '/dashboard/general',
-          label: '👁️ Dashboard General'
-        },
-        {
-          href: '/dashboard/finanzas',
-          label: '💰 Finanzas'
-        },
-        {
-          href: '/dashboard/inventario',
-          label: '📦 Inventario'
-        },
-        {
-          href: '/dashboard/catalogo',
-          label: '🏷️ Catálogo / Precios'
-        },
-        {
-          href: '/dashboard/distribuidores',
-          label: '👥 Distribuidores'
-        },
-        {
-          href: '/dashboard/cartera',
-          label: '📋 Cartera'
-        },
-        {
-          href: '/dashboard/avisos',
-          label: '⚠️ Cola de captura',
-          badge: avisosAbiertos
-        }
-      ]
-    } else if (entidadId) {
-      if (userRole === 'DST') {
-        return [
-          {
-            href: '/dashboard/distribuidores',
-            label: 'Directorio de Red / Mis Locales'
-          },
-          {
-            href: `/dashboard/distribuidores/${entidadId}`,
-            label: 'Mi Estado de Cuenta'
-          },
-          {
-            href: '/dashboard/catalogo',
-            label: '🏷️ Catálogo / Precios'
-          },
-          {
-            href: '/dashboard/conteo',
-            label: '🔢 Conteo fisico'
-          },
-          {
-            href: '/dashboard/ventas',
-            label: '📈 Ventas por mes'
-          },
-          {
-            href: '/dashboard/avisos',
-            label: '⚠️ Cola de captura',
-            badge: avisosAbiertos
-          }
-        ]
-      }
-      return [
-        {
-          href: `/dashboard/distribuidores/${entidadId}`,
-          label: 'Mi Estado de Cuenta'
-        },
-        {
-          href: '/dashboard/catalogo',
-          label: '🏷️ Catálogo / Precios'
-        }
-      ]
-    }
-    return []
+  // 3. Reubicacion por rol, tambien en el servidor. La ruta la pone la
+  //    puerta (`proxy.ts`) en una cabecera de peticion; un layout no la recibe como
+  //    prop. Si la cabecera faltara, aqui no se reubica y queda el respaldo de
+  //    experiencia que hace el cliente.
+  const pathname = (await headers()).get(CABECERA_RUTA)
+  if (pathname) {
+    const destino = destinoPorRol({ rol, entidadId, pathname })
+    if (destino) redirect(destino)
   }
 
-  const navItems = getNavItems()
-
   return (
-    <ProtectedRoute>
-      <div className="flex h-screen bg-gray-100 dark:bg-gray-950">
-        {isMobileOpen ? (
-          <button
-            type="button"
-            className="fixed inset-0 z-30 bg-black/50 md:hidden"
-            aria-label="Cerrar menú de navegación"
-            onClick={() => setIsMobileOpen(false)}
-          />
-        ) : null}
-
-        <DashboardSidebar
-          navItems={navItems}
-          pathname={pathname}
-          isLoadingRole={isLoadingRole}
-          isCollapsed={isCollapsed}
-          isMobileOpen={isMobileOpen}
-          onToggleCollapse={() => setIsCollapsed((prev) => !prev)}
-          onCloseMobile={() => setIsMobileOpen(false)}
-        />
-
-        <main className="flex min-w-0 flex-1 flex-col overflow-auto">
-          <DateFilterProvider>
-            <TopBar onMenuClick={() => setIsMobileOpen(true)} />
-            <div className="flex-1 overflow-auto">{children}</div>
-          </DateFilterProvider>
-        </main>
-      </div>
-    </ProtectedRoute>
+    <DashboardShell navItems={itemsDeMenu(rol, entidadId)} rol={rol} entidadId={entidadId}>
+      {children}
+    </DashboardShell>
   )
 }
