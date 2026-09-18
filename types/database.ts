@@ -1,4 +1,4 @@
-﻿export type Json =
+export type Json =
   | string
   | number
   | boolean
@@ -10,170 +10,43 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
-      // Escrito a mano, igual que `avisos_captura` y `bot_identidades`: este
-      // archivo se mantiene a mano en este repo. Migracion 20260912172851.
-      bot_categorias: {
-        Row: {
-          nombre: string
-          ayuda: string
-          tipo_movimiento: string
-          columna: string
-          activa: boolean
-          creada_por: string
-          creada_en: string
-        }
-        Insert: {
-          nombre: string
-          ayuda?: string
-          tipo_movimiento?: string
-          columna?: string
-          activa?: boolean
-          creada_por?: string
-          creada_en?: string
-        }
-        Update: {
-          nombre?: string
-          ayuda?: string
-          tipo_movimiento?: string
-          columna?: string
-          activa?: boolean
-          creada_por?: string
-          creada_en?: string
-        }
-        Relationships: []
-      }
-      // AG-01 Fase 1. Escritas a mano por la misma razon que `avisos_captura`:
-      // las tablas nacen en `20260912163850_bot_identidades_y_borradores.sql`.
-      // Si al regenerar con `supabase gen types` este bloque cambia, manda el
-      // generado.
-      bot_identidades: {
-        Row: {
-          activo: boolean
-          creado_en: string
-          creado_por: string | null
-          etiqueta: string
-          id: string
-          id_cuenta_destino: string
-          id_entidad: string
-          telegram_id: number
-        }
-        Insert: {
-          activo?: boolean
-          creado_en?: string
-          creado_por?: string | null
-          etiqueta: string
-          id?: string
-          id_cuenta_destino: string
-          id_entidad: string
-          telegram_id: number
-        }
-        Update: {
-          activo?: boolean
-          creado_en?: string
-          creado_por?: string | null
-          etiqueta?: string
-          id?: string
-          id_cuenta_destino?: string
-          id_entidad?: string
-          telegram_id?: number
-        }
-        Relationships: []
-      }
-      bot_borradores: {
+      auditoria_logs: {
         Row: {
           creado_en: string
-          estado: string
+          datos_antes: Json | null
+          datos_despues: Json
           id: string
-          id_registro: string | null
-          payload: Json
-          resuelto_en: string | null
-          sello: string
-          telegram_id: number
+          id_registro: string
+          operacion: string
+          rol: string | null
+          tabla: string
+          usuario: string
         }
         Insert: {
           creado_en?: string
-          estado?: string
+          datos_antes?: Json | null
+          datos_despues: Json
           id?: string
-          id_registro?: string | null
-          payload: Json
-          resuelto_en?: string | null
-          sello: string
-          telegram_id: number
+          id_registro: string
+          operacion: string
+          rol?: string | null
+          tabla: string
+          usuario: string
         }
         Update: {
           creado_en?: string
-          estado?: string
+          datos_antes?: Json | null
+          datos_despues?: Json
           id?: string
-          id_registro?: string | null
-          payload?: Json
-          resuelto_en?: string | null
-          sello?: string
-          telegram_id?: number
-        }
-        Relationships: []
-      }
-      // ERP-59. Escrita a mano y no por `supabase gen types`: la tabla nace en
-      // `supabase/migrations/20260905120000_cola_de_avisos_de_captura.sql` y
-      // los tipos se regeneran cuando esa migracion se aplique. Si al
-      // regenerar este bloque cambia, manda el generado.
-      conteos_fisicos: {
-        Row: {
-          creado_en: string
-          fecha_conteo: string
-          id: string
-          id_entidad: string
-          notas: string | null
-          status: string
-          usuario_creador: string | null
-        }
-        Insert: {
-          creado_en?: string
-          fecha_conteo: string
-          id?: string
-          id_entidad: string
-          notas?: string | null
-          status?: string
-          usuario_creador?: string | null
-        }
-        Update: {
-          creado_en?: string
-          fecha_conteo?: string
-          id?: string
-          id_entidad?: string
-          notas?: string | null
-          status?: string
-          usuario_creador?: string | null
-        }
-        Relationships: []
-      }
-      conteo_detalles: {
-        Row: {
-          cubeta: string
-          id: string
-          id_conteo: string
-          id_producto: string
-          libro_decia: number
-          piezas_contadas: number
-        }
-        Insert: {
-          cubeta?: string
-          id?: string
-          id_conteo: string
-          id_producto: string
-          libro_decia: number
-          piezas_contadas: number
-        }
-        Update: {
-          cubeta?: string
-          id?: string
-          id_conteo?: string
-          id_producto?: string
-          libro_decia?: number
-          piezas_contadas?: number
+          id_registro?: string
+          operacion?: string
+          rol?: string | null
+          tabla?: string
+          usuario?: string
         }
         Relationships: []
       }
@@ -234,11 +107,179 @@ export type Database = {
             referencedRelation: "entidades"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "avisos_captura_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "avisos_captura_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "avisos_captura_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "avisos_captura_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+        ]
+      }
+      bot_borradores: {
+        Row: {
+          creado_en: string
+          estado: string
+          id: string
+          id_registro: string | null
+          payload: Json
+          resuelto_en: string | null
+          sello: string
+          telegram_id: number
+        }
+        Insert: {
+          creado_en?: string
+          estado?: string
+          id?: string
+          id_registro?: string | null
+          payload: Json
+          resuelto_en?: string | null
+          sello: string
+          telegram_id: number
+        }
+        Update: {
+          creado_en?: string
+          estado?: string
+          id?: string
+          id_registro?: string | null
+          payload?: Json
+          resuelto_en?: string | null
+          sello?: string
+          telegram_id?: number
+        }
+        Relationships: []
+      }
+      bot_categorias: {
+        Row: {
+          activa: boolean
+          ayuda: string
+          columna: string
+          creada_en: string
+          creada_por: string
+          nombre: string
+          tipo_movimiento: string
+        }
+        Insert: {
+          activa?: boolean
+          ayuda?: string
+          columna?: string
+          creada_en?: string
+          creada_por?: string
+          nombre: string
+          tipo_movimiento?: string
+        }
+        Update: {
+          activa?: boolean
+          ayuda?: string
+          columna?: string
+          creada_en?: string
+          creada_por?: string
+          nombre?: string
+          tipo_movimiento?: string
+        }
+        Relationships: []
+      }
+      bot_identidades: {
+        Row: {
+          activo: boolean
+          creado_en: string
+          creado_por: string | null
+          etiqueta: string
+          id: string
+          id_cuenta_destino: string
+          id_entidad: string
+          telegram_id: number
+        }
+        Insert: {
+          activo?: boolean
+          creado_en?: string
+          creado_por?: string | null
+          etiqueta: string
+          id?: string
+          id_cuenta_destino: string
+          id_entidad: string
+          telegram_id: number
+        }
+        Update: {
+          activo?: boolean
+          creado_en?: string
+          creado_por?: string | null
+          etiqueta?: string
+          id?: string
+          id_cuenta_destino?: string
+          id_entidad?: string
+          telegram_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_identidades_id_cuenta_destino_fkey"
+            columns: ["id_cuenta_destino"]
+            isOneToOne: false
+            referencedRelation: "cuentas_financieras"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bot_identidades_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bot_identidades_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "bot_identidades_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "bot_identidades_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "bot_identidades_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
         ]
       }
       catalogo_productos: {
         Row: {
           costo_unitario: number | null
+          es_materia_prima: boolean
           id: string
           nombre: string
           sku: string
@@ -247,6 +288,7 @@ export type Database = {
         }
         Insert: {
           costo_unitario?: number | null
+          es_materia_prima?: boolean
           id?: string
           nombre: string
           sku: string
@@ -255,6 +297,7 @@ export type Database = {
         }
         Update: {
           costo_unitario?: number | null
+          es_materia_prima?: boolean
           id?: string
           nombre?: string
           sku?: string
@@ -262,6 +305,128 @@ export type Database = {
           unidad_medida?: string | null
         }
         Relationships: []
+      }
+      conteo_detalles: {
+        Row: {
+          cubeta: string
+          id: string
+          id_conteo: string
+          id_producto: string
+          libro_decia: number
+          piezas_contadas: number
+        }
+        Insert: {
+          cubeta?: string
+          id?: string
+          id_conteo: string
+          id_producto: string
+          libro_decia: number
+          piezas_contadas: number
+        }
+        Update: {
+          cubeta?: string
+          id?: string
+          id_conteo?: string
+          id_producto?: string
+          libro_decia?: number
+          piezas_contadas?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conteo_detalles_id_conteo_fkey"
+            columns: ["id_conteo"]
+            isOneToOne: false
+            referencedRelation: "conteos_fisicos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conteo_detalles_id_conteo_fkey"
+            columns: ["id_conteo"]
+            isOneToOne: false
+            referencedRelation: "v_conteo_ultimo"
+            referencedColumns: ["id_conteo"]
+          },
+          {
+            foreignKeyName: "conteo_detalles_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "catalogo_productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conteo_detalles_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+        ]
+      }
+      conteos_fisicos: {
+        Row: {
+          creado_en: string
+          fecha_conteo: string
+          id: string
+          id_entidad: string
+          notas: string | null
+          status: string
+          usuario_creador: string | null
+        }
+        Insert: {
+          creado_en?: string
+          fecha_conteo: string
+          id?: string
+          id_entidad: string
+          notas?: string | null
+          status?: string
+          usuario_creador?: string | null
+        }
+        Update: {
+          creado_en?: string
+          fecha_conteo?: string
+          id?: string
+          id_entidad?: string
+          notas?: string | null
+          status?: string
+          usuario_creador?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+        ]
       }
       cuentas_financieras: {
         Row: {
@@ -289,6 +454,34 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "entidades"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuentas_financieras_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cuentas_financieras_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cuentas_financieras_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cuentas_financieras_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
           },
         ]
       }
@@ -362,11 +555,67 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "entidades_id_nodo_padre_fkey"
+            columns: ["id_nodo_padre"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "entidades_id_nodo_padre_fkey"
+            columns: ["id_nodo_padre"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "entidades_id_nodo_padre_fkey"
+            columns: ["id_nodo_padre"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "entidades_id_nodo_padre_fkey"
+            columns: ["id_nodo_padre"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+          {
             foreignKeyName: "entidades_id_padre_fkey"
             columns: ["id_padre"]
             isOneToOne: false
             referencedRelation: "entidades"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entidades_id_padre_fkey"
+            columns: ["id_padre"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "entidades_id_padre_fkey"
+            columns: ["id_padre"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "entidades_id_padre_fkey"
+            columns: ["id_padre"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "entidades_id_padre_fkey"
+            columns: ["id_padre"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
           },
         ]
       }
@@ -386,7 +635,7 @@ export type Database = {
           monto: number
           status: string
           subcategoria: string | null
-          tipo_movimiento: string | null
+          tipo_movimiento: string
           usuario_creador: string | null
         }
         Insert: {
@@ -404,7 +653,7 @@ export type Database = {
           monto: number
           status?: string
           subcategoria?: string | null
-          tipo_movimiento?: string | null
+          tipo_movimiento: string
           usuario_creador?: string | null
         }
         Update: {
@@ -422,7 +671,7 @@ export type Database = {
           monto?: number
           status?: string
           subcategoria?: string | null
-          tipo_movimiento?: string | null
+          tipo_movimiento?: string
           usuario_creador?: string | null
         }
         Relationships: [
@@ -448,6 +697,34 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+          {
             foreignKeyName: "finanzas_ledger_id_ticket_fkey"
             columns: ["id_ticket"]
             isOneToOne: false
@@ -467,7 +744,7 @@ export type Database = {
           id_entidad_origen: string | null
           id_producto: string
           notas: string | null
-          status: string | null
+          status: string
           tipo_movimiento: string
           usuario_creador: string | null
         }
@@ -481,7 +758,7 @@ export type Database = {
           id_entidad_origen?: string | null
           id_producto: string
           notas?: string | null
-          status?: string | null
+          status?: string
           tipo_movimiento: string
           usuario_creador?: string | null
         }
@@ -495,7 +772,7 @@ export type Database = {
           id_entidad_origen?: string | null
           id_producto?: string
           notas?: string | null
-          status?: string | null
+          status?: string
           tipo_movimiento?: string
           usuario_creador?: string | null
         }
@@ -508,6 +785,34 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "inventario_ledger_id_entidad_destino_fkey"
+            columns: ["id_entidad_destino"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_entidad_destino_fkey"
+            columns: ["id_entidad_destino"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_entidad_destino_fkey"
+            columns: ["id_entidad_destino"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_entidad_destino_fkey"
+            columns: ["id_entidad_destino"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+          {
             foreignKeyName: "inventario_ledger_id_entidad_origen_fkey"
             columns: ["id_entidad_origen"]
             isOneToOne: false
@@ -515,11 +820,46 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "inventario_ledger_id_entidad_origen_fkey"
+            columns: ["id_entidad_origen"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_entidad_origen_fkey"
+            columns: ["id_entidad_origen"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_entidad_origen_fkey"
+            columns: ["id_entidad_origen"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_entidad_origen_fkey"
+            columns: ["id_entidad_origen"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+          {
             foreignKeyName: "inventario_ledger_id_producto_fkey"
             columns: ["id_producto"]
             isOneToOne: false
             referencedRelation: "catalogo_productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
           },
         ]
       }
@@ -549,6 +889,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "catalogo_productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "listas_precios_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
           },
         ]
       }
@@ -580,11 +927,25 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "recetas_produccion_id_insumo_fkey"
+            columns: ["id_insumo"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+          {
             foreignKeyName: "recetas_produccion_id_producto_terminado_fkey"
             columns: ["id_producto_terminado"]
             isOneToOne: false
             referencedRelation: "catalogo_productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recetas_produccion_id_producto_terminado_fkey"
+            columns: ["id_producto_terminado"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
           },
         ]
       }
@@ -622,6 +983,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "ticket_detalles_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+          {
             foreignKeyName: "ticket_detalles_id_ticket_fkey"
             columns: ["id_ticket"]
             isOneToOne: false
@@ -636,13 +1004,13 @@ export type Database = {
           condicion_pago: string
           fecha_transaccion: string | null
           id: string
-          status: string
           id_comprador: string | null
           id_cuenta_destino: string | null
           id_vendedor: string | null
           impuesto_ieps_calculado: number | null
           impuesto_iva_calculado: number | null
           monto_base_ingreso: number
+          status: string | null
           subtotal_catalogo: number
           total_cobrado_real: number
           usuario_creador: string | null
@@ -652,13 +1020,13 @@ export type Database = {
           condicion_pago?: string
           fecha_transaccion?: string | null
           id?: string
-          status?: string
           id_comprador?: string | null
           id_cuenta_destino?: string | null
           id_vendedor?: string | null
           impuesto_ieps_calculado?: number | null
           impuesto_iva_calculado?: number | null
           monto_base_ingreso: number
+          status?: string | null
           subtotal_catalogo: number
           total_cobrado_real: number
           usuario_creador?: string | null
@@ -668,13 +1036,13 @@ export type Database = {
           condicion_pago?: string
           fecha_transaccion?: string | null
           id?: string
-          status?: string
           id_comprador?: string | null
           id_cuenta_destino?: string | null
           id_vendedor?: string | null
           impuesto_ieps_calculado?: number | null
           impuesto_iva_calculado?: number | null
           monto_base_ingreso?: number
+          status?: string | null
           subtotal_catalogo?: number
           total_cobrado_real?: number
           usuario_creador?: string | null
@@ -686,6 +1054,34 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "entidades"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transacciones_tickets_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "transacciones_tickets_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "transacciones_tickets_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "transacciones_tickets_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
           },
           {
             foreignKeyName: "transacciones_tickets_id_cuenta_destino_fkey"
@@ -701,26 +1097,337 @@ export type Database = {
             referencedRelation: "entidades"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "transacciones_tickets_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "transacciones_tickets_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "transacciones_tickets_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "transacciones_tickets_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
         ]
       }
     }
     Views: {
-      [_ in never]: never
+      v_cartera: {
+        Row: {
+          abonado: number | null
+          calculado_en: string | null
+          deuda: number | null
+          dias_sin_abono: number | null
+          estimado_en_piso: number | null
+          generado: number | null
+          id_entidad: string | null
+          libro_dice: number | null
+          nombre: string | null
+          porcentaje_pagado: number | null
+          prioridad: number | null
+          recibidas: number | null
+          referencia_dias: string | null
+          rol: string | null
+          salidas: number | null
+          ultimo_abono: string | null
+        }
+        Relationships: []
+      }
+      v_conteo_ultimo: {
+        Row: {
+          cubeta: string | null
+          diferencia: number | null
+          fecha_conteo: string | null
+          id_conteo: string | null
+          id_entidad: string | null
+          id_producto: string | null
+          libro_decia: number | null
+          piezas_contadas: number | null
+          usuario_creador: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conteo_detalles_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "catalogo_productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conteo_detalles_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "conteos_fisicos_id_entidad_fkey"
+            columns: ["id_entidad"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+        ]
+      }
+      v_costo_produccion: {
+        Row: {
+          costo_insumos: number | null
+          costo_parcial_conocido: number | null
+          faltan_costo: string | null
+          id_producto_terminado: string | null
+          insumos_en_receta: number | null
+          insumos_sin_costo: number | null
+          margen_bruto_antes_de_impuestos: number | null
+          nombre: string | null
+          precio_zacatecas: number | null
+          receta_incluye_materia_prima: boolean | null
+          sku: string | null
+        }
+        Relationships: []
+      }
+      v_insumos_en_negativo: {
+        Row: {
+          capturado_entradas: number | null
+          consumido: number | null
+          entidad: string | null
+          faltante: number | null
+          id_entidad: string | null
+          id_producto: string | null
+          insumo: string | null
+          sku: string | null
+          stock: number | null
+          unidad_medida: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventario_ledger_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "catalogo_productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+        ]
+      }
+      v_movimiento_clasificado: {
+        Row: {
+          categoria: string | null
+          categoria_gasto: string | null
+          descripcion: string | null
+          es_contable_efectivo: boolean | null
+          es_egreso_admin: boolean | null
+          es_ingreso_admin: boolean | null
+          fecha_movimiento: string | null
+          id: string | null
+          id_cuenta_destino: string | null
+          id_cuenta_origen: string | null
+          id_entidad_relacionada: string | null
+          id_ticket: string | null
+          monto: number | null
+          status: string | null
+          tipo_movimiento: string | null
+          toca_cuenta_admin: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finanzas_ledger_id_cuenta_destino_fkey"
+            columns: ["id_cuenta_destino"]
+            isOneToOne: false
+            referencedRelation: "cuentas_financieras"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_cuenta_origen_fkey"
+            columns: ["id_cuenta_origen"]
+            isOneToOne: false
+            referencedRelation: "cuentas_financieras"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_entidad_relacionada_fkey"
+            columns: ["id_entidad_relacionada"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "finanzas_ledger_id_ticket_fkey"
+            columns: ["id_ticket"]
+            isOneToOne: false
+            referencedRelation: "transacciones_tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_pasivo_fiscal: {
+        Row: {
+          calculado_en: string | null
+          ieps_por_pagar: number | null
+          iva_por_pagar: number | null
+          pagos_ieps: number | null
+          pagos_iva: number | null
+          pasivo_ieps_acumulado: number | null
+          pasivo_iva_acumulado: number | null
+        }
+        Relationships: []
+      }
+      v_saldo_entidad: {
+        Row: {
+          abonos_aprobados: number | null
+          calculado_en: string | null
+          cargos_deuda: number | null
+          deuda_generada_tickets: number | null
+          dias_sin_abonar: number | null
+          id_entidad: string | null
+          nombre: string | null
+          rol: string | null
+          saldo_pendiente_consignacion: number | null
+          saldo_por_pagar_efectivo: number | null
+          total_ganado_comisiones: number | null
+          ultimo_abono: string | null
+        }
+        Relationships: []
+      }
+      v_stock_por_cubeta: {
+        Row: {
+          cubeta: string | null
+          entidad: string | null
+          id_entidad: string | null
+          id_producto: string | null
+          producto: string | null
+          stock: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventario_ledger_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "catalogo_productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventario_ledger_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+        ]
+      }
+      v_ventas_por_mes: {
+        Row: {
+          compradores: number | null
+          mes: string | null
+          tickets: number | null
+          tickets_concesion: number | null
+          vendido: number | null
+          vendido_concesion: number | null
+          vendido_contado: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
-      mis_entidades: {
-        Args: Record<PropertyKey, never>
-        Returns: string[]
-      }
-      /**
-       * ERP-73. Solo `service_role`. La consume
-       * `tests/salud-del-sistema.spec.ts` para comparar los archivos del repo
-       * contra lo que de verdad esta aplicado en la base. No devuelve el SQL.
-       */
+      entidad_pendiente_de_asignar: { Args: never; Returns: string }
+      mi_entidad_id: { Args: never; Returns: string }
+      mi_rol: { Args: never; Returns: string }
       migraciones_aplicadas: {
-        Args: Record<PropertyKey, never>
-        Returns: { version: string; name: string }[]
+        Args: never
+        Returns: {
+          name: string
+          version: string
+        }[]
       }
+      mis_entidades: { Args: never; Returns: string[] }
+      registrar_venta_atomica: {
+        Args: {
+          p_detalles: Json
+          p_finanzas?: Json
+          p_inventario?: Json
+          p_ticket: Json
+        }
+        Returns: string
+      }
+      usuario_de_sesion: { Args: never; Returns: string }
     }
     Enums: {
       [_ in never]: never
@@ -739,12 +1446,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -768,11 +1475,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -793,11 +1500,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -818,11 +1525,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -835,11 +1542,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

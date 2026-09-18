@@ -1,3 +1,7 @@
+-- >>> APLICADA EL 2026-09-17. Este archivo queda SUPERADO y no se vuelve a aplicar.
+-- >>> Vive sellado en supabase/migrations/20260918023212_erp11_la_venta_del_pos_en_una_transaccion.sql
+-- >>> (mismo contenido, con la seccion 6 movida arriba para que el md5 de ERP-83 cuadre:
+-- >>>  un comentario despues del ultimo statement no entra en `statements` y rompe la igualdad).
 -- ===========================================================================
 --  ERP-11 · la venta del POS, en UNA transaccion
 -- ===========================================================================

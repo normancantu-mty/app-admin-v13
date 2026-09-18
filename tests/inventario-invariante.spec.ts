@@ -187,13 +187,21 @@ test.describe('B - el instrumento, antes de creerle', () => {
 test.describe('B - el cableado sobre el repo real', () => {
   const archivos = archivosDeCodigo()
 
-  test('encuentra los 7 INSERT a inventario_ledger que hay hoy', () => {
+  test('encuentra los 6 INSERT a inventario_ledger que hay hoy', () => {
     // La guardia contra el modo de fallo silencioso de esta prueba: si el
     // recorrido devolviera cero archivos, la de abajo pasaria en verde sobre
     // nada. Un instrumento roto y un repo limpio se ven igual.
     expect(archivos.length).toBeGreaterThan(50)
     const total = archivos.reduce((n, a) => n + insertsDeInventario(readFileSync(a, 'utf8')), 0)
-    expect(total).toBe(7)
+
+    // Eran 7 hasta el 2026-09-17. ERP-11 se llevo el del POS: el movimiento de
+    // inventario de una venta ya no se escribe desde TypeScript, viaja dentro
+    // de `registrar_venta_atomica` para caer en la misma transaccion que el
+    // ticket. El numero exacto se conserva a proposito y no se cambia por un
+    // `>=`: lo que esta prueba defiende es que **nadie meta un INSERT nuevo sin
+    // darse cuenta**, y un umbral no caza eso. Si esto se pone rojo, primero
+    // averigua cual archivo lo movio.
+    expect(total).toBe(6)
   })
 
   test('cada archivo que inserta llama a la puerta, al menos una vez por INSERT', () => {

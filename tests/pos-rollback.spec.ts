@@ -26,6 +26,14 @@ import {
  * Puras: sin navegador, sin base, sin sesion.
  *
  * **El problema, con su nombre: compensating transaction failure.**
+ *
+ * ACTUALIZACION 2026-09-17 (ERP-11). El POS ya no compensa: las cinco
+ * escrituras se volvieron una sola llamada a `registrar_venta_atomica`, y
+ * dentro de esa funcion las cuatro tablas caen en la MISMA transaccion. Una
+ * compensacion que no existe no puede fallar. **`lib/pos-rollback.ts` NO se
+ * borro** y las pruebas de este archivo que lo juzgan siguen valiendo: es el
+ * juicio correcto para cualquier otro sitio que borre a mano. Lo que se
+ * invirtio es el centinela de abajo.
  */
 
 const TICKET = 'a1b2c3d4-0000-4000-8000-000000000001'
@@ -125,46 +133,95 @@ test.describe('ERP-66 · lo que ve el vendedor', () => {
 })
 
 /**
- * La otra mitad: que `app/actions/pos.ts` siga MIRANDO el resultado.
+ * La otra mitad, invertida por ERP-11.
  *
- * Las pruebas de arriba solo juzgan al juez. No pueden ver que alguien vuelva a
- * escribir `await rollbackTicket(...)` tirando lo que devuelve — que es
- * literalmente el defecto que trae ERP-66. Esto lee el codigo fuente, como
- * `tests/arquitectura.spec.ts`.
+ * Antes esto exigia que `app/actions/pos.ts` MIRARA el resultado de cada
+ * compensacion. Hoy exige que no haya compensacion que mirar: el camino de la
+ * venta escribe UNA vez, y esa vez es la funcion de Postgres. Lee el codigo
+ * fuente como texto, igual que `tests/arquitectura.spec.ts`.
+ *
+ * Por que una prueba de texto y no una de comportamiento: lo que se defiende no
+ * es un resultado, es una FORMA. Un segundo `.insert()` en el camino de la venta
+ * volveria a partir la escritura en dos transacciones y ninguna prueba funcional
+ * lo notaria mientras las dos tengan exito. El defecto solo aparece cuando una
+ * falla, que es justo el caso que nadie corre.
+ *
+ * **El problema, con su nombre: atomic write path.**
  */
-test.describe('ERP-66 · ninguna llamada tira el resultado del rollback', () => {
+test.describe('ERP-11 · la venta se escribe de una sola vez', () => {
   const RUTA_POS = path.resolve(__dirname, '..', 'app', 'actions', 'pos.ts')
+  const fuentePOS = () => readFileSync(RUTA_POS, 'utf8')
 
-  test('todo `rollbackTicket(...)` que se llama, se lee', () => {
-    const fuente = readFileSync(RUTA_POS, 'utf8')
+  const TABLAS_DE_LA_VENTA = [
+    'transacciones_tickets',
+    'ticket_detalles',
+    'finanzas_ledger',
+    'inventario_ledger'
+  ]
+
+  test('ninguna de las cuatro tablas se escribe suelta', () => {
+    const fuente = fuentePOS()
     const lineas = fuente.split('\n')
-    const descartadas: string[] = []
+    const sueltas: string[] = []
 
     lineas.forEach((linea, indice) => {
-      // `await rollbackTicket(` sin nada a la izquierda que reciba el valor.
-      if (/^\s*await\s+rollbackTicket\s*\(/.test(linea)) {
-        descartadas.push(`app/actions/pos.ts:${indice + 1}: ${linea.trim()}`)
-      }
+      TABLAS_DE_LA_VENTA.forEach((tabla) => {
+        if (linea.includes(`from('${tabla}')`) && /\.(insert|upsert|update|delete)\s*\(/.test(linea)) {
+          sueltas.push(`app/actions/pos.ts:${indice + 1}: ${linea.trim()}`)
+        }
+      })
     })
 
     expect(
-      descartadas,
-      'Una llamada a rollbackTicket que descarta su resultado es el defecto de ERP-66: ' +
-        'la compensacion falla, nadie se entera y el ticket queda vivo en el ledger.'
+      sueltas,
+      'Cada escritura suelta a estas tablas abre su propia transaccion en PostgREST. ' +
+        'Dos transacciones donde debe haber una es exactamente el defecto que ERP-11 cerro: ' +
+        'si la segunda falla, la primera ya quedo committeada y hay que borrarla a mano.'
     ).toEqual([])
   })
 
-  test('CONTROL POSITIVO: y de verdad se llama, no es que el archivo cambio de nombre', () => {
-    const fuente = readFileSync(RUTA_POS, 'utf8')
+  test('y no quedo compensacion viva en el camino de la venta', () => {
+    const fuente = fuentePOS()
 
-    expect(fuente).toContain('const rollbackTicket = async')
-    expect((fuente.match(/await rollbackTicket\(ticketData\.id\)/g) ?? []).length).toBe(5)
-    expect(fuente).toContain('componerErrorDeVenta')
+    // Se juzga el CODIGO, no la prosa: `pos.ts` conserva a proposito un
+    // comentario que nombra a `evaluarRollbackPOS` para decir que el modulo NO
+    // se borro. Lo que no puede volver es el import ni la closure.
+    const sinComentarios = fuente
+      .split('\n')
+      .filter((linea) => !linea.trim().startsWith('//') && !linea.trim().startsWith('*'))
+      .join('\n')
+
+    expect(sinComentarios).not.toContain('rollbackTicket')
+    expect(sinComentarios).not.toContain('pos-rollback')
+    expect(sinComentarios).not.toContain('componerErrorDeVenta')
   })
 
-  test('CONTROL NEGATIVO: el detector reconoce una llamada descartada', () => {
-    const patron = /^\s*await\s+rollbackTicket\s*\(/
-    expect(patron.test('      await rollbackTicket(ticketData.id)')).toBe(true)
-    expect(patron.test('      const rollback = await rollbackTicket(ticketData.id)')).toBe(false)
+  test('CONTROL POSITIVO: la escritura existe, y es una sola', () => {
+    const fuente = fuentePOS()
+
+    // Si alguien renombra la funcion o borra la llamada, esto se cae antes de
+    // que la prueba de arriba pase por vacia.
+    expect((fuente.match(/\.rpc\(\s*'registrar_venta_atomica'/g) ?? []).length).toBe(1)
+
+    // El uuid se genera en el servidor ANTES de escribir: es lo que permite que
+    // las notas de inventario y las categorias de finanzas lleven el folio sin
+    // haber insertado el encabezado primero.
+    expect(fuente).toContain('const idTicket = crypto.randomUUID()')
+    expect(fuente).toContain('id: idTicket')
+  })
+
+  test('CONTROL NEGATIVO: el detector reconoce una escritura suelta reintroducida', () => {
+    const detecta = (linea: string) =>
+      TABLAS_DE_LA_VENTA.some(
+        (tabla) =>
+          linea.includes(`from('${tabla}')`) && /\.(insert|upsert|update|delete)\s*\(/.test(linea)
+      )
+
+    expect(detecta("  await supabase.from('ticket_detalles').insert(detalles)")).toBe(true)
+    expect(detecta("  const { error } = await supabase.from('finanzas_ledger').insert(x)")).toBe(true)
+    // Una LECTURA no es una escritura, y no se debe acusar.
+    expect(detecta("  await supabase.from('ticket_detalles').select('id')")).toBe(false)
+    // Otra tabla tampoco: el invariante es sobre las cuatro de la venta.
+    expect(detecta("  await supabase.from('avisos').insert(aviso)")).toBe(false)
   })
 })

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import type { Database, TablesInsert } from '@/types/database'
+import type { Database, Json, TablesInsert } from '@/types/database'
 import { resolverCompradorDeVenta } from '@/lib/avisos'
 import { registrarAviso } from '@/lib/avisos-server'
 import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
@@ -12,7 +12,10 @@ import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { esCuentaFiscal, validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
-import { componerErrorDeVenta, evaluarRollbackPOS, type ResultadoRollbackPOS } from '@/lib/pos-rollback'
+// ERP-11: `lib/pos-rollback.ts` ya no se importa aqui, y el modulo NO se borro.
+// `evaluarRollbackPOS` sigue siendo el juicio correcto para cualquier otro sitio
+// que compense a mano. Lo que se retiro es su uso en el POS: con la venta
+// atomica ya no hay nada que compensar.
 
 interface POSItemPayload {
   id_producto: string
@@ -516,7 +519,15 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       }
     }
 
+    // ERP-11 paso 1: el uuid del ticket se genera AQUI, antes de escribir nada.
+    // Las `notas` de inventario y las `categoria_gasto` de finanzas llevan el
+    // folio dentro, asi que hasta hoy habia que insertar el encabezado primero
+    // para poder armar el resto. Generandolo en el servidor, la venta entera se
+    // construye en memoria y se escribe de una sola vez.
+    const idTicket = crypto.randomUUID()
+
     const ticketInsert: TicketInsert = {
+      id: idTicket,
       id_vendedor: vendedorId,
       id_comprador: idCompradorResuelto,
       condicion_pago: payload.condicion_pago,
@@ -530,42 +541,10 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       usuario_creador: user.email
     }
 
-    const { data: ticketData, error: ticketError } = await supabase.from('transacciones_tickets').insert(ticketInsert).select('id').single()
-    if (ticketError || !ticketData) return { ok: false, error: `Error al generar ticket: ${ticketError?.message}` }
-
-    /**
-     * Compensacion manual: no hay transaccion, asi que deshacer es escribir otra
-     * vez. ERP-66: antes se descartaba el resultado de los tres borrados, y como
-     * DELETE es solo de ADMIN, la venta fallida de un vendedor no-ADMIN dejaba el
-     * ticket vivo sin que nadie se enterara. Ahora cada borrado se mira, y el del
-     * encabezado ademas exige haber devuelto su fila: **RLS no da error, da cero
-     * filas**. El juicio vive en `lib/pos-rollback.ts`, que es puro y tiene prueba.
-     */
-    const rollbackTicket = async (ticketId: string): Promise<ResultadoRollbackPOS> => {
-      const { error: errorFinanzas } = await supabase.from('finanzas_ledger').delete().eq('id_ticket', ticketId)
-      const { error: errorDetalles } = await supabase.from('ticket_detalles').delete().eq('id_ticket', ticketId)
-      const { data: ticketsBorrados, error: errorTicket } = await supabase
-        .from('transacciones_tickets')
-        .delete()
-        .eq('id', ticketId)
-        .select('id')
-
-      const resultado = evaluarRollbackPOS(ticketId, [
-        { nombreTabla: 'finanzas_ledger', error: errorFinanzas, filasBorradas: null, exigeFilas: false },
-        { nombreTabla: 'ticket_detalles', error: errorDetalles, filasBorradas: null, exigeFilas: false },
-        { nombreTabla: 'transacciones_tickets', error: errorTicket, filasBorradas: ticketsBorrados?.length ?? 0, exigeFilas: true }
-      ])
-
-      if (!resultado.ok) {
-        console.error(`[POS] Rollback incompleto del ticket ${ticketId}:`, resultado.restos.join(' | '))
-      }
-      return resultado
-    }
-
     const detalles: TicketDetalleInsert[] = itemsNormalizados.map((item) => {
       const precioUnitarioFinal = roundTo2(item.precio_unitario)
       return {
-      id_ticket: ticketData.id,
+      id_ticket: idTicket,
       id_producto: item.id_producto,
       cantidad: item.cantidad,
       precio_unitario: precioUnitarioFinal,
@@ -573,12 +552,10 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     }
     })
 
-    const { error: detallesError } = await supabase.from('ticket_detalles').insert(detalles)
-    if (detallesError) {
-      const rollback = await rollbackTicket(ticketData.id)
-      return { ok: false, error: componerErrorDeVenta(`Error al guardar detalles: ${detallesError.message}`, rollback) }
-    }
-
+    // Las dos listas de finanzas se declaran juntas y fuera del `if`: viajan
+    // concatenadas en un solo parametro de la funcion, porque una transaccion
+    // no puede recibir dos arreglos y prometer que entran los dos.
+    const movimientosFinancieros: FinanzaInsert[] = []
     const movimientosComisionTriangulacionYAdmin: FinanzaInsert[] = []
 
     // ── Block 1: Admin sells directly from own inventory → LOC ──────────────
@@ -610,10 +587,10 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
           movimientosComisionTriangulacionYAdmin.push({
             id_entidad_relacionada: idPadreLocal,
             id_cuenta_destino: null,
-            id_ticket: ticketData.id,
+            id_ticket: idTicket,
             tipo_movimiento: 'COMISION_PASIVA',
             monto: montoComision,
-            categoria_gasto: `Comisión ganada - Ticket #${ticketData.id.slice(0, 8).toUpperCase()}`,
+            categoria_gasto: `Comisión ganada - Ticket #${idTicket.slice(0, 8).toUpperCase()}`,
             status: 'ACTIVO',
             fecha_movimiento: timestampTransaccion,
             usuario_creador: user.email
@@ -643,10 +620,10 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
         movimientosComisionTriangulacionYAdmin.push({
           id_entidad_relacionada: origenInventarioId,
           id_cuenta_destino: null,
-          id_ticket: ticketData.id,
+          id_ticket: idTicket,
           tipo_movimiento: 'INGRESO_COMISION',
           monto: montoComisionTriangulada,
-          categoria_gasto: `Comisión ganada - Ticket #${ticketData.id.slice(0, 8).toUpperCase()}`,
+          categoria_gasto: `Comisión ganada - Ticket #${idTicket.slice(0, 8).toUpperCase()}`,
           status: 'ACTIVO',
           fecha_movimiento: timestampTransaccion,
           usuario_creador: user.email
@@ -655,11 +632,10 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     }
 
     if (payload.condicion_pago === 'CONTADO') {
-      const movimientosFinancieros: FinanzaInsert[] = []
       const totalLiquidezEsperado = roundTo2(payload.totalCobradoReal)
       if (!Number.isFinite(totalLiquidezEsperado) || totalLiquidezEsperado <= 0) {
-        const rollback = await rollbackTicket(ticketData.id)
-        return { ok: false, error: componerErrorDeVenta('Monto de cobro inválido.', rollback) }
+        // Aqui todavia no se ha escrito ni una fila: no hay que compensar, solo salir.
+        return { ok: false, error: 'Monto de cobro inválido.' }
       }
 
       if (vendedor.rol === 'DST' || vendedor.rol === 'LOC') {
@@ -672,7 +648,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
           ? Number(vendedor.comision_base ?? 0)
           : comisionBaseLocalDecimal(vendedor.comision_base_local)
         const aplicaRedondeo = vendedor.aplica_redondeo_costo ?? true
-        const ticketRef = `Ticket #${ticketData.id.slice(0, 8).toUpperCase()}`
+        const ticketRef = `Ticket #${idTicket.slice(0, 8).toUpperCase()}`
 
         let montoComision: number
         let montoDeuda: number
@@ -688,7 +664,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
           movimientosFinancieros.push({
             id_entidad_relacionada: vendedorId,
             id_cuenta_destino: cuentaData.id,
-            id_ticket: ticketData.id,
+            id_ticket: idTicket,
             tipo_movimiento: 'INGRESO_COMISION',
             monto: montoComision,
             categoria_gasto: `Comisión ganada - ${ticketRef}`,
@@ -701,7 +677,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
           movimientosFinancieros.push({
             id_entidad_relacionada: vendedorId,
             id_cuenta_destino: cuentaData.id,
-            id_ticket: ticketData.id,
+            id_ticket: idTicket,
             tipo_movimiento: 'DEUDA_A_MATRIZ',
             monto: montoDeuda,
             categoria_gasto: `Caja por entregar a Matriz - ${ticketRef}`,
@@ -715,7 +691,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
         movimientosFinancieros.push({
           id_entidad_relacionada: vendedorId,
           id_cuenta_destino: cuentaData.id,
-          id_ticket: ticketData.id,
+          id_ticket: idTicket,
           tipo_movimiento: 'INGRESO_VENTA',
           monto: totalLiquidezEsperado,
           categoria_gasto: 'Venta de mercancia',
@@ -724,8 +700,8 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
           usuario_creador: user.email
         })
 
-        if (impuestoIvaCalculado > 0) movimientosFinancieros.push({ id_cuenta_destino: cuentaData.id, id_ticket: ticketData.id, tipo_movimiento: 'PASIVO_IVA', monto: impuestoIvaCalculado, categoria_gasto: 'Pasivo fiscal IVA', status: 'ACTIVO', fecha_movimiento: timestampTransaccion, usuario_creador: user.email })
-        if (impuestoIepsCalculado > 0) movimientosFinancieros.push({ id_cuenta_destino: cuentaData.id, id_ticket: ticketData.id, tipo_movimiento: 'PASIVO_IEPS', monto: impuestoIepsCalculado, categoria_gasto: 'Pasivo fiscal IEPS', status: 'ACTIVO', fecha_movimiento: timestampTransaccion, usuario_creador: user.email })
+        if (impuestoIvaCalculado > 0) movimientosFinancieros.push({ id_cuenta_destino: cuentaData.id, id_ticket: idTicket, tipo_movimiento: 'PASIVO_IVA', monto: impuestoIvaCalculado, categoria_gasto: 'Pasivo fiscal IVA', status: 'ACTIVO', fecha_movimiento: timestampTransaccion, usuario_creador: user.email })
+        if (impuestoIepsCalculado > 0) movimientosFinancieros.push({ id_cuenta_destino: cuentaData.id, id_ticket: idTicket, tipo_movimiento: 'PASIVO_IEPS', monto: impuestoIepsCalculado, categoria_gasto: 'Pasivo fiscal IEPS', status: 'ACTIVO', fecha_movimiento: timestampTransaccion, usuario_creador: user.email })
 
         // Only credit the DST with an ABONO_DEUDA when they physically hold the cash
         // (i.e. the destination account belongs to the DST, not to Admin). When the
@@ -734,7 +710,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
         if (usaTriangulacionInventario && !cuentaEsDeAdmin) {
           movimientosFinancieros.push({
             id_entidad_relacionada: origenInventarioId,
-            id_ticket: ticketData.id,
+            id_ticket: idTicket,
             tipo_movimiento: 'ABONO_DEUDA',
             monto: montoBaseIngreso,
             categoria_gasto: 'Abono por triangulación de inventario',
@@ -744,36 +720,50 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
           })
         }
       }
-
-      if (movimientosFinancieros.length > 0) {
-        const { error: finanzasError } = await supabase.from('finanzas_ledger').insert(movimientosFinancieros)
-        if (finanzasError) {
-          const rollback = await rollbackTicket(ticketData.id)
-          return { ok: false, error: componerErrorDeVenta(`Error financiero: ${finanzasError.message}`, rollback) }
-        }
-      }
     }
 
-    if (movimientosComisionTriangulacionYAdmin.length > 0) {
-      const { error: comisionError } = await supabase.from('finanzas_ledger').insert(movimientosComisionTriangulacionYAdmin)
-      if (comisionError) {
-        const rollback = await rollbackTicket(ticketData.id)
-        return { ok: false, error: componerErrorDeVenta(`Error comision: ${comisionError.message}`, rollback) }
-      }
-    }
+    const inventarioConTicket = inventarioMovimientos.map((row) => ({
+      ...row,
+      notas: notasConIdTicket(idTicket, row.notas)
+    }))
 
-    if (inventarioMovimientos.length > 0) {
-      const inventarioConTicket = inventarioMovimientos.map((row) => ({
-        ...row,
-        notas: notasConIdTicket(ticketData.id, row.notas)
-      }))
+    if (inventarioConTicket.length > 0) {
+      // El invariante de ERP-16 se sigue comprobando AQUI y no en SQL. El CHECK
+      // de la tabla existe pero esta NOT VALID y lanza un 23514 pelon; este da
+      // el mensaje que dice QUE fila va sin entidad.
       exigirEntidadDelMovimiento(inventarioConTicket, 'pos.registrarVenta')
+    }
 
-      const { error: inventarioError } = await supabase.from('inventario_ledger').insert(inventarioConTicket)
-      if (inventarioError) {
-        const rollback = await rollbackTicket(ticketData.id)
-        return { ok: false, error: componerErrorDeVenta(`Error inventario: ${inventarioError.message}`, rollback) }
-      }
+    // ── ERP-11: LA UNICA ESCRITURA ───────────────────────────────────
+    // Hasta hoy esto eran cinco llamadas sueltas, y PostgREST abre una
+    // transaccion por llamada: si la tercera fallaba, las dos primeras ya
+    // estaban committeadas y habia que BORRARLAS a mano. Ese borrado tenia su
+    // propio modo de fallo silencioso -un DELETE denegado por RLS devuelve 200
+    // con cero filas, que es ERP-66-. Dentro de la funcion las cuatro tablas
+    // caen en la MISMA transaccion: cualquier excepcion las deshace todas y no
+    // queda nada que compensar. La compensacion no se arreglo: se elimino.
+    //
+    // Los cuatro parametros van tipados por `types/database.ts`, regenerado
+    // contra produccion en este mismo turno. El `as unknown as Json` no es
+    // pereza: PostgREST recibe jsonb, y el generador declara jsonb como `Json`,
+    // que es una estructura recursiva sin campos opcionales. Un `Insert` de
+    // Supabase si los tiene, y `undefined` no existe en JSON. La conversion es
+    // la traduccion real, y ocurre de todas formas al serializar.
+    const { error: ventaError } = await supabase.rpc('registrar_venta_atomica', {
+      p_ticket: ticketInsert as unknown as Json,
+      p_detalles: detalles as unknown as Json,
+      p_finanzas: [
+        ...movimientosFinancieros,
+        ...movimientosComisionTriangulacionYAdmin
+      ] as unknown as Json,
+      p_inventario: inventarioConTicket as unknown as Json
+    })
+
+    if (ventaError) {
+      // No hay rollback que llamar: o entro todo o no entro nada. El mensaje es
+      // el de la excepcion de Postgres, que ya dice cual de las cuatro tablas
+      // fallo y por que.
+      return { ok: false, error: `Error al registrar la venta: ${ventaError.message}` }
     }
 
     revalidatePath('/dashboard/finanzas')
@@ -787,9 +777,13 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     }
     revalidatePath(`/dashboard/distribuidores/${vendedorId}`)
 
-    // El aviso se escribe AL FINAL, cuando ya no queda nada que pueda disparar
-    // `rollbackTicket`. Registrarlo antes dejaria un aviso apuntando a un ticket
-    // borrado el dia que un insert posterior falle.
+    // El aviso se escribe DESPUES de la venta, y ahora por otra razon: ya no hay
+    // compensacion que pudiera borrar el ticket bajo sus pies. Lo que queda es el
+    // riesgo contrario, y esta declarado en la migracion de ERP-11: el aviso vive
+    // FUERA de la transaccion, asi que puede fallar DESPUES del COMMIT y dejar una
+    // concesion sin centinela. Meterlo dentro es decision de negocio -si un aviso
+    // perdido es peor que una venta rechazada porque el aviso fallo- y la toma
+    // Norman, no este archivo.
     if (concesionSinComprador) {
       await registrarAviso(supabase, {
         tipo: 'W4',
@@ -800,7 +794,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
           '"PENDIENTE DE ASIGNAR": nadie la debe todavia. Este aviso no se cierra ' +
           'sin asignar el comprador real.',
         tabla: 'transacciones_tickets',
-        idRegistro: ticketData.id,
+        idRegistro: idTicket,
         datosCapturados: {
           vendedor: vendedor.nombre,
           total_cobrado_real: payload.totalCobradoReal,
@@ -811,7 +805,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       revalidatePath('/dashboard/avisos')
     }
 
-    return { ok: true, ticketId: ticketData.id }
+    return { ok: true, ticketId: idTicket }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno POS.'
     return { ok: false, error: message }
