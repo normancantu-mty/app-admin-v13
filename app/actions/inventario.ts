@@ -8,6 +8,16 @@ import { registrarAviso } from '@/lib/avisos-server'
 import type { Cubeta } from '@/lib/inventario-types'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
+
+/** Las cinco columnas del ledger que decide la cascada. Ver ERP-25. */
+interface MovimientoCascadaRow {
+  tipo_movimiento: string | null
+  cantidad: number | null
+  cubeta: string | null
+  id_entidad_destino: string | null
+  id_entidad_origen: string | null
+}
 
 type TipoLogisticaInversa = 'MERMA' | 'DEVOLUCION_FISICA'
 type InventarioInsert = TablesInsert<'inventario_ledger'>
@@ -294,21 +304,25 @@ export async function registrarSalidaCascada(
       return { success: false, error: 'cantidad_a_deducir debe ser un número mayor a cero.' }
     }
 
-    const { data: movimientos, error: movimientosError } = await supabase
-      .from('inventario_ledger')
-      .select('tipo_movimiento, cantidad, cubeta, id_entidad_destino, id_entidad_origen')
-      .eq('status', 'ACTIVO')
-      .eq('id_producto', id_producto)
-      .or(`id_entidad_destino.eq.${id_entidad},id_entidad_origen.eq.${id_entidad}`)
-
-    if (movimientosError) {
-      return { success: false, error: movimientosError.message }
-    }
+    // ERP-25: paginado. Aqui el truncamiento no solo ensucia un tablero —
+    // decide CUANTO se resta y DE QUE cubeta. Con el stock PAGADO de menos, la
+    // cascada quema consignado que no tocaba, o revienta con "Stock
+    // insuficiente" sobre mercancia que si existe.
+    const movimientos = await fetchTodasLasFilas<MovimientoCascadaRow>(
+      () =>
+        supabase
+          .from('inventario_ledger')
+          .select('tipo_movimiento, cantidad, cubeta, id_entidad_destino, id_entidad_origen')
+          .eq('status', 'ACTIVO')
+          .eq('id_producto', id_producto)
+          .or(`id_entidad_destino.eq.${id_entidad},id_entidad_origen.eq.${id_entidad}`),
+      'deduccionCascada: inventario_ledger'
+    )
 
     let stockPagadoActual = 0
     let stockConsignadoActual = 0
 
-    for (const mov of movimientos || []) {
+    for (const mov of movimientos) {
       const cubeta = mov.cubeta as Cubeta
       if (cubeta !== 'PAGADO' && cubeta !== 'CONSIGNADO') continue
 

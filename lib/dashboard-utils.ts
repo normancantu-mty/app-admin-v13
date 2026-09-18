@@ -8,6 +8,7 @@ import {
   movimientoContableEfectivo
 } from './finance-utils'
 import { limitesRangoMX } from './date-format'
+import { fetchTodasLasFilas, type ConsultaPaginable } from './paginacion'
 // La flecha va en ESTE sentido y solo en este: `lib/vistas.ts` no importa a
 // `dashboard-utils`, que es server-only por `next/headers`; importarlo desde
 // alla volveria server-only tambien la lectura de las vistas. Aqui, al reves,
@@ -54,39 +55,16 @@ async function getSupabaseServer() {
 export const DIAS_SEMAFORO_AMARILLO = 7
 export const DIAS_SEMAFORO_ROJO = 14
 
-/** Tope duro de PostgREST: sin `.range()` explícito nunca devuelve más de esto. */
-const TAMANO_PAGINA = 1000
-
-interface ConsultaPaginable<T> {
-  range(desde: number, hasta: number): PromiseLike<{ data: T[] | null; error: { message: string } | null }>
-}
-
 /**
- * Trae **todas** las filas de una consulta, paginando con `.range()`.
+ * La paginación vive en `lib/paginacion.ts` y desde aquí se **re-exporta**.
  *
- * PostgREST corta en 1000 filas sin avisar. Un ledger truncado no da error: da
- * un saldo falso. Toda consulta cuyo resultado se vaya a sumar (dinero o stock)
- * tiene que pasar por aquí. Si la página falla, se lanza el error en vez de
- * devolver una suma incompleta.
+ * Por qué re-exportada y no mudada a secas: cuatro pantallas y `risk-utils` la
+ * importan desde este módulo, y `lib/vistas.ts` mantenía su propia copia
+ * (`leerTodo`) porque no puede importar `dashboard-utils` sin volverse
+ * server-only. Ahora la implementación es UNA y las dos puertas siguen
+ * abiertas. Ver ERP-25 y `tests/paginacion-ledger.spec.ts`.
  */
-export async function fetchTodasLasFilas<T>(
-  construirConsulta: () => ConsultaPaginable<T>,
-  etiqueta: string
-): Promise<T[]> {
-  const filas: T[] = []
-
-  for (let desde = 0; ; desde += TAMANO_PAGINA) {
-    const { data, error } = await construirConsulta().range(desde, desde + TAMANO_PAGINA - 1)
-
-    if (error) {
-      throw new Error(`${etiqueta}: ${error.message}`)
-    }
-
-    const pagina = data ?? []
-    filas.push(...pagina)
-    if (pagina.length < TAMANO_PAGINA) return filas
-  }
-}
+export { fetchTodasLasFilas } from './paginacion'
 
 /**
  * Filas de `v_movimiento_clasificado` para el periodo pedido.
@@ -185,14 +163,6 @@ export interface AspectosUrgentes {
   semaforosRojos: SemaforoAlerta[]
   semaforosAmarillos: SemaforoAlerta[]
   alertasInventario: AlertaInventario[]
-}
-
-export interface EventoFeed {
-  id: string
-  tipo: string
-  descripcion: string
-  fecha: string
-  haceCuantoTiempo: string
 }
 
 export interface LiquidezPorCuenta {
@@ -362,17 +332,6 @@ export function calcularPasivosFiscalesAdmin(
     ivaPorPagar: Math.max(0, pasivosIva - pagosIva),
     iepsPorPagar: Math.max(0, pasivosIeps - pagosIeps)
   }
-}
-
-function inferCuentaDestinoLegacy(categoriaGasto?: string | null): keyof LiquidezPorCuenta | null {
-  const texto = (categoriaGasto || '').toUpperCase()
-  if (!texto) return null
-
-  if (texto.includes('FRESNILLO') || texto.includes('EMPRESA')) return 'CUENTA_FRESNILLO'
-  if (texto.includes('PERSONAL')) return 'CUENTA_PERSONAL'
-  if (texto.includes('EFECTIVO') || texto.includes('CAJA')) return 'EFECTIVO'
-
-  return null
 }
 
 /** Cuentas financieras del ADMIN (ids + nombre para buckets de liquidez). */
@@ -853,99 +812,4 @@ export async function getDesgloseCategorias(
     console.error('Error in getDesgloseCategorias:', error)
     return []
   }
-}
-
-export async function getFeedGlobal(): Promise<EventoFeed[]> {
-  try {
-    const supabase = await getSupabaseServer()
-    const { data: tickets, error: ticketsError } = await supabase
-      .from('transacciones_tickets')
-      .select('id, id_vendedor, id_comprador, total_cobrado_real, fecha_transaccion, comprador:entidades!id_comprador(nombre)')
-      .order('fecha_transaccion', { ascending: false })
-      .limit(10)
-
-    if (ticketsError) {
-      console.error('Error fetching tickets for feed:', ticketsError?.message, ticketsError?.details, ticketsError?.hint)
-    }
-
-    const { data: ledger, error: ledgerError } = await supabase
-      .from('finanzas_ledger')
-      .select('id, tipo_movimiento, monto, categoria, fecha_movimiento, id_entidad_relacionada')
-      .in('status', ['APPROVED', 'ACTIVO'])
-      .order('fecha_movimiento', { ascending: false })
-      .limit(10)
-
-    if (ledgerError) {
-      console.error('Error fetching ledger for feed:', ledgerError?.message, ledgerError?.details, ledgerError?.hint)
-    }
-
-    const eventos: EventoFeed[] = []
-
-    if (tickets) {
-      tickets.forEach(ticket => {
-        const compradorNombre = (ticket.comprador as any)?.nombre || 'Cliente'
-        eventos.push({
-          id: ticket.id,
-          tipo: 'Venta',
-          descripcion: `Venta a ${compradorNombre} - $${ticket.total_cobrado_real.toLocaleString('es-MX')}`,
-          fecha: ticket.fecha_transaccion,
-          haceCuantoTiempo: calcularTiempoTranscurrido(ticket.fecha_transaccion)
-        })
-      })
-    }
-
-    if (ledger) {
-      ledger.forEach(mov => {
-        let tipo = 'Movimiento'
-        let descripcion = ''
-
-        if (mov.tipo_movimiento === 'ABONO_DEUDA') {
-          tipo = 'Abono'
-          descripcion = `Abono - $${mov.monto.toLocaleString('es-MX')}`
-        } else if (mov.tipo_movimiento === 'GASTO_OPERATIVO') {
-          tipo = 'Gasto'
-          descripcion = `Gasto: ${mov.categoria} - $${mov.monto.toLocaleString('es-MX')}`
-        } else if (mov.tipo_movimiento === 'COMPRA_INSUMOS') {
-          tipo = 'Gasto'
-          descripcion = `Compra Insumos - $${mov.monto.toLocaleString('es-MX')}`
-        } else if (mov.tipo_movimiento === 'SUBSIDIO_FISCAL') {
-          tipo = 'Gasto'
-          descripcion = `Subsidio Fiscal - $${mov.monto.toLocaleString('es-MX')}`
-        } else if (mov.tipo_movimiento === 'COMISION_PASIVA') {
-          tipo = 'Gasto'
-          descripcion = `Comisión Pasiva - $${mov.monto.toLocaleString('es-MX')}`
-        }
-
-        eventos.push({
-          id: mov.id,
-          tipo,
-          descripcion,
-          fecha: mov.fecha_movimiento,
-          haceCuantoTiempo: calcularTiempoTranscurrido(mov.fecha_movimiento)
-        })
-      })
-    }
-
-    eventos.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())
-
-    return eventos.slice(0, 15)
-  } catch (error: any) {
-    console.error('Error in getFeedGlobal:', error?.message, error?.details, error?.hint)
-    return []
-  }
-}
-
-function calcularTiempoTranscurrido(fecha: string): string {
-  const ahora = Date.now()
-  const entonces = new Date(fecha).getTime()
-  const diferencia = ahora - entonces
-
-  const minutos = Math.floor(diferencia / (1000 * 60))
-  const horas = Math.floor(diferencia / (1000 * 60 * 60))
-  const dias = Math.floor(diferencia / (1000 * 60 * 60 * 24))
-
-  if (minutos < 1) return 'Hace un momento'
-  if (minutos < 60) return `Hace ${minutos} min`
-  if (horas < 24) return `Hace ${horas} ${horas === 1 ? 'hora' : 'horas'}`
-  return `Hace ${dias} ${dias === 1 ? 'día' : 'días'}`
 }

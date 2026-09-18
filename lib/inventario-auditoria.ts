@@ -1,6 +1,17 @@
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
+
+/** Las seis columnas del ledger de las que sale el stock. Nada mas se lee. */
+interface MovimientoStockRow {
+  id_producto: string | null
+  tipo_movimiento: string | null
+  cantidad: number | null
+  cubeta: string | null
+  id_entidad_destino: string | null
+  id_entidad_origen: string | null
+}
 
 export interface StockEsperadoItem {
   idProducto: string
@@ -93,15 +104,21 @@ export async function getStockPorCubetaPorEntidad(idEntidad: string): Promise<St
   }
 
   const supabase = getServiceRoleSupabaseClient()
-  const { data: movimientos, error: movimientosError } = await supabase
-    .from('inventario_ledger')
-    .select('id_producto, tipo_movimiento, cantidad, cubeta, id_entidad_destino, id_entidad_origen')
-    .in('status', ['ACTIVO', 'APPROVED'])
-    .or(`id_entidad_destino.eq.${entidadId},id_entidad_origen.eq.${entidadId}`)
 
-  if (movimientosError) {
-    throw new Error(`Error al calcular stock esperado: ${movimientosError.message}`)
-  }
+  // ERP-25. Este replay ES el stock que ve el Conteo fisico. Sin `.range()`
+  // PostgREST entrega 1000 filas y se calla: el stock sale MENOR de lo real,
+  // sin un solo error en pantalla, y el conteo acusa un faltante que no existe.
+  // Hoy `inventario_ledger` va en 484 filas — la fecha de explosion depende de
+  // cuando Norman empiece a meter datos reales, no de una decision de diseno.
+  const movimientos = await fetchTodasLasFilas<MovimientoStockRow>(
+    () =>
+      supabase
+        .from('inventario_ledger')
+        .select('id_producto, tipo_movimiento, cantidad, cubeta, id_entidad_destino, id_entidad_origen')
+        .in('status', ['ACTIVO', 'APPROVED'])
+        .or(`id_entidad_destino.eq.${entidadId},id_entidad_origen.eq.${entidadId}`),
+    'Error al calcular stock esperado'
+  )
 
   const stockMapPagado = new Map<string, number>()
   const stockMapConsignado = new Map<string, number>()

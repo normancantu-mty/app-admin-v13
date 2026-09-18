@@ -25,6 +25,16 @@ import type { Database } from '@/types/database'
 import { CATALOGO_SEMILLA, type CategoriaDelCatalogo } from '@/lib/bot-gastos'
 import { aCentavos, aPesos, netearAbonosSinPedido } from '@/lib/abonos'
 import type { TicketAbierto } from '@/lib/bot-abonos'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
+
+/** Un pedido a concesion tal como sale del ledger, antes de netear. Ver ERP-25. */
+interface TicketAbiertoRow {
+  id: string
+  fecha_transaccion: string | null
+  total_cobrado_real: number | null
+  condicion_pago: string | null
+  status: string | null
+}
 
 export type ClienteServicio = SupabaseClient<Database>
 
@@ -263,49 +273,57 @@ export async function leerTicketsAbiertos(
   supabase: ClienteServicio,
   idEntidad: string
 ): Promise<TicketAbierto[]> {
-  const { data: ticketsRaw, error } = await supabase
-    .from('transacciones_tickets')
-    .select('id, fecha_transaccion, total_cobrado_real, condicion_pago, status')
-    .eq('id_comprador', idEntidad)
-    .eq('condicion_pago', 'CONCESION')
-    .in('status', ['ACTIVO', 'APPROVED'])
-    .order('fecha_transaccion', { ascending: true })
+  // ERP-25: las tres lecturas van paginadas, igual que su gemela
+  // `cargarTicketsPendientes` en `app/actions/abonos.ts`. Un bot que propone
+  // cobrar sobre un ledger truncado ofrece pedidos ya pagados.
+  const tickets = await fetchTodasLasFilas<TicketAbiertoRow>(
+    () =>
+      supabase
+        .from('transacciones_tickets')
+        .select('id, fecha_transaccion, total_cobrado_real, condicion_pago, status')
+        .eq('id_comprador', idEntidad)
+        .eq('condicion_pago', 'CONCESION')
+        .in('status', ['ACTIVO', 'APPROVED'])
+        .order('fecha_transaccion', { ascending: true }),
+    'No se pudieron leer los pedidos'
+  )
 
-  if (error) throw new Error('No se pudieron leer los pedidos: ' + error.message)
-
-  const tickets = ticketsRaw ?? []
   if (!tickets.length) return []
 
-  const { data: aplicadosRaw, error: errorAplicados } = await supabase
-    .from('finanzas_ledger')
-    .select('id_ticket, monto')
-    .in('id_ticket', tickets.map((t) => t.id))
-    .eq('tipo_movimiento', 'ABONO_DEUDA')
-    .in('status', ['ACTIVO', 'APPROVED'])
-
-  if (errorAplicados) throw new Error('No se pudo leer lo ya aplicado: ' + errorAplicados.message)
+  const aplicadosRaw = await fetchTodasLasFilas<{ id_ticket: string | null; monto: number | null }>(
+    () =>
+      supabase
+        .from('finanzas_ledger')
+        .select('id_ticket, monto')
+        .in('id_ticket', tickets.map((t) => t.id))
+        .eq('tipo_movimiento', 'ABONO_DEUDA')
+        .in('status', ['ACTIVO', 'APPROVED']),
+    'No se pudo leer lo ya aplicado'
+  )
 
   // ── El dinero que se cobro SIN decir de que pedido era ───────────────────
   // Sin esto el reparto cree que hay pedidos abiertos que la cartera ya da por
   // cobrados: 7 de 9 deudores el 2026-09-12, y en Delirio 85 la diferencia era
   // de $60,716 (E-246). Va a los mas viejos por decision de Norman.
-  const { data: aCuentaRaw, error: errorACuenta } = await supabase
-    .from('finanzas_ledger')
-    .select('monto')
-    .eq('id_entidad_relacionada', idEntidad)
-    .eq('tipo_movimiento', 'ABONO_DEUDA')
-    .in('status', ['ACTIVO', 'APPROVED'])
-    .is('id_ticket', null)
+  const aCuentaRaw = await fetchTodasLasFilas<{ monto: number | null }>(
+    () =>
+      supabase
+        .from('finanzas_ledger')
+        .select('monto')
+        .eq('id_entidad_relacionada', idEntidad)
+        .eq('tipo_movimiento', 'ABONO_DEUDA')
+        .in('status', ['ACTIVO', 'APPROVED'])
+        .is('id_ticket', null),
+    'No se pudo leer lo abonado a cuenta'
+  )
 
-  if (errorACuenta) throw new Error('No se pudo leer lo abonado a cuenta: ' + errorACuenta.message)
-
-  const aCuentaCentavos = (aCuentaRaw ?? []).reduce(
+  const aCuentaCentavos = aCuentaRaw.reduce(
     (total, fila) => total + aCentavos(Number(fila.monto) || 0),
     0
   )
 
   const aplicado = new Map<string, number>()
-  for (const fila of aplicadosRaw ?? []) {
+  for (const fila of aplicadosRaw) {
     if (!fila.id_ticket) continue
     aplicado.set(fila.id_ticket, (aplicado.get(fila.id_ticket) ?? 0) + aCentavos(Number(fila.monto) || 0))
   }

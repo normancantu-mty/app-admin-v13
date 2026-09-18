@@ -15,8 +15,10 @@
  * 1. **No importa `lib/dashboard-utils.ts`.** Ese modulo es server-only
  *    (importa `next/headers`) y arrastrarlo aqui volveria server-only tambien
  *    a la lectura de las vistas, que es justo lo que van a necesitar el bot de
- *    Telegram y los reportes. Por eso la paginacion se reimplementa abajo, en
- *    doce lineas, en vez de importarse.
+ *    Telegram y los reportes. Por eso la paginacion se importa de
+ *    `lib/paginacion.ts` —que no depende de nada— y NO de `dashboard-utils`.
+ *    Hasta ERP-25 estaba reimplementada aqui abajo en doce lineas; eran dos
+ *    copias de la misma regla, que es una copia de mas.
  * 2. **El cliente se recibe, no se construye.** Ni `createBrowserClient` ni
  *    `createServerClient` ni service role: quien llama decide con que sesion
  *    lee, y las vistas —creadas con `security_invoker = true`— aplican el RLS
@@ -28,6 +30,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { fetchTodasLasFilas } from './paginacion'
 
 // ─── Tipos de fila ──────────────────────────────────────────────────────────
 
@@ -151,23 +154,19 @@ type ClienteConVistas = {
   }
 }
 
-/** PostgREST corta en 1000 filas sin avisar; un ledger truncado no da error, da una suma falsa. */
-const TAMANO_PAGINA = 1000
-
+/**
+ * Envoltorio de `fetchTodasLasFilas` para las vistas.
+ *
+ * Solo existe por el tipo: `ClienteConVistas` devuelve `unknown[]` —las vistas
+ * no estan en `types/database.ts`, ver `ClienteConVistas` arriba— y el cast a
+ * `T[]` se concentra aqui en vez de repetirse en cada lectura. La paginacion en
+ * si ya no se reimplementa: es la de `lib/paginacion.ts` (ERP-25).
+ */
 async function leerTodo<T>(
   construir: () => { range(desde: number, hasta: number): PromiseLike<{ data: unknown[] | null; error: { message: string } | null }> },
   etiqueta: string
 ): Promise<T[]> {
-  const filas: T[] = []
-
-  for (let desde = 0; ; desde += TAMANO_PAGINA) {
-    const { data, error } = await construir().range(desde, desde + TAMANO_PAGINA - 1)
-    if (error) throw new Error(`${etiqueta}: ${error.message}`)
-
-    const pagina = (data ?? []) as T[]
-    filas.push(...pagina)
-    if (pagina.length < TAMANO_PAGINA) return filas
-  }
+  return (await fetchTodasLasFilas<unknown>(construir, etiqueta)) as T[]
 }
 
 function comoClienteConVistas(client: SupabaseClient<Database>): ClienteConVistas {

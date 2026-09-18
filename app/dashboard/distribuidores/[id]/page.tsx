@@ -455,19 +455,29 @@ async function getTotalMermasEntidad(
     return 0
   }
 
-  const { data, error } = await serviceRoleClient
-    .from('inventario_ledger')
-    .select('cantidad, id_entidad_origen, id_entidad_destino')
-    .in('status', ['ACTIVO', 'APPROVED'])
-    .eq('tipo_movimiento', 'MERMA')
-    .or(`id_entidad_origen.eq.${idEntidad},id_entidad_destino.eq.${idEntidad}`)
+  // ERP-25: paginado. Es un `reduce` sobre filas de ledger, o sea exactamente
+  // la forma que PostgREST trunca en silencio. Hoy las mermas son pocas; el
+  // argumento "son pocas" es el que hace que nadie lo revise el dia que dejan
+  // de serlo. Si una pagina falla, `fetchTodasLasFilas` lanza — y el `catch`
+  // de abajo conserva el comportamiento anterior: el perfil no revienta, el
+  // total sale 0 y el error queda en el log.
+  try {
+    const filas = await fetchTodasLasFilas<{ cantidad: number | null }>(
+      () =>
+        serviceRoleClient
+          .from('inventario_ledger')
+          .select('cantidad, id_entidad_origen, id_entidad_destino')
+          .in('status', ['ACTIVO', 'APPROVED'])
+          .eq('tipo_movimiento', 'MERMA')
+          .or(`id_entidad_origen.eq.${idEntidad},id_entidad_destino.eq.${idEntidad}`),
+      'getTotalMermasEntidad'
+    )
 
-  if (error) {
+    return filas.reduce((acc, mov) => acc + Math.abs(Number(mov.cantidad) || 0), 0)
+  } catch (error) {
     console.error('Error fetching total mermas por entidad:', error)
     return 0
   }
-
-  return (data || []).reduce((acc, mov) => acc + Math.abs(Number(mov.cantidad) || 0), 0)
 }
 
 async function dstPuedeOperarPerfilDetallePage(

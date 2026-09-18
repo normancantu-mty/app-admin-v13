@@ -44,12 +44,30 @@ import {
   type TicketPendienteCentavos,
   netearAbonosSinPedido
 } from '@/lib/abonos'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
+import { hoyEnMX } from '@/lib/date-format'
 
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 
+/** Un pedido a concesion abierto, tal como lo lee `cargarTicketsPendientes`. */
+interface TicketPendienteRow {
+  id: string
+  fecha_transaccion: string | null
+  total_cobrado_real: number | null
+  condicion_pago: string | null
+  status: string | null
+}
+
+/** Un ABONO_DEUDA ya colgado de un pedido. */
+interface AbonoAplicadoRow {
+  id_ticket: string | null
+  monto: number | null
+  status: string | null
+  tipo_movimiento: string | null
+}
+
 /** Zacatecas es UTC-6 todo el anio. Un input `date` no trae hora ni zona. */
 const OFFSET_MX = '-06:00'
-const MS_OFFSET_MX = 6 * 60 * 60 * 1000
 
 export interface PropuestaTicketAbono {
   id_ticket: string
@@ -133,9 +151,16 @@ async function autorizarEntidadObjetivo(
   return { ok: true }
 }
 
-/** Fecha de hoy (YYYY-MM-DD) leida en hora de Zacatecas, no en UTC. */
+/**
+ * Fecha de hoy (YYYY-MM-DD) leida en hora de Zacatecas, no en UTC.
+ *
+ * ERP-23: era `Date.now() - 6h`, o sea el offset de Mexico escrito a mano por
+ * segunda vez en el repo. Acertaba —Zacatecas es UTC-6 todo el anio— pero
+ * "que dia es hoy" tenia DOS implementaciones, y la que un dia se corrija no
+ * va a ser la que alguien recuerde. Ahora las dos son `hoyEnMX`.
+ */
 function hoyEnMexico(): string {
-  return new Date(Date.now() - MS_OFFSET_MX).toISOString().slice(0, 10)
+  return hoyEnMX()
 }
 
 /**
@@ -217,37 +242,51 @@ async function cargarTicketsPendientes(
   supabase: ClienteServidor,
   idEntidad: string
 ): Promise<{ ok: true; tickets: PropuestaTicketAbono[] } | { ok: false; error: string }> {
-  const { data: ticketsRaw, error: ticketsError } = await supabase
-    .from('transacciones_tickets')
-    .select('id, fecha_transaccion, total_cobrado_real, condicion_pago, status')
-    .eq('id_comprador', idEntidad)
-    .eq('condicion_pago', 'CONCESION')
-    .in('status', ['ACTIVO', 'APPROVED'])
-    .order('fecha_transaccion', { ascending: true })
-
-  if (ticketsError) {
-    return { ok: false, error: `No se pudieron leer los pedidos: ${ticketsError.message}` }
+  // ERP-25: las tres lecturas de esta funcion van paginadas. De ellas sale el
+  // saldo que se le ofrece cobrar a un distribuidor; truncadas, el reparto FIFO
+  // ofrece pedidos ya pagados o esconde deuda, sin un solo error. Y aqui el
+  // riesgo crece con el negocio: son los tickets de UN comprador y sus abonos.
+  let ticketsRaw: TicketPendienteRow[]
+  try {
+    ticketsRaw = await fetchTodasLasFilas<TicketPendienteRow>(
+      () =>
+        supabase
+          .from('transacciones_tickets')
+          .select('id, fecha_transaccion, total_cobrado_real, condicion_pago, status')
+          .eq('id_comprador', idEntidad)
+          .eq('condicion_pago', 'CONCESION')
+          .in('status', ['ACTIVO', 'APPROVED'])
+          .order('fecha_transaccion', { ascending: true }),
+      'No se pudieron leer los pedidos'
+    )
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'No se pudieron leer los pedidos' }
   }
 
-  const tickets = ticketsRaw ?? []
+  const tickets = ticketsRaw
   if (!tickets.length) {
     return { ok: true, tickets: [] }
   }
 
   const ids = tickets.map((ticket) => ticket.id)
-  const { data: aplicadosRaw, error: aplicadosError } = await supabase
-    .from('finanzas_ledger')
-    .select('id_ticket, monto, status, tipo_movimiento')
-    .in('id_ticket', ids)
-    .eq('tipo_movimiento', 'ABONO_DEUDA')
-    .in('status', ['ACTIVO', 'APPROVED'])
-
-  if (aplicadosError) {
-    return { ok: false, error: `No se pudo leer lo ya aplicado: ${aplicadosError.message}` }
+  let aplicadosRaw: AbonoAplicadoRow[]
+  try {
+    aplicadosRaw = await fetchTodasLasFilas<AbonoAplicadoRow>(
+      () =>
+        supabase
+          .from('finanzas_ledger')
+          .select('id_ticket, monto, status, tipo_movimiento')
+          .in('id_ticket', ids)
+          .eq('tipo_movimiento', 'ABONO_DEUDA')
+          .in('status', ['ACTIVO', 'APPROVED']),
+      'No se pudo leer lo ya aplicado'
+    )
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'No se pudo leer lo ya aplicado' }
   }
 
   const aplicadoPorTicket = new Map<string, number>()
-  for (const fila of aplicadosRaw ?? []) {
+  for (const fila of aplicadosRaw) {
     if (!fila.id_ticket) continue
     aplicadoPorTicket.set(
       fila.id_ticket,
@@ -260,19 +299,24 @@ async function cargarTicketsPendientes(
   // reparto ofrecia pedidos que ya estaban cobrados. Medido el 2026-09-12 en 7
   // de los 9 deudores; en Delirio 85, $60,716 de diferencia (E-246).
   // **Se netea contra los mas viejos** — decision de Norman, 2026-09-12.
-  const { data: aCuentaRaw, error: aCuentaError } = await supabase
-    .from('finanzas_ledger')
-    .select('monto')
-    .eq('id_entidad_relacionada', idEntidad)
-    .eq('tipo_movimiento', 'ABONO_DEUDA')
-    .in('status', ['ACTIVO', 'APPROVED'])
-    .is('id_ticket', null)
-
-  if (aCuentaError) {
-    return { ok: false, error: `No se pudo leer lo abonado a cuenta: ${aCuentaError.message}` }
+  let aCuentaRaw: { monto: number | null }[]
+  try {
+    aCuentaRaw = await fetchTodasLasFilas<{ monto: number | null }>(
+      () =>
+        supabase
+          .from('finanzas_ledger')
+          .select('monto')
+          .eq('id_entidad_relacionada', idEntidad)
+          .eq('tipo_movimiento', 'ABONO_DEUDA')
+          .in('status', ['ACTIVO', 'APPROVED'])
+          .is('id_ticket', null),
+      'No se pudo leer lo abonado a cuenta'
+    )
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'No se pudo leer lo abonado a cuenta' }
   }
 
-  const aCuentaCentavos = (aCuentaRaw ?? []).reduce(
+  const aCuentaCentavos = aCuentaRaw.reduce(
     (total, fila) => total + aCentavos(Number(fila.monto) || 0),
     0
   )

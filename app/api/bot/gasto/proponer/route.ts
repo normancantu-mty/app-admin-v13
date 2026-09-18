@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server'
 import type { Json } from '@/types/database'
 import { clienteDeServicio, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { fetchTodasLasFilas, type ConsultaPaginable } from '@/lib/paginacion'
 import {
   buscarDuplicado,
   mensajeDeConfirmacion,
@@ -84,21 +85,28 @@ export async function POST(request: Request) {
     // compra de insumos entre los gastos con `id_cuenta_destino` no encontraria
     // nunca nada, y un detector que nunca encuentra nada es indistinguible de
     // uno apagado.
-    let consulta = supabase
-      .from('finanzas_ledger')
-      .select('id, monto, categoria, descripcion, fecha_movimiento, usuario_creador')
-      .eq('tipo_movimiento', fila.tipo_movimiento)
-      .eq('status', 'ACTIVO')
-      .gte('fecha_movimiento', desde)
-    consulta =
-      fila.id_cuenta_origen !== null
-        ? consulta.eq('id_cuenta_origen', fila.id_cuenta_origen)
-        : consulta.eq('id_cuenta_destino', fila.id_cuenta_destino as string)
-    const { data: recientes } = await consulta
+    // ERP-25: paginado. El detector de duplicados barre una ventana de horas;
+    // truncada, deja de encontrar justo cuando hay muchos movimientos — que es
+    // cuando mas falta hace. Un detector que no encuentra nada es
+    // indistinguible de uno apagado, y esto lo apagaria sin avisar.
+    const recientes = await fetchTodasLasFilas<MovimientoReciente>(() => {
+      const consulta = supabase
+        .from('finanzas_ledger')
+        .select('id, monto, categoria, descripcion, fecha_movimiento, usuario_creador')
+        .eq('tipo_movimiento', fila.tipo_movimiento)
+        .eq('status', 'ACTIVO')
+        .gte('fecha_movimiento', desde)
+
+      return (
+        fila.id_cuenta_origen !== null
+          ? consulta.eq('id_cuenta_origen', fila.id_cuenta_origen)
+          : consulta.eq('id_cuenta_destino', fila.id_cuenta_destino as string)
+      ) as unknown as ConsultaPaginable<MovimientoReciente>
+    }, 'bot/gasto/proponer: duplicados recientes')
 
     const duplicado = buscarDuplicado(
       { monto: normalizada.payload.monto, categoria: normalizada.payload.categoria },
-      (recientes ?? []) as MovimientoReciente[],
+      recientes,
       new Date()
     )
 

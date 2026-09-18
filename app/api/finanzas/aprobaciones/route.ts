@@ -5,6 +5,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
 
 // Cliente por request con la sesion del usuario. El cliente browser de
 // '@/lib/supabase' viaja sin sesion desde un route handler (o sea, como `anon`):
@@ -75,9 +76,13 @@ export async function GET() {
     }
 
     const supabase = await getSupabaseRoute()
-    const { data, error } = await supabase
-      .from('finanzas_ledger')
-      .select(`
+    // ERP-25: paginado. Es la cola de aprobaciones. Truncada no da error: da una
+    // cola corta, y un abono que nadie ve es un abono que nadie aprueba.
+    const data = await fetchTodasLasFilas<unknown>(
+      () =>
+        supabase
+          .from('finanzas_ledger')
+          .select(`
         id,
         fecha_movimiento,
         monto,
@@ -85,16 +90,14 @@ export async function GET() {
         entidad_relacionada:entidades!id_entidad_relacionada(nombre),
         cuenta_destino:cuentas_financieras!id_cuenta_destino(nombre)
       `)
-      .eq('status', 'ACTIVO')
-      .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
-      .eq('tipo_movimiento', 'ABONO_DEUDA')
-      .order('fecha_movimiento', { ascending: false })
+          .eq('status', 'ACTIVO')
+          .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
+          .eq('tipo_movimiento', 'ABONO_DEUDA')
+          .order('fecha_movimiento', { ascending: false }),
+      'aprobaciones pendientes'
+    )
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    return NextResponse.json({ approvals: data || [] })
+    return NextResponse.json({ approvals: data })
   } catch (error: unknown) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Error interno al obtener pendientes.' },

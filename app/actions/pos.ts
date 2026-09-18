@@ -12,6 +12,7 @@ import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { esCuentaFiscal, validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
+import { componerErrorDeVenta, evaluarRollbackPOS, type ResultadoRollbackPOS } from '@/lib/pos-rollback'
 
 interface POSItemPayload {
   id_producto: string
@@ -56,6 +57,16 @@ type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 type InventarioInsert = TablesInsert<'inventario_ledger'>
 
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
+
+/** Las cinco columnas del ledger de las que el POS saca el stock. Ver ERP-25. */
+interface MovimientoStockPos {
+  id_entidad_destino: string | null
+  id_entidad_origen: string | null
+  cantidad: number | null
+  cubeta: string | null
+  status: string | null
+}
 
 function roundTo2(value: number): number {
   return Number(value.toFixed(2))
@@ -411,17 +422,25 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
 
     const inventarioMovimientos: InventarioInsert[] = []
     for (const [idProducto, cantidadVendida] of cantidadPorProducto.entries()) {
-      const { data: sellerMovs } = await supabase
-        .from('inventario_ledger')
-        .select('id_entidad_destino, id_entidad_origen, cantidad, cubeta, status')
-        .eq('id_producto', idProducto)
-        .eq('status', 'ACTIVO')
-        .or(`id_entidad_destino.eq.${origenInventarioId},id_entidad_origen.eq.${origenInventarioId}`)
+      // ERP-25: paginado. De estas filas sale el stock con el que el POS decide
+      // si puede vender y de que cubeta descuenta. Truncada, la venta se
+      // rechaza por mercancia que si existe, o se carga a la cubeta
+      // equivocada — y ninguna de las dos cosas da error.
+      const sellerMovs = await fetchTodasLasFilas<MovimientoStockPos>(
+        () =>
+          supabase
+            .from('inventario_ledger')
+            .select('id_entidad_destino, id_entidad_origen, cantidad, cubeta, status')
+            .eq('id_producto', idProducto)
+            .eq('status', 'ACTIVO')
+            .or(`id_entidad_destino.eq.${origenInventarioId},id_entidad_origen.eq.${origenInventarioId}`),
+        'pos: stock del vendedor'
+      )
 
       let stockPagadoActual = 0
       let stockConsignadoActual = 0
       let stockNeto = 0
-      ;(sellerMovs || []).forEach(m => {
+      sellerMovs.forEach(m => {
         const cubetaAsignada = (m.cubeta || 'PAGADO') as Cubeta
         const isReceiver = m.id_entidad_destino === origenInventarioId
         const isSender = m.id_entidad_origen === origenInventarioId
@@ -514,10 +533,33 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     const { data: ticketData, error: ticketError } = await supabase.from('transacciones_tickets').insert(ticketInsert).select('id').single()
     if (ticketError || !ticketData) return { ok: false, error: `Error al generar ticket: ${ticketError?.message}` }
 
-    const rollbackTicket = async (ticketId: string) => {
-      await supabase.from('finanzas_ledger').delete().eq('id_ticket', ticketId)
-      await supabase.from('ticket_detalles').delete().eq('id_ticket', ticketId)
-      await supabase.from('transacciones_tickets').delete().eq('id', ticketId)
+    /**
+     * Compensacion manual: no hay transaccion, asi que deshacer es escribir otra
+     * vez. ERP-66: antes se descartaba el resultado de los tres borrados, y como
+     * DELETE es solo de ADMIN, la venta fallida de un vendedor no-ADMIN dejaba el
+     * ticket vivo sin que nadie se enterara. Ahora cada borrado se mira, y el del
+     * encabezado ademas exige haber devuelto su fila: **RLS no da error, da cero
+     * filas**. El juicio vive en `lib/pos-rollback.ts`, que es puro y tiene prueba.
+     */
+    const rollbackTicket = async (ticketId: string): Promise<ResultadoRollbackPOS> => {
+      const { error: errorFinanzas } = await supabase.from('finanzas_ledger').delete().eq('id_ticket', ticketId)
+      const { error: errorDetalles } = await supabase.from('ticket_detalles').delete().eq('id_ticket', ticketId)
+      const { data: ticketsBorrados, error: errorTicket } = await supabase
+        .from('transacciones_tickets')
+        .delete()
+        .eq('id', ticketId)
+        .select('id')
+
+      const resultado = evaluarRollbackPOS(ticketId, [
+        { nombreTabla: 'finanzas_ledger', error: errorFinanzas, filasBorradas: null, exigeFilas: false },
+        { nombreTabla: 'ticket_detalles', error: errorDetalles, filasBorradas: null, exigeFilas: false },
+        { nombreTabla: 'transacciones_tickets', error: errorTicket, filasBorradas: ticketsBorrados?.length ?? 0, exigeFilas: true }
+      ])
+
+      if (!resultado.ok) {
+        console.error(`[POS] Rollback incompleto del ticket ${ticketId}:`, resultado.restos.join(' | '))
+      }
+      return resultado
     }
 
     const detalles: TicketDetalleInsert[] = itemsNormalizados.map((item) => {
@@ -533,8 +575,8 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
 
     const { error: detallesError } = await supabase.from('ticket_detalles').insert(detalles)
     if (detallesError) {
-      await rollbackTicket(ticketData.id)
-      return { ok: false, error: `Error al guardar detalles: ${detallesError.message}` }
+      const rollback = await rollbackTicket(ticketData.id)
+      return { ok: false, error: componerErrorDeVenta(`Error al guardar detalles: ${detallesError.message}`, rollback) }
     }
 
     const movimientosComisionTriangulacionYAdmin: FinanzaInsert[] = []
@@ -616,8 +658,8 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       const movimientosFinancieros: FinanzaInsert[] = []
       const totalLiquidezEsperado = roundTo2(payload.totalCobradoReal)
       if (!Number.isFinite(totalLiquidezEsperado) || totalLiquidezEsperado <= 0) {
-        await rollbackTicket(ticketData.id)
-        return { ok: false, error: 'Monto de cobro inválido.' }
+        const rollback = await rollbackTicket(ticketData.id)
+        return { ok: false, error: componerErrorDeVenta('Monto de cobro inválido.', rollback) }
       }
 
       if (vendedor.rol === 'DST' || vendedor.rol === 'LOC') {
@@ -706,8 +748,8 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
       if (movimientosFinancieros.length > 0) {
         const { error: finanzasError } = await supabase.from('finanzas_ledger').insert(movimientosFinancieros)
         if (finanzasError) {
-          await rollbackTicket(ticketData.id)
-          return { ok: false, error: `Error financiero: ${finanzasError.message}` }
+          const rollback = await rollbackTicket(ticketData.id)
+          return { ok: false, error: componerErrorDeVenta(`Error financiero: ${finanzasError.message}`, rollback) }
         }
       }
     }
@@ -715,8 +757,8 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     if (movimientosComisionTriangulacionYAdmin.length > 0) {
       const { error: comisionError } = await supabase.from('finanzas_ledger').insert(movimientosComisionTriangulacionYAdmin)
       if (comisionError) {
-        await rollbackTicket(ticketData.id)
-        return { ok: false, error: `Error comision: ${comisionError.message}` }
+        const rollback = await rollbackTicket(ticketData.id)
+        return { ok: false, error: componerErrorDeVenta(`Error comision: ${comisionError.message}`, rollback) }
       }
     }
 
@@ -729,8 +771,8 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
 
       const { error: inventarioError } = await supabase.from('inventario_ledger').insert(inventarioConTicket)
       if (inventarioError) {
-        await rollbackTicket(ticketData.id)
-        return { ok: false, error: `Error inventario: ${inventarioError.message}` }
+        const rollback = await rollbackTicket(ticketData.id)
+        return { ok: false, error: componerErrorDeVenta(`Error inventario: ${inventarioError.message}`, rollback) }
       }
     }
 
