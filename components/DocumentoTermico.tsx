@@ -13,39 +13,21 @@
  * Quien lo llama trae los datos ya resueltos.
  */
 
-export interface LineaDocumento {
-  id: string
-  nombre: string
-  cantidad: number
-  precioUnitario: number
-}
+import type { DocumentoDatos } from '@/lib/documento'
 
-export interface MovimientoDocumento {
-  id: string
-  fecha: string
-  concepto: string
-  monto: number
-}
-
-export interface DocumentoTermicoProps {
-  /** La linea chica bajo el nombre de la empresa. Es lo unico que distingue un ticket de una cotizacion. */
-  subtitulo: string
-  fecha: string
-  folio: string
-  vendedor: string
-  comprador: string
-  lineas: LineaDocumento[]
-  etiquetaTotal: string
-  total: number
-  /** Solo el ticket lo trae: una cotizacion no tiene estado de cuenta porque no movio nada. */
-  movimientos?: MovimientoDocumento[]
-  /** Renglones del pie, en orden. El primero va en negro; los demas en gris. */
-  pie: string[]
+/**
+ * Los datos los arma `lib/documento.ts` y los mismos alimentan la imagen PNG.
+ * `movimientos` es opcional aqui porque una cotizacion no tiene estado de
+ * cuenta: no movio nada.
+ */
+export type DocumentoTermicoProps = Omit<DocumentoDatos, 'movimientos'> & {
+  movimientos?: DocumentoDatos['movimientos']
 }
 
 export const NOMBRE_EMPRESA = 'FRESNILLO / DESTILADO DE CHILE'
 
 export function formatFechaDocumento(dateString: string) {
+  if (!dateString) return '—'
   return new Date(dateString).toLocaleString('es-MX', {
     year: 'numeric',
     month: '2-digit',

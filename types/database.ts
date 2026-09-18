@@ -1446,23 +1446,30 @@ export type Database = {
       }
       v_lote_rendimiento: {
         Row: {
+          alcanza_el_grado_diluyendo: boolean | null
+          alcohol_absoluto_l: number | null
           botellas: number | null
+          botellas_750_teoricas: number | null
           codigo_lote: string | null
           costo_insumos_conocido: number | null
           costo_por_ml: number | null
+          costo_por_ml_al_grado_objetivo: number | null
           faltan_costo: string | null
           fecha_fin_fermentacion: string | null
           fecha_inicio: string | null
+          grado_objetivo: number | null
           grado_ponderado: number | null
           horas_fermentacion: number | null
           id: string | null
           insumos_sin_costo: number | null
           kg_chile: number | null
+          litros_al_grado_objetivo: number | null
           litros_por_kg_chile: number | null
           litros_producidos: number | null
           merma_envasado: number | null
           ml_envasados: number | null
           tandas: number | null
+          tandas_sin_grado: number | null
         }
         Relationships: []
       }
@@ -1553,6 +1560,21 @@ export type Database = {
           pagos_iva: number | null
           pasivo_ieps_acumulado: number | null
           pasivo_iva_acumulado: number | null
+        }
+        Relationships: []
+      }
+      v_resumen_del_dia: {
+        Row: {
+          abonos: number | null
+          abonos_monto: number | null
+          avisos_pendientes: number | null
+          fecha: string | null
+          gastos: number | null
+          gastos_monto: number | null
+          lotes: number | null
+          movimientos_del_dia: number | null
+          ventas: number | null
+          ventas_monto: number | null
         }
         Relationships: []
       }

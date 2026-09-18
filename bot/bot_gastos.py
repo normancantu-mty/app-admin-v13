@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extraer import CATEGORIAS, extraer  # noqa: E402
 from consultar import clasificar  # noqa: E402
 from extraer_abono import extraer_abono  # noqa: E402
+from enrutador import enrutar  # noqa: E402
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -440,6 +441,143 @@ _catalogo = list(CATEGORIAS)
 _deudores = []
 
 
+async def _responder_natural(update, ruta):
+    """Contesta hablando cuando no hay nada que escribir todavia.
+
+    Este es el reemplazo del mensaje de ayuda fijo que Norman llamo "muy
+    cuadrado". La diferencia no es el tono: es que aqui el bot DICE QUE
+    ENTENDIO. Un bot que contesta "no te entendi" cuando si entendio la mitad
+    entrena a la gente a no volver a intentarlo.
+    """
+    intencion = ruta.get("intencion")
+    entendido = ruta.get("entendido") or ""
+
+    if intencion == "venta":
+        aviso = "Entendido: " + entendido + ". Todavia no se guardar ventas, esa va por el POS."
+    elif intencion == "lote":
+        aviso = "Entendido: " + entendido + ". Todavia no se guardar lotes; ya viene."
+    elif intencion == "cotizacion":
+        aviso = "Entendido: " + entendido + ". Todavia no se cotizar; ya viene."
+    elif intencion == "reporte":
+        aviso = "Todavia no tengo el reporte del dia. Por ahora: /ventas, /stock o /cartera."
+    elif intencion == "consulta":
+        aviso = ("Entendido: " + entendido + ". Eso todavia no lo se consultar. "
+                 "Hoy puedo: stock, cartera y ventas.")
+    else:
+        aviso = entendido if entendido else "No te entendi. Dime que hiciste o que quieres saber."
+
+    await update.effective_message.reply_text(aviso)
+
+
+def _propuesta_de_gasto(campos, catalogo):
+    """Traduce los campos del enrutador al objeto que espera el servidor.
+
+    La unica decision real es categoria contra categoria_nueva: si el nombre ya
+    existe en el catalogo va como existente, y si no, como nueva. Se decide
+    aqui y no en el prompt porque el catalogo es un hecho y no una opinion, y
+    porque el servidor rechaza una "nueva" que ya existia.
+    """
+    categoria = campos.get("categoria")
+    nombre = str(categoria).strip() if categoria else ""
+    existente = None
+    for c in catalogo:
+        if str(c).strip().lower() == nombre.lower():
+            existente = c
+            break
+    return {
+        "monto": campos.get("monto"),
+        "categoria": existente,
+        "categoria_nueva": None if (existente or not nombre) else nombre,
+        "descripcion": campos.get("descripcion"),
+        "fecha": campos.get("fecha"),
+    }
+
+
+async def _proponer_gasto_directo(update, chat, propuesta):
+    """Propone un gasto cuyos campos ya vienen resueltos por el enrutador.
+
+    Es el mismo destino que `_proponer` -- la puerta sellada del servidor --
+    pero sin volver a llamar al modelo, porque el enrutador ya leyo el mensaje.
+    Ahorrar esa llamada es lo que hace que el bot conteste rapido, y la
+    velocidad es parte de lo que Norman pidio: "Telegram tiene que ser lo mas
+    conciso posible".
+    """
+    estado, r = _post("/api/bot/gasto/proponer", {
+        "telegram_id": chat,
+        "propuesta": propuesta,
+    })
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponerlo."))
+        return False
+
+    _memoria[chat] = {
+        "borrador_id": r["borrador_id"],
+        "sello": r["sello"],
+        "cuentas": r.get("cuentas", []),
+        "id_cuenta": r.get("id_cuenta"),
+        "categorias": r.get("categorias", list(_catalogo)),
+        "propuesta": dict(propuesta),
+    }
+    _refrescar_catalogo(r)
+    await update.effective_message.reply_text(
+        r["mensaje"], reply_markup=_teclado_confirmar(r["borrador_id"]))
+    return True
+
+
+async def _enrutar_y_despachar(update, chat, texto):
+    """UNA llamada al modelo decide que quiso decir Norman, y se despacha.
+
+    Antes esto era una cascada de tres intentos EN FILA -- gasto, abono,
+    consulta -- asi que una pregunta pagaba tres llamadas al modelo antes de
+    contestarse, y todo lo que no cayera en esas tres cajas terminaba en un
+    mensaje de ayuda fijo.
+
+    Ahora la intencion se decide una vez. Y como el enrutador ya extrajo los
+    campos, un gasto completo tambien se resuelve en UNA llamada: antes era
+    una, ahora sigue siendo una, y todo lo demas bajo de tres a una.
+
+    **La cascada vieja no se borro: es la red.** Si el enrutador falla, o si
+    despacha a un camino que no logra proponer, se cae al camino de siempre.
+    Un bot que captura gastos desde hace meses no se apuesta a un modulo nuevo.
+    """
+    ok, ruta = await asyncio.to_thread(
+        enrutar, texto, None, list(_catalogo), _nombres_deudores())
+
+    if not ok:
+        log.warning("el enrutador fallo (%s); voy por el camino viejo", ruta)
+        await _proponer(update, texto, _pendiente)
+        return
+
+    log.info("enrutado como %s (confianza %s)", ruta.get("intencion"), ruta.get("confianza"))
+    intencion = ruta.get("intencion")
+    campos = ruta.get("campos") or {}
+
+    if intencion == "gasto":
+        # Si al enrutador le falto lo indispensable, se PREGUNTA una sola cosa
+        # y se guarda el texto para juntarlo con la respuesta. Nada se inventa.
+        if not campos.get("monto") or not campos.get("descripcion"):
+            _pendiente[chat] = texto
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or "Cuanto fue?")
+            return
+        await _proponer_gasto_directo(update, chat, _propuesta_de_gasto(campos, _catalogo))
+        return
+
+    if intencion == "abono":
+        if await _proponer_abono(update, chat, texto):
+            return
+        await _proponer(update, texto, _pendiente)
+        return
+
+    if intencion == "consulta":
+        if await _contestar_consulta(update, chat, texto):
+            return
+        await _responder_natural(update, ruta)
+        return
+
+    await _responder_natural(update, ruta)
+
+
 async def manejar_texto(update, context):
     chat = update.effective_chat.id
     texto = (update.message.text or "").strip()
@@ -481,7 +619,7 @@ async def manejar_texto(update, context):
         texto = anterior + ". " + texto
 
     await update.message.chat.send_action("typing")
-    await _proponer(update, texto, _pendiente)
+    await _enrutar_y_despachar(update, chat, texto)
 
 
 async def manejar_voz(update, context):
