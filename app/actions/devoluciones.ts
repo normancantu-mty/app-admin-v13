@@ -238,16 +238,28 @@ export async function registrarDevolucionAction(
     // a cual. Es el destino el que lo dice, y es el de la sesion: quien captura
     // la devolucion es quien recibe la mercancia.
     //
-    // ⚠️ PENDIENTE APARTE, y NO se toca aqui porque es decision de Norman: el
-    // tipo deberia ser `DEVOLUCION_FISICA`, no `ENTRADA_COMPRA`. Con el tipo
-    // actual la mercancia entra al almacen pero NUNCA sale del libro del
-    // distribuidor -`lib/inventario-auditoria.ts` solo resta los tipos de
-    // SALIDA-, asi que el producto existe en los dos lados a la vez. Cambiar el
-    // tipo reclasifica filas ya escritas; eso se decide, no se parchea.
+    // ERP-15 · CERRADO el 2026-09-17. Antes esto escribia `ENTRADA_COMPRA` con
+    // solo destino: la mercancia entraba al almacen y NUNCA salia del libro del
+    // distribuidor, asi que el producto existia en los dos lados a la vez.
+    //
+    // Ahora es `DEVOLUCION_FISICA` con LAS DOS entidades en la MISMA fila:
+    // sale de `idEntidad` -el distribuidor que devuelve- y llega a
+    // `sesion.entidadId` -quien recibe-. Una fila, no dos: dos se pueden
+    // escribir a medias y eso es lo que ERP-11 existe para arreglar.
+    //
+    // No reclasifica nada: se midio antes de aplicar la migracion y habia 0
+    // filas de devolucion en las 488 del ledger. Este flujo nunca se uso.
+    //
+    // Quien lo sostiene si alguien lo vuelve a cambiar: el CHECK
+    // `inventario_ledger_entidad_obligatoria` (migracion `20260918014009`)
+    // rechaza la fila si falta cualquiera de las dos entidades, y
+    // `exigirEntidadDelMovimiento` de aqui abajo lo detiene antes, con una
+    // frase que se entiende.
     const inventarioPayload: InventarioInsert = {
       id_producto: idProducto,
-      tipo_movimiento: 'ENTRADA_COMPRA',
+      tipo_movimiento: 'DEVOLUCION_FISICA',
       cantidad,
+      id_entidad_origen: idEntidad,
       id_entidad_destino: sesion.entidadId,
       notas: 'Devolución de Distribuidor',
       usuario_creador: sesion.email, // de la sesion, NUNCA del cliente

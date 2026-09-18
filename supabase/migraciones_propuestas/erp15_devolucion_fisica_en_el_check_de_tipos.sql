@@ -1,3 +1,19 @@
+-- =========================================================================
+--  SUPERADA EL 2026-09-17. NO APLICAR ESTE ARCHIVO.
+--
+--  Lo anula la migracion ya APLICADA y sellada:
+--      20260918014009_erp15_la_devolucion_fisica_es_una_sola_fila_completa
+--
+--  Por que se quedo corta: esta solo ensanchaba el CHECK de tipos. El defecto
+--  real estaba en `inventario_ledger_entidad_obligatoria`, que tenia a
+--  DEVOLUCION_FISICA en la rama de ENTRADAS y por lo tanto aceptaba MEDIA
+--  devolucion (con destino y sin origen). La pregunta de negocio del punto 5
+--  quedo contestada midiendo: UNA fila con las dos entidades, porque dos filas
+--  se pueden escribir a medias y eso es lo que ERP-11 existe para arreglar.
+--
+--  Se conserva, no se borra: documenta como se llego aqui.
+-- =========================================================================
+
 -- ===========================================================================
 --  ERP-15 · `DEVOLUCION_FISICA` entra al CHECK de tipos de inventario
 -- ===========================================================================

@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from './inventario-types'
+import { isTipoMovimientoEntrada, isTipoMovimientoSalida, isTipoMovimientoTraslado } from './inventario-types'
 import {
   esAbonoPendienteAprobacion,
   esPagoImpuestoIeps,
@@ -669,6 +669,12 @@ export async function getAspectosUrgentes(liderazgo: LiderazgoRed): Promise<Aspe
 
       inventarioLedger.forEach(mov => {
         if (mov.status === 'ANULADO') return
+        // Este total es GLOBAL: no mira entidad. Un traslado -una devolucion
+        // fisica- no crea ni destruye producto, solo lo cambia de lugar, y como
+        // esta en las dos listas el `if/else if` de abajo lo contaria como
+        // entrada y inflaria el total. Aqui se salta a proposito.
+        // Ver TIPOS_MOVIMIENTO_TRASLADO en lib/inventario-types.ts.
+        if (isTipoMovimientoTraslado(mov.tipo_movimiento)) return
         const stockActual = stockPorProducto.get(mov.id_producto) || 0
         if (isTipoMovimientoEntrada(mov.tipo_movimiento)) {
           stockPorProducto.set(mov.id_producto, stockActual + mov.cantidad)

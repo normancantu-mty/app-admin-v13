@@ -1,6 +1,7 @@
 import {
   isTipoMovimientoEntrada,
   isTipoMovimientoSalida,
+  isTipoMovimientoTraslado,
   type TipoMovimientoInventario
 } from '@/lib/inventario-types'
 
@@ -79,6 +80,32 @@ export function motivoEntidadFaltante(mov: MovimientoJuzgable): string | null {
 
   if (!tipo) {
     return 'el movimiento no trae `tipo_movimiento`'
+  }
+
+  // LOS TRASLADOS VAN PRIMERO, Y EL ORDEN ES EL ARREGLO.
+  //
+  // Un traslado esta en las dos listas, asi que si esto fuera despues de la
+  // rama de ENTRADA, el `return` de alla lo atraparia, pediria solo el destino
+  // y dejaria pasar MEDIA devolucion: entra a la matriz y no sale de nadie.
+  // Ese era ERP-15. La base ya la rechaza desde la migracion `20260918014009`,
+  // pero llegar hasta alla devuelve un error de constraint en vez de una frase
+  // que se entienda, y esta puerta existe precisamente para eso.
+  if (isTipoMovimientoTraslado(tipo)) {
+    if (!mov.id_entidad_origen || !mov.id_entidad_destino) {
+      const falta = !mov.id_entidad_origen ? 'id_entidad_origen' : 'id_entidad_destino'
+      return (
+        `\`${tipo}\` es un TRASLADO y no trae \`${falta}\`: una devolucion a medias ` +
+        'deja el producto existiendo en los dos lados a la vez (ERP-15). Van las dos ' +
+        'entidades en la MISMA fila: de quien sale, y a quien llega'
+      )
+    }
+    if (mov.id_entidad_origen === mov.id_entidad_destino) {
+      return (
+        `\`${tipo}\` sale y llega a la misma entidad (\`${mov.id_entidad_origen}\`): ` +
+        'no movio nada, y el stock que suma es el mismo que resta'
+      )
+    }
+    return null
   }
 
   if (isTipoMovimientoEntrada(tipo)) {
