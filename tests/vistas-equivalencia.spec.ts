@@ -705,13 +705,29 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
     }
   })
 
-  test('v_cartera: Dulceria el Eden con 0% pagado y $3,610 de deuda', async () => {
+  /**
+   * Antes esta prueba exigia `deuda === 3_610`, la cifra que tenia el Eden el
+   * 2026-07-21. Se puso roja el 2026-09-17 sin que nada estuviera mal: el
+   * 2026-09-15 entro una venta REAL de $1,803 en concesion y la deuda paso a
+   * $5,413. Anclar una constante de produccion en una prueba la convierte en
+   * una alarma que suena cada vez que el negocio funciona.
+   *
+   * La invariante -que es lo que de verdad se queria medir- es que quien nunca
+   * abono debe EXACTAMENTE lo que genero. Eso no caduca, y ademas es mas
+   * fuerte que la constante: se rompe si la vista suma mal, cosa que un
+   * `3_610` escrito a mano no podia ver.
+   */
+  test('v_cartera: el Eden nunca abono, asi que debe todo lo generado y va en 0%', async () => {
     const vista = await leerCartera(db)
     const fila = vista.find((f) => f.nombre === DULCERIA_EDEN)
     expect(fila, 'no aparece Dulceria el Eden en la cartera').toBeTruthy()
 
-    expect(centavos(Number(fila!.deuda))).toBe(centavos(3_610))
-    expect(centavos(Number(fila!.abonado))).toBe(0)
+    expect(centavos(Number(fila!.abonado)), 'nunca abono').toBe(0)
+    expect(centavos(Number(fila!.deuda)), 'sin abonos, deuda = generado').toBe(
+      centavos(Number(fila!.generado))
+    )
+    // `porcentaje_pagado` es una FRACCION 0-1 pese al nombre (E-243): aqui lo
+    // que se vigila es que un deudor sin abonos diga 0 y no null.
     expect(Number(fila!.porcentaje_pagado), '0% pagado, no "no aplica"').toBeCloseTo(0, 10)
   })
 })
