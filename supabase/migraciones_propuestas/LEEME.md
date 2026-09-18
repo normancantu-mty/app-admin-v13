@@ -37,3 +37,22 @@ apretar un candado sobre datos que ya existen es el, no el agente.
 **Ojo con el desfase de fecha, y no es un error:** la propuesta se escribio el **14** y quedo
 sellada con version del **15**. `apply_migration` sella con SU hora UTC, que a esa hora de Mexico
 ya es el dia siguiente. Por eso el archivo se nombra DESPUES de aplicar y nunca antes.
+
+## Lo que hay hoy en esta carpeta, y de que depende cada cosa
+
+Escrito el 2026-09-17 por el Socio, al dejar tres propuestas nuevas.
+
+| Archivo | Que hace | Depende de |
+|---|---|---|
+| `erp15_devolucion_fisica_en_el_check_de_tipos.sql` | Agrega 3 tipos al CHECK de `inventario_ledger` | nada |
+| `erp71_el_intento_bloqueado_deja_rastro.sql` | Un intento de escritura BLOQUEADO deja rastro fuera de la transaccion que se aborta | nada. Conviene aplicar `erp57` antes o el contador nace tocable por `anon` |
+| `erp57_las_tablas_nuevas_no_nacen_abiertas_a_anon.sql` | Cierra el *default privilege* de `postgres` en `public` para `anon` | nada. **Va primero** |
+| `erp11_venta_atomica_funcion_de_postgres.sql` | La venta del POS en UNA transaccion. **No la llama nadie todavia** | nada para aplicarla; el corte del codigo va despues y esta escrito en el punto 6 del propio archivo |
+
+**Orden recomendado: `erp57` -> `erp71` -> `erp11`.** El motivo del primero esta
+medido dentro de `erp57`: mientras el default siga abierto, cada funcion y cada
+secuencia nueva nace con permiso para `anon` y hay que revocarlo a mano, una por
+una. Las tres propuestas de esta tanda traen su `REVOKE` escrito justamente por eso.
+
+**Ninguna de las tres se aplico.** Cada una lleva dentro su control positivo, su
+control negativo y su rollback.
