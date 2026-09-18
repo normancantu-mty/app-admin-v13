@@ -281,6 +281,7 @@ export type Database = {
           costo_unitario: number | null
           es_materia_prima: boolean
           id: string
+          ml_por_unidad: number | null
           nombre: string
           sku: string
           tipo: string
@@ -290,6 +291,7 @@ export type Database = {
           costo_unitario?: number | null
           es_materia_prima?: boolean
           id?: string
+          ml_por_unidad?: number | null
           nombre: string
           sku: string
           tipo: string
@@ -299,6 +301,7 @@ export type Database = {
           costo_unitario?: number | null
           es_materia_prima?: boolean
           id?: string
+          ml_por_unidad?: number | null
           nombre?: string
           sku?: string
           tipo?: string
@@ -899,6 +902,187 @@ export type Database = {
           },
         ]
       }
+      lote_entradas: {
+        Row: {
+          cantidad: number
+          id: string
+          id_insumo: string
+          id_lote: string
+        }
+        Insert: {
+          cantidad: number
+          id?: string
+          id_insumo: string
+          id_lote: string
+        }
+        Update: {
+          cantidad?: number
+          id?: string
+          id_insumo?: string
+          id_lote?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lote_entradas_id_insumo_fkey"
+            columns: ["id_insumo"]
+            isOneToOne: false
+            referencedRelation: "catalogo_productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lote_entradas_id_insumo_fkey"
+            columns: ["id_insumo"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+          {
+            foreignKeyName: "lote_entradas_id_lote_fkey"
+            columns: ["id_lote"]
+            isOneToOne: false
+            referencedRelation: "lotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lote_entradas_id_lote_fkey"
+            columns: ["id_lote"]
+            isOneToOne: false
+            referencedRelation: "v_lote_rendimiento"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lote_envasado: {
+        Row: {
+          botellas: number
+          fecha: string
+          id: string
+          id_lote: string
+          id_producto: string
+        }
+        Insert: {
+          botellas: number
+          fecha?: string
+          id?: string
+          id_lote: string
+          id_producto: string
+        }
+        Update: {
+          botellas?: number
+          fecha?: string
+          id?: string
+          id_lote?: string
+          id_producto?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lote_envasado_id_lote_fkey"
+            columns: ["id_lote"]
+            isOneToOne: false
+            referencedRelation: "lotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lote_envasado_id_lote_fkey"
+            columns: ["id_lote"]
+            isOneToOne: false
+            referencedRelation: "v_lote_rendimiento"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lote_envasado_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "catalogo_productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lote_envasado_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+        ]
+      }
+      lote_salidas: {
+        Row: {
+          grado_alcohol: number | null
+          id: string
+          id_lote: string
+          litros: number
+          notas: string | null
+          numero_tanda: number
+          peso_kg: number | null
+        }
+        Insert: {
+          grado_alcohol?: number | null
+          id?: string
+          id_lote: string
+          litros: number
+          notas?: string | null
+          numero_tanda: number
+          peso_kg?: number | null
+        }
+        Update: {
+          grado_alcohol?: number | null
+          id?: string
+          id_lote?: string
+          litros?: number
+          notas?: string | null
+          numero_tanda?: number
+          peso_kg?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lote_salidas_id_lote_fkey"
+            columns: ["id_lote"]
+            isOneToOne: false
+            referencedRelation: "lotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lote_salidas_id_lote_fkey"
+            columns: ["id_lote"]
+            isOneToOne: false
+            referencedRelation: "v_lote_rendimiento"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lotes: {
+        Row: {
+          codigo_lote: string
+          creado_en: string
+          fecha_fin_fermentacion: string | null
+          fecha_inicio: string
+          horas_fermentacion: number | null
+          id: string
+          notas: string | null
+          usuario_creador: string
+        }
+        Insert: {
+          codigo_lote: string
+          creado_en?: string
+          fecha_fin_fermentacion?: string | null
+          fecha_inicio: string
+          horas_fermentacion?: number | null
+          id?: string
+          notas?: string | null
+          usuario_creador: string
+        }
+        Update: {
+          codigo_lote?: string
+          creado_en?: string
+          fecha_fin_fermentacion?: string | null
+          fecha_inicio?: string
+          horas_fermentacion?: number | null
+          id?: string
+          notas?: string | null
+          usuario_creador?: string
+        }
+        Relationships: []
+      }
       recetas_produccion: {
         Row: {
           cantidad_requerida: number
@@ -1259,6 +1443,28 @@ export type Database = {
             referencedColumns: ["id_producto_terminado"]
           },
         ]
+      }
+      v_lote_rendimiento: {
+        Row: {
+          botellas: number | null
+          codigo_lote: string | null
+          costo_insumos_conocido: number | null
+          costo_por_ml: number | null
+          faltan_costo: string | null
+          fecha_fin_fermentacion: string | null
+          fecha_inicio: string | null
+          grado_ponderado: number | null
+          horas_fermentacion: number | null
+          id: string | null
+          insumos_sin_costo: number | null
+          kg_chile: number | null
+          litros_por_kg_chile: number | null
+          litros_producidos: number | null
+          merma_envasado: number | null
+          ml_envasados: number | null
+          tandas: number | null
+        }
+        Relationships: []
       }
       v_movimiento_clasificado: {
         Row: {
