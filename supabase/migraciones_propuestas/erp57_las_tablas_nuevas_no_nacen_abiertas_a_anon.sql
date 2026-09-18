@@ -1,0 +1,178 @@
+-- ===========================================================================
+--  ERP-57 · lo nuevo en `public` no nace abierto a `anon`
+-- ===========================================================================
+--  Escrito el 2026-09-17 por el Socio.  **ESTA MIGRACION NO ESTA APLICADA.**
+--  Se aplica con `apply_migration` del MCP. NUNCA con `supabase db push`.
+--
+-- ---------------------------------------------------------------------------
+--  1. LO QUE DICE EL TICKET, Y LO QUE DICE LA BASE
+-- ---------------------------------------------------------------------------
+--  ERP-57 lo describe asi: "`supabase_admin` concede `arwdDxtm` al rol `anon`
+--  sobre las tablas nuevas de `public`". Es cierto — y medido hoy
+--  (2026-09-17, proyecto `gnnqxtsdrbvmlkhfemjw`, Postgres 17.6) el cuadro
+--  completo es este, y cambia que se puede hacer:
+--
+--    concede         clase        privilegio de anon
+--    ------------------------------------------------
+--    postgres        FUNCIONES    anon=X/postgres          <-- se cierra aqui
+--    postgres        SECUENCIAS   anon=rwU/postgres        <-- se cierra aqui
+--    supabase_admin  FUNCIONES    anon=X/supabase_admin    <-- NO se puede
+--    supabase_admin  SECUENCIAS   anon=rwU/supabase_admin  <-- NO se puede
+--    supabase_admin  TABLAS       anon=arwdDxtm/supabase_admin  <-- NO se puede
+--
+--  Tres cosas que no estaban en el ticket y mandan sobre el arreglo:
+--
+--  (1) **Para TABLAS, el default de `postgres` ya esta limpio**: su lista es
+--      `{postgres, authenticated, service_role}`, sin `anon`. Alguien ya lo
+--      cerro. Y las migraciones de este repo corren como `postgres` —
+--      comprobado: `current_user` = `postgres` — asi que **una tabla creada
+--      por una migracion HOY ya no nace legible por el publico**. El agujero
+--      de tablas que describe el ticket solo se abre si el creador es
+--      `supabase_admin`, que es el rol interno de la plataforma.
+--
+--  (2) **El agujero que SI se dispara con cada migracion normal son las
+--      FUNCIONES.** `postgres` concede `EXECUTE` a `anon` sobre toda funcion
+--      nueva de `public`, y PostgREST publica como RPC toda funcion que el rol
+--      pueda ejecutar. O sea: **cada funcion nueva nace como un endpoint
+--      publico** salvo que la migracion se acuerde de revocarlo. Hoy hay 13
+--      funciones en `public` y las 13 tienen ACL explicita sin `anon`: se ha
+--      pagado el peaje a mano, migracion por migracion (`REVOKE EXECUTE ON
+--      FUNCTION ... FROM PUBLIC, anon, authenticated`). Trece aciertos
+--      seguidos no son una garantia: son trece veces que alguien se acordo.
+--
+--  (3) **Y las SECUENCIAS, que parecen inofensivas, no lo son.** `anon` recibe
+--      `rwU`: `USAGE` + `UPDATE` = puede llamar `nextval` y `setval`. La
+--      propuesta ERP-71 de esta misma tanda crea una secuencia como CONTADOR
+--      DE INTENTOS BLOQUEADOS; sin cerrar esto, cualquiera con la llave anon
+--      —que viaja en el JavaScript del navegador— podria inflar el contador y
+--      dejar el instrumento sin sentido. Por eso aquella migracion trae su
+--      `REVOKE` a mano. Esta quita la necesidad de acordarse.
+--
+-- ---------------------------------------------------------------------------
+--  2. LO QUE NO SE PUEDE HACER DESDE UNA MIGRACION, Y HAY QUE DECIRLO
+-- ---------------------------------------------------------------------------
+--  `ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin ...` **falla**: solo se
+--  pueden alterar los defaults de un rol del que uno es miembro. Medido:
+--
+--      current_user ............................. postgres
+--      rolsuper de postgres ..................... false
+--      pg_has_role('postgres','supabase_admin') . false
+--
+--  Asi que las tres filas de `supabase_admin` **no se pueden cerrar desde
+--  aqui**, ni con `apply_migration`, ni desde el editor SQL del panel. Eso
+--  necesitaria soporte de Supabase. Lo que queda en su lugar es un chequeo que
+--  no depende de que nadie se acuerde — la consulta del punto 5, que se corre
+--  contra la base y dice si algo en `public` quedo alcanzable por `anon`.
+--
+-- ---------------------------------------------------------------------------
+--  3. ¿ROMPE A `anon` DONDE SI SE LE NECESITA?  NO. COMPROBADO ANTES DE
+--     ESCRIBIR UNA SOLA LINEA DE SQL
+-- ---------------------------------------------------------------------------
+--    · **Politicas de RLS que alcancen a `anon`: 0.** Ni una de las 23 tablas
+--      de `public` tiene politica para `anon` ni para `public`. Con RLS activo
+--      y sin politica, `anon` obtiene CERO filas aunque tenga el privilegio.
+--      Quitar el privilegio no le quita nada que hoy este usando.
+--    · **Privilegios de DML que anon tenga hoy: ninguno.** Las 9 tablas que lo
+--      listan le dan solo `REFERENCES, TRIGGER` — restos de la epoca anterior.
+--      Ni SELECT, ni INSERT, ni UPDATE, ni DELETE.
+--    · **`anon` no puede crear nada en `public`** (`has_schema_privilege
+--      ('anon','public','CREATE')` = false), asi que el `TRIGGER` que le queda
+--      es inerte: no tiene funcion propia que colgar.
+--    · **La aplicacion no lee datos como `anon`.** Las dos unicas pantallas
+--      fuera de sesion son `/login` y `/`; `/` redirige, y `/login` solo habla
+--      con el servidor de auth (GoTrue) hasta que hay sesion. Sus dos consultas
+--      a `entidades` ocurren DESPUES de `getSession()` y de
+--      `signInWithPassword()`, o sea ya como `authenticated`.
+--    · **El bot de Telegram no usa `anon`**: entra por `app/api/bot/**` con su
+--      propio sello, del lado del servidor.
+--
+--  Lo unico que este cambio quita es la capacidad de que algo FUTURO nazca
+--  abierto. Y lo que NO se toca, a proposito: `USAGE` de `anon` sobre el
+--  esquema `public` — PostgREST lo necesita para contestar cualquier cosa, y
+--  quitarlo cambia el modo de fallo del login sin ganar nada.
+--
+-- ---------------------------------------------------------------------------
+--  4. EL CAMBIO
+-- ---------------------------------------------------------------------------
+
+-- ─── 4.1 Que lo NUEVO no nazca abierto (el arreglo de verdad) ───────────────
+-- OJO con el pie de esta funcion: si una fila de `pg_default_acl` se quedara
+-- VACIA, Postgres vuelve al default interno — y el default interno de una
+-- FUNCION es `EXECUTE TO PUBLIC`, que es peor que lo que estamos quitando.
+-- No pasa aqui: las filas conservan `postgres`, `authenticated` y
+-- `service_role`, asi que siguen mandando ellas. Se comprueba en el punto 5.
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE ALL ON FUNCTIONS FROM anon;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE ALL ON SEQUENCES FROM anon;
+
+-- Idempotente y a proposito: hoy ya esta limpio, pero dejarlo escrito hace que
+-- este archivo describa el estado final completo y no dependa de que alguien
+-- cerro las tablas en algun momento que nadie anoto.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE ALL ON TABLES FROM anon;
+
+-- ─── 4.2 Y que lo VIEJO deje de arrastrar restos ────────────────────────────
+-- Las 9 tablas con `REFERENCES, TRIGGER` para `anon`. No sirven para nada hoy
+-- (punto 3) y son privilegio regalado.
+REVOKE ALL ON ALL TABLES    IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon;
+
+-- ---------------------------------------------------------------------------
+--  5. COMO SE COMPRUEBA — con su control negativo, y el control ya se corrio
+-- ---------------------------------------------------------------------------
+--  EL INSTRUMENTO (la consulta que dice si queda algo abierto a `anon`):
+--
+--    select pg_get_userbyid(d.defaclrole) as concede,
+--           case d.defaclobjtype when 'r' then 'TABLAS' when 'S' then 'SECUENCIAS'
+--                                when 'f' then 'FUNCIONES' when 'T' then 'TIPOS' end as clase,
+--           (select a from unnest(d.defaclacl) a where a::text like 'anon=%') as privilegio
+--      from pg_default_acl d join pg_namespace n on n.oid = d.defaclnamespace
+--     where n.nspname = 'public'
+--       and exists (select 1 from unnest(d.defaclacl) a where a::text like 'anon=%');
+--
+--  CONTROL NEGATIVO, YA CORRIDO (2026-09-17, ANTES de aplicar): la consulta
+--  devuelve **5 filas** — las dos de `postgres` y las tres de `supabase_admin`
+--  listadas en el punto 1. Esto es lo que hace que el control valga: si el
+--  instrumento hubiera dado vacio con el agujero abierto, no estaria midiendo
+--  nada y el "cero filas" de despues no probaria nada.
+--
+--  CONTROL POSITIVO, DESPUES de aplicar: la misma consulta tiene que devolver
+--  **exactamente las 3 filas de `supabase_admin`**, y ninguna de `postgres`.
+--  Ni 5 (no se aplico) ni 0 (imposible: ver el punto 2; si sale 0, lo que
+--  cambio es la plataforma y hay que releer esto entero).
+--
+--  Y LA PRUEBA QUE IMPORTA, la de que el default interno no volvio por detras:
+--
+--    select defaclacl::text from pg_default_acl d
+--      join pg_namespace n on n.oid=d.defaclnamespace
+--     where n.nspname='public' and d.defaclobjtype='f'
+--       and d.defaclrole = 'postgres'::regrole;
+--
+--  Tiene que seguir trayendo `postgres`, `authenticated` y `service_role`. Si
+--  la fila desaparecio, el default interno (`EXECUTE TO PUBLIC`) volvio a
+--  mandar y el arreglo dejo la puerta MAS abierta que antes. Es el unico modo
+--  de fallo peligroso de esta migracion y por eso se comprueba explicitamente.
+--
+--  CONTROL DE QUE NO SE ROMPIO NADA: entrar a la aplicacion con una cuenta
+--  real y abrir Finanzas. Si pinta cifras, `authenticated` sigue intacto —
+--  que es el unico rol del que cuelga la aplicacion.
+--
+-- ---------------------------------------------------------------------------
+--  6. ROLLBACK
+-- ---------------------------------------------------------------------------
+--    ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+--      GRANT ALL ON TABLES TO anon;
+--    ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+--      GRANT ALL ON SEQUENCES TO anon;
+--    ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+--      GRANT EXECUTE ON FUNCTIONS TO anon;
+--    GRANT REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public TO anon;  -- los restos
+--
+--  (Volver atras del todo no tiene sentido practico: nada de lo que se quita
+--  se esta usando. Queda escrito porque un rollback que no esta escrito no
+--  existe.)
+-- ===========================================================================
