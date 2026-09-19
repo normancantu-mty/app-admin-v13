@@ -8,7 +8,7 @@ otro bot, con otro token, otro publico y otro dominio.
 LOS CINCO PASOS (D-E30), Y DONDE VIVE CADA UNO
 ----------------------------------------------
   1. Entra lenguaje natural (texto o nota de voz) ............ aqui
-  2. El LLM emite UN objeto de cuatro campos ................. bot/extraer.py
+  2. El LLM emite UN objeto con intencion y campos ........... bot/enrutador.py
   3. Se propone una fila y se SELLA .......................... POST /api/bot/gasto/proponer
   4. La persona confirma o corrige UN CAMPO .................. aqui
   5. Se escribe el objeto exacto, verificando el sello ....... POST /api/bot/gasto/confirmar
@@ -43,10 +43,13 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
 from telegram.error import NetworkError, TimedOut  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from extraer import CATEGORIAS, extraer  # noqa: E402
-from consultar import clasificar  # noqa: E402
-from extraer_abono import extraer_abono  # noqa: E402
-from enrutador import enrutar  # noqa: E402
+# UNA sola llamada al modelo por mensaje, y sale de aqui. `extraer.py`,
+# `extraer_abono.py` y `consultar.py` **siguen en el repo** -- nada se borra
+# (regla 6) -- pero ya no los llama nadie: cada uno abre diciendolo en su
+# primera linea. Mientras estuvieron cableados en paralelo con el enrutador, el
+# mismo mensaje se podia leer de dos maneras distintas segun por donde entrara,
+# y cual mandaba dependia del orden de unos `if`.
+from enrutador import CATEGORIAS_SEMILLA, enrutar  # noqa: E402
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -133,6 +136,106 @@ def _teclado_confirmar(borrador_id):
         [InlineKeyboardButton("Cambiar categoria", callback_data="cat:" + borrador_id),
          InlineKeyboardButton("Cambiar monto", callback_data="monto:" + borrador_id)],
         [InlineKeyboardButton("Cambiar cuenta", callback_data="cta:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_movimientos(opciones):
+    """La lista de lo que se puede anular. **POR INDICE, y es D2.**
+
+    *"Un movimiento que se va a anular NO se identifica NUNCA por texto libre."*
+    El enrutador tiene PROHIBIDO decir cual: dictar "anula el gasto de mil
+    pesos" habiendo dos gastos de mil pesos es exactamente como se anula la fila
+    equivocada, y una anulacion equivocada no se deshace -- el contrato del
+    ledger tiene una sola transicion.
+
+    El indice apunta a la lista que el servidor acaba de declarar, igual que
+    `setcta`, `setdeu` y `setcomp`. El uuid no viaja en el boton: no cabe en los
+    64 bytes (ya reventó una vez, el 2026-09-12) y ademas un indice contra una
+    lista cerrada del servidor no se puede apuntar a una fila que no este en
+    ella.
+    """
+    filas = [[InlineKeyboardButton(
+        o["etiqueta"], callback_data="setanu:" + str(i))]
+        for i, o in enumerate(opciones)]
+    filas.append([InlineKeyboardButton("Mejor no", callback_data="no:x")])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_confirmar_anulacion(borrador_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, anulalo", callback_data="vaan:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_confirmar_correccion(borrador_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, corrigelo", callback_data="vaan:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_campos_corregibles():
+    """Que se le cambia. **Tres botones, y los tres hacen cosas distintas.**
+
+    El concepto es una edicion de verdad (D6: es la unica columna que se edita);
+    el monto y la categoria son anular-y-recapturar. Desde el celular se ven
+    igual -- se pica y queda corregido -- y esa es justo la idea: la diferencia
+    es del ledger, no de la persona.
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("El monto", callback_data="setcorr:monto")],
+        [InlineKeyboardButton("El concepto", callback_data="setcorr:desc")],
+        [InlineKeyboardButton("La categoria", callback_data="setcorr:cat")],
+        [InlineKeyboardButton("Mejor no", callback_data="no:x")],
+    ])
+
+
+def _teclado_alta(opciones):
+    """Las listas cerradas del alta. **POR INDICE, igual que todo lo demas.**
+
+    El servidor manda `{valor, etiqueta}` y aqui solo viaja el indice contra esa
+    lista. El `valor` de una zona es `Zacatecas` o `Foraneo` -- texto exacto que
+    va al CHECK de la base -- y mandarlo dentro del `callback_data` seria
+    exponerlo a que alguien lo escriba a mano. Por indice no hay nada que
+    escribir.
+    """
+    filas = [[InlineKeyboardButton(
+        o.get("etiqueta", "?"), callback_data="setalta:" + str(i))]
+        for i, o in enumerate(opciones)]
+    filas.append([InlineKeyboardButton("Mejor no", callback_data="no:x")])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_confirmar_alta(borrador_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, dalo de alta", callback_data="vaalt:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_conversion(opciones):
+    """La lista de cotizaciones a convertir, y las dos preguntas que siguen.
+
+    El mismo teclado sirve para las tres porque las tres son lo mismo: una lista
+    cerrada que declaro el servidor, escogida por indice. La etiqueta lleva el
+    folio, la fecha y el total -- que es lo que una persona necesita para
+    reconocer cual es -- y nada de eso viaja en el dato del boton.
+    """
+    filas = []
+    for i, o in enumerate(opciones):
+        texto = o.get("etiqueta", "?")
+        if o.get("detalle"):
+            texto = texto + " · " + str(o["detalle"])
+        filas.append([InlineKeyboardButton(texto, callback_data="setcnv:" + str(i))])
+    filas.append([InlineKeyboardButton("Mejor no", callback_data="no:x")])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_confirmar_conversion(borrador_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, hazla venta", callback_data="vacnv:" + borrador_id)],
         [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
     ])
 
@@ -352,29 +455,36 @@ def _refrescar_catalogo(respuesta):
         _catalogo = list(vivas)
 
 
-async def _contestar_consulta(update, chat, texto):
+async def _contestar_consulta(update, chat, consulta, filtro=None):
     """Fase 3. Devuelve True si contesto una consulta.
 
     EL MODELO NO VE NI UN NUMERO. Clasifica la intencion, el servidor lee la
     vista y **devuelve el texto ya formateado**; aqui solo se reenvia. Por eso
     una consulta no puede contestar una cifra inventada: no hay ningun punto del
     camino donde el LLM pueda escribirla.
+
+    **La clasificacion ya viene hecha.** Hasta el 2026-09-19 esta funcion
+    llamaba otra vez al modelo (`consultar.clasificar`) para decidir de que
+    consulta se trataba: una segunda opinion sobre algo que el enrutador acababa
+    de decidir. Y las dos opiniones ni siquiera hablaban el mismo idioma --
+    `consultar.py` conocia SEIS consultas y el servidor contesta TRES
+    (`lib/bot-consultas.ts`), asi que las otras tres viajaban hasta el endpoint
+    nada mas para que las rechazara. Ahora la lista cerrada vive en un solo
+    lugar (`CONSULTAS_QUE_CONTESTA`) y aqui llega ya normalizada.
     """
-    ok, obj = await asyncio.to_thread(clasificar, texto)
-    if not ok or not obj.get("consulta"):
+    if not consulta or consulta == "otra":
         return False
 
     estado, r = _post("/api/bot/consulta", {
         "telegram_id": chat,
-        "consulta": obj["consulta"],
-        "filtro": obj.get("filtro"),
+        "consulta": consulta,
+        "filtro": filtro,
     })
     # Se registra QUE se consulto y COMO salio, nunca la respuesta: el log ya
     # lleva el token del bot en cada linea de la libreria y no se le agregan
     # cifras del negocio. Sin esta linea, un uso real del bot no dejaba rastro
     # del lado de la maquina y no habia con que comprobarlo despues.
-    log.info("consulta por voz/texto: %s filtro=%s -> %s",
-             obj["consulta"], obj.get("filtro"), estado)
+    log.info("consulta por voz/texto: %s filtro=%s -> %s", consulta, filtro, estado)
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(
             r.get("error", "No pude consultarlo."))
@@ -384,39 +494,23 @@ async def _contestar_consulta(update, chat, texto):
     return True
 
 
-async def _proponer_abono(update, chat, texto, id_deudor=None, propuesta=None, nombre=None):
+async def _proponer_abono(update, chat, propuesta, id_deudor=None, nombre=None):
     """Fase 2. Devuelve True si propuso un abono (o si pidio elegir deudor).
 
-    EL MODELO NO ELIGE A NADIE: devuelve un NOMBRE y el servidor lo empata
-    contra la cartera viva. Si hay mas de un candidato, o ninguno, vuelve con
-    `hay_que_elegir` y lo resuelve un boton. Escribir dinero en la entidad
+    EL MODELO NO ELIGE A NADIE: el enrutador devuelve un NOMBRE y el servidor lo
+    empata contra la cartera viva. Si hay mas de un candidato, o ninguno, vuelve
+    con `hay_que_elegir` y lo resuelve un boton. Escribir dinero en la entidad
     equivocada no se corrige solo: hay que anular la fila y recapturar.
+
+    **La propuesta SIEMPRE llega armada.** Antes esta funcion tenia dentro su
+    propio extractor (`extraer_abono`), o sea una segunda lectura del mismo
+    mensaje que el enrutador ya habia leido. El nombre del deudor que valia
+    dependia de cual de las dos lecturas hubiera corrido, y eso en una funcion
+    que mueve dinero de la cartera de alguien.
     """
-    if propuesta is None:
-        ok, obj = await asyncio.to_thread(extraer_abono, texto, _nombres_deudores())
-        if not ok:
-            return False
-        if obj.get("falta") == "esto no parece un abono":
-            return False
-        if obj.get("monto") in (None, "", 0):
-            # Falta el monto: se PREGUNTA. Un abono a medias no se adivina, y
-            # tampoco se deja caer al camino de la consulta.
-            _pendiente[chat] = texto
-            await update.effective_message.reply_text(
-                "Me falta " + str(obj.get("falta") or "de cuanto fue") + ". Me lo dices?")
-            return True
-        propuesta = {
-            "monto": obj.get("monto"),
-            "metodo_pago": obj.get("metodo_pago"),
-            "nota": obj.get("nota"),
-            "fecha": obj.get("fecha"),
-        }
-        nombre_dicho = obj.get("deudor")
-    else:
-        # Cuando la propuesta viene armada (comando directo, o correccion de
-        # monto) el nombre llega por parametro. Si tampoco hay, es porque ya se
-        # resolvio el deudor por uuid.
-        nombre_dicho = nombre
+    # El nombre llega por parametro. Si no hay, es porque el deudor ya quedo
+    # resuelto por uuid (un boton) y el nombre ya no pinta nada.
+    nombre_dicho = nombre
 
     cuerpo = {"telegram_id": chat, "propuesta": propuesta}
     if id_deudor:
@@ -477,88 +571,93 @@ def _nombres_deudores():
     return [d.get("nombre") for d in _deudores if isinstance(d, dict) and d.get("nombre")]
 
 
-async def _proponer(update, texto, pendiente):
-    """Del lenguaje natural al borrador sellado. Devuelve True si propuso."""
-    chat = update.effective_chat.id
+def _propuesta_de_abono(campos):
+    """Los campos del enrutador, en la forma que espera `/api/bot/abono/proponer`.
 
-    ok, obj = await asyncio.to_thread(extraer, texto, list(_catalogo))
-    if not ok:
-        await update.effective_message.reply_text("No pude procesarlo: " + str(obj))
-        return False
-
-    # Slot filling: si el modelo dice que falta algo, se PREGUNTA. No se adivina.
-    if obj.get("monto") in (None, "", 0) or not obj.get("descripcion"):
-        falta = obj.get("falta") or "el monto"
-        if falta == "esto no parece un gasto":
-            # AG-04 Fase 3. **Este es el unico punto donde entra una consulta**,
-            # y entra DESPUES de descartar el gasto, no antes. El orden importa:
-            # si se preguntara primero "es una consulta?", un gasto mal dictado
-            # podria contestarse como pregunta y no quedar registrado. Al reves,
-            # lo peor que pasa es que una pregunta se intente leer como gasto y
-            # el extractor la rechace, que es justo lo que acaba de ocurrir.
-            # AG-02 Fase 2. **El abono va ANTES que la consulta y DESPUES que
-            # el gasto**, y el orden no es arbitrario: los dos primeros
-            # ESCRIBEN, y una escritura que se pierde no deja rastro de que se
-            # perdio. Si una pregunta se intenta leer como abono, el extractor
-            # la rechaza y seguimos; al reves, un pago dictado se habria
-            # contestado como si fuera una consulta de cartera.
-            # El costo es latencia: una pregunta en lenguaje natural paga tres
-            # llamadas al modelo. Por eso existen /cartera, /stock y /abono.
-            if await _proponer_abono(update, chat, texto):
-                return False
-            if await _contestar_consulta(update, chat, texto):
-                return False
-            await update.effective_message.reply_text(
-                "Eso no lo lei como un gasto ni como una pregunta que sepa contestar. "
-                "Para capturar: dime cuanto y en que fue. "
-                "Para preguntar: stock, cartera (quien debe) o ventas.")
-            return False
-        pendiente[chat] = texto
-        await update.effective_message.reply_text("Me falta " + str(falta) + ". Me lo dices?")
-        return False
-
-    estado, r = _post("/api/bot/gasto/proponer", {
-        "telegram_id": chat,
-        "propuesta": {
-            "monto": obj.get("monto"),
-            "categoria": obj.get("categoria"),
-            "categoria_nueva": obj.get("categoria_nueva"),
-            "descripcion": obj.get("descripcion"),
-            "fecha": obj.get("fecha"),
-        },
-    })
-    if estado != 200 or not r.get("ok"):
-        await update.effective_message.reply_text(r.get("error", "No pude proponerlo."))
-        return False
-
-    _memoria[chat] = {
-        "borrador_id": r["borrador_id"],
-        "sello": r["sello"],
-        "cuentas": r.get("cuentas", []),
-        "id_cuenta": r.get("id_cuenta"),
-        "categorias": r.get("categorias", list(_catalogo)),
-        # La propuesta cruda se guarda para poder cambiar UN campo sin volver a
-        # llamar al modelo. Es memoria del proceso, no autoridad: la fila que se
-        # escribe es la sellada en la base, no esta.
-        "propuesta": {
-            "monto": obj.get("monto"),
-            "categoria": obj.get("categoria"),
-            "categoria_nueva": obj.get("categoria_nueva"),
-            "descripcion": obj.get("descripcion"),
-            "fecha": obj.get("fecha"),
-        },
+    El deudor NO va aqui: viaja aparte porque el servidor lo empata contra la
+    cartera viva y puede contestar con botones. Meterlo en la propuesta lo
+    volveria un dato mas, y es el que decide a quien se le acredita el dinero.
+    """
+    campos = campos or {}
+    return {
+        "monto": campos.get("monto"),
+        "metodo_pago": campos.get("metodo_pago"),
+        "nota": campos.get("nota") or campos.get("descripcion"),
+        "fecha": campos.get("fecha"),
     }
-    _refrescar_catalogo(r)
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar(r["borrador_id"]))
-    return True
+
+
+def _tomar_borrador_a_medias(chat):
+    """Saca de `_memoria` los campos de una captura que quedo incompleta.
+
+    **Se CONSUME al leerlo.** Vive exactamente una vuelta: si el mensaje nuevo
+    tampoco alcanza, el camino que corresponda lo vuelve a guardar, ya fundido
+    con lo que se acabe de entender. Dejarlo pegado seria peor que no tenerlo --
+    un "500 de gasolina" que quedo a medias el lunes contaminaria la primera
+    frase del martes, y el sintoma seria un monto que aparece solo.
+    """
+    dato = _memoria.get(chat)
+    if not isinstance(dato, dict) or dato.get("estado") != "incompleto":
+        return None
+    _memoria.pop(chat, None)
+    campos = dato.get("campos")
+    return dict(campos) if isinstance(campos, dict) and campos else None
+
+
+def _recordar_a_medias(chat, intencion, campos):
+    """Lo que si se entendio, esperando la pieza que falta. **Sin sello.**
+
+    Un borrador sellado significa "esto es exactamente lo que se va a escribir".
+    Este no lleva sello y no puede llevarlo: todavia le falta un campo, asi que
+    no hay nada que sellar. Esa ausencia es la que impide que `_confirmar` lo
+    tome por bueno si alguien contesta "va" antes de tiempo.
+    """
+    _memoria[chat] = {
+        "estado": "incompleto",
+        "intencion": intencion,
+        "campos": dict(campos or {}),
+    }
+
+
+# ===========================================================================
+# AQUI VIVIA `_proponer()`, LA CASCADA VIEJA. 2026-09-19.
+# ===========================================================================
+#
+# Era el camino de siempre: llamar a `extraer`, y si decia "esto no parece un
+# gasto", intentar abono, y si tampoco, intentar consulta. Tres llamadas al
+# modelo en fila para contestar una pregunta, y un mensaje de ayuda fijo para
+# todo lo que no cayera en esas tres cajas.
+#
+# Se quedo de red de seguridad cuando entro el enrutador, y esa fue la decision
+# equivocada. Una red que lee el mismo mensaje con OTRO prompt no es una red: es
+# una segunda opinion que puede diferir de la primera, y que se activa
+# precisamente cuando algo ya salio raro. El gasto que el enrutador entendio de
+# una forma y la cascada de otra se escribe distinto segun cual corriera, y
+# desde afuera las dos cosas se ven igual.
+#
+# **La red de verdad son los comandos**: `/stock`, `/cartera`, `/ventas` y
+# `/abono` no pasan por ningun modelo, asi que siguen funcionando aunque el
+# modelo este caido. Y si se cae con un gasto en la mano, lo que toca es
+# decirlo, no adivinarlo con otro prompt.
+#
+# `bot/extraer.py`, `bot/extraer_abono.py` y `bot/consultar.py` siguen en el
+# repo sin llamador (regla 6: nada se borra).
+# ===========================================================================
 
 
 # Lo unico que el bot guarda en memoria: el ultimo borrador por chat, para poder
 # mandar el sello al confirmar. **El payload NO vive aqui** — vive en la base, y
 # por eso este proceso no puede alterarlo aunque tuviera un bug.
 _memoria = {}
-_pendiente = {}
+# AQUI VIVIA `_pendiente`, y lo sustituye el borrador a medias de `_memoria`.
+# Guardaba el TEXTO literal de la vuelta anterior y lo pegaba con un ". " al de
+# la siguiente, para que el modelo volviera a leer las dos frases juntas. O sea
+# que cada vuelta re-extraia todo desde cero y podia cambiar de opinion sobre un
+# campo que nadie habia vuelto a mencionar: contestar "de gasolina" despues de
+# "gaste 340" podia acabar en un monto distinto, porque el modelo leia una frase
+# nueva y no un hueco que llenar. Ahora lo que sobrevive entre vueltas son los
+# CAMPOS ya extraidos (`estado='incompleto'`, y **sin sello**, que es lo que los
+# distingue de un borrador de verdad), y el mensaje nuevo solo los completa.
 _esperando_monto = {}
 # Igual que `_esperando_monto`, pero para el codigo de un lote: el boton
 # "Otro codigo" abre la captura y el siguiente texto ES el codigo, sin pasar
@@ -567,10 +666,22 @@ _esperando_codigo = {}
 # Igual, pero para la vigencia de una cotizacion: el boton "Cambiar
 # vigencia" abre la captura y el siguiente texto ES el numero de dias.
 _esperando_vigencia = {}
+# Fase 5. Que campo se esta corrigiendo de un movimiento ya escrito: "monto" o
+# "desc". El siguiente texto ES el valor nuevo y **no pasa por el modelo**, por
+# la misma razon que `_esperando_monto`: re-extraer la frase entera le daria al
+# modelo licencia para cambiar campos que nadie toco -- y aqui lo que se toca es
+# una fila que ya existe.
+_esperando_correccion = {}
+# Fase 5, Paso 5. Que dato del alta se esta esperando por texto: "nombre",
+# "email" o el nombre de una columna de comision. El siguiente mensaje ES ese
+# dato y **no pasa por el modelo**: volver a extraer la frase entera le daria
+# licencia para cambiar la zona o el rol que ya se escogieron con boton, que son
+# justo los dos que D9 saco del lenguaje natural a proposito.
+_esperando_alta = {}
 # Las categorias que el servidor reporto en la ultima propuesta. Arranca con las
 # del diccionario local y se actualiza sola: **la autoridad es la base**, esto
 # es solo para que el extractor tenga el vocabulario completo la proxima vez.
-_catalogo = list(CATEGORIAS)
+_catalogo = list(CATEGORIAS_SEMILLA)
 # Los nombres de la cartera viva (Fase 2). Arranca VACIO a proposito: no hay
 # una lista local de deudores que pudiera caducar. Hasta la primera respuesta
 # del servidor, el extractor trabaja sin vocabulario y el servidor empata igual.
@@ -1092,6 +1203,287 @@ async def _confirmar_cotizacion(update, chat):
             "La cotizacion quedo guardada; el documento no se pudo enviar.")
 
 
+def _recaptura_con(valores, campo, nuevo):
+    """La fila corregida: la de siempre con UN campo cambiado.
+
+    **La fecha se conserva**, y es la parte que importa. Una correccion que
+    reescribe la fila con la fecha de HOY mueve el gasto de mes -- y de paso se
+    regala ventana de edicion, porque la ventana se cuenta desde
+    `fecha_movimiento`. Por eso `mensajeDeRecaptura` la ensena antes del "va":
+    para que se pueda cazar ahi y no en el corte.
+    """
+    valores = valores or {}
+    propuesta = {
+        "monto": valores.get("monto"),
+        "categoria": valores.get("categoria"),
+        "descripcion": valores.get("descripcion"),
+        "fecha": (valores.get("fecha") or "")[:10] or None,
+    }
+    propuesta[campo] = nuevo
+    return propuesta
+
+
+async def _proponer_correccion_de_campo(update, chat, campo, nuevo):
+    """Despacha la correccion de UN campo por el camino que le toca.
+
+    El concepto es la unica columna que se EDITA de verdad (D6), y encima tiene
+    que volver a pasar por el filtro fiscal en el servidor porque
+    `v_pasivo_fiscal` lee ese texto. El monto y la categoria no se editan: se
+    anula la fila y se escribe otra, en un solo "va".
+    """
+    dato = _memoria.get(chat) or {}
+    elegido = dato.get("elegido") or {}
+    if not elegido:
+        await update.effective_message.reply_text(
+            "Ya no tengo ese movimiento. Dime otra vez que quieres corregir.")
+        return
+    cuerpo = {
+        "telegram_id": chat,
+        "tabla": elegido.get("tabla"),
+        "id_movimiento": elegido.get("id"),
+    }
+    if campo == "descripcion":
+        cuerpo["modo"] = "editar_descripcion"
+        cuerpo["descripcion_nueva"] = nuevo
+    else:
+        cuerpo["modo"] = "recapturar"
+        cuerpo["recaptura"] = _recaptura_con(elegido.get("valores"), campo, nuevo)
+    await _proponer_anulacion(update, chat, cuerpo, accion="corregir")
+
+
+async def _proponer_alta(update, chat, cuerpo):
+    """Paso 5. El alta de un distribuidor o un local, una pregunta a la vez.
+
+    Este endpoint contesta VARIAS veces antes de dar un borrador, y cada
+    respuesta resuelve UN hueco. Hay tres formas de respuesta y se distinguen
+    solas:
+
+      · `hay_que_elegir` con `opciones` .. lista cerrada -> botones.
+      · `campo` sin `opciones` .......... hace falta un texto -> se pregunta y
+                                          el siguiente mensaje ES la respuesta.
+      · `borrador_id` ................... ya esta todo -> se ensena y se sella.
+
+    El cuerpo se acumula en `_memoria[chat]["peticion"]` y se vuelve a mandar
+    entero en cada vuelta. No se guarda a medias en el servidor: mientras no
+    haya borrador, no hay nada escrito en ningun lado.
+    """
+    estado, r = _post("/api/bot/entidad/proponer", cuerpo)
+    log.info("alta propuesta: campo=%s -> %s", r.get("campo"), estado)
+
+    if estado != 200:
+        await update.effective_message.reply_text(
+            r.get("error", "No pude prepararlo. No cree nada."))
+        return True
+
+    # --- Hace falta escoger de una lista cerrada ---------------------------
+    if r.get("hay_que_elegir"):
+        opciones = r.get("opciones") or []
+        if not opciones:
+            await update.effective_message.reply_text(r.get("mensaje", "No hay de donde escoger."))
+            return True
+        _memoria[chat] = {"tipo": "alta_eligiendo",
+                          "campo": r.get("campo"),
+                          "peticion": dict(cuerpo),
+                          "opciones": opciones}
+        await update.effective_message.reply_text(
+            r.get("mensaje", "Cual?"), reply_markup=_teclado_alta(opciones))
+        return True
+
+    # --- Hace falta un texto ----------------------------------------------
+    if r.get("campo") and not r.get("borrador_id"):
+        _memoria[chat] = {"tipo": "alta_eligiendo",
+                          "campo": r.get("campo"),
+                          "peticion": dict(cuerpo),
+                          "opciones": []}
+        _esperando_alta[chat] = r.get("campo")
+        await update.effective_message.reply_text(r.get("mensaje", "Que dato falta?"))
+        return True
+
+    if not r.get("ok") or not r.get("borrador_id"):
+        await update.effective_message.reply_text(
+            r.get("error", "No pude prepararlo. No cree nada."))
+        return True
+
+    _memoria[chat] = {"tipo": "alta",
+                      "borrador_id": r["borrador_id"],
+                      "sello": r["sello"],
+                      "peticion": dict(cuerpo)}
+    await update.effective_message.reply_text(
+        r["mensaje"], reply_markup=_teclado_confirmar_alta(r["borrador_id"]))
+    return True
+
+
+async def _confirmar_alta(update, chat):
+    """El "va" del alta. Viajan `{telegram_id, borrador_id, sello}` y nada mas.
+
+    La contrasena viene en la RESPUESTA, no en el borrador: se genera al crear
+    la cuenta y se ensena una vez. Por eso este mensaje no se puede volver a
+    pedir -- y por eso se manda tal cual lo mando el servidor, sin recortarlo.
+    """
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "alta":
+        await update.effective_message.reply_text("No tengo ninguna alta pendiente.")
+        return
+    estado, r = _post("/api/bot/entidad/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("alta confirmada: borrador=%s -> %s", dato["borrador_id"], estado)
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        _esperando_alta.pop(chat, None)
+        await update.effective_message.reply_text(r.get("mensaje", "Listo, quedo dado de alta."))
+    else:
+        await update.effective_message.reply_text(r.get("error", "No pude darlo de alta."))
+
+
+async def _proponer_conversion(update, chat, cuerpo):
+    """Paso 6. Volver venta una cotizacion que ya existe.
+
+    Misma mecanica que el alta: el endpoint pregunta lo que la cotizacion no
+    sabe -- cual es, de contado o a consignacion, y a que cuenta entra -- y cada
+    respuesta se acumula en el cuerpo.
+    """
+    estado, r = _post("/api/bot/convertir/proponer", cuerpo)
+    log.info("conversion propuesta: campo=%s -> %s", r.get("campo"), estado)
+
+    if estado == 200 and r.get("hay_que_elegir"):
+        opciones = r.get("opciones") or []
+        if not opciones:
+            await update.effective_message.reply_text(r.get("mensaje", "No hay de donde escoger."))
+            return True
+        _memoria[chat] = {"tipo": "conversion_eligiendo",
+                          "campo": r.get("campo"),
+                          "peticion": dict(cuerpo),
+                          "opciones": opciones}
+        await update.effective_message.reply_text(
+            r.get("mensaje", "Cual?"), reply_markup=_teclado_conversion(opciones))
+        return True
+
+    if estado != 200 or not r.get("ok"):
+        mensaje = r.get("error", "No pude prepararlo. No escribi nada.")
+        # Fuera de los 7 dias la cotizacion puede seguir siendo buena para el
+        # cliente: lo que caduco es cerrarla a ciegas. Se dice la salida en vez
+        # de dejar a la persona en un callejon.
+        if r.get("ofrecer_recotizar"):
+            mensaje = mensaje + NL + NL + 'Si quieres te la recotizo con los precios de hoy: dime "cotizale otra vez".'
+        await update.effective_message.reply_text(mensaje)
+        return True
+
+    _memoria[chat] = {"tipo": "conversion",
+                      "borrador_id": r["borrador_id"],
+                      "sello": r["sello"],
+                      "folio": r.get("folio"),
+                      "peticion": dict(cuerpo)}
+    await update.effective_message.reply_text(
+        r["mensaje"], reply_markup=_teclado_confirmar_conversion(r["borrador_id"]))
+    return True
+
+
+async def _confirmar_conversion(update, chat):
+    """El "va" de una conversion. Escribe la venta Y marca la cotizacion."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "conversion":
+        await update.effective_message.reply_text("No tengo ninguna cotizacion pendiente de cerrar.")
+        return
+    estado, r = _post("/api/bot/convertir/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("conversion confirmada: borrador=%s -> %s", dato["borrador_id"], estado)
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        await update.effective_message.reply_text(r.get("mensaje", "Listo, quedo vendida."))
+    else:
+        await update.effective_message.reply_text(r.get("error", "No pude convertirla."))
+
+
+async def _proponer_anulacion(update, chat, cuerpo, accion="anular"):
+    """Fase 5. La lista, o la propuesta sellada de lo que se va a tocar.
+
+    Devuelve True si contesto algo. `accion` es lo que Norman pidio -- anular o
+    corregir -- y solo sirve para saber que preguntar despues de que escoja la
+    fila; lo que de verdad se va a hacer lo decide el `modo` que viaja al
+    servidor y queda dentro del sello.
+    """
+    # `accion` viaja SOLO para que el servidor escoja el verbo de la pregunta:
+    # con /corregir la lista decia "Cual anulo?", que es justo la palabra que
+    # nadie quiere leer cuando lo que pidio fue arreglar un concepto. Lo que de
+    # verdad se escribe lo decide `modo`, que va dentro del sello.
+    cuerpo = dict(cuerpo)
+    cuerpo["accion"] = accion
+    estado, r = _post("/api/bot/anular/proponer", cuerpo)
+    log.info("anulacion propuesta: accion=%s modo=%s -> %s",
+             accion, cuerpo.get("modo") or "anular", estado)
+
+    if estado == 200 and r.get("hay_que_elegir"):
+        opciones = r.get("opciones") or []
+        if not opciones:
+            await update.effective_message.reply_text(r.get("mensaje", "No encontre nada."))
+            return True
+        _memoria[chat] = {"tipo": "anulacion_eligiendo",
+                          "accion": accion,
+                          "opciones": opciones}
+        await update.effective_message.reply_text(
+            r.get("mensaje", "Cual?"), reply_markup=_teclado_movimientos(opciones))
+        return True
+
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(
+            r.get("error", "No pude prepararlo. No toque nada."))
+        return True
+
+    _memoria[chat] = {
+        "tipo": "anulacion",
+        "accion": accion,
+        "borrador_id": r["borrador_id"],
+        "sello": r["sello"],
+        "modo": r.get("modo") or "anular",
+        "peticion": dict(cuerpo),
+        "valores": r.get("valores"),
+    }
+    teclado = (_teclado_confirmar_anulacion(r["borrador_id"]) if accion == "anular"
+               else _teclado_confirmar_correccion(r["borrador_id"]))
+    await update.effective_message.reply_text(r["mensaje"], reply_markup=teclado)
+    return True
+
+
+async def _confirmar_anulacion(update, chat):
+    """El "va" de una anulacion o de una correccion.
+
+    Aqui tampoco hay LLM y no puede haberlo: viajan `{telegram_id, borrador_id,
+    sello}` y nada mas. Cual fila se toca lo dice el borrador sellado.
+    """
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "anulacion":
+        await update.effective_message.reply_text("No tengo nada pendiente que anular.")
+        return
+    estado, r = _post("/api/bot/anular/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("anulacion confirmada: borrador=%s modo=%s -> %s",
+             dato["borrador_id"], dato.get("modo"), estado)
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        modo = r.get("modo") or "anular"
+        if modo == "recapturar":
+            await update.effective_message.reply_text(
+                "Listo. Anule la vieja y escribi la corregida.")
+        elif modo == "editar_descripcion":
+            await update.effective_message.reply_text("Listo. Le cambie el concepto.")
+        elif r.get("idTicket"):
+            await update.effective_message.reply_text(
+                "Listo. Quedo anulada la venta completa y el stock se devolvio.")
+        else:
+            await update.effective_message.reply_text("Listo. Quedo anulado.")
+    else:
+        await update.effective_message.reply_text(r.get("error", "No pude anularlo."))
+
+
 async def _enrutar_y_despachar(update, chat, texto):
     """UNA llamada al modelo decide que quiso decir Norman, y se despacha.
 
@@ -1104,16 +1496,27 @@ async def _enrutar_y_despachar(update, chat, texto):
     campos, un gasto completo tambien se resuelve en UNA llamada: antes era
     una, ahora sigue siendo una, y todo lo demas bajo de tres a una.
 
-    **La cascada vieja no se borro: es la red.** Si el enrutador falla, o si
-    despacha a un camino que no logra proponer, se cae al camino de siempre.
-    Un bot que captura gastos desde hace meses no se apuesta a un modulo nuevo.
+    **Y ya no hay cascada detras.** Se habia quedado de red cuando entro el
+    enrutador, y era la decision equivocada: una red que vuelve a leer el mismo
+    mensaje con OTRO prompt no es una red, es una segunda opinion -- y se activa
+    justo cuando algo ya salio raro. La red de verdad son los comandos, que no
+    pasan por ningun modelo y por lo tanto siguen de pie aunque el modelo no.
+
+    El segundo argumento de `enrutar` es el BORRADOR A MEDIAS. Hasta el
+    2026-09-19 era un `None` literal: el enrutador tenia sitio para los campos
+    que ya se sabian y el bot nunca se los mandaba, asi que una captura a medias
+    volvia a empezar de cero en cada vuelta.
     """
     ok, ruta = await asyncio.to_thread(
-        enrutar, texto, None, list(_catalogo), _nombres_deudores())
+        enrutar, texto, _tomar_borrador_a_medias(chat), list(_catalogo),
+        _nombres_deudores())
 
     if not ok:
-        log.warning("el enrutador fallo (%s); voy por el camino viejo", ruta)
-        await _proponer(update, texto, _pendiente)
+        log.warning("el enrutador fallo: %s", ruta)
+        await update.effective_message.reply_text(
+            "No pude leer ese mensaje: se me cayo el modelo. Dimelo otra vez. "
+            "Si corre prisa, /stock, /cartera, /ventas y /abono no pasan por el "
+            "modelo y siguen funcionando.")
         return
 
     log.info("enrutado como %s (confianza %s)", ruta.get("intencion"), ruta.get("confianza"))
@@ -1124,7 +1527,7 @@ async def _enrutar_y_despachar(update, chat, texto):
         # Si al enrutador le falto lo indispensable, se PREGUNTA una sola cosa
         # y se guarda el texto para juntarlo con la respuesta. Nada se inventa.
         if not campos.get("monto") or not campos.get("descripcion"):
-            _pendiente[chat] = texto
+            _recordar_a_medias(chat, "gasto", campos)
             await update.effective_message.reply_text(
                 ruta.get("pregunta") or "Cuanto fue?")
             return
@@ -1132,9 +1535,19 @@ async def _enrutar_y_despachar(update, chat, texto):
         return
 
     if intencion == "abono":
-        if await _proponer_abono(update, chat, texto):
+        # Lo indispensable de un abono es CUANTO. Por el deudor no se pregunta
+        # aqui: el servidor lo empata contra la cartera viva y, si duda, manda
+        # botones. Preguntar un nombre que se acaba de decir es de las cosas que
+        # hacen que un bot se sienta cuadrado.
+        if not campos.get("monto"):
+            _recordar_a_medias(chat, "abono", campos)
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or "De cuanto fue el abono?")
             return
-        await _proponer(update, texto, _pendiente)
+        if await _proponer_abono(update, chat, _propuesta_de_abono(campos),
+                                 nombre=campos.get("deudor")):
+            return
+        await _responder_natural(update, ruta)
         return
 
     if intencion == "venta":
@@ -1143,7 +1556,7 @@ async def _enrutar_y_despachar(update, chat, texto):
         # de todos los dias, asi que no se pregunta por el.
         renglones = _renglones_de(campos)
         if not renglones:
-            _pendiente[chat] = texto
+            _recordar_a_medias(chat, "venta", campos)
             await update.effective_message.reply_text(
                 ruta.get("pregunta") or "Que vendiste?")
             return
@@ -1160,7 +1573,7 @@ async def _enrutar_y_despachar(update, chat, texto):
             peticion["comprador"] = campos.get("comprador")
         if await _proponer_venta(update, chat, peticion):
             return
-        await _proponer(update, texto, _pendiente)
+        await _responder_natural(update, ruta)
         return
 
     if intencion == "lote":
@@ -1169,7 +1582,7 @@ async def _enrutar_y_despachar(update, chat, texto):
         # por ninguno de los dos se pregunta.
         peticion = _peticion_de_lote(campos)
         if not peticion["insumos"] and not peticion["propuesta"]["tandas"] and not peticion["envasado"]:
-            _pendiente[chat] = texto
+            _recordar_a_medias(chat, "lote", campos)
             await update.effective_message.reply_text(
                 ruta.get("pregunta") or "Cuanto chile entro?")
             return
@@ -1184,7 +1597,7 @@ async def _enrutar_y_despachar(update, chat, texto):
         # "es cliente nuevo", que es el caso normal de una cotizacion.
         peticion = _peticion_de_cotizacion(campos)
         if not peticion["productos"]:
-            _pendiente[chat] = texto
+            _recordar_a_medias(chat, "cotizacion", campos)
             await update.effective_message.reply_text(
                 ruta.get("pregunta") or "Que le cotizo?")
             return
@@ -1193,8 +1606,49 @@ async def _enrutar_y_despachar(update, chat, texto):
         await _responder_natural(update, ruta)
         return
 
+    if intencion == "anular":
+        # FASE 5. El enrutador NO dice cual: lo dice la persona, con un boton,
+        # contra una lista que arma el servidor (D2).
+        await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="anular")
+        return
+
+    if intencion == "corregir":
+        # FASE 5. Misma lista; lo que cambia es la pregunta de despues. Y
+        # "corregir" casi nunca acaba en un UPDATE: acaba en anular y volver a
+        # escribir, en un solo "va" (D6).
+        await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="corregir")
+        return
+
+    if intencion == "alta":
+        # PASO 5. El nombre es lo unico que el modelo aporta; la zona y el rol
+        # NUNCA (D9), y las comisiones se preguntan una por una segun el rol.
+        # Si ni el nombre vino, se pregunta por el y ya.
+        nombre = (campos.get("nombre") or "").strip()
+        if not nombre:
+            _recordar_a_medias(chat, "alta", campos)
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or "Como se llama?")
+            return
+        peticion = {"telegram_id": chat, "nombre": nombre}
+        if campos.get("email"):
+            peticion["email"] = campos.get("email")
+        if campos.get("telefono"):
+            peticion["telefono"] = campos.get("telefono")
+        await _proponer_alta(update, chat, peticion)
+        return
+
+    if intencion == "convertir":
+        # PASO 6. El folio, si lo dijo, solo sirve para no ensenar la lista; y
+        # aun asi la fila se busca por id, no por folio dictado. Si no lo dijo,
+        # se ensena la lista con botones, que es lo normal.
+        await _proponer_conversion(update, chat, {"telegram_id": chat})
+        return
+
     if intencion == "consulta":
-        if await _contestar_consulta(update, chat, texto):
+        # `ruta["consulta"]` en vez de volver a clasificar con el modelo. Y el
+        # filtro tal cual: quien lo prueba contra el producto y contra el punto
+        # de venta es el servidor, no este proceso.
+        if await _contestar_consulta(update, chat, ruta.get("consulta"), ruta.get("filtro")):
             return
         await _responder_natural(update, ruta)
         return
@@ -1231,10 +1685,45 @@ async def manejar_texto(update, context):
             propuesta["monto"] = monto
             # Se repropone con el MISMO deudor ya resuelto (por uuid), no con el
             # nombre: cambiar el monto no puede cambiar a quien se le abona.
-            await _proponer_abono(update, chat, texto,
-                                  id_deudor=dato.get("id_deudor"), propuesta=propuesta)
+            await _proponer_abono(update, chat, propuesta,
+                                  id_deudor=dato.get("id_deudor"))
             return
         await _reproponer(update, chat, {"propuesta": {"monto": monto}})
+        return
+
+    # Contestando una pregunta del alta: el correo, o una comision. **No pasa
+    # por el modelo**, por la misma razon que el monto: si la frase se volviera
+    # a extraer, el modelo podria "corregir" la zona o el rol que ya se
+    # escogieron con boton, y esos dos salieron del lenguaje natural a proposito.
+    campo_alta = _esperando_alta.pop(chat, None)
+    if campo_alta:
+        dato = _memoria.get(chat) or {}
+        peticion = dict(dato.get("peticion") or {})
+        peticion["telegram_id"] = chat
+        if campo_alta.startswith("comision"):
+            comisiones = dict(peticion.get("comisiones") or {})
+            comisiones[campo_alta] = texto.replace("%", "").strip()
+            peticion["comisiones"] = comisiones
+        else:
+            peticion[campo_alta] = texto.strip()
+        await _proponer_alta(update, chat, peticion)
+        return
+
+    # Corrigiendo un movimiento YA ESCRITO: entra el valor nuevo y se propone
+    # la correccion. **Tampoco pasa por el modelo.**
+    cual = _esperando_correccion.pop(chat, None)
+    if cual == "monto":
+        limpio = texto.replace("$", "").replace(",", "").replace("pesos", "").strip()
+        try:
+            monto = float(limpio)
+        except ValueError:
+            _esperando_correccion[chat] = "monto"
+            await update.message.reply_text("No lo lei como numero. Solo la cifra, por favor.")
+            return
+        await _proponer_correccion_de_campo(update, chat, "monto", monto)
+        return
+    if cual == "desc":
+        await _proponer_correccion_de_campo(update, chat, "descripcion", texto.strip())
         return
 
     # Cambiando el codigo de un lote vivo: entra el texto y se repropone con
@@ -1272,11 +1761,8 @@ async def manejar_texto(update, context):
         await _proponer_cotizacion(update, chat, peticion)
         return
 
-    # Si veniamos preguntando un dato que faltaba, se junta con lo anterior.
-    anterior = _pendiente.pop(chat, None)
-    if anterior:
-        texto = anterior + ". " + texto
-
+    # Si veniamos preguntando un dato que faltaba, quien lo recoge es el
+    # enrutador con el borrador a medias. Aqui ya no se pegan frases.
     await update.message.chat.send_action("typing")
     await _enrutar_y_despachar(update, chat, texto)
 
@@ -1304,10 +1790,13 @@ async def manejar_voz(update, context):
         return
     await update.message.reply_text('Te entendi: "' + texto + '"')
 
-    anterior = _pendiente.pop(chat, None)
-    if anterior:
-        texto = anterior + ". " + texto
-    await _proponer(update, texto, _pendiente)
+    # 1.b. **La voz entra por el mismo sitio que el texto.** Hasta el
+    # 2026-09-19 esta linea llamaba a `_proponer`, o sea a la cascada vieja: una
+    # nota de voz NUNCA llegaba al enrutador. Dictar "cotizale 20 cajas a
+    # Delirio" no cotizaba nada -- se intentaba leer como gasto, fallaba; como
+    # abono, fallaba; y contestaba el mensaje de ayuda. Todo lo que las fases 3 y
+    # 4 agregaron existia solo para quien escribiera, y Norman dicta.
+    await _enrutar_y_despachar(update, chat, texto)
 
 
 # ===========================================================================
@@ -1347,10 +1836,43 @@ async def _confirmar(update, chat):
     if not dato:
         await update.effective_message.reply_text("No tengo nada pendiente que escribir.")
         return
+    # Un borrador a medias NO se confirma, y este es el candado que lo impide.
+    # Comparte casilla con los borradores de verdad, pero no tiene sello -- y
+    # sin sello no hay nada que mandar al servidor. Un "va" adelantado se
+    # contesta diciendo que falta, no escribiendo una fila incompleta.
+    if dato.get("estado") == "incompleto":
+        await update.effective_message.reply_text(
+            "Todavia me falta un dato para poder escribirlo. Contestame lo que te pregunte.")
+        return
     # Un "va" escrito vale para lo que este pendiente, sea gasto o abono: la
     # persona contesta como habla y no tiene por que saber que hay dos caminos.
     if dato.get("tipo") == "abono":
         await _confirmar_abono(update, chat)
+        return
+    if dato.get("tipo") == "anulacion":
+        await _confirmar_anulacion(update, chat)
+        return
+    if dato.get("tipo") == "anulacion_eligiendo":
+        await update.effective_message.reply_text(
+            "Primero dime cual, con uno de los botones.")
+        return
+    if dato.get("tipo") == "correccion_eligiendo":
+        await update.effective_message.reply_text(
+            "Primero dime que le cambio, con uno de los botones.")
+        return
+    if dato.get("tipo") == "alta":
+        await _confirmar_alta(update, chat)
+        return
+    if dato.get("tipo") == "alta_eligiendo":
+        await update.effective_message.reply_text(
+            "Todavia me falta un dato del alta. Contestame lo que te pregunte.")
+        return
+    if dato.get("tipo") == "conversion":
+        await _confirmar_conversion(update, chat)
+        return
+    if dato.get("tipo") == "conversion_eligiendo":
+        await update.effective_message.reply_text(
+            "Primero dime cual, con uno de los botones.")
         return
     if dato.get("tipo") == "venta":
         await _confirmar_venta(update, chat)
@@ -1566,6 +2088,113 @@ async def manejar_boton(update, context):
             return
         peticion["productos"] = renglones
         await _proponer_venta(update, chat, peticion)
+    elif accion == "vaan":
+        await _confirmar_anulacion(update, chat)
+    elif accion == "vaalt":
+        await _confirmar_alta(update, chat)
+    elif accion == "setalta":
+        dato = _memoria.get(chat) or {}
+        opciones = dato.get("opciones") or []
+        campo = dato.get("campo")
+        try:
+            elegido = opciones[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            # El indice solo significa algo contra la lista que se ofrecio.
+            await q.message.reply_text("Ese ya no esta en la lista. Empecemos otra vez.")
+            return
+        peticion = dict(dato.get("peticion") or {})
+        peticion["telegram_id"] = chat
+        valor = elegido.get("valor")
+        if campo == "duplicado":
+            if valor != "si":
+                _memoria.pop(chat, None)
+                await q.message.reply_text("Va, no lo creo. No escribi nada.")
+                return
+            # La persona ya vio con quien se parece y dijo que es otro. La
+            # bandera la pone el BOT, nunca el modelo: es un consentimiento, no
+            # un dato extraido de una frase.
+            peticion["aun_con_parecidas"] = True
+        elif campo and campo.startswith("comision"):
+            comisiones = dict(peticion.get("comisiones") or {})
+            comisiones[campo] = valor
+            peticion["comisiones"] = comisiones
+        elif campo:
+            peticion[campo] = valor
+        await _proponer_alta(update, chat, peticion)
+    elif accion == "vacnv":
+        await _confirmar_conversion(update, chat)
+    elif accion == "setcnv":
+        dato = _memoria.get(chat) or {}
+        opciones = dato.get("opciones") or []
+        campo = dato.get("campo")
+        try:
+            elegido = opciones[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            await q.message.reply_text("Esa ya no esta en la lista. Pidemela otra vez.")
+            return
+        peticion = dict(dato.get("peticion") or {})
+        peticion["telegram_id"] = chat
+        if campo == "cotizacion":
+            peticion["id_cotizacion"] = elegido.get("id")
+        elif campo == "condicion_pago":
+            peticion["condicion_pago"] = elegido.get("valor")
+        elif campo == "cuenta":
+            peticion["id_cuenta_destino"] = elegido.get("valor")
+        await _proponer_conversion(update, chat, peticion)
+    elif accion == "setanu":
+        dato = _memoria.get(chat) or {}
+        opciones = dato.get("opciones") or []
+        try:
+            elegido = opciones[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            # El indice solo significa algo contra la lista que se ofrecio. Si
+            # ya no esta, NO se adivina: se vuelve a pedir la lista.
+            await q.message.reply_text("Ese ya no esta en la lista. Pidemela otra vez.")
+            return
+        if dato.get("accion") == "corregir":
+            if not elegido.get("valores"):
+                await q.message.reply_text(
+                    "Ese no se corrige: es un movimiento de inventario y el stock se "
+                    "replaya desde el ledger entero. Lo puedo anular y lo recapturas.")
+                return
+            if elegido.get("arrastra_venta"):
+                await q.message.reply_text(
+                    "Ese renglon es de una venta y su concepto lleva el folio dentro. "
+                    "Lo puedo anular entero, pero no reescribirlo.")
+                return
+            _memoria[chat] = {"tipo": "correccion_eligiendo",
+                              "accion": "corregir",
+                              "elegido": elegido,
+                              "opciones": opciones}
+            await q.message.reply_text(
+                "Que le cambio?" + NL + elegido.get("detalle", ""),
+                reply_markup=_teclado_campos_corregibles())
+            return
+        await _proponer_anulacion(update, chat, {
+            "telegram_id": chat,
+            "tabla": elegido.get("tabla"),
+            "id_movimiento": elegido.get("id"),
+            "modo": "anular",
+        }, accion="anular")
+    elif accion == "setcorr":
+        dato = _memoria.get(chat) or {}
+        if dato.get("tipo") != "correccion_eligiendo":
+            await q.message.reply_text("Ya no tengo ese movimiento. Dimelo otra vez.")
+            return
+        cual = partes[1]
+        if cual == "monto":
+            _esperando_correccion[chat] = "monto"
+            await q.message.reply_text("De cuanto era? Solo el numero.")
+        elif cual == "desc":
+            _esperando_correccion[chat] = "desc"
+            await q.message.reply_text("Como le pongo?")
+        else:
+            # La categoria reusa el teclado de siempre. La lista que se ofrece
+            # se guarda EXACTA, porque el indice del boton solo significa algo
+            # contra ella y no contra lo que el catalogo diga despues.
+            vivas = list(_catalogo)
+            dato["categorias_ofrecidas"] = vivas
+            await q.message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
     elif accion == "vaab":
         await _confirmar_abono(update, chat)
     elif accion == "deu":
@@ -1585,8 +2214,8 @@ async def manejar_boton(update, context):
         except (ValueError, IndexError, TypeError):
             await q.message.reply_text("Ese ya no esta en la lista. Dictamelo otra vez.")
             return
-        await _proponer_abono(update, chat, "", id_deudor=elegido["id_entidad"],
-                              propuesta=dato.get("propuesta"))
+        await _proponer_abono(update, chat, dato.get("propuesta"),
+                              id_deudor=elegido["id_entidad"])
     elif accion == "montoab":
         _esperando_monto[chat] = True
         await q.message.reply_text("De cuanto fue el abono? Solo el numero.")
@@ -1608,6 +2237,26 @@ async def manejar_boton(update, context):
     elif accion == "setcat":
         dato = _memoria.get(chat) or {}
         ofrecidas = dato.get("categorias_ofrecidas") or dato.get("categorias") or []
+        # El teclado de categorias es el mismo para capturar y para corregir,
+        # pero el camino NO. Sin esta bifurcacion, cambiarle la categoria a un
+        # movimiento ya escrito lo volveria a proponer como un gasto NUEVO: dos
+        # filas donde deberia haber una corregida.
+        if dato.get("tipo") == "correccion_eligiendo":
+            try:
+                i = int(partes[1])
+            except (ValueError, IndexError, TypeError):
+                await q.message.reply_text("No entendi ese boton. Dimelo otra vez.")
+                return
+            try:
+                nueva = None if i == -1 else ofrecidas[i]
+            except IndexError:
+                await q.message.reply_text("Esa categoria ya no esta en la lista.")
+                return
+            if not nueva:
+                await q.message.reply_text("Para corregir la categoria tienes que escoger una.")
+                return
+            await _proponer_correccion_de_campo(update, chat, "categoria", nueva)
+            return
         try:
             i = int(partes[1])
         except (ValueError, IndexError, TypeError):
@@ -1714,9 +2363,55 @@ async def comando_abono(update, context):
     await update.effective_message.chat.send_action("typing")
     # El nombre no se resuelve aqui: viaja al servidor como se tecleo, y el
     # servidor lo empata o pregunta. Es el mismo camino que el de la voz.
-    await _proponer_abono(update, chat, nombre, nombre=nombre,
-                          propuesta={"monto": monto, "metodo_pago": None,
-                                     "nota": None, "fecha": None})
+    await _proponer_abono(update, chat,
+                          {"monto": monto, "metodo_pago": None,
+                           "nota": None, "fecha": None},
+                          nombre=nombre)
+
+
+async def comando_anular(update, context):
+    """/anular — la lista, sin pasar por el modelo. Igual que /stock.
+
+    Existe por latencia y por confianza, no por seguridad: el camino de lenguaje
+    natural paga una llamada al modelo para decidir que "cancela el gasto de
+    ayer" es una anulacion y no un gasto. Lo que se usa a diario no tiene por que
+    pagar eso, y ademas un comando escrito no se puede clasificar mal -- que en
+    este camino importa mas que en los otros, porque leer "anula" como "gasto"
+    escribe una fila de dinero que nadie pidio.
+
+    No anula nada: ofrece la lista. Lo que anula es el "va".
+    """
+    chat = update.effective_chat.id
+    await update.effective_message.chat.send_action("typing")
+    await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="anular")
+
+
+async def comando_corregir(update, context):
+    """/corregir — la misma lista, y despues se pregunta que campo."""
+    chat = update.effective_chat.id
+    await update.effective_message.chat.send_action("typing")
+    await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="corregir")
+
+
+async def comando_alta(update, context):
+    """/alta — el alta sin pasar por el modelo. Misma razon que /anular.
+
+    Empieza preguntando el nombre, porque es lo unico que el modelo aportaba en
+    este camino. Todo lo demas ya iba por boton.
+    """
+    chat = update.effective_chat.id
+    _memoria[chat] = {"tipo": "alta_eligiendo", "campo": "nombre",
+                      "peticion": {"telegram_id": chat}, "opciones": []}
+    _esperando_alta[chat] = "nombre"
+    await update.effective_message.reply_text(
+        "Va. Como se llama el distribuidor o el local?")
+
+
+async def comando_convertir(update, context):
+    """/convertir — la lista de cotizaciones abiertas, sin modelo."""
+    chat = update.effective_chat.id
+    await update.effective_message.chat.send_action("typing")
+    await _proponer_conversion(update, chat, {"telegram_id": chat})
 
 
 async def comando_inicio(update, context):
@@ -1735,6 +2430,11 @@ async def comando_inicio(update, context):
         + "  /abono Gilberto 5000   o dilo hablando: \"me deposito Gilberto 5 mil\"" + NL
         + "Te enseno a que pedidos se aplica ANTES de escribir nada." + NL
         + "Tambien puedes preguntarlo hablando: \"cuanto me debe Delirio\"." + NL + NL
+        + "PARA DESHACER O CORREGIR ALGO QUE YA QUEDO ESCRITO:" + NL
+        + "  /anular           te enseno los ultimos y escoges con un boton" + NL
+        + "  /corregir         igual, y despues te pregunto que le cambio" + NL
+        + "Nunca te voy a pedir que me digas cual de oido: siempre lo escoges de"
+          " una lista." + NL + NL
         + "Los numeros salen de las vistas del ERP, nunca del modelo.")
 
 
@@ -1810,6 +2510,10 @@ def main():
     app.add_handler(CommandHandler("cartera", comando_cartera))
     app.add_handler(CommandHandler("ventas", comando_ventas))
     app.add_handler(CommandHandler("abono", comando_abono))
+    app.add_handler(CommandHandler("anular", comando_anular))
+    app.add_handler(CommandHandler("corregir", comando_corregir))
+    app.add_handler(CommandHandler("alta", comando_alta))
+    app.add_handler(CommandHandler("convertir", comando_convertir))
     app.add_handler(CallbackQueryHandler(manejar_boton))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))

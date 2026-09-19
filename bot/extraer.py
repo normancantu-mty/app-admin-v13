@@ -1,4 +1,15 @@
 """
+⛔ RETIRADO EL 2026-09-19. **Nadie llama este modulo.** Lo sustituye
+`bot/enrutador.py`, que decide la intencion Y extrae los campos en UNA sola
+llamada al modelo. Se queda en el repo sin llamador porque aqui nada se borra
+(regla 6 de CLAUDE.md), y porque su prompt es el historial de lo que se fue
+aprendiendo sobre como dicta Norman.
+
+**No lo vuelvas a cablear en paralelo con el enrutador.** Eso fue exactamente lo
+que estuvo mal hasta hoy: dos prompts leyendo el mismo mensaje, y cual mandaba
+dependia del orden de unos `if`. El mismo gasto se podia escribir de dos maneras
+segun por donde entrara, y desde afuera las dos se veian igual.
+
 extraer.py — el unico punto donde el LLM toca este sistema.
 
 Entra lenguaje natural. Sale UN objeto con cuatro campos y nada mas.

@@ -51,7 +51,7 @@ def _mide(nombre, teclado):
 casos = []
 
 # --- 1 (VERDE): categorias, con un nombre largo de verdad.
-cats = list(B.CATEGORIAS) + [CATEGORIA_LARGA]
+cats = list(B.CATEGORIAS_SEMILLA) + [CATEGORIA_LARGA]
 ok, peor, largo = _mide("categorias", B._teclado_categorias(cats))
 casos.append(("VERDE - categorias con nombre de 53 chars", ok, True,
               "peor=%r %d bytes" % (peor, largo)))
@@ -76,6 +76,74 @@ casos.append(("VERDE - confirmar gasto (lleva uuid)", ok, True,
 ok2, peor2, largo2 = _mide("confirmar_abono", B._teclado_confirmar_abono(UUID))
 casos.append(("VERDE - confirmar abono (lleva uuid)", ok2, True,
               "peor=%r %d bytes" % (peor2, largo2)))
+
+# --- 4.bis (VERDE): los teclados de la FASE 5 (anular y corregir).
+#     El de movimientos es el que mas riesgo tiene: la etiqueta lleva la fecha,
+#     el monto Y el concepto, y el concepto lo escribio una persona sin limite.
+#     Por eso el `callback_data` va por INDICE y la etiqueta se queda en el
+#     TEXTO del boton, que no tiene tope de 64 bytes.
+movimientos = [
+    dict(tabla="finanzas", id=UUID, etiqueta="19 sep · $1,234.00 · " + CATEGORIA_LARGA,
+         detalle="da igual", valores=None, arrastra_venta=False)
+    for _ in range(8)
+]
+ok, peor, largo = _mide("movimientos", B._teclado_movimientos(movimientos))
+casos.append(("VERDE - movimientos a anular por indice", ok, True,
+              "peor=%r %d bytes" % (peor, largo)))
+
+ok, peor, largo = _mide("confirmar_anulacion", B._teclado_confirmar_anulacion(UUID))
+casos.append(("VERDE - confirmar anulacion (lleva uuid)", ok, True,
+              "peor=%r %d bytes" % (peor, largo)))
+
+ok, peor, largo = _mide("campos_corregibles", B._teclado_campos_corregibles())
+casos.append(("VERDE - que campo se corrige", ok, True,
+              "peor=%r %d bytes" % (peor, largo)))
+
+# --- 4.quater (VERDE): los teclados de los PASOS 5 y 6 (alta y conversion).
+#     El de conversion es el peor caso nuevo: la etiqueta junta folio, fecha,
+#     total Y el nombre del comprador, que no tiene tope de largo. Por eso el
+#     `callback_data` es "setcnv:<indice>" y todo lo demas se queda en el TEXTO.
+zonas = [dict(valor="Zacatecas", etiqueta="Zacatecas"),
+         dict(valor="Foraneo", etiqueta="Foraneo")]
+ok, peor, largo = _mide("alta_zonas", B._teclado_alta(zonas))
+casos.append(("VERDE - zona/rol del alta por indice", ok, True,
+              "peor=%r %d bytes" % (peor, largo)))
+
+cotizaciones = [
+    dict(id=UUID, etiqueta="COT-0007 · 2026-09-19 · $12,345.00",
+         detalle=CATEGORIA_LARGA, estado="VIGENTE")
+    for _ in range(8)
+]
+ok, peor, largo = _mide("conversion", B._teclado_conversion(cotizaciones))
+casos.append(("VERDE - cotizaciones a convertir por indice", ok, True,
+              "peor=%r %d bytes" % (peor, largo)))
+
+ok, peor, largo = _mide("confirmar_alta", B._teclado_confirmar_alta(UUID))
+casos.append(("VERDE - confirmar alta (lleva uuid)", ok, True,
+              "peor=%r %d bytes" % (peor, largo)))
+
+ok, peor, largo = _mide("confirmar_conversion", B._teclado_confirmar_conversion(UUID))
+casos.append(("VERDE - confirmar conversion (lleva uuid)", ok, True,
+              "peor=%r %d bytes" % (peor, largo)))
+
+# --- 4.quinquies (CONTROL NEGATIVO): la zona NO puede viajar en el dato.
+#     Es la tentacion concreta de D9 -- "total, son dos palabras cortas" -- y con
+#     un uuid de borrador delante ya no cabe. Ademas un texto en el
+#     `callback_data` es un texto que alguien puede escribir a mano, y ese texto
+#     va directo contra el CHECK de `entidades.zona`.
+tentacion_zona = "setalta:" + UUID + ":Zacatecas:" + CATEGORIA_LARGA
+casos.append(("ROJO  - setalta:<uuid>:<zona>:<nombre>",
+              len(tentacion_zona.encode("utf-8")) > TOPE, True,
+              "%d bytes > %d" % (len(tentacion_zona.encode("utf-8")), TOPE)))
+
+# --- 4.ter (CONTROL NEGATIVO): la etiqueta NO puede acabar en el callback_data.
+#     Si alguien "simplifica" mandando el texto del movimiento en el dato del
+#     boton, revienta con el mismo Button_data_invalid de septiembre. Esta linea
+#     mide esa tentacion concreta, no una hipotetica.
+tentacion = "setanu:" + movimientos[0]["etiqueta"]
+casos.append(("ROJO  - setanu:<etiqueta del movimiento>",
+              len(tentacion.encode("utf-8")) > TOPE, True,
+              "%d bytes > %d" % (len(tentacion.encode("utf-8")), TOPE)))
 
 # --- 5 (CONTROL NEGATIVO): la formula VIEJA tiene que seguir reventando.
 #     Si esto diera verde, la prueba de arriba no probaria nada: querria decir

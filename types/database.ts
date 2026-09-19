@@ -1961,6 +1961,19 @@ export type Database = {
       }
     }
     Functions: {
+      anular_ticket_atomica: {
+        Args: {
+          p_ticket_id: string
+        }
+        Returns: Json
+      }
+      crear_entidad_atomica: {
+        Args: {
+          p_cuenta: Json
+          p_entidad: Json
+        }
+        Returns: string
+      }
       entidad_pendiente_de_asignar: { Args: never; Returns: string }
       mi_entidad_id: { Args: never; Returns: string }
       mi_rol: { Args: never; Returns: string }

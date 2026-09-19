@@ -17,37 +17,68 @@ export function notasConIdTicket(ticketId: string, notasExistentes?: string | nu
   return `${prev} | ${marca}`
 }
 
+/** Lo que devuelve `anular_ticket_atomica`: cuantas filas toco de cada lado. */
+export interface CascadaAnulada {
+  finanzas: number
+  inventario: number
+  /**
+   * Cotizaciones que volvieron a quedar libres. Es 0 casi siempre —la mayoria
+   * de las ventas no vienen de una cotizacion— y por eso el RPC no lo exige.
+   * Ver la migracion `20260919153518`.
+   */
+  cotizaciones: number
+}
+
+/**
+ * ─── UN SOLO RPC, Y ANTES ERAN TRES UPDATE SUELTOS ──────────────────────────
+ *
+ * Hasta el 2026-09-19 esto eran tres `update()` en fila: encabezado, dinero,
+ * inventario. PostgREST abre y cierra una transaccion **por peticion**, asi que
+ * entre uno y otro no habia nada que los atara. Si el tercero fallaba, quedaba
+ * el ticket anulado y su movimiento de inventario todavia ACTIVO — o sea stock
+ * descontado por una venta que ya no existe. Y como el inventario no se guarda
+ * como total sino que se replaya desde el ledger entero, esa fila huerfana no
+ * se ve en ninguna pantalla: el almacen simplemente dice de menos, para siempre.
+ *
+ * `anular_ticket_atomica` (migracion `20260919151831`) mete los tres en la
+ * MISMA transaccion de Postgres. Desde `20260919153518` son cuatro: se suma la
+ * cotizacion que origino la venta, que si no se liberaba quedaba CONVERTIDA
+ * apuntando a un ticket muerto. Es la gemela de lo que ERP-11 le hizo a la
+ * venta, para el lado que habia quedado sin cubrir.
+ *
+ * **El comportamiento visible no cambia** — mismos criterios, mismo orden,
+ * mismos filtros de `status` — salvo en un punto, y es a mejor: si el ticket no
+ * existe, ahora lanza en vez de contestar 200 habiendo tocado cero filas (la
+ * leccion de ERP-66).
+ *
+ * `SECURITY INVOKER`: dentro del RPC siguen corriendo el RLS y el trigger
+ * `tg_vigilar_update_no_admin` con el rol de quien llama. La ventana de 12 h de
+ * un DST no se evapora por haber pasado a ser una funcion.
+ */
 export async function annulComercialCascadePorTicketId(
   supabase: SupabaseClient<Database>,
   ticketId: string
-): Promise<void> {
+): Promise<CascadaAnulada> {
   if (!ticketId || !UUID_REGEX.test(ticketId)) {
     throw new Error('Ticket inválido para anulación en cascada.')
   }
 
-  const { error: eTicket } = await supabase
-    .from('transacciones_tickets')
-    .update({ status: 'ANULADO' })
-    .eq('id', ticketId)
+  const { data, error } = await supabase.rpc('anular_ticket_atomica', {
+    p_ticket_id: ticketId
+  })
 
-  if (eTicket) throw new Error(eTicket.message)
+  if (error) throw new Error(error.message)
 
-  const { error: eLed } = await supabase
-    .from('finanzas_ledger')
-    .update({ status: 'ANULADO' })
-    .eq('id_ticket', ticketId)
-    .in('status', ['ACTIVO', 'APPROVED'])
-
-  if (eLed) throw new Error(eLed.message)
-
-  const pattern = `%${ticketId}%`
-  const { error: eInv } = await supabase
-    .from('inventario_ledger')
-    .update({ status: 'ANULADO' })
-    .eq('status', 'ACTIVO')
-    .ilike('notas', pattern)
-
-  if (eInv) throw new Error(eInv.message)
+  const conteo = (data ?? {}) as {
+    finanzas?: unknown
+    inventario?: unknown
+    cotizaciones?: unknown
+  }
+  return {
+    finanzas: Number(conteo.finanzas) || 0,
+    inventario: Number(conteo.inventario) || 0,
+    cotizaciones: Number(conteo.cotizaciones) || 0
+  }
 }
 
 type Actor = { id: string; email: string; rol: string }

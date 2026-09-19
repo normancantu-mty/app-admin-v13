@@ -41,11 +41,49 @@ INTENCIONES = (
     "lote",
     "consulta",
     "cotizacion",
+    # --- Fase 5, 2026-09-19. Las cuatro que faltaban para que el bot sea la
+    # interfaz COMPLETA y no solo la de captura. Las tres primeras NO llevan
+    # campos que identifiquen una fila: la fila se elige de una lista con
+    # botones, por indice (D2). Dictar "anula el gasto de mil pesos" con dos
+    # gastos de mil pesos es como se anula la fila equivocada.
+    "anular",
+    "corregir",
+    "alta",
+    "convertir",
     "reporte",
     "charla",
 )
 
-CONSULTAS = ("stock", "cartera", "ventas", "margen", "lote", "otra")
+# ---------------------------------------------------------------------------
+# LAS CONSULTAS QUE DE VERDAD EXISTEN
+# ---------------------------------------------------------------------------
+# **Eran seis aqui y tres en el servidor.** El enrutador ofrecia `margen` y
+# `lote`, `lib/bot-consultas.ts` solo conoce `stock`, `cartera` y `ventas`, y el
+# endpoint contesta 422 a cualquier otra cosa. El resultado no era un error
+# entendible: era que preguntar por el margen devolvia "Esa consulta no existe"
+# despues de haber pagado la llamada al modelo.
+#
+# Ahora la lista del modelo es la MISMA lista cerrada del servidor, mas `otra`,
+# que es el cajon honesto: el bot contesta diciendo que eso todavia no lo sabe
+# consultar y QUE SI puede. Si algun dia el servidor aprende una consulta nueva,
+# se agrega en los dos lados — `lib/bot-consultas.ts` manda, y lo que no empate
+# se rechaza con 422, que es un fallo ruidoso.
+CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas")
+CONSULTAS = CONSULTAS_QUE_CONTESTA + ("otra",)
+
+# El vocabulario de arranque del extractor de gastos. Vivia en `extraer.py`, que
+# desde el 2026-09-19 ya no lo llama nadie (ver su cabecera). Es el MISMO que
+# `CATALOGO_SEMILLA` de `lib/bot-gastos.ts`, duplicado a proposito porque Python
+# no lee una constante de TypeScript. **No es autoridad**: en cuanto el servidor
+# contesta la primera propuesta, manda `bot_categorias`.
+CATEGORIAS_SEMILLA = (
+    "Marketing_y_Relaciones",
+    "Servicios_Basicos",
+    "Logistica_Envios",
+    "Nomina_y_Honorarios",
+    "Gastos_Personales_Socio",
+    "Insumos",
+)
 
 PROMPT = u"""Eres el enrutador de un bot de Telegram de una destileria de chile en Mexico.
 Norman te escribe o te dicta notas de voz mientras trabaja. Decides QUE quiso
@@ -54,8 +92,9 @@ hacer. NO ejecutas nada.
 Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:
 
 {
-  "intencion": una de: gasto | abono | venta | lote | consulta | cotizacion | reporte | charla,
-  "consulta": si intencion es consulta, una de: stock | cartera | ventas | margen | lote | otra. Si no, null,
+  "intencion": una de: gasto | abono | venta | lote | consulta | cotizacion | anular | corregir | alta | convertir | reporte | charla,
+  "consulta": si intencion es consulta, una de: stock | cartera | ventas | otra. Si no, null,
+  "filtro": SOLO para consulta stock: el nombre propio que menciono (un producto O un punto de venta), tal cual lo dijo. Si no menciona ninguno, o la consulta no es stock, null,
   "entendido": frase MUY corta de lo que si entendiste, en sus palabras. Nunca vacia,
   "campos": objeto con lo que lograste sacar del mensaje. Solo lo que DE VERDAD dijo,
   "faltantes": lista de los campos obligatorios que NO dijo,
@@ -75,6 +114,23 @@ QUE ES CADA INTENCION
 - cotizacion: quiere un precio para un cliente ANTES de vender. "cotizale a", "cuanto le sale".
   Campos: productos (lista de {producto, cantidad}), cliente, vigencia_dias.
 - consulta: pregunta por algo que ya esta en el sistema. No escribe nada.
+  Campos: ninguno. Lo que menciona va en "filtro", no en "campos".
+- anular: quiere DESHACER algo que ya se escribio. "cancela", "borra", "quitale",
+  "ese gasto estuvo mal", "anula la venta de ayer".
+  Campos: ninguno. NO intentes decir CUAL: el bot le ensena la lista y el escoge
+  con un boton. Un movimiento identificado de oido se anula equivocado.
+- corregir: quiere CAMBIAR algo que ya se escribio. "estaba mal el monto",
+  "no eran 500 eran 1500", "cambiale el concepto".
+  Campos: ninguno, por la misma razon que anular. Si dice el valor nuevo,
+  ponlo en campos.valor_nuevo, pero NUNCA adivines de que fila habla.
+- alta: quiere dar de alta a un distribuidor o a un local nuevo en la red.
+  "da de alta a", "agrega el local", "abrimos punto de venta en".
+  Campos: nombre, email, telefono, comision.
+  **NUNCA pongas zona ni rol**: esos dos van por boton, porque un "Foraneo"
+  transcrito con acento revienta contra el CHECK de la base.
+- convertir: quiere volver VENTA una cotizacion que ya existe. "cerramos la
+  cotizacion", "acepto el precio, hazlo venta", "convierte la COT-0007".
+  Campos: folio, si lo dijo. Si no lo dijo, ninguno: se escoge con boton.
 - reporte: quiere el resumen del dia o del periodo.
 - charla: saludo, agradecimiento, o algo que no cae en ninguna de las anteriores.
 
@@ -102,6 +158,13 @@ REGLAS QUE NO SE ROMPEN
    monto, un abono sin deudor o sin monto, una venta sin producto o sin monto,
    un lote sin kilos de chile. Todo lo demas se guarda vacio y se corrige
    despues.
+12. "anular", "corregir" y "convertir" NUNCA llevan faltantes ni pregunta. El
+   bot ensena una lista con botones y la persona escoge; preguntarle "cual?"
+   antes de ensenarle la lista es pedirle que recuerde un identificador, que es
+   justo lo que este bot existe para no pedir.
+13. DESHACER NO ES GASTAR. "cancela ese gasto" es intencion "anular", no
+   "gasto". Y "corregir" no es capturar de nuevo: es cambiar algo que ya entro.
+   Si la frase habla de algo que YA se escribio, no es una captura nueva.
 
 CAMPOS QUE YA SE SABEN
 Si abajo viene un borrador a medias, el mensaje nuevo lo COMPLETA: junta los dos
@@ -152,6 +215,16 @@ def _normaliza(obj):
     if consulta not in CONSULTAS:
         consulta = None
 
+    # El filtro solo significa algo en `stock`, igual que en el servidor
+    # (`app/api/bot/consulta/route.ts` lo prueba contra el producto Y contra el
+    # punto de venta). La lista cerrada se aplica AQUI tambien y no solo alla:
+    # un filtro colgado de `cartera` viajaria hasta el endpoint para que lo
+    # ignore, y un dato que viaja para ser ignorado acaba usandose algun dia.
+    filtro = obj.get("filtro")
+    filtro = str(filtro).strip()[:60] if filtro else None
+    if consulta != "stock":
+        filtro = None
+
     campos = obj.get("campos")
     if not isinstance(campos, dict):
         campos = {}
@@ -179,6 +252,7 @@ def _normaliza(obj):
     return {
         "intencion": intencion,
         "consulta": consulta,
+        "filtro": filtro,
         "entendido": str(obj.get("entendido") or "").strip(),
         "campos": campos,
         "faltantes": faltantes,

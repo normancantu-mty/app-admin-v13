@@ -60,6 +60,22 @@ const ESCRITURAS = new Set(['insert', 'update', 'delete', 'upsert'])
 const UNA_FILA = new Set(['single', 'maybeSingle'])
 
 /**
+ * `select('...', { head: true })` — la lectura que **no devuelve ni una fila**.
+ *
+ * Con `head: true` PostgREST contesta con los encabezados y cuerpo vacio: el
+ * numero viaja en `Content-Range` y **es el total que empata el filtro, no el
+ * de la pagina**. El corte de las mil filas no lo puede tocar porque no hay
+ * filas que cortar; paginar un conteo no significa nada.
+ *
+ * Se agrego el 2026-09-19, cuando `medirAlcanceDeAnulacion` —que cuenta las
+ * filas que va a arrastrar una anulacion, para poder decirlas antes del "va"—
+ * salio marcada. Era un hueco del analizador, no un defecto del codigo: la
+ * alternativa habria sido traerse las filas enteras para contarlas, que es
+ * literalmente lo que ERP-25 existe para evitar.
+ */
+const CUENTA_SIN_FILAS = /\bhead\s*:\s*true\b/
+
+/**
  * Techo de un `.limit()` legitimo. Por debajo es un "ultimos N" de una pantalla
  * de actividad; de aqui para arriba alguien esta creyendo que pide *todo*, y
  * `.limit(1000)` —el numero exacto del tope de PostgREST— es el caso que
@@ -214,6 +230,9 @@ export function analizarFuente(fuente: string): Hallazgo[] {
       if ([...ESCRITURAS].some((e) => metodos.has(e))) continue
       if ([...UNA_FILA].some((u) => metodos.has(u))) continue
       if (metodos.has('range')) continue
+      // El conteo puro: `select(..., { head: true })` no trae filas. Ver arriba.
+      const seleccion = piezas.find((p) => p.metodo === 'select')
+      if (seleccion && CUENTA_SIN_FILAS.test(seleccion.argumento)) continue
       if (tramos.some(([desde, hasta]) => m!.index > desde && m!.index < hasta)) continue
 
       const limite = piezas.find((p) => p.metodo === 'limit')
@@ -304,6 +323,26 @@ test.describe('ERP-25 · ninguna lectura de ledger se lee truncada', () => {
     // C — el defecto que de verdad estaba vivo: ni limit ni range.
     expect(
       roto(`supabase.from('inventario_ledger').select('cantidad').eq('status', 'ACTIVO')`)[0]?.clase
+    ).toBe('sin-paginar')
+
+    // D — el conteo puro, que NO es un defecto: `head: true` no trae filas.
+    expect(
+      roto(
+        `supabase.from('finanzas_ledger').select('id', { count: 'exact', head: true }).eq('id_ticket', t)`
+      )
+    ).toEqual([])
+    expect(
+      roto(
+        `supabase.from('inventario_ledger').select('id', { head: true, count: 'exact' }).ilike('notas', p)`
+      )
+    ).toEqual([])
+
+    // ...pero contar TRAYENDOSE las filas si lo es, y es el defecto que ERP-25
+    // nombra. La exencion tiene que morder solo con `head: true`, no con
+    // cualquier `count`.
+    expect(
+      roto(`supabase.from('finanzas_ledger').select('id', { count: 'exact' }).eq('id_ticket', t)`)[0]
+        ?.clase
     ).toBe('sin-paginar')
 
     // Y los cuatro casos legitimos, que tienen que salir limpios.

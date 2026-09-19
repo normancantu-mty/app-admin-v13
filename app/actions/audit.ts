@@ -1,30 +1,30 @@
 'use server'
 
+/**
+ * La puerta con SESION de la anulacion. **La logica ya no vive aqui.**
+ *
+ * Desde el 2026-09-19 (Fase 5 del bot) el cuerpo entero —quien puede anular
+ * que, la ventana de 12 h, la cascada por ticket— vive en
+ * `lib/anulacion-servidor.ts`, sin `cookies()` y sin `getCurrentUser()`, para
+ * que el bot de Telegram pueda llamarlo con su identidad de servicio. Es el
+ * mismo movimiento que el commit `9b73c58` le hizo a la venta
+ * (`pos.ts` -> `lib/venta-servidor.ts`) y por la misma razon: copiarla habria
+ * creado **dos verdades sobre la anulacion**, que es la deuda declarada del
+ * repo (TKT-034/TKT-035).
+ *
+ * Lo que queda en este archivo es lo unico que de verdad necesita el navegador:
+ * resolver la sesion, y revalidar las rutas de Next.
+ */
+
 import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { getCurrentUser } from '@/lib/auth-utils'
-import type { Tables } from '@/types/database'
 import {
-  annulComercialCascadePorTicketId,
-  assertAdminOAnulacionTicketPropia,
-  assertPermiteAnularTicketEnPerfil
-} from '@/lib/ticket-annul-cascade'
-import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
-
-const LOCKED_RECORD_ERROR = 'Forbidden: Record is locked. Deletion window has expired for your role.'
-
-type FinanzaLedgerRow = Pick<
-  Tables<'finanzas_ledger'>,
-  'id' | 'fecha_movimiento' | 'usuario_creador' | 'status' | 'id_entidad_relacionada' | 'id_ticket'
->
-interface InventarioLedgerRow {
-  id: string
-  fecha_movimiento: string | null
-  usuario_creador: string | null
-  status: string | null
-  notas: string | null
-}
+  anularFinanzas,
+  anularInventario,
+  type ActorDeAnulacion
+} from '@/lib/anulacion-servidor'
 
 async function getServerSupabaseClient() {
   const cookieStore = await cookies()
@@ -48,85 +48,13 @@ async function getServerSupabaseClient() {
   )
 }
 
-async function dstPuedeOperarPerfilDetalle(
-  supabase: Awaited<ReturnType<typeof getServerSupabaseClient>>,
-  dstEntityId: string,
-  perfilEntidadId: string
-): Promise<boolean> {
-  if (perfilEntidadId === dstEntityId) return true
-  const { data } = await supabase
-    .from('entidades')
-    .select('id_nodo_padre, id_padre, rol')
-    .eq('id', perfilEntidadId)
-    .maybeSingle()
-  if (!data || data.rol !== 'LOC') return false
-  const padre = data.id_nodo_padre ?? data.id_padre
-  return padre === dstEntityId
-}
-
-async function assertDistribuidoresHistorialAnnul(
-  supabase: Awaited<ReturnType<typeof getServerSupabaseClient>>,
-  movimiento: {
-    id_entidad_relacionada: string | null
-    fecha_movimiento: string | null
-  },
-  currentUser: { id: string; email: string; rol: string },
-  perfilEntidadId: string,
-  opts?: { omitVentanaHorariaDst?: boolean }
-) {
-  const rol = currentUser.rol.toUpperCase()
-  if (rol === 'ADMIN') return
-
-  if (rol !== 'DST') {
-    throw new Error('No autorizado para anular desde este perfil.')
+/** La sesion, traducida al actor que espera `lib/anulacion-servidor.ts`. */
+async function actorDeLaSesion(): Promise<ActorDeAnulacion> {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) {
+    throw new Error('Sesión inválida. Inicia sesión nuevamente.')
   }
-
-  if (movimiento.id_entidad_relacionada !== perfilEntidadId) {
-    throw new Error('El movimiento no pertenece al perfil visualizado.')
-  }
-
-  const dstAllowed = await dstPuedeOperarPerfilDetalle(supabase, currentUser.id, perfilEntidadId)
-  if (!dstAllowed) {
-    throw new Error('No autorizado: solo puedes anular en tu cuenta o la de tus locales.')
-  }
-
-  if (opts?.omitVentanaHorariaDst) {
-    return
-  }
-
-  const tsMs = movimiento.fecha_movimiento ? new Date(movimiento.fecha_movimiento).getTime() : NaN
-  if (!Number.isFinite(tsMs)) {
-    throw new Error('No se puede determinar la antigüedad del movimiento.')
-  }
-  if (Date.now() - tsMs > VENTANA_EDICION_MS) {
-    throw new Error(VENTANA_EDICION_ERROR)
-  }
-}
-
-function assertAnnullmentAllowed(
-  row: { usuario_creador: string | null; fecha_movimiento: string | null },
-  currentUser: { email: string; rol: string }
-) {
-  const rol = currentUser.rol.toUpperCase()
-  if (rol === 'ADMIN') {
-    return
-  }
-
-  if (row.usuario_creador !== currentUser.email) {
-    throw new Error('Forbidden: You can only annul records created by your own user.')
-  }
-
-  const createdAtMs = row.fecha_movimiento ? new Date(row.fecha_movimiento).getTime() : NaN
-  if (!Number.isFinite(createdAtMs)) {
-    throw new Error(LOCKED_RECORD_ERROR)
-  }
-
-  // D-E25: el candado temporal es UNO y es el mismo para todo rol que no sea
-  // ADMIN. Antes eran 24 h para DST y 15 min para WORKER, y el resto de los
-  // roles no-ADMIN se colaba sin ninguna ventana por el final de la funcion.
-  if (Date.now() - createdAtMs > VENTANA_EDICION_MS) {
-    throw new Error(LOCKED_RECORD_ERROR)
-  }
+  return { idEntidad: currentUser.id, email: currentUser.email, rol: currentUser.rol }
 }
 
 export async function bulkDeleteMovements(ids: string[]) {
@@ -134,12 +62,11 @@ export async function bulkDeleteMovements(ids: string[]) {
     throw new Error('No se recibieron movimientos para borrar.')
   }
 
-  const currentUser = await getCurrentUser()
-  if (!currentUser) {
-    throw new Error('Sesión inválida. Inicia sesión nuevamente.')
-  }
-
-  if (currentUser.rol === 'SOCIO') {
+  // Se comprueba la sesion ANTES del bucle, aunque cada anulacion la vuelva a
+  // pedir: sin esto, una lista vacia de permisos costaria N viajes a la base
+  // para acabar en el mismo error.
+  const actor = await actorDeLaSesion()
+  if (actor.rol === 'SOCIO') {
     throw new Error('Acceso denegado: Solo lectura.')
   }
 
@@ -153,78 +80,19 @@ export async function bulkDeleteMovements(ids: string[]) {
 }
 
 export async function anularMovimientoFinanzas(id: string, options?: { perfilEntidadId?: string }) {
-  if (!id) {
-    throw new Error('ID de movimiento inválido.')
-  }
-
   const supabase = await getServerSupabaseClient()
-  const currentUser = await getCurrentUser()
+  const actor = await actorDeLaSesion()
 
-  if (!currentUser) {
-    throw new Error('Sesión inválida. Inicia sesión nuevamente.')
-  }
+  const resultado = await anularFinanzas(supabase, actor, id, options)
 
-  if (currentUser.rol === 'SOCIO') {
-    throw new Error('Acceso denegado: Solo lectura.')
-  }
-
-  const { data: movimientoRaw, error: fetchError } = await supabase
-    .from('finanzas_ledger')
-    .select('id, usuario_creador, fecha_movimiento, status, id_entidad_relacionada, id_ticket')
-    .eq('id', id)
-    .single()
-
-  if (fetchError || !movimientoRaw) {
-    throw new Error('No se encontró el movimiento financiero.')
-  }
-
-  const movimiento = movimientoRaw as FinanzaLedgerRow & { id_entidad_relacionada: string | null }
-
-  if (movimiento.status === 'ANULADO') {
-    throw new Error('El movimiento financiero ya está anulado.')
-  }
-
-  if (options?.perfilEntidadId) {
-    await assertDistribuidoresHistorialAnnul(
-      supabase,
-      {
-        id_entidad_relacionada: movimiento.id_entidad_relacionada,
-        fecha_movimiento: movimiento.fecha_movimiento
-      },
-      { id: currentUser.id, email: currentUser.email, rol: currentUser.rol },
-      options.perfilEntidadId,
-      { omitVentanaHorariaDst: Boolean(movimiento.id_ticket) }
-    )
-  } else {
-    assertAnnullmentAllowed(movimiento, { email: currentUser.email, rol: currentUser.rol })
-  }
-
-  const idTicket = movimiento.id_ticket ? String(movimiento.id_ticket).trim() : ''
-
-  if (idTicket) {
-    const actor = { id: currentUser.id, email: currentUser.email, rol: currentUser.rol }
-    if (options?.perfilEntidadId) {
-      await assertPermiteAnularTicketEnPerfil(supabase, idTicket, options.perfilEntidadId, actor)
-    } else {
-      await assertAdminOAnulacionTicketPropia(supabase, idTicket, actor)
-    }
-    await annulComercialCascadePorTicketId(supabase, idTicket)
+  if (resultado.idTicket) {
     if (options?.perfilEntidadId) {
       revalidatePath(`/dashboard/distribuidores/${options.perfilEntidadId}`)
     }
     revalidatePath('/dashboard/distribuidores')
     revalidatePath('/dashboard/inventario')
     revalidatePath('/dashboard/finanzas')
-    return { success: true }
-  }
-
-  const { error: annullError } = await supabase
-    .from('finanzas_ledger')
-    .update({ status: 'ANULADO' })
-    .eq('id', id)
-
-  if (annullError) {
-    throw new Error(`Error al anular movimiento financiero: ${annullError.message}`)
+    return { success: true as const }
   }
 
   revalidatePath('/dashboard/finanzas')
@@ -233,59 +101,19 @@ export async function anularMovimientoFinanzas(id: string, options?: { perfilEnt
   }
   revalidatePath('/dashboard/distribuidores')
 
-  return { success: true }
+  return { success: true as const }
 }
 
 export async function anularMovimientoInventario(id: string) {
-  if (!id) {
-    throw new Error('ID de movimiento inválido.')
-  }
-
   const supabase = await getServerSupabaseClient()
-  const currentUser = await getCurrentUser()
+  const actor = await actorDeLaSesion()
 
-  if (!currentUser) {
-    throw new Error('Sesión inválida. Inicia sesión nuevamente.')
-  }
-
-  if (currentUser.rol === 'SOCIO') {
-    throw new Error('Acceso denegado: Solo lectura.')
-  }
-
-  const { data: movimientoRaw, error: fetchError } = await supabase
-    .from('inventario_ledger')
-    .select('id, usuario_creador, fecha_movimiento, status, notas')
-    .eq('id', id)
-    .single()
-
-  if (fetchError || !movimientoRaw) {
-    throw new Error('No se encontró el movimiento de inventario.')
-  }
-
-  const movimiento = movimientoRaw as InventarioLedgerRow
-  assertAnnullmentAllowed(movimiento, { email: currentUser.email, rol: currentUser.rol })
-
-  if (movimiento.status === 'ANULADO') {
-    throw new Error('El movimiento ya está anulado.')
-  }
-
-  const notasAnulacion = [movimiento.notas, 'ANULADO'].filter(Boolean).join(' | ')
-  const { error: annullError } = await supabase
-    .from('inventario_ledger')
-    .update({
-      status: 'ANULADO',
-      notas: notasAnulacion
-    })
-    .eq('id', id)
-
-  if (annullError) {
-    throw new Error(`Error al anular movimiento de inventario: ${annullError.message}`)
-  }
+  await anularInventario(supabase, actor, id)
 
   revalidatePath('/dashboard/inventario')
   revalidatePath('/dashboard/distribuidores')
 
-  return { success: true }
+  return { success: true as const }
 }
 
 export async function deleteInventarioMovement(id: string) {
