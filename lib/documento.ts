@@ -221,3 +221,86 @@ export async function armarDocumentoDeTicket(
     pie: PIE_TICKET
   }
 }
+
+/**
+ * El pie de una cotizacion. **Dice lo unico que la distingue de un ticket**: no
+ * es un comprobante de nada, y caduca.
+ */
+export const PIE_COTIZACION = [
+  'Esta cotizacion NO es un comprobante de venta',
+  'Los precios pierden vigencia en la fecha indicada'
+]
+
+/**
+ * Arma el documento de una cotizacion (ERP-87).
+ *
+ * ─── POR QUE NO ES `armarDocumentoDeTicket` CON UN `if` ─────────────────────
+ * Porque no lee las mismas tablas: una cotizacion vive en `cotizaciones` y
+ * `cotizacion_detalles`, no en `transacciones_tickets`. Lo que SI se comparte
+ * es lo que importa — `DocumentoDatos`, o sea el contrato del contenido — de
+ * modo que la pagina y la imagen PNG siguen pintando una sola forma.
+ *
+ * ─── LAS TRES DIFERENCIAS, Y POR QUE CADA UNA ───────────────────────────────
+ *   · `subtitulo` dice "Cotizacion" y la vigencia. Es la linea que evita que
+ *     alguien reciba esta imagen y la archive como su ticket.
+ *   · `movimientos` va SIEMPRE vacio. Un estado de cuenta en una cotizacion
+ *     mezclaria lo que alguien debe con lo que todavia no ha comprado.
+ *   · `total` es el cotizado, sin neteo de distribuidor: en una cotizacion no
+ *     hay impuestos que absorber porque no hay cuenta que los reciba.
+ *
+ * Se lee de `v_cotizaciones` y no de la tabla para que el `estado` que se pinta
+ * sea el EFECTIVO: una cotizacion caduca por el paso del tiempo, y la tabla
+ * seguiria diciendo VIGENTE.
+ */
+export async function armarDocumentoDeCotizacion(
+  client: Cliente,
+  idCotizacion: string
+): Promise<DocumentoDatos | null> {
+  const { data: cot, error } = await client
+    .from('v_cotizaciones')
+    .select('*, vendedor:entidades!id_vendedor(nombre)')
+    .eq('id', idCotizacion)
+    .maybeSingle()
+
+  if (error || !cot) return null
+
+  const vendedor = (cot.vendedor ?? null) as { nombre: string } | null
+
+  const { data: detalles } = await client
+    .from('cotizacion_detalles')
+    .select('*, producto:catalogo_productos(nombre)')
+    .eq('id_cotizacion', idCotizacion)
+
+  const lineas: LineaDocumento[] = (detalles ?? []).map((d) => {
+    const producto = (d.producto ?? null) as { nombre: string } | null
+    return {
+      id: d.id,
+      nombre: producto?.nombre ?? 'Producto',
+      cantidad: d.cantidad,
+      precioUnitario: d.precio_unitario
+    }
+  })
+
+  // El estado efectivo va en el subtitulo cuando ya no sirve. Una cotizacion
+  // vencida que se imprime igual que una viva es una promesa que se cobra dos
+  // meses despues al precio del mes pasado.
+  const vigencia =
+    cot.estado_efectivo === 'CONVERTIDA'
+      ? 'Cotizacion ya convertida en venta'
+      : cot.estado_efectivo === 'VENCIDA'
+        ? `Cotizacion VENCIDA el ${cot.vigente_hasta ?? ''}`
+        : `Cotizacion vigente hasta el ${cot.vigente_hasta ?? ''}`
+
+  return {
+    subtitulo: vigencia,
+    fecha: cot.fecha ?? '',
+    folio: cot.folio ?? '',
+    vendedor: vendedor?.nombre || 'Desconocido',
+    comprador: cot.para_quien || 'Sin nombre',
+    lineas,
+    etiquetaTotal: 'Total cotizado:',
+    total: Number(cot.total ?? 0),
+    movimientos: [],
+    pie: PIE_COTIZACION
+  }
+}

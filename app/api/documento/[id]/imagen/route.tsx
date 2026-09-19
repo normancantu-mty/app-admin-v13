@@ -23,7 +23,11 @@
  */
 import { ImageResponse } from 'next/og'
 import { clienteDeServicio, tokenValido } from '@/lib/bot-servidor'
-import { armarDocumentoDeTicket, type DocumentoDatos } from '@/lib/documento'
+import {
+  armarDocumentoDeCotizacion,
+  armarDocumentoDeTicket,
+  type DocumentoDatos
+} from '@/lib/documento'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,8 +36,28 @@ const TINTA = '#1f2937'
 const TENUE = '#6b7280'
 const MONO = 'ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace'
 
+/**
+ * `AAAA-MM-DD` a secas es un dia de CALENDARIO, no un instante.
+ *
+ * `new Date('2026-09-18')` lo interpreta como medianoche UTC, que en Mexico es
+ * **el 17 a las 6 de la tarde**. Un ticket no sufria esto porque
+ * `fecha_transaccion` trae hora; la cotizacion si, porque `cotizaciones.fecha`
+ * es `date`. Se vio en la primera imagen generada: decia "17/09/2026, 06:00
+ * p.m." en una cotizacion hecha el 18.
+ *
+ * Asi que una fecha sin hora se arma como fecha local y se pinta SIN hora: un
+ * documento que no tiene hora no debe inventarse una.
+ */
+const SOLO_FECHA = /^\d{4}-\d{2}-\d{2}$/
+
 function fechaLarga(iso: string): string {
   if (!iso) return '—'
+  if (SOLO_FECHA.test(iso)) {
+    const [y, m, d] = iso.split('-').map(Number)
+    return new Date(y, m - 1, d).toLocaleDateString('es-MX', {
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    })
+  }
   return new Date(iso).toLocaleString('es-MX', {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
   })
@@ -149,7 +173,22 @@ export async function GET(request: Request, contexto: { params: Promise<{ id: st
   }
 
   const { id } = await contexto.params
-  const datos = await armarDocumentoDeTicket(clienteDeServicio(), id)
+
+  // La MISMA imagen sirve para las dos cosas y eso es a proposito: un solo
+  // componente de Satori, un solo alto calculado, un solo lugar donde se
+  // arregla un renglon que se sale. Lo unico que cambia es DE DONDE salen los
+  // datos, y esa decision es esta bandera.
+  //
+  // Cualquier valor que no sea exactamente 'cotizacion' es un ticket. El
+  // default tiene que ser el documento que YA existia: una ruta que se
+  // equivocara hacia cotizacion devolveria 404 en todos los tickets del
+  // historial.
+  const url = new URL(request.url)
+  const esCotizacion = url.searchParams.get('tipo') === 'cotizacion'
+  const supabase = clienteDeServicio()
+  const datos = esCotizacion
+    ? await armarDocumentoDeCotizacion(supabase, id)
+    : await armarDocumentoDeTicket(supabase, id)
 
   if (!datos) {
     return new Response('documento no encontrado', { status: 404 })

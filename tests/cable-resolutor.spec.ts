@@ -169,8 +169,22 @@ test.describe('El cable entre el resolutor y la fila', () => {
     // el resuelto y de paso cablea el crudo, la prueba de arriba se quedaria sin
     // pares que mirar y pasaria en verde POR VACIA. Esto la ancla a los archivos
     // concretos. Medido el 2026-09-12.
+    // ── QUE INVARIANTE VIGILA, Y POR QUE SIGUE VALIENDO TRAS LA MUDANZA ────
+    // El invariante es **el valor que se escribe en la fila es el que paso por
+    // el resolutor**, y el barrido de arriba lo exige sobre `app` y `lib`
+    // enteros. Esta lista no es el invariante: es el ANCLA que impide que el
+    // barrido pase en verde por vacio.
+    //
+    // `idCompradorResuelto` se mudo de `app/actions/pos.ts` a
+    // `lib/venta-servidor.ts` el 2026-09-18, sin cambiarle una letra al par:
+    // `resolverCompradorDeVenta` sigue decidiendo y `id_comprador` sigue
+    // escribiendo `idCompradorResuelto`. `lib` ya estaba dentro de RAICES, asi
+    // que el barrido no dejo de mirarlo ni un turno; lo unico que se movio es
+    // la direccion del ancla. Y se agrega la mitad que falta: la envoltura no
+    // puede volver a declarar el par, porque dos resolutores del mismo valor en
+    // dos archivos es justo el *integration gap* que esta prueba caza.
     const esperados: Array<[string, string]> = [
-      ['app/actions/pos.ts', 'idCompradorResuelto'],
+      ['lib/venta-servidor.ts', 'idCompradorResuelto'],
       ['app/actions/abonos.ts', 'idCuentaOrigenResuelta'],
       ['app/actions/compras.ts', 'idCuentaOrigenResuelta'],
       ['app/api/finanzas/nuevo/route.ts', 'categoriaResuelta']
@@ -184,5 +198,18 @@ test.describe('El cable entre el resolutor y la fila', () => {
           'Y comprueba que la fila siga escribiendo el valor resuelto.'
       ).toBe(true)
     }
+  })
+
+  test('la envoltura del POS no vuelve a declarar el par que se mudo', () => {
+    // La mitad que falta del cambio de ancla. Mover el par y dejar que el
+    // archivo viejo lo declare otra vez daria DOS resolutores para el mismo
+    // valor: uno para la pantalla y otro para el bot, que es la divergencia que
+    // la extraccion vino a cerrar. El barrido de arriba no lo cazaria — cada
+    // archivo, por separado, escribiria su propia variable resuelta.
+    const envoltura = sinComentarios(
+      readFileSync(join(process.cwd(), 'app/actions/pos.ts'), 'utf-8')
+    )
+    expect(envoltura).not.toContain('idCompradorResuelto')
+    expect(envoltura).toContain('registrarVenta')
   })
 })

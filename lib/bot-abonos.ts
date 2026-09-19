@@ -43,6 +43,7 @@ import {
   type TicketPendienteCentavos
 } from '@/lib/abonos'
 import { desactivarTextoFiscal, disparadoresFiscalesEn, TOPE_DESCRIPCION } from '@/lib/bot-gastos'
+import { buscarPorNombre, normalizarNombre, type FalloNombre } from '@/lib/bot-nombres'
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
 import { CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
 
@@ -137,20 +138,17 @@ export interface Deudor {
   dias_sin_abono: number | null
 }
 
-/** minusculas, sin acentos, sin puntuacion, un espacio entre palabras. */
-export function normalizarNombre(texto: unknown): string {
-  return String(texto ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+/**
+ * minusculas, sin acentos, sin puntuacion, un espacio entre palabras.
+ *
+ * Se re-exporta desde `lib/bot-nombres.ts`, que es donde vive desde que la Fase
+ * 3 necesito el mismo empate para el comprador y para el producto. Sigue
+ * exportandose aqui porque quien lo importa no tiene por que enterarse de la
+ * mudanza.
+ */
+export { normalizarNombre }
 
-const LARGO_MINIMO_TOKEN = 3
-
-export type FalloDeudor = 'sin-nombre' | 'no-encontrado' | 'ambiguo'
+export type FalloDeudor = FalloNombre
 
 export type ResultadoDeudor =
   | { ok: true; deudor: Deudor }
@@ -169,54 +167,16 @@ export type ResultadoDeudor =
  * de un candidato se para ahi y se pregunta**. Adivinar entre "Dulceria el Eden"
  * y "Dulceria ruiz" escribe dinero en la cuenta equivocada, y eso no se corrige
  * solo: hay que anular la fila y volver a capturar. Preguntar cuesta un boton.
+ *
+ * El algoritmo vive en `lib/bot-nombres.ts` desde que la Fase 3 necesito el
+ * mismo empate para el comprador de una venta y para el producto del catalogo.
+ * Aqui solo queda de que lista se saca el nombre.
  */
 export function buscarDeudor(dicho: unknown, deudores: readonly Deudor[]): ResultadoDeudor {
-  const q = normalizarNombre(dicho)
-  const todos = [...deudores]
-  if (q === '') return { ok: false, motivo: 'sin-nombre', candidatos: todos }
-
-  const decidir = (encontrados: Deudor[]): ResultadoDeudor | null => {
-    if (encontrados.length === 1) return { ok: true, deudor: encontrados[0] }
-    if (encontrados.length > 1) return { ok: false, motivo: 'ambiguo', candidatos: encontrados }
-    return null
-  }
-
-  // 1. El nombre completo, igualito.
-  const exactos = todos.filter((d) => normalizarNombre(d.nombre) === q)
-  const porExacto = decidir(exactos)
-  if (porExacto) return porExacto
-
-  // 2. Uno contiene al otro: "gilberto franco" vs "franco", "delirio" vs "delirio 85".
-  //
-  // **Pide tres caracteres, y lo pide porque una prueba lo cazo.** Con dos,
-  // `"el"` empataba por subcadena con "Delirio 85", "Dulceria el Eden" y
-  // "Al son del Mezcal" a la vez, y el bot contestaba "me da mas de uno, cual
-  // es?" ofreciendo tres negocios que no tienen nada que ver. No escribia nada
-  // malo —para eso esta la pregunta— pero el mensaje mentia sobre por que no
-  // habia entendido, que es la clase de error que hace desconfiar del resto.
-  const contenidos =
-    q.length >= LARGO_MINIMO_TOKEN
-      ? todos.filter((d) => {
-          const n = normalizarNombre(d.nombre)
-          return n.includes(q) || q.includes(n)
-        })
-      : []
-  const porContenido = decidir(contenidos)
-  if (porContenido) return porContenido
-
-  // 3. Alguna palabra de verdad en comun. Las de una o dos letras no cuentan:
-  //    "el" empataria "Dulceria el Eden" con cualquier cosa.
-  const tokensQ = q.split(' ').filter((t) => t.length >= LARGO_MINIMO_TOKEN)
-  const porPalabra = todos.filter((d) => {
-    const tokensD = normalizarNombre(d.nombre)
-      .split(' ')
-      .filter((t) => t.length >= LARGO_MINIMO_TOKEN)
-    return tokensD.some((t) => tokensQ.includes(t))
-  })
-  const porToken = decidir(porPalabra)
-  if (porToken) return porToken
-
-  return { ok: false, motivo: 'no-encontrado', candidatos: todos }
+  const hallazgo = buscarPorNombre(dicho, deudores, (d) => [d.nombre])
+  return hallazgo.ok
+    ? { ok: true, deudor: hallazgo.elegido }
+    : { ok: false, motivo: hallazgo.motivo, candidatos: hallazgo.candidatos }
 }
 
 // ============================================================================

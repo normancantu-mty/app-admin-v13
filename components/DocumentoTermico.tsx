@@ -26,8 +26,30 @@ export type DocumentoTermicoProps = Omit<DocumentoDatos, 'movimientos'> & {
 
 export const NOMBRE_EMPRESA = 'FRESNILLO / DESTILADO DE CHILE'
 
+/**
+ * `AAAA-MM-DD` a secas es un dia de CALENDARIO, no un instante.
+ *
+ * `new Date('2026-09-18')` lo interpreta como medianoche UTC, que en Mexico es
+ * **el 17 a las 6 de la tarde**. Un ticket no sufria esto porque
+ * `fecha_transaccion` trae hora; la cotizacion si, porque `cotizaciones.fecha`
+ * es `date`. Se vio en la primera imagen generada: decia "17/09/2026, 06:00
+ * p.m." en una cotizacion hecha el 18.
+ *
+ * Asi que una fecha sin hora se arma como fecha local y se pinta SIN hora: un
+ * documento que no tiene hora no debe inventarse una.
+ */
+const SOLO_FECHA = /^\d{4}-\d{2}-\d{2}$/
+
 export function formatFechaDocumento(dateString: string) {
   if (!dateString) return '—'
+  if (SOLO_FECHA.test(dateString)) {
+    const [y, m, d] = dateString.split('-').map(Number)
+    return new Date(y, m - 1, d).toLocaleDateString('es-MX', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    })
+  }
   return new Date(dateString).toLocaleString('es-MX', {
     year: 'numeric',
     month: '2-digit',

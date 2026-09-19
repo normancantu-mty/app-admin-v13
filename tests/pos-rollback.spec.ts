@@ -148,8 +148,24 @@ test.describe('ERP-66 · lo que ve el vendedor', () => {
  *
  * **El problema, con su nombre: atomic write path.**
  */
+/**
+ * ── POR QUE ESTO MIRA AHORA `lib/venta-servidor.ts` ────────────────────────
+ * El invariante es **el camino de la venta escribe UNA vez**, no "pos.ts
+ * escribe una vez". El 2026-09-18 el camino se extrajo de la sesion y se mudo
+ * entero a `lib/venta-servidor.ts`; el `.rpc('registrar_venta_atomica')` es el
+ * mismo, la funcion de Postgres es la misma, y la transaccion sigue siendo una.
+ * `app/actions/pos.ts` quedo como envoltura: resuelve la sesion y delega.
+ *
+ * Y el invariante se volvio mas fuerte: ese mismo camino lo usa ahora el bot de
+ * Telegram, asi que una escritura suelta reintroducida partiria en dos la venta
+ * de la pantalla **y** la del bot.
+ *
+ * La mitad que falta la cubre el bloque `LA ENVOLTURA` de mas abajo: apuntar el
+ * centinela al archivo nuevo y dejar de mirar el viejo permitiria reintroducir
+ * la escritura suelta justo donde ya no hay nadie mirando.
+ */
 test.describe('ERP-11 · la venta se escribe de una sola vez', () => {
-  const RUTA_POS = path.resolve(__dirname, '..', 'app', 'actions', 'pos.ts')
+  const RUTA_POS = path.resolve(__dirname, '..', 'lib', 'venta-servidor.ts')
   const fuentePOS = () => readFileSync(RUTA_POS, 'utf8')
 
   const TABLAS_DE_LA_VENTA = [
@@ -167,7 +183,7 @@ test.describe('ERP-11 · la venta se escribe de una sola vez', () => {
     lineas.forEach((linea, indice) => {
       TABLAS_DE_LA_VENTA.forEach((tabla) => {
         if (linea.includes(`from('${tabla}')`) && /\.(insert|upsert|update|delete)\s*\(/.test(linea)) {
-          sueltas.push(`app/actions/pos.ts:${indice + 1}: ${linea.trim()}`)
+          sueltas.push(`lib/venta-servidor.ts:${indice + 1}: ${linea.trim()}`)
         }
       })
     })
@@ -223,5 +239,37 @@ test.describe('ERP-11 · la venta se escribe de una sola vez', () => {
     expect(detecta("  await supabase.from('ticket_detalles').select('id')")).toBe(false)
     // Otra tabla tampoco: el invariante es sobre las cuatro de la venta.
     expect(detecta("  await supabase.from('avisos').insert(aviso)")).toBe(false)
+  })
+
+  // ── LA ENVOLTURA: la mitad que falta ───────────────────────────────────
+  test('la envoltura del POS delega, y no escribe ninguna de las cuatro tablas', () => {
+    const envoltura = readFileSync(
+      path.resolve(__dirname, '..', 'app', 'actions', 'pos.ts'),
+      'utf8'
+    )
+    const lineas = envoltura.split('\n')
+    const sueltas: string[] = []
+
+    lineas.forEach((linea, indice) => {
+      TABLAS_DE_LA_VENTA.forEach((tabla) => {
+        if (linea.includes(`from('${tabla}')`) && /\.(insert|upsert|update|delete)\s*\(/.test(linea)) {
+          sueltas.push(`app/actions/pos.ts:${indice + 1}: ${linea.trim()}`)
+        }
+      })
+    })
+
+    expect(
+      sueltas,
+      'La envoltura no escribe en la venta: solo resuelve la sesion y llama a registrarVenta. ' +
+        'Una escritura aqui seria una segunda transaccion fuera de la funcion atomica, y ademas ' +
+        'una que el bot de Telegram NO ejecuta: dos verdades sobre el mismo dinero.'
+    ).toEqual([])
+
+    // Tampoco su propia escritura atomica: la unica vive en el motor.
+    expect((envoltura.match(/\.rpc\(\s*'registrar_venta_atomica'/g) ?? []).length).toBe(0)
+
+    // Y si delega. Sin esto, la prueba de arriba miraria un archivo que ya no
+    // participa en la venta y pasaria en verde por irrelevante.
+    expect(envoltura).toContain('registrarVenta(')
   })
 })

@@ -22,8 +22,24 @@ import { join } from 'path'
  * cinturon-y-tirantes deliberado, documentado en `avisos.ts`.
  */
 
+/**
+ * ── QUE INVARIANTE VIGILA ESTA LISTA, Y POR QUE CRECIO EN VEZ DE MUDARSE ──
+ * El invariante es **ningun archivo que decida fiscalidad lo hace comparando el
+ * NOMBRE de la cuenta**. `resolveTipoFiscalidadCuenta` se mudo de
+ * `app/actions/pos.ts` a `lib/venta-servidor.ts` el 2026-09-18 al extraer la
+ * venta de la sesion, asi que el archivo nuevo entra a la lista: ahi es donde
+ * hoy se decide, y ahora lo comparten la pantalla y el bot de Telegram.
+ *
+ * Y `app/actions/pos.ts` **se queda**, que es la mitad que faltaba. La
+ * envoltura no decide fiscalidad hoy; lo que esta prueba impide es que manana
+ * alguien le meta un atajo por nombre "nada mas para el POS" y tengamos otra
+ * vez dos verdades sobre el mismo hecho — que es literalmente el defecto de
+ * ERP-21 que esta prueba nacio para cerrar. Vigilar un archivo que hoy esta
+ * limpio no cuesta nada; descubrir que se ensucio cuesta una venta mal cobrada.
+ */
 const ARCHIVOS_DE_LOGICA_FISCAL = [
   'lib/venta-cuenta-fiscal.ts',
+  'lib/venta-servidor.ts',
   'app/actions/pos.ts'
 ]
 

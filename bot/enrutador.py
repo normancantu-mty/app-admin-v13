@@ -73,7 +73,7 @@ QUE ES CADA INTENCION
 - lote: se produjo. Fermentacion, kilos de chile, litros, grados, envasado.
   Campos: codigo_lote, kg_chile, dias_fermentacion, horas_fermentacion, tandas (lista de {litros, grado}), botellas.
 - cotizacion: quiere un precio para un cliente ANTES de vender. "cotizale a", "cuanto le sale".
-  Campos: productos, cliente.
+  Campos: productos (lista de {producto, cantidad}), cliente, vigencia_dias.
 - consulta: pregunta por algo que ya esta en el sistema. No escribe nada.
 - reporte: quiere el resumen del dia o del periodo.
 - charla: saludo, agradecimiento, o algo que no cae en ninguna de las anteriores.

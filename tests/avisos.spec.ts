@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
 import {
   CATALOGO_AVISOS,
   CATEGORIA_SIN_CATEGORIZAR,
@@ -338,18 +338,47 @@ test.describe('ERP-80 · el centinela no se puede elegir a mano', () => {
     expect(posUi).toContain('esCompradorSeleccionable')
   })
 
-  test('el servidor no le cree a la pantalla: pos.ts resuelve por su cuenta', () => {
-    const accion = readFileSync(join(process.cwd(), 'app/actions/pos.ts'), 'utf-8')
-    expect(accion).toContain('resolverCompradorDeVenta')
+  // ── QUE INVARIANTE VIGILA ESTO, Y POR QUE SIGUE VALIENDO TRAS LA MUDANZA ──
+  // El invariante nunca fue "pos.ts contiene tal cadena": es **quien escribe la
+  // venta resuelve al comprador por su cuenta en vez de creerle a la pantalla**,
+  // porque el camino de escritura se puede invocar sin pasar por el desplegable.
+  // Ese camino ya no es `app/actions/pos.ts` -que hoy solo resuelve la sesion y
+  // delega-, es `lib/venta-servidor.ts`. Y el invariante se volvio MAS fuerte,
+  // no mas debil: ahora ese camino lo comparten la pantalla y el bot de
+  // Telegram, que ni siquiera tiene desplegable al que creerle.
+  //
+  // La mitad que se agrega: **la envoltura no puede reintroducir la logica.**
+  // Sin ella, apuntar el centinela al archivo nuevo seria calificarse con un
+  // examen recien reescrito -- bastaria con volver a decidir el comprador en
+  // `pos.ts` para tener dos criterios otra vez, que es el defecto original.
+  test('el servidor no le cree a la pantalla: lib/venta-servidor.ts resuelve por su cuenta', () => {
+    const motor = readFileSync(join(process.cwd(), 'lib/venta-servidor.ts'), 'utf-8')
+    expect(motor).toContain('resolverCompradorDeVenta')
 
     // Y ya no decide con la pregunta vieja, que era el hueco. Se miran solo las
     // lineas de CODIGO: el bloque de arriba cita la version rota a proposito,
     // para que se entienda que se arreglo, y un `toContain` a secas la caza.
-    const codigoVivo = accion
+    const codigoVivo = motor
       .split('\n')
       .filter((linea) => !linea.trim().startsWith('//'))
       .join('\n')
     expect(codigoVivo).not.toContain("=== 'CONCESION' && !payload.idComprador")
+  })
+
+  test('la envoltura del POS delega y NO vuelve a decidir el comprador', () => {
+    const envoltura = readFileSync(join(process.cwd(), 'app/actions/pos.ts'), 'utf-8')
+      .split('\n')
+      .filter((linea) => !linea.trim().startsWith('//') && !linea.trim().startsWith('*'))
+      .join('\n')
+
+    // Delega: si esto desaparece, la venta de la pantalla dejo de pasar por el
+    // motor compartido y la prueba de arriba estaria mirando codigo muerto.
+    expect(envoltura).toContain('registrarVenta')
+
+    // Y no decide: ni con el resolutor (seria un segundo criterio) ni con la
+    // pregunta vieja (seria el criterio roto de vuelta).
+    expect(envoltura).not.toContain('resolverCompradorDeVenta')
+    expect(envoltura).not.toContain("=== 'CONCESION' && !payload.idComprador")
   })
 })
 
@@ -431,18 +460,47 @@ const EXENTAS: Record<string, string> = {
   transacciones_tickets: 'el candado de W4 haria fallar la anulacion del ticket'
 }
 
-/** Los archivos donde nace un aviso con puntero. */
+/**
+ * Los archivos donde nace un aviso con puntero.
+ *
+ * ── POR QUE `app/actions/pos.ts` YA NO ESTA, Y SI `lib/venta-servidor.ts` ──
+ * El invariante de esta prueba nunca fue sobre un nombre de archivo: es **toda
+ * tabla a la que un aviso apunta tiene trigger de anulacion**. El aviso W4 de
+ * la venta se movio entero, sin cambiarle un campo, a `lib/venta-servidor.ts`
+ * cuando se extrajo la venta de la sesion; `pos.ts` quedo como envoltura y ya
+ * no registra ningun aviso. Apuntar la lista al archivo nuevo es seguir al
+ * `registrarAviso`, no aflojar la regla — y la prueba de abajo se encarga de
+ * que la lista no se vuelva a quedar atras sola.
+ */
 function fuentesQueRegistranAvisos(): string[] {
   return [
     'app/actions/abonos.ts',
     'app/actions/auditoria.ts',
     'app/actions/compras.ts',
     'app/actions/inventario.ts',
-    'app/actions/pos.ts',
     'app/api/bot/abono/confirmar/route.ts',
     'app/api/bot/gasto/confirmar/route.ts',
-    'app/api/finanzas/nuevo/route.ts'
+    'app/api/finanzas/nuevo/route.ts',
+    'lib/venta-servidor.ts'
   ]
+}
+
+/** Todo `.ts` de produccion, para poder preguntarle al repo en vez de a una lista. */
+function fuentesTypeScriptDelRepo(): string[] {
+  const salida: string[] = []
+  const recorrer = (dir: string) => {
+    for (const entrada of readdirSync(dir)) {
+      const ruta = join(dir, entrada)
+      if (statSync(ruta).isDirectory()) {
+        if (entrada === 'node_modules' || entrada === '.next') continue
+        recorrer(ruta)
+        continue
+      }
+      if (ruta.endsWith('.ts') && !ruta.endsWith('.d.ts')) salida.push(ruta)
+    }
+  }
+  for (const raiz of ['app', 'lib']) recorrer(join(process.cwd(), raiz))
+  return salida
 }
 
 test.describe('Anular una fila cierra sus avisos', () => {
@@ -491,6 +549,62 @@ test.describe('Anular una fila cierra sus avisos', () => {
           `Agregale el trigger en ${MIGRACION_HUERFANOS} o exentala con su razon.`
       ).toBe(true)
     }
+  })
+
+  test('LA MITAD QUE FALTABA: la lista de fuentes esta completa, no solo al dia', () => {
+    // ── POR QUE ESTA PRUEBA EXISTE ────────────────────────────────────────
+    // La prueba de arriba barre una lista ESCRITA A MANO. El 2026-09-18 esa
+    // lista se quedo atras sola: el aviso W4 se mudo de `app/actions/pos.ts` a
+    // `lib/venta-servidor.ts` y la lista siguio apuntando al archivo viejo, que
+    // ya no registra nada. El sintoma habria sido el peor posible — **verde**:
+    // un archivo sin avisos aporta cero tablas, y cero tablas nunca fallan.
+    //
+    // Que la lista se corrija a mano no arregla la CLASE: la proxima mudanza
+    // vuelve a dejarla verde y vacia. Asi que aqui se le pregunta al repo.
+    const raizRepo = process.cwd()
+    const declarados = new Set(fuentesQueRegistranAvisos())
+    const olvidados: string[] = []
+
+    for (const ruta of fuentesTypeScriptDelRepo()) {
+      const fuente = readFileSync(ruta, 'utf-8')
+      const vivo = fuente
+        .split('\n')
+        .filter((linea) => !linea.trim().startsWith('//') && !linea.trim().startsWith('*'))
+        .join('\n')
+
+      // Nace un aviso CON PUNTERO: llama a registrarAviso y nombra una tabla
+      // literal. `lib/avisos-server.ts` (que lo define) y `app/actions/avisos.ts`
+      // (que reenvia `tabla: fila.tabla`) no caen aqui, y es correcto: ninguno
+      // de los dos elige la tabla, la reciben.
+      if (!vivo.includes('registrarAviso(')) continue
+      if (!/tabla:\s*'[a-z_]+'/.test(vivo)) continue
+
+      const relativo = relative(raizRepo, ruta).split(sep).join('/')
+      if (!declarados.has(relativo)) olvidados.push(relativo)
+    }
+
+    expect(
+      olvidados,
+      'estos archivos registran avisos con puntero y no estan en fuentesQueRegistranAvisos(): ' +
+        olvidados.join(', ') +
+        '. Sin ellos, la prueba de cobertura pasa en verde sin haberlos mirado.'
+    ).toEqual([])
+
+    // Y al reves: un archivo listado que ya no registra nada convierte la lista
+    // en un recuerdo. Es exactamente lo que le paso a `app/actions/pos.ts`.
+    const vacios = fuentesQueRegistranAvisos().filter((relativo) => {
+      const vivo = readFileSync(join(raizRepo, relativo), 'utf-8')
+        .split('\n')
+        .filter((linea) => !linea.trim().startsWith('//') && !linea.trim().startsWith('*'))
+        .join('\n')
+      return !/tabla:\s*'[a-z_]+'/.test(vivo)
+    })
+    expect(
+      vacios,
+      'estos archivos siguen en la lista pero ya no registran ningun aviso con puntero: ' +
+        vacios.join(', ') +
+        '. Quitalos, o la lista deja de describir el codigo.'
+    ).toEqual([])
   })
 
   test('el trigger solo mueve estado y motivo_cierre, que es lo unico que la base deja mover', () => {

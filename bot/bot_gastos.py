@@ -205,6 +205,135 @@ def _teclado_cuentas(cuentas):
     return InlineKeyboardMarkup(filas)
 
 
+
+def _teclado_confirmar_venta(borrador_id):
+    """El mismo VA de las Fases 1 y 2, con los campos que de verdad se corrigen
+    en una venta.
+
+    No hay "cambiar monto": **el monto de una venta no se dicta**, sale de
+    `listas_precios` y de la cascada. Un boton para escribirlo a mano seria
+    exactamente la puerta que la Fase 3 cierra. Lo que si se equivoca es el
+    COMPRADOR (y con el, el precio, porque a un distribuidor no se le cobra
+    lista) y la CUENTA donde entra el dinero.
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, escribelo", callback_data="vavt:" + borrador_id)],
+        [InlineKeyboardButton("Otro comprador", callback_data="comp:" + borrador_id),
+         InlineKeyboardButton("Cambiar cuenta", callback_data="cta:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_compradores(opciones, permite_publico=False):
+    """Los compradores van POR INDICE, igual que deudores, cuentas y categorias.
+
+    `pub` no es un indice sino una palabra de tres letras porque no apunta a
+    ninguna fila: "Publico en General" es la AUSENCIA de comprador, la forma
+    legitima y de siempre de una venta de mostrador. Meterlo como indice -1
+    habria obligado a que la lista y la ausencia se leyeran igual.
+    """
+    filas = [[InlineKeyboardButton(
+        o["nombre"] + " (" + str(o.get("rol") or "") + ")",
+        callback_data="setcomp:" + str(i))] for i, o in enumerate(opciones)]
+    if permite_publico:
+        filas.append([InlineKeyboardButton("Publico en General",
+                                           callback_data="setcomp:pub")])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_productos(opciones):
+    """Un boton por producto, con su precio a la vista.
+
+    El precio va en el boton a proposito: cuando el empate es ambiguo entre
+    "Destilado Plata 250ml" y "Destilado Plata 50ml", los nombres se parecen y
+    los precios no ($179 contra $69). Es el dato que de verdad distingue.
+    """
+    filas = [[InlineKeyboardButton(
+        o["nombre"] + "  $" + ("{:,.2f}".format(float(o.get("precio") or 0))),
+        callback_data="setprod:" + str(i))] for i, o in enumerate(opciones)]
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_confirmar_lote(borrador_id):
+    """El VA de un lote, con el unico campo que de verdad se corrige: el codigo.
+
+    Aqui NO hay boton para cambiar litros, grados ni kilos. No es descuido: si
+    el numero esta mal, lo que hay que hacer es dictarlo otra vez, porque un
+    lote es un conjunto de mediciones y cambiar una sola desde un boton invita
+    a "arreglar" la que no cuadra en vez de volver a medir. El codigo es lo
+    unico que no se midio: se propuso.
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, escribelo", callback_data="valt:" + borrador_id)],
+        [InlineKeyboardButton("Otro codigo", callback_data="cod:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_insumos(opciones):
+    """Un boton por insumo, con su unidad a la vista.
+
+    La unidad va en el boton por la misma razon que el precio va en el de
+    productos: es el dato que distingue. "8 de Chile Guajillo" puede ser kilos
+    o piezas, y entre "Botella 750ml Vacia" (PIEZAS) y "Agua de proceso"
+    (LITROS) la unidad dice mas que el nombre.
+    """
+    filas = [[InlineKeyboardButton(
+        o["nombre"] + " (" + str(o.get("unidad") or "") + ")",
+        callback_data="setins:" + str(i))] for i, o in enumerate(opciones)]
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_formatos(opciones):
+    """Un boton por formato de botella, con sus mililitros.
+
+    Los tres formatos se llaman casi igual ("Destilado Plata 750ml", "250ml",
+    "50ml"); los mililitros son lo que los separa, y ademas son exactamente lo
+    que decide el rendimiento del lote.
+    """
+    filas = [[InlineKeyboardButton(
+        o["nombre"] + "  " + str(int(float(o.get("ml") or 0))) + " ml",
+        callback_data="setfmt:" + str(i))] for i, o in enumerate(opciones)]
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_confirmar_cotizacion(borrador_id):
+    """El VA de una cotizacion, con los dos campos que de verdad se corrigen.
+
+    El CLIENTE, porque decide el precio igual que en una venta: a un
+    distribuidor se le cotiza su costo y a un prospecto la lista, y equivocarse
+    manda por escrito un precio que despues no se puede sostener. Y la
+    VIGENCIA, porque es lo unico de la cotizacion que se negocia de palabra
+    ("te lo respeto un mes") y el default de 15 dias no siempre es lo dicho.
+
+    No hay boton de precio, por la misma razon que no lo hay en la venta: el
+    precio sale de `listas_precios` y de la cascada, no de la boca.
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, guardala", callback_data="vact:" + borrador_id)],
+        [InlineKeyboardButton("Otro cliente", callback_data="cli:" + borrador_id),
+         InlineKeyboardButton("Cambiar vigencia", callback_data="vig:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_clientes(opciones, permite_prospecto=False, nombre_dicho=""):
+    """Los clientes por indice, mas el boton que la venta NO tiene.
+
+    "Es cliente nuevo" existe porque cotizar a alguien que todavia no compra es
+    el caso NORMAL de una cotizacion. En una venta, un nombre fuera de la red es
+    un error; aqui es un prospecto, y obligarlo a darse de alta como
+    distribuidor antes de saber si va a comprar llenaria la red de nodos
+    muertos.
+    """
+    filas = [[InlineKeyboardButton(
+        o["nombre"] + " (" + str(o.get("rol") or "") + ")",
+        callback_data="setcli:" + str(i))] for i, o in enumerate(opciones)]
+    if permite_prospecto and nombre_dicho:
+        filas.append([InlineKeyboardButton(
+            "Es cliente nuevo: " + nombre_dicho[:40], callback_data="setcli:pros")])
+    return InlineKeyboardMarkup(filas)
+
 # ===========================================================================
 # EL CAMINO PRINCIPAL
 # ===========================================================================
@@ -431,6 +560,13 @@ async def _proponer(update, texto, pendiente):
 _memoria = {}
 _pendiente = {}
 _esperando_monto = {}
+# Igual que `_esperando_monto`, pero para el codigo de un lote: el boton
+# "Otro codigo" abre la captura y el siguiente texto ES el codigo, sin pasar
+# por el modelo.
+_esperando_codigo = {}
+# Igual, pero para la vigencia de una cotizacion: el boton "Cambiar
+# vigencia" abre la captura y el siguiente texto ES el numero de dias.
+_esperando_vigencia = {}
 # Las categorias que el servidor reporto en la ultima propuesta. Arranca con las
 # del diccionario local y se actualiza sola: **la autoridad es la base**, esto
 # es solo para que el extractor tenga el vocabulario completo la proxima vez.
@@ -453,11 +589,20 @@ async def _responder_natural(update, ruta):
     entendido = ruta.get("entendido") or ""
 
     if intencion == "venta":
-        aviso = "Entendido: " + entendido + ". Todavia no se guardar ventas, esa va por el POS."
+        # Desde la Fase 3 las ventas SI se guardan: aqui solo se llega si el
+        # camino de la venta no logro proponer nada. Decirle "esa va por el POS"
+        # seria mentirle sobre lo que el bot sabe hacer.
+        aviso = ("Entendido: " + entendido + ". Dimela otra vez diciendo que producto "
+                 "y cuantas piezas.")
     elif intencion == "lote":
-        aviso = "Entendido: " + entendido + ". Todavia no se guardar lotes; ya viene."
+        # Desde la Fase 3.3 los lotes SI se guardan. Aqui solo se llega si el
+        # camino del lote no logro proponer nada.
+        aviso = ("Entendido: " + entendido + ". Dimelo otra vez diciendo cuanto chile entro y cuantos litros y grados salieron.")
     elif intencion == "cotizacion":
-        aviso = "Entendido: " + entendido + ". Todavia no se cotizar; ya viene."
+        # Desde la Fase 4 las cotizaciones SI se guardan. Aqui solo se llega si
+        # el camino de la cotizacion no logro proponer nada.
+        aviso = ("Entendido: " + entendido + ". Dimela otra vez diciendo que producto "
+                 "y cuantas piezas.")
     elif intencion == "reporte":
         aviso = "Todavia no tengo el reporte del dia. Por ahora: /ventas, /stock o /cartera."
     elif intencion == "consulta":
@@ -524,6 +669,429 @@ async def _proponer_gasto_directo(update, chat, propuesta):
     return True
 
 
+
+
+# ===========================================================================
+# FASE 3 — LA VENTA. El bot CAPTURA; el ERP cobra.
+# ===========================================================================
+
+def _bajar(ruta):
+    """Baja un archivo de la app con el token del bot. Devuelve bytes o None.
+
+    **La imagen del comprobante no se puede mandar como URL.** `sendPhoto` con
+    una URL hace que los servidores de Telegram vayan a pedirla, y ellos no
+    llevan el `x-bot-token`: recibirian un 401. Asi que el proceso la baja aqui
+    y la sube como archivo. De paso, el comprobante nunca queda accesible desde
+    fuera de esta maquina.
+    """
+    pet = urllib.request.Request(API + ruta, headers={"x-bot-token": TOKEN_API})
+    try:
+        with urllib.request.urlopen(pet, timeout=30) as r:
+            return r.read()
+    except Exception as e:
+        log.warning("no pude bajar %s: %s", ruta, e)
+        return None
+
+
+def _renglones_de(campos):
+    """Los renglones que dijo el enrutador, en la forma que espera la ruta.
+
+    El enrutador devuelve `productos` como lista de `{producto, cantidad}`. Se
+    acepta tambien la forma suelta (`producto` + `cantidad`) porque un mensaje
+    de un solo renglon a veces sale asi. **La cantidad que falta es 1**: "vendi
+    una plata de 750" y "vendi plata de 750" son la misma frase, y suponer 1 es
+    el unico numero que no puede sorprender a nadie — se ensena antes del "va".
+    """
+    crudos = campos.get("productos")
+    if not isinstance(crudos, list) or not crudos:
+        if campos.get("producto"):
+            crudos = [{"producto": campos.get("producto"),
+                       "cantidad": campos.get("cantidad")}]
+        else:
+            return []
+    renglones = []
+    for c in crudos:
+        if not isinstance(c, dict):
+            # Una lista de puros nombres tambien se entiende.
+            renglones.append({"producto": str(c), "cantidad": 1})
+            continue
+        cantidad = c.get("cantidad")
+        try:
+            cantidad = int(float(cantidad))
+        except (TypeError, ValueError):
+            cantidad = 1
+        if cantidad <= 0:
+            cantidad = 1
+        renglones.append({"producto": c.get("producto") or c.get("nombre"),
+                          "cantidad": cantidad})
+    return [r for r in renglones if r["producto"]]
+
+
+async def _proponer_venta(update, chat, peticion):
+    """Manda la peticion a `/api/bot/venta/proponer` y ensena lo que salga.
+
+    Devuelve True si atendio la venta (haya propuesto o haya preguntado).
+
+    **La peticion completa se guarda en memoria.** Cuando un producto o el
+    comprador salen ambiguos, el boton no manda un dato suelto: parcha ESTA
+    peticion y se vuelve a proponer entera. Asi una venta de tres renglones con
+    dos ambiguos se resuelve en dos botones, sin volver a dictarla y sin que el
+    modelo vuelva a tocar nada.
+    """
+    peticion = dict(peticion)
+    peticion["telegram_id"] = chat
+
+    estado, r = _post("/api/bot/venta/proponer", peticion)
+    log.info("venta propuesta: %s renglones -> %s",
+             len(peticion.get("productos") or []), estado)
+
+    if estado == 200 and r.get("hay_que_elegir"):
+        campo = r.get("campo")
+        opciones = r.get("opciones") or []
+        _memoria[chat] = {
+            "tipo": "venta_eligiendo",
+            "peticion": peticion,
+            "campo": campo,
+            "indice": r.get("indice"),
+            "opciones": opciones,
+            "permite_publico": bool(r.get("permite_publico")),
+        }
+        if campo == "producto":
+            teclado = _teclado_productos(opciones)
+        else:
+            teclado = _teclado_compradores(opciones, bool(r.get("permite_publico")))
+        await update.effective_message.reply_text(
+            r.get("mensaje", "Cual es?"), reply_markup=teclado)
+        return True
+
+    if estado != 200 or not r.get("ok"):
+        # 422 y 403 SI se dicen: llegamos aqui porque el enrutador lo leyo como
+        # venta, y callarse dejaria a la persona sin saber por que no paso nada.
+        await update.effective_message.reply_text(r.get("error", "No pude proponer la venta."))
+        return True
+
+    _memoria[chat] = {
+        "tipo": "venta",
+        "borrador_id": r["borrador_id"],
+        "sello": r["sello"],
+        "peticion": peticion,
+        "cuentas": r.get("cuentas", []),
+        "id_cuenta": r.get("id_cuenta"),
+        # La lista completa viaja con el borrador para que "Otro comprador" no
+        # tenga que volver a preguntarle al servidor.
+        "compradores": r.get("opciones") or [],
+    }
+    await update.effective_message.reply_text(
+        r["mensaje"], reply_markup=_teclado_confirmar_venta(r["borrador_id"]))
+    return True
+
+
+async def _confirmar_venta(update, chat):
+    """El "va" de una venta. Aqui tampoco hay LLM, y no puede haberlo: solo
+    viajan `{telegram_id, borrador_id, sello}`. Ninguna fila."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "venta":
+        await update.effective_message.reply_text("No tengo ninguna venta pendiente que escribir.")
+        return
+    estado, r = _post("/api/bot/venta/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("venta confirmada: borrador=%s -> %s ticket=%s",
+             dato["borrador_id"], estado, r.get("ticket_id"))
+
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude escribir la venta."))
+        return
+
+    _memoria.pop(chat, None)
+    if r.get("condicion_pago") == "CONCESION":
+        aviso = "Listo. Quedo a deber " + "{:,.2f}".format(float(r.get("total") or 0)) + "."
+    else:
+        aviso = "Listo. Quedo escrita."
+    await update.effective_message.reply_text(aviso)
+
+    # ── FASE 1b: el comprobante llega solo ──────────────────────────────────
+    # Va DESPUES del aviso y sin condicionarlo: la venta ya esta escrita, asi
+    # que si la imagen falla no se puede deshacer nada y callarse la escritura
+    # seria peor que quedarse sin foto. Por eso el fallo se dice aparte.
+    ruta = r.get("ruta_imagen")
+    if not ruta:
+        return
+    imagen = await asyncio.to_thread(_bajar, ruta)
+    if not imagen:
+        await update.effective_message.reply_text(
+            "La venta quedo escrita; el comprobante no lo pude generar.")
+        return
+    try:
+        await update.effective_message.reply_photo(
+            photo=imagen, filename="ticket.png")
+    except Exception as e:
+        log.warning("no pude mandar el comprobante: %s", e)
+        await update.effective_message.reply_text(
+            "La venta quedo escrita; el comprobante no se pudo enviar.")
+
+
+
+def _peticion_de_lote(campos):
+    """Traduce los campos del enrutador a lo que espera `/api/bot/lote/proponer`.
+
+    El enrutador devuelve `kg_chile` como campo suelto porque asi se dicta
+    ("meti ocho kilos de chile"), pero la ruta trabaja contra el catalogo, asi
+    que se convierte en un renglon de insumo como cualquier otro. Si el modelo
+    ya puso el chile en `insumos`, el suelto NO se agrega: el servidor suma los
+    repetidos —porque `lote_entradas` no deja dos filas del mismo insumo— y
+    sumarlo aqui duplicaria los kilos sin que nadie lo pidiera.
+
+    `botellas` sale sin formato a proposito. No se completa con 750 porque sea
+    el mas comun: el formato decide cuantos mililitros salieron del lote, y la
+    ruta pregunta cual es.
+    """
+    insumos = []
+    crudos = campos.get("insumos")
+    if isinstance(crudos, list):
+        for c in crudos:
+            if not isinstance(c, dict):
+                continue
+            nombre = c.get("insumo") or c.get("nombre")
+            if nombre:
+                insumos.append({"insumo": nombre, "cantidad": c.get("cantidad")})
+
+    kg = campos.get("kg_chile")
+    ya_hay_chile = any("chile" in str(i.get("insumo")).lower() for i in insumos)
+    if kg not in (None, "", 0) and not ya_hay_chile:
+        insumos.append({"insumo": "chile-guajillo", "cantidad": kg})
+
+    tandas = []
+    for t in (campos.get("tandas") or []):
+        if isinstance(t, dict) and t.get("litros") not in (None, ""):
+            tandas.append({"litros": t.get("litros"), "grado": t.get("grado")})
+
+    envasado = []
+    botellas = campos.get("botellas")
+    if botellas not in (None, "", 0):
+        linea = {"botellas": botellas}
+        if campos.get("formato"):
+            linea["formato"] = campos.get("formato")
+        envasado.append(linea)
+
+    propuesta = {"tandas": tandas}
+    for campo in ("codigo_lote", "dias_fermentacion", "horas_fermentacion", "fecha_inicio"):
+        if campos.get(campo) not in (None, ""):
+            propuesta[campo] = campos.get(campo)
+
+    return {"insumos": insumos, "envasado": envasado, "propuesta": propuesta}
+
+
+async def _proponer_lote(update, chat, peticion):
+    """Manda la peticion a `/api/bot/lote/proponer` y ensena lo que salga.
+
+    Devuelve True si atendio el lote (haya propuesto o haya preguntado).
+
+    Igual que en la venta, **la peticion completa se guarda en memoria**: los
+    botones parchan ESTA peticion y se vuelve a proponer entera, sin que el
+    modelo vuelva a tocar nada. Un lote con dos insumos ambiguos se resuelve en
+    dos botones sin volver a dictarlo.
+    """
+    peticion = dict(peticion)
+    peticion["telegram_id"] = chat
+
+    estado, r = _post("/api/bot/lote/proponer", peticion)
+    log.info("lote propuesto: %s insumos, %s envasado -> %s",
+             len(peticion.get("insumos") or []),
+             len(peticion.get("envasado") or []), estado)
+
+    if estado == 200 and r.get("hay_que_elegir"):
+        campo = r.get("campo")
+        opciones = r.get("opciones") or []
+        _memoria[chat] = {
+            "tipo": "lote_eligiendo",
+            "peticion": peticion,
+            "campo": campo,
+            "indice": r.get("indice"),
+            "opciones": opciones,
+        }
+        teclado = _teclado_insumos(opciones) if campo == "insumo" else _teclado_formatos(opciones)
+        await update.effective_message.reply_text(
+            r.get("mensaje", "Cual es?"), reply_markup=teclado)
+        return True
+
+    if estado != 200 or not r.get("ok"):
+        # El 403 de "esto es de la matriz" y el 422 de un grado imposible SI se
+        # dicen: llegamos aqui porque el enrutador lo leyo como lote, y callarse
+        # dejaria a la persona creyendo que se guardo.
+        await update.effective_message.reply_text(r.get("error", "No pude proponer el lote."))
+        return True
+
+    _memoria[chat] = {
+        "tipo": "lote",
+        "borrador_id": r["borrador_id"],
+        "sello": r["sello"],
+        "peticion": peticion,
+        "codigo_lote": r.get("codigo_lote"),
+    }
+    await update.effective_message.reply_text(
+        r["mensaje"], reply_markup=_teclado_confirmar_lote(r["borrador_id"]))
+    return True
+
+
+async def _confirmar_lote(update, chat):
+    """El "va" de un lote. Viajan `{telegram_id, borrador_id, sello}` y nada mas.
+
+    El resumen que se manda despues NO lo arma este archivo: viene en `mensaje`,
+    y la ruta lo saco de `v_lote_rendimiento` DESPUES de escribir. Es la misma
+    fila que Norman va a ver en la pantalla, no una copia calculada aparte
+    (D-198).
+    """
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "lote":
+        await update.effective_message.reply_text("No tengo ningun lote pendiente que escribir.")
+        return
+
+    estado, r = _post("/api/bot/lote/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("lote confirmado: borrador=%s -> %s id=%s",
+             dato["borrador_id"], estado, r.get("id_lote"))
+
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude escribir el lote."))
+        return
+
+    _memoria.pop(chat, None)
+    aviso = "Listo. Quedo el lote " + str(r.get("codigo_lote") or "") + "."
+    resumen = r.get("mensaje")
+    if resumen:
+        aviso = aviso + "\n\n" + resumen
+    await update.effective_message.reply_text(aviso)
+
+# ===========================================================================
+# FASE 4 - LA COTIZACION. Un precio por escrito que todavia no es una venta.
+# ===========================================================================
+
+def _peticion_de_cotizacion(campos):
+    """Traduce los campos del enrutador a lo que espera `/api/bot/cotizacion/proponer`.
+
+    Los renglones se leen con `_renglones_de`, el mismo de la venta: una
+    cotizacion y una venta dicen los productos exactamente igual, y dos lectores
+    distintos del mismo "dos de 750" acabarian entendiendo cosas distintas.
+    """
+    peticion = {"productos": _renglones_de(campos), "propuesta": {}}
+    cliente = campos.get("cliente") or campos.get("comprador")
+    if cliente:
+        peticion["cliente"] = cliente
+    if campos.get("vigencia_dias") not in (None, ""):
+        peticion["propuesta"]["vigencia_dias"] = campos.get("vigencia_dias")
+    if campos.get("notas"):
+        peticion["propuesta"]["notas"] = campos.get("notas")
+    return peticion
+
+
+async def _proponer_cotizacion(update, chat, peticion):
+    """Manda la peticion a `/api/bot/cotizacion/proponer` y ensena lo que salga.
+
+    Devuelve True si atendio la cotizacion (haya propuesto o haya preguntado).
+    Mismo patron que la venta y el lote: la peticion completa se guarda y los
+    botones la parchan.
+    """
+    peticion = dict(peticion)
+    peticion["telegram_id"] = chat
+
+    estado, r = _post("/api/bot/cotizacion/proponer", peticion)
+    log.info("cotizacion propuesta: %s renglones -> %s",
+             len(peticion.get("productos") or []), estado)
+
+    if estado == 200 and r.get("hay_que_elegir"):
+        campo = r.get("campo")
+        opciones = r.get("opciones") or []
+        _memoria[chat] = {
+            "tipo": "cotizacion_eligiendo",
+            "peticion": peticion,
+            "campo": campo,
+            "indice": r.get("indice"),
+            "opciones": opciones,
+            "permite_prospecto": bool(r.get("permite_prospecto")),
+            "nombre_dicho": r.get("nombre_dicho") or "",
+        }
+        if campo == "producto":
+            teclado = _teclado_productos(opciones)
+        else:
+            teclado = _teclado_clientes(opciones, bool(r.get("permite_prospecto")),
+                                        r.get("nombre_dicho") or "")
+        await update.effective_message.reply_text(
+            r.get("mensaje", "Cual es?"), reply_markup=teclado)
+        return True
+
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(
+            r.get("error", "No pude armar la cotizacion."))
+        return True
+
+    _memoria[chat] = {
+        "tipo": "cotizacion",
+        "borrador_id": r["borrador_id"],
+        "sello": r["sello"],
+        "peticion": peticion,
+        "para_quien": r.get("para_quien"),
+        # La lista completa viaja con el borrador para que "Otro cliente" no
+        # tenga que volver a preguntarle al servidor.
+        "clientes": r.get("clientes") or [],
+    }
+    await update.effective_message.reply_text(
+        r["mensaje"], reply_markup=_teclado_confirmar_cotizacion(r["borrador_id"]))
+    return True
+
+
+async def _confirmar_cotizacion(update, chat):
+    """El "va" de una cotizacion. Viajan `{telegram_id, borrador_id, sello}`.
+
+    Igual que la venta, el documento llega solo despues (Fase 1b). Y por la
+    misma razon se manda DESPUES del aviso y sin condicionarlo: la cotizacion ya
+    quedo guardada, asi que un fallo de la imagen no se puede deshacer y
+    callarse la escritura seria peor que quedarse sin foto.
+    """
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "cotizacion":
+        await update.effective_message.reply_text(
+            "No tengo ninguna cotizacion pendiente que guardar.")
+        return
+
+    estado, r = _post("/api/bot/cotizacion/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("cotizacion confirmada: borrador=%s -> %s folio=%s",
+             dato["borrador_id"], estado, r.get("folio"))
+
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(
+            r.get("error", "No pude guardar la cotizacion."))
+        return
+
+    _memoria.pop(chat, None)
+    await update.effective_message.reply_text(r.get("mensaje", "Listo."))
+
+    ruta = r.get("ruta_imagen")
+    if not ruta:
+        return
+    imagen = await asyncio.to_thread(_bajar, ruta)
+    if not imagen:
+        await update.effective_message.reply_text(
+            "La cotizacion quedo guardada; el documento no lo pude generar.")
+        return
+    try:
+        await update.effective_message.reply_photo(
+            photo=imagen, filename="cotizacion.png")
+    except Exception as e:
+        log.warning("no pude mandar la cotizacion: %s", e)
+        await update.effective_message.reply_text(
+            "La cotizacion quedo guardada; el documento no se pudo enviar.")
+
+
 async def _enrutar_y_despachar(update, chat, texto):
     """UNA llamada al modelo decide que quiso decir Norman, y se despacha.
 
@@ -569,6 +1137,62 @@ async def _enrutar_y_despachar(update, chat, texto):
         await _proponer(update, texto, _pendiente)
         return
 
+    if intencion == "venta":
+        # FASE 3. Lo indispensable de una venta es QUE se vendio; el comprador
+        # vacio en CONTADO es "publico en general", que es una venta legitima y
+        # de todos los dias, asi que no se pregunta por el.
+        renglones = _renglones_de(campos)
+        if not renglones:
+            _pendiente[chat] = texto
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or "Que vendiste?")
+            return
+        peticion = {
+            "productos": renglones,
+            "propuesta": {
+                "condicion_pago": campos.get("condicion_pago"),
+                # Lo que dijo de monto NO se escribe: la ruta lo compara contra
+                # el precio de lista y avisa si no cuadran. Ver `lib/bot-venta.ts`.
+                "monto": campos.get("monto"),
+            },
+        }
+        if campos.get("comprador"):
+            peticion["comprador"] = campos.get("comprador")
+        if await _proponer_venta(update, chat, peticion):
+            return
+        await _proponer(update, texto, _pendiente)
+        return
+
+    if intencion == "lote":
+        # FASE 3.3. Lo indispensable de un lote es que algo haya entrado o
+        # salido; el codigo lo propone el servidor y la fecha es hoy, asi que
+        # por ninguno de los dos se pregunta.
+        peticion = _peticion_de_lote(campos)
+        if not peticion["insumos"] and not peticion["propuesta"]["tandas"] and not peticion["envasado"]:
+            _pendiente[chat] = texto
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or "Cuanto chile entro?")
+            return
+        if await _proponer_lote(update, chat, peticion):
+            return
+        await _responder_natural(update, ruta)
+        return
+
+    if intencion == "cotizacion":
+        # FASE 4. Lo indispensable es QUE se cotiza. Por el cliente no se
+        # pregunta aqui: el servidor lo pregunta con botones, y entre ellos va
+        # "es cliente nuevo", que es el caso normal de una cotizacion.
+        peticion = _peticion_de_cotizacion(campos)
+        if not peticion["productos"]:
+            _pendiente[chat] = texto
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or "Que le cotizo?")
+            return
+        if await _proponer_cotizacion(update, chat, peticion):
+            return
+        await _responder_natural(update, ruta)
+        return
+
     if intencion == "consulta":
         if await _contestar_consulta(update, chat, texto):
             return
@@ -611,6 +1235,41 @@ async def manejar_texto(update, context):
                                   id_deudor=dato.get("id_deudor"), propuesta=propuesta)
             return
         await _reproponer(update, chat, {"propuesta": {"monto": monto}})
+        return
+
+    # Cambiando el codigo de un lote vivo: entra el texto y se repropone con
+    # ese campo cambiado. **Tampoco pasa por el modelo.**
+    if _esperando_codigo.pop(chat, False):
+        dato = _memoria.get(chat) or {}
+        peticion = dict(dato.get("peticion") or {})
+        if not peticion:
+            await update.message.reply_text("Ya no tengo ese lote. Dictamelo otra vez.")
+            return
+        propuesta = dict(peticion.get("propuesta") or {})
+        propuesta["codigo_lote"] = texto.strip()
+        peticion["propuesta"] = propuesta
+        await _proponer_lote(update, chat, peticion)
+        return
+
+    # Cambiando la vigencia de una cotizacion viva. **Tampoco pasa por el
+    # modelo.** El tope de dias lo pone el servidor, no esta linea.
+    if _esperando_vigencia.pop(chat, False):
+        digitos = "".join(c for c in texto if c.isdigit())
+        dias = int(digitos) if digitos else 0
+        if dias <= 0:
+            _esperando_vigencia[chat] = True
+            await update.message.reply_text("Cuantos dias? Solo el numero.")
+            return
+        dato = _memoria.get(chat) or {}
+        peticion = dict(dato.get("peticion") or {})
+        if not peticion:
+            await update.message.reply_text(
+                "Ya no tengo esa cotizacion. Dictamela otra vez.")
+            return
+        propuesta = dict(peticion.get("propuesta") or {})
+        propuesta["vigencia_dias"] = dias
+        peticion["propuesta"] = propuesta
+        await _proponer_cotizacion(update, chat, peticion)
         return
 
     # Si veniamos preguntando un dato que faltaba, se junta con lo anterior.
@@ -693,6 +1352,31 @@ async def _confirmar(update, chat):
     if dato.get("tipo") == "abono":
         await _confirmar_abono(update, chat)
         return
+    if dato.get("tipo") == "venta":
+        await _confirmar_venta(update, chat)
+        return
+    if dato.get("tipo") == "lote":
+        await _confirmar_lote(update, chat)
+        return
+    if dato.get("tipo") == "cotizacion":
+        await _confirmar_cotizacion(update, chat)
+        return
+    if dato.get("tipo") == "cotizacion_eligiendo":
+        pendiente = ("que producto" if dato.get("campo") == "producto"
+                     else "a quien se la cotizo")
+        await update.effective_message.reply_text(
+            "Primero dime " + pendiente + ", con uno de los botones.")
+        return
+    if dato.get("tipo") == "lote_eligiendo":
+        pendiente = "el insumo" if dato.get("campo") == "insumo" else "el formato de las botellas"
+        await update.effective_message.reply_text(
+            "Primero dime " + pendiente + ", con uno de los botones.")
+        return
+    if dato.get("tipo") == "venta_eligiendo":
+        pendiente = "el producto" if dato.get("campo") == "producto" else "el comprador"
+        await update.effective_message.reply_text(
+            "Primero dime " + pendiente + ", con uno de los botones.")
+        return
     if dato.get("tipo") == "abono_eligiendo":
         await update.effective_message.reply_text(
             "Primero dime de quien fue el pago, con uno de los botones.")
@@ -758,7 +1442,131 @@ async def manejar_boton(update, context):
     partes = q.data.split(":", 2)
     accion = partes[0]
 
-    if accion == "vaab":
+    if accion == "valt":
+        await _confirmar_lote(update, chat)
+    elif accion == "cod":
+        _esperando_codigo[chat] = True
+        await q.message.reply_text("Que codigo le pongo?")
+    elif accion == "setins":
+        dato = _memoria.get(chat) or {}
+        peticion = dict(dato.get("peticion") or {})
+        opciones = dato.get("opciones") or []
+        lineas = [dict(x) for x in (peticion.get("insumos") or [])]
+        try:
+            elegido = opciones[int(partes[1])]
+            lineas[int(dato.get("indice"))]["id_insumo"] = elegido["id"]
+        except (ValueError, IndexError, TypeError):
+            await q.message.reply_text("Ese insumo ya no esta en la lista. Dictamelo otra vez.")
+            return
+        peticion["insumos"] = lineas
+        await _proponer_lote(update, chat, peticion)
+    elif accion == "setfmt":
+        dato = _memoria.get(chat) or {}
+        peticion = dict(dato.get("peticion") or {})
+        opciones = dato.get("opciones") or []
+        lineas = [dict(x) for x in (peticion.get("envasado") or [])]
+        try:
+            elegido = opciones[int(partes[1])]
+            lineas[int(dato.get("indice"))]["id_producto"] = elegido["id"]
+        except (ValueError, IndexError, TypeError):
+            await q.message.reply_text("Ese formato ya no esta en la lista. Dictamelo otra vez.")
+            return
+        peticion["envasado"] = lineas
+        await _proponer_lote(update, chat, peticion)
+    elif accion == "vact":
+        await _confirmar_cotizacion(update, chat)
+    elif accion == "cli":
+        # "Otro cliente": la lista COMPLETA que mando el servidor la ultima
+        # vez. Sin boton de prospecto: para cotizarle a alguien que no esta en
+        # la red hay que decir su nombre, y eso se dicta, no se escoge.
+        dato = _memoria.get(chat) or {}
+        opciones = dato.get("clientes") or []
+        if not opciones:
+            await q.message.reply_text(
+                "Dictamela otra vez diciendo a quien se la cotizo.")
+        else:
+            await q.message.reply_text(
+                "A quien?", reply_markup=_teclado_clientes(opciones))
+    elif accion == "vig":
+        _esperando_vigencia[chat] = True
+        await q.message.reply_text("Cuantos dias se la respeto? Solo el numero.")
+    elif accion == "setcli":
+        dato = _memoria.get(chat) or {}
+        peticion = dict(dato.get("peticion") or {})
+        if not peticion:
+            await q.message.reply_text("Ya no tengo esa cotizacion. Dictamela otra vez.")
+            return
+        peticion.pop("cliente", None)
+        peticion.pop("id_comprador", None)
+        peticion.pop("prospecto", None)
+        if partes[1] == "pros":
+            # El nombre del prospecto es el que se DIJO, guardado por el
+            # servidor en la pregunta. El boton no lo lleva: no cabe en los 64
+            # bytes de `callback_data` y ademas se reescribiria a mano.
+            nombre = dato.get("nombre_dicho") or ""
+            if not nombre:
+                await q.message.reply_text("No me quedo el nombre. Dictamela otra vez.")
+                return
+            peticion["prospecto"] = nombre
+        else:
+            opciones = dato.get("opciones") or dato.get("clientes") or []
+            try:
+                elegido = opciones[int(partes[1])]
+            except (ValueError, IndexError, TypeError):
+                await q.message.reply_text("Ese ya no esta en la lista. Dictamela otra vez.")
+                return
+            peticion["id_comprador"] = elegido["id"]
+        await _proponer_cotizacion(update, chat, peticion)
+    elif accion == "vavt":
+        await _confirmar_venta(update, chat)
+    elif accion == "comp":
+        # "Otro comprador": se vuelve a preguntar con la lista COMPLETA que el
+        # servidor mando la ultima vez. Es la correccion que de verdad importa
+        # en una venta, porque el comprador decide el precio.
+        dato = _memoria.get(chat) or {}
+        opciones = dato.get("compradores") or []
+        if not opciones:
+            await q.message.reply_text("Dictamela otra vez diciendo a quien se la vendiste.")
+        else:
+            peticion = dato.get("peticion") or {}
+            publico = str(peticion.get("propuesta", {}).get("condicion_pago") or "").upper() != "CONCESION"
+            await q.message.reply_text(
+                "A quien?", reply_markup=_teclado_compradores(opciones, publico))
+    elif accion == "setcomp":
+        dato = _memoria.get(chat) or {}
+        peticion = dict(dato.get("peticion") or {})
+        if not peticion:
+            await q.message.reply_text("Ya no tengo esa venta. Dictamela otra vez.")
+            return
+        peticion.pop("comprador", None)
+        peticion.pop("id_comprador", None)
+        peticion.pop("publico", None)
+        if partes[1] == "pub":
+            peticion["publico"] = True
+        else:
+            opciones = dato.get("opciones") or dato.get("compradores") or []
+            try:
+                elegido = opciones[int(partes[1])]
+            except (ValueError, IndexError, TypeError):
+                await q.message.reply_text("Ese ya no esta en la lista. Dictamela otra vez.")
+                return
+            peticion["id_comprador"] = elegido["id"]
+        await _proponer_venta(update, chat, peticion)
+    elif accion == "setprod":
+        dato = _memoria.get(chat) or {}
+        peticion = dict(dato.get("peticion") or {})
+        opciones = dato.get("opciones") or []
+        renglones = [dict(x) for x in (peticion.get("productos") or [])]
+        try:
+            elegido = opciones[int(partes[1])]
+            indice = int(dato.get("indice"))
+            renglones[indice]["id_producto"] = elegido["id"]
+        except (ValueError, IndexError, TypeError):
+            await q.message.reply_text("Ese producto ya no esta en la lista. Dictamela otra vez.")
+            return
+        peticion["productos"] = renglones
+        await _proponer_venta(update, chat, peticion)
+    elif accion == "vaab":
         await _confirmar_abono(update, chat)
     elif accion == "deu":
         # "Otro deudor": se vuelve a preguntar con la lista COMPLETA que el
@@ -831,6 +1639,14 @@ async def manejar_boton(update, context):
             elegida = cuentas[int(partes[1])]
         except (ValueError, IndexError, TypeError):
             await q.message.reply_text("Esa cuenta ya no esta en la lista. Dictamelo otra vez.")
+            return
+        # Las dos fases comparten el boton de cuenta, pero NO la ruta que
+        # repropone. Sin esta bifurcacion, cambiarle la cuenta a una venta la
+        # volveria a proponer como gasto: el peor error posible en este archivo.
+        if dato.get("tipo") == "venta":
+            peticion = dict(dato.get("peticion") or {})
+            peticion["id_cuenta"] = elegida["id"]
+            await _proponer_venta(update, chat, peticion)
             return
         await _reproponer(update, chat, {"id_cuenta": elegida["id"]})
 

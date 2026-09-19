@@ -431,6 +431,191 @@ export type Database = {
           },
         ]
       }
+      cotizacion_detalles: {
+        Row: {
+          cantidad: number
+          id: string
+          id_cotizacion: string
+          id_producto: string
+          precio_unitario: number
+        }
+        Insert: {
+          cantidad: number
+          id?: string
+          id_cotizacion: string
+          id_producto: string
+          precio_unitario: number
+        }
+        Update: {
+          cantidad?: number
+          id?: string
+          id_cotizacion?: string
+          id_producto?: string
+          precio_unitario?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cotizacion_detalles_id_cotizacion_fkey"
+            columns: ["id_cotizacion"]
+            isOneToOne: false
+            referencedRelation: "cotizaciones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizacion_detalles_id_cotizacion_fkey"
+            columns: ["id_cotizacion"]
+            isOneToOne: false
+            referencedRelation: "v_cotizaciones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizacion_detalles_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "catalogo_productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizacion_detalles_id_producto_fkey"
+            columns: ["id_producto"]
+            isOneToOne: false
+            referencedRelation: "v_costo_produccion"
+            referencedColumns: ["id_producto_terminado"]
+          },
+        ]
+      }
+      cotizaciones: {
+        Row: {
+          creado_en: string
+          estado: string
+          fecha: string
+          folio: string
+          id: string
+          id_comprador: string | null
+          id_ticket: string | null
+          id_vendedor: string
+          nombre_prospecto: string | null
+          notas: string | null
+          total: number
+          usuario_creador: string
+          vigencia_dias: number
+          vigente_hasta: string | null
+          zona: string
+        }
+        Insert: {
+          creado_en?: string
+          estado?: string
+          fecha?: string
+          folio?: string
+          id?: string
+          id_comprador?: string | null
+          id_ticket?: string | null
+          id_vendedor: string
+          nombre_prospecto?: string | null
+          notas?: string | null
+          total: number
+          usuario_creador: string
+          vigencia_dias?: number
+          vigente_hasta?: string | null
+          zona?: string
+        }
+        Update: {
+          creado_en?: string
+          estado?: string
+          fecha?: string
+          folio?: string
+          id?: string
+          id_comprador?: string | null
+          id_ticket?: string | null
+          id_vendedor?: string
+          nombre_prospecto?: string | null
+          notas?: string | null
+          total?: number
+          usuario_creador?: string
+          vigencia_dias?: number
+          vigente_hasta?: string | null
+          zona?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_ticket_fkey"
+            columns: ["id_ticket"]
+            isOneToOne: false
+            referencedRelation: "transacciones_tickets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+        ]
+      }
       cuentas_financieras: {
         Row: {
           id: string
@@ -1413,6 +1598,147 @@ export type Database = {
           sku: string | null
         }
         Relationships: []
+      }
+      v_cotizaciones: {
+        Row: {
+          creado_en: string | null
+          dias_restantes: number | null
+          estado: string | null
+          estado_efectivo: string | null
+          fecha: string | null
+          folio: string | null
+          id: string | null
+          id_comprador: string | null
+          id_ticket: string | null
+          id_vendedor: string | null
+          nombre_prospecto: string | null
+          notas: string | null
+          para_quien: string | null
+          total: number | null
+          usuario_creador: string | null
+          vigencia_dias: number | null
+          vigente_hasta: string | null
+          zona: string | null
+        }
+        Insert: {
+          creado_en?: string | null
+          dias_restantes?: never
+          estado?: string | null
+          estado_efectivo?: never
+          fecha?: string | null
+          folio?: string | null
+          id?: string | null
+          id_comprador?: string | null
+          id_ticket?: string | null
+          id_vendedor?: string | null
+          nombre_prospecto?: string | null
+          notas?: string | null
+          para_quien?: never
+          total?: number | null
+          usuario_creador?: string | null
+          vigencia_dias?: number | null
+          vigente_hasta?: string | null
+          zona?: string | null
+        }
+        Update: {
+          creado_en?: string | null
+          dias_restantes?: never
+          estado?: string | null
+          estado_efectivo?: never
+          fecha?: string | null
+          folio?: string | null
+          id?: string | null
+          id_comprador?: string | null
+          id_ticket?: string | null
+          id_vendedor?: string | null
+          nombre_prospecto?: string | null
+          notas?: string | null
+          para_quien?: never
+          total?: number | null
+          usuario_creador?: string | null
+          vigencia_dias?: number | null
+          vigente_hasta?: string | null
+          zona?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_comprador_fkey"
+            columns: ["id_comprador"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_ticket_fkey"
+            columns: ["id_ticket"]
+            isOneToOne: false
+            referencedRelation: "transacciones_tickets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "entidades"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_cartera"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_insumos_en_negativo"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_saldo_entidad"
+            referencedColumns: ["id_entidad"]
+          },
+          {
+            foreignKeyName: "cotizaciones_id_vendedor_fkey"
+            columns: ["id_vendedor"]
+            isOneToOne: false
+            referencedRelation: "v_stock_por_cubeta"
+            referencedColumns: ["id_entidad"]
+          },
+        ]
       }
       v_insumos_en_negativo: {
         Row: {

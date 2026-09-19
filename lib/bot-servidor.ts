@@ -25,6 +25,9 @@ import type { Database } from '@/types/database'
 import { CATALOGO_SEMILLA, type CategoriaDelCatalogo } from '@/lib/bot-gastos'
 import { aCentavos, aPesos, netearAbonosSinPedido } from '@/lib/abonos'
 import type { TicketAbierto } from '@/lib/bot-abonos'
+import type { CompradorDeVenta, ProductoConPrecios } from '@/lib/bot-venta'
+import type { FormatoDeBotella, InsumoDelCatalogo } from '@/lib/bot-lotes'
+import { esCompradorSeleccionable } from '@/lib/avisos'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
 
 /** Un pedido a concesion tal como sale del ledger, antes de netear. Ver ERP-25. */
@@ -349,4 +352,183 @@ export async function leerTicketsAbiertos(
     })
   }
   return abiertos
+}
+
+/**
+ * El catalogo de TERMINADO con sus precios por zona.
+ *
+ * **Misma consulta que `app/pos/page.tsx`**, incluido el filtro `tipo` =
+ * `'TERMINADO'`: la pasta y los insumos no se venden por el POS y tampoco por
+ * chat. Se trae la lista entera —hoy son pocas filas— porque el empate por
+ * nombre necesita ver a TODOS los candidatos para poder decir "me da mas de
+ * uno"; filtrar en SQL por el nombre dicho convertiria una ambiguedad en un
+ * acierto falso.
+ */
+export async function leerCatalogoDeVenta(
+  supabase: ClienteServicio
+): Promise<ProductoConPrecios[]> {
+  const { data, error } = await supabase
+    .from('catalogo_productos')
+    .select('id, sku, nombre, listas_precios (zona, precio_final)')
+    .eq('tipo', 'TERMINADO')
+    .order('nombre', { ascending: true })
+
+  if (error || !data) {
+    console.error('[bot] no se pudo leer el catalogo de venta:', error)
+    return []
+  }
+
+  return data.map((p) => ({
+    id: p.id,
+    sku: p.sku,
+    nombre: p.nombre ?? '(sin nombre)',
+    precios: (p.listas_precios ?? []).map((l) => ({
+      zona: l.zona ?? '',
+      precio_final: Number(l.precio_final) || 0
+    }))
+  }))
+}
+
+/**
+ * Los compradores posibles: la red entera menos el centinela.
+ *
+ * `esCompradorSeleccionable` es la MISMA funcion que usa el desplegable de la
+ * pantalla (`lib/avisos.ts`): "PENDIENTE DE ASIGNAR" no es un comprador, es el
+ * marcador de las consignaciones sin dueno, y ofrecerlo por chat seria darle a
+ * un empate por nombre la oportunidad de elegirlo.
+ *
+ * Se traen las columnas de la cascada (`comision_base`, `comision_base_local`,
+ * `aplica_redondeo_costo`) porque el precio de un DST o un LOC sale de ahi. Sin
+ * ellas `calculateWaterfall` devolveria el costo de un distribuidor con comision
+ * cero, o sea el precio de publico — mas caro, y en silencio.
+ */
+export async function leerCompradoresDeVenta(
+  supabase: ClienteServicio
+): Promise<CompradorDeVenta[]> {
+  const { data, error } = await supabase
+    .from('entidades')
+    .select('id, nombre, rol, zona, comision_base, comision_base_local, aplica_redondeo_costo')
+    .order('nombre', { ascending: true })
+
+  if (error || !data) {
+    console.error('[bot] no se pudieron leer los compradores:', error)
+    return []
+  }
+
+  return data.filter(esCompradorSeleccionable).map((e) => ({
+    id: e.id,
+    nombre: e.nombre ?? '(sin nombre)',
+    rol: e.rol ?? '',
+    zona: e.zona,
+    comision_base: e.comision_base,
+    comision_base_local: e.comision_base_local,
+    aplica_redondeo_costo: e.aplica_redondeo_costo
+  }))
+}
+
+/**
+ * La cuenta destino, con su `tipo_fiscalidad`.
+ *
+ * `IdentidadBot.cuentas` no la trae —ahi solo hace falta el nombre para el
+ * boton—, y `normalizarVenta` la necesita para ensenar el desglose de impuestos
+ * con la misma funcion que `registrarVenta` va a usar al escribir. Devuelve
+ * `null` si la cuenta no existe: el endpoint ya comprobo que este en la lista
+ * cerrada de la identidad, asi que un `null` aqui es una cuenta borrada entre
+ * las dos lecturas y se trata como error, no como LIBRE.
+ */
+export async function leerCuentaDeVenta(
+  supabase: ClienteServicio,
+  idCuenta: string
+): Promise<{ id: string; nombre: string; tipo_fiscalidad: string } | null> {
+  const { data, error } = await supabase
+    .from('cuentas_financieras')
+    .select('id, nombre, tipo_fiscalidad')
+    .eq('id', idCuenta)
+    .maybeSingle()
+
+  if (error || !data) return null
+  return {
+    id: data.id,
+    nombre: data.nombre ?? '(cuenta)',
+    tipo_fiscalidad: data.tipo_fiscalidad ?? ''
+  }
+}
+
+/**
+ * Los insumos del catalogo, con su unidad.
+ *
+ * Se trae la lista entera por la misma razon que el catalogo de venta: el
+ * empate por nombre necesita ver a todos los candidatos para poder decir "me da
+ * mas de uno". La unidad viene porque es lo que se ensena en la confirmacion —
+ * "8 kilogramos de Chile Guajillo" se revisa; "8 de Chile Guajillo" no.
+ */
+export async function leerInsumosDeLote(
+  supabase: ClienteServicio
+): Promise<InsumoDelCatalogo[]> {
+  const { data, error } = await supabase
+    .from('catalogo_productos')
+    .select('id, sku, nombre, unidad_medida')
+    .eq('tipo', 'INSUMO')
+    .order('nombre', { ascending: true })
+
+  if (error || !data) {
+    console.error('[bot] no se pudieron leer los insumos:', error)
+    return []
+  }
+  return data.map((i) => ({
+    id: i.id,
+    sku: i.sku,
+    nombre: i.nombre ?? '(sin nombre)',
+    unidad_medida: i.unidad_medida ?? 'PIEZAS'
+  }))
+}
+
+/**
+ * Los formatos de botella: los TERMINADO que declaran `ml_por_unidad`.
+ *
+ * El filtro por `ml_por_unidad` no es cosmetico. `lote_envasado` liga litros
+ * producidos con botellas, y la vista convierte con esa columna (ERP-84b); un
+ * producto sin ml —la pasta, por ejemplo— no se puede envasar desde un lote de
+ * destilado, y ofrecerlo seria ofrecer una fila que descuadra el rendimiento.
+ */
+export async function leerFormatosDeBotella(
+  supabase: ClienteServicio
+): Promise<FormatoDeBotella[]> {
+  const { data, error } = await supabase
+    .from('catalogo_productos')
+    .select('id, sku, nombre, ml_por_unidad')
+    .eq('tipo', 'TERMINADO')
+    .not('ml_por_unidad', 'is', null)
+    .order('ml_por_unidad', { ascending: false })
+
+  if (error || !data) {
+    console.error('[bot] no se pudieron leer los formatos:', error)
+    return []
+  }
+  return data
+    .map((p) => ({
+      id: p.id,
+      sku: p.sku,
+      nombre: p.nombre ?? '(sin nombre)',
+      ml_por_unidad: Number(p.ml_por_unidad) || 0
+    }))
+    .filter((f) => f.ml_por_unidad > 0)
+}
+
+/**
+ * Los codigos de lote que ya existen.
+ *
+ * Sirve para dos cosas y las dos importan: proponer el siguiente
+ * (`codigoSugerido`) y **rechazar por nombre un codigo repetido antes de
+ * escribir**. `lotes.codigo_lote` es `unique`, asi que sin esto el choque
+ * llegaria como un error de Postgres a mitad de la escritura, cuando la fila
+ * del lote ya existe y hay que deshacerla.
+ */
+export async function leerCodigosDeLote(supabase: ClienteServicio): Promise<string[]> {
+  const { data, error } = await supabase.from('lotes').select('codigo_lote')
+  if (error || !data) {
+    console.error('[bot] no se pudieron leer los codigos de lote:', error)
+    return []
+  }
+  return data.map((l) => l.codigo_lote).filter((c): c is string => typeof c === 'string')
 }
