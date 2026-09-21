@@ -33,6 +33,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { preguntaDeProducto } from '@/lib/bot-tamanos'
 import type { Json } from '@/types/database'
 import {
   clienteDeServicio,
@@ -59,6 +60,7 @@ import {
   type ProductoDelCatalogo
 } from '@/lib/bot-venta'
 import { buscarPorNombre } from '@/lib/bot-nombres'
+import { aplicarDescuento } from '@/lib/bot-descuento'
 import { esCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 
 export const dynamic = 'force-dynamic'
@@ -305,12 +307,15 @@ export async function POST(request: Request) {
         const hallazgo = buscarProducto(pedido.producto, catalogo)
         if (!hallazgo.ok) {
           const dicho = String(pedido.producto ?? '').trim()
+          // D39 (2026-09-19): *"No encontre X en el catalogo"* deja de ser una
+          // respuesta aceptable cuando el catalogo son tres botellas. Le echaba
+          // al usuario la culpa de no conocer el nombre interno del inventario.
+          // Ahora se ofrecen las que hay **con su tamano a la vista**, y la
+          // pregunta dice que si se entendio.
           const mensaje =
-            hallazgo.motivo === 'ambiguo'
-              ? `"${dicho}" me da mas de uno. Cual es?`
-              : hallazgo.motivo === 'sin-nombre'
-                ? 'No entendi que producto se vendio.'
-                : `No encontre "${dicho}" en el catalogo. Es alguno de estos?`
+            hallazgo.motivo === 'sin-nombre'
+              ? 'No entendi que producto se vendio.'
+              : preguntaDeProducto(dicho, hallazgo.candidatos, 'vender')
           // Se pregunta **por renglon**, y el `indice` dice cual: una venta de
           // tres productos con dos ambiguos se resuelve en dos botones, no
           // volviendo a dictar la venta entera.
@@ -330,7 +335,7 @@ export async function POST(request: Request) {
       lineas.push({ producto, cantidad: Number(pedido.cantidad) })
     }
 
-    const normalizada = normalizarVenta(cuerpo.propuesta ?? {}, {
+    const contextoVenta = {
       idVendedor: identidad.idEntidad,
       nombreVendedor: identidad.nombreEntidad,
       comprador,
@@ -339,7 +344,42 @@ export async function POST(request: Request) {
       tipoFiscalidadCuenta,
       etiqueta: identidad.etiqueta,
       lineas
-    })
+    }
+
+    // ── D55/D56: EL DESCUENTO, Y SU TOPE ────────────────────────────────────
+    //
+    // **El tope se impone AQUI, en la ruta, y no en el prompt.** Un prompt se
+    // negocia, una ruta no: por mas que el modelo se convenza de que el 60% va,
+    // el 422 sale igual y no se escribe nada.
+    //
+    // Se normaliza DOS VECES a proposito, y no es desperdicio:
+    //   1. la primera, sin descuento, para que el **subtotal de lista** salga de
+    //      `listas_precios` y de la cascada, que es el unico lugar de donde
+    //      puede salir un precio;
+    //   2. `aplicarDescuento` sobre ese subtotal, que es donde vive el tope;
+    //   3. la segunda, ya con el descuento resuelto, que es la que se sella.
+    //
+    // La alternativa era copiar aqui el bucle de precios para calcular el
+    // subtotal, y ese es justo el patron que en `pos.ts` / `auditoria.ts` ya
+    // produjo drift (ver `BACKLOG.md` TKT-034/035). `normalizarVenta` es pura;
+    // llamarla dos veces cuesta microsegundos y garantiza que el numero sobre el
+    // que se descuenta sea **exactamente** el que se va a escribir.
+    const deLista = normalizarVenta(cuerpo.propuesta ?? {}, contextoVenta)
+    if (!deLista.ok) {
+      return NextResponse.json({ error: deLista.error }, { status: 422 })
+    }
+
+    const descuento = aplicarDescuento(
+      deLista.payload.subtotal_catalogo,
+      (cuerpo.propuesta as { descuento?: unknown } | undefined)?.descuento
+    )
+    if (!descuento.ok) {
+      return NextResponse.json({ error: descuento.error }, { status: 422 })
+    }
+
+    const normalizada = descuento.hay
+      ? normalizarVenta(cuerpo.propuesta ?? {}, { ...contextoVenta, descuento })
+      : deLista
     if (!normalizada.ok) {
       return NextResponse.json({ error: normalizada.error }, { status: 422 })
     }
@@ -375,7 +415,11 @@ export async function POST(request: Request) {
             zona,
             nombre_cuenta_destino: cuenta.nombre,
             desglose: normalizada.desglose,
-            avisos: normalizada.avisos
+            avisos: normalizada.avisos,
+            // Solo la etiqueta ("promocion de septiembre"). Las cifras ya van
+            // en `venta.subtotal_catalogo` / `venta.total_cobrado_real`, que
+            // son las selladas; esto es para que el rastro diga POR QUE.
+            motivo_descuento: descuento.motivo
           }
         } as unknown as Json
       })
@@ -402,7 +446,8 @@ export async function POST(request: Request) {
           nombreVendedor: identidad.nombreEntidad,
           nombreComprador,
           nombreCuentaDestino: cuenta.nombre,
-          desglose: normalizada.desglose
+          desglose: normalizada.desglose,
+          motivoDescuento: descuento.motivo
         },
         normalizada.avisos
       )

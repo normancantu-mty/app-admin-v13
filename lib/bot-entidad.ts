@@ -235,6 +235,68 @@ export function preguntaDeAmbiguedad(etiqueta: string): string {
   )
 }
 
+/**
+ * La comision dicha, convertida a fraccion **con el criterio del chat**.
+ *
+ * ─── LA DEUDA QUE CIERRA (D17/D18/D20, 2026-09-19) ──────────────────────────
+ *
+ * Habia DOS verdades para la misma operacion. `normalizeCommission`, la de la
+ * pantalla, traia tres trampas que la del chat ya no tenia:
+ *
+ * | | por el chat | por la pantalla, hasta hoy |
+ * |---|---|---|
+ * | un `1` | pregunta 1% o 100% | lo guardaba como **100%**, callado |
+ * | un 12.5% | avisa que quedaria 13% **antes** del "va" | lo guardaba **0.13**, callado |
+ * | algo invalido | revienta | se volvia **0**, callado |
+ *
+ * Las tres **se detienen en vez de adivinar**, y esa es la diferencia entera.
+ * Un 12.5% no cabe en `numeric(5,2)`: el error DICE el numero que quedaria, que
+ * es la unica forma de que quien lo escribio pueda decidir.
+ *
+ * **Vive aqui y no dentro del Server Action a proposito.** Mientras estuvo
+ * dentro de `registrarEntidadAction`, ejercitarla exigia montar una sesion de
+ * Next -- o sea, no se ejercitaba nunca. Es la misma enfermedad del defecto 1:
+ * codigo correcto que ninguna prueba toca. Aqui la corre `bot-entidad-100.spec.ts`.
+ */
+export function comisionValidada(crudo: number | undefined | null, etiqueta: string): number {
+  if (crudo === undefined || crudo === null) return 0
+  const juicio = normalizarComision(crudo)
+  if (!juicio.ok) {
+    if (juicio.motivo === 'ambigua') {
+      throw new Error(
+        etiqueta +
+          ': "1" lo puedo leer como 1% o como 100%, y la diferencia es que el producto ' +
+          'se regale. Escribelo como 0.01 o como 100.'
+      )
+    }
+    throw new Error(etiqueta + ': ' + juicio.error)
+  }
+  const aviso = avisoDeRedondeo(juicio)
+  if (aviso) throw new Error(etiqueta + ': ' + aviso.replace('\u26a0 ', ''))
+  return juicio.fraccion
+}
+
+/**
+ * Las dos salidas del `1` ambiguo. **Estan aqui y no dentro de la ruta a
+ * proposito (D11, 2026-09-19):** mientras el par vivio como literal dentro de
+ * `entidad/proponer/route.ts`, **ninguna prueba podia tocarlo** -- y el de
+ * "100%" mandaba de vuelta el mismo `'1'` que disparo la ambiguedad, asi que
+ * `normalizarComision` lo volvia a declarar ambiguo y quien quisiera 100%
+ * recibia la misma pregunta para siempre. Un bucle sin salida.
+ *
+ * La invariante que esto hace comprobable, y que `tests/bot-entidad-100.spec.ts`
+ * ejercita fila por fila: **ningun valor de un boton puede volver a salir
+ * `ambigua`.** Un boton que reabre la pregunta que venia a cerrar no es un
+ * boton.
+ */
+export const OPCIONES_DE_AMBIGUEDAD: ReadonlyArray<{ valor: string; etiqueta: string }> = [
+  { valor: '0.01', etiqueta: '1%' },
+  // `'100'`, NO `'1'`. `Number('100')` = 100: no pasa de 100, no es 1, y sale
+  // por el camino normal como fraccion 1. **La que estaba mal era la opcion, no
+  // la funcion** -- por eso `normalizarComision` no se toca.
+  { valor: '100', etiqueta: '100%' }
+]
+
 export interface ComisionPedida {
   columna: 'comision_base' | 'comision_hijo_local' | 'comision_base_local'
   etiqueta: string

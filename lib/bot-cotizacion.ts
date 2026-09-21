@@ -40,6 +40,14 @@ import {
   type CompradorDeVenta,
   type ProductoDelCatalogo
 } from '@/lib/bot-venta'
+import {
+  TOPE_DESCUENTO_PORCENTAJE,
+  descuentoDelPayload,
+  lineasDeDescuento,
+  notaDeDescuento,
+  sinDescuento,
+  type DescuentoAplicado
+} from '@/lib/bot-descuento'
 
 // ============================================================================
 // 1. EL PAYLOAD Y SU SELLO
@@ -103,6 +111,163 @@ export const VIGENCIA_POR_DEFECTO = 15
 export const TOPE_VIGENCIA_DIAS = 365
 
 // ============================================================================
+// 2b. EL MONTO OBJETIVO — "que salga en unos 15,000" (D51, Fase 6)
+// ============================================================================
+
+/**
+ * ─── LA CONVERSACION QUE ESTO CIERRA ────────────────────────────────────────
+ *
+ * 2026-09-19, con una cotizacion de $10,176.00 recien emitida en pantalla:
+ *
+ *   Norman: ahora quiere una cotizacion cuyo total sea lo mas cercano a 15,000
+ *           pesos, manteniendo una proporcion semejante, hazme esa cotizacion
+ *   Bot:    Que le cotizo?
+ *   Norman: nose tu dimelo, haz las cuentas
+ *   Bot:    Que le cotizo?
+ *
+ * Dos veces la misma respuesta, la segunda ya con la instruccion explicita
+ * enfrente. **Norman creyo que habia sido demasiado exigente; no lo fue.** Los
+ * tres precios estaban en la cotizacion que el bot acababa de emitir y la
+ * operacion es una regla de tres.
+ *
+ * ─── POR QUE LA ARITMETICA VIVE AQUI Y NO EN EL PROMPT ──────────────────────
+ *
+ * Por la misma razon que `id_producto` es lista cerrada: **el modelo no inventa
+ * precios.** Aqui entran los precios que ya resolvio el endpoint desde
+ * `listas_precios` mas la cascada, y salen CANTIDADES. El modelo aporta un solo
+ * numero —el que Norman dijo en voz alta— y ni siquiera lo multiplica.
+ *
+ * Y es aritmetica pura a proposito: sin catalogo, sin base y sin red, para que
+ * `tests/bot-cotizacion.spec.ts` la pueda ejercitar de verdad en vez de leer su
+ * codigo fuente.
+ */
+
+/** Cuantos pasos de ajuste fino como maximo. Con tres renglones sobran. */
+export const TOPE_PASOS_AJUSTE = 40
+
+/**
+ * Cuanto puede moverse un renglon del escalado limpio, en tanto por uno.
+ *
+ * **Esto es lo que mantiene la "proporcion semejante" que pidio Norman.** Sin
+ * tope, la busqueda del total mas cercano acabaria vaciando el renglon barato
+ * para cuadrar el centavo: daria un total perfecto y una cotizacion que ya no
+ * se parece a la que se pidio. Un 15% mueve lo suficiente para acercarse mucho
+ * y poco para que la mezcla siga siendo la misma.
+ */
+export const MARGEN_DE_PROPORCION = 0.15
+
+export interface RenglonEscalable {
+  precioUnitario: number
+  cantidad: number
+}
+
+export interface EscaladoOk {
+  ok: true
+  cantidades: number[]
+  total: number
+}
+
+export interface EscaladoFallido {
+  ok: false
+  error: string
+}
+
+/**
+ * Escala las cantidades para acercar el total a `objetivo`, en piezas ENTERAS.
+ *
+ * Dos pasadas, y la segunda es la que de verdad acerca:
+ *   1. **regla de tres**, redondeando cada renglon a la pieza mas cercana y
+ *      nunca por debajo de 1 — una cotizacion con un renglon en cero es otra
+ *      cotizacion, no esta;
+ *   2. **ajuste fino de a una pieza**, siempre el paso que mas acerca, dentro
+ *      del `MARGEN_DE_PROPORCION` de cada renglon.
+ *
+ * Nunca devuelve cantidades en cero ni negativas. Cuando ni con una pieza de
+ * cada cosa se baja del objetivo, **dice que no se puede** en vez de entregar
+ * una cotizacion que no es la que se pidio.
+ */
+export function escalarAObjetivo(
+  renglones: readonly RenglonEscalable[],
+  objetivo: number
+): EscaladoOk | EscaladoFallido {
+  if (renglones.length === 0) {
+    return { ok: false, error: 'No hay ninguna cotizacion anterior que escalar.' }
+  }
+  if (!Number.isFinite(objetivo) || objetivo <= 0) {
+    return { ok: false, error: 'No entendi a que total quieres llegar.' }
+  }
+
+  const precios: number[] = []
+  const actuales: number[] = []
+  for (const r of renglones) {
+    const precio = Number(r.precioUnitario)
+    const cantidad = Number(r.cantidad)
+    if (!Number.isFinite(precio) || precio <= 0) {
+      return { ok: false, error: 'Un renglon no tiene precio. No escalo sobre eso.' }
+    }
+    if (!Number.isInteger(cantidad) || cantidad <= 0) {
+      return { ok: false, error: 'Un renglon no tiene cantidad. No escalo sobre eso.' }
+    }
+    precios.push(precio)
+    actuales.push(cantidad)
+  }
+
+  const suma = (cs: readonly number[]) =>
+    Number(cs.reduce((t, c, i) => t + c * precios[i], 0).toFixed(2))
+
+  // Una pieza de cada cosa es el piso: por debajo de eso no hay cotizacion que
+  // dar. Es el control negativo de Norman ("pedir $5") y se contesta diciendo
+  // el numero, no con un "no se puede" pelado.
+  const piso = suma(precios.map(() => 1))
+  if (objetivo < piso) {
+    return {
+      ok: false,
+      error:
+        `Con esos productos lo menos que puedo armar son $${piso.toLocaleString('es-MX', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        })} (una pieza de cada uno). No llego a $${objetivo.toLocaleString('es-MX')}.`
+    }
+  }
+
+  const totalActual = suma(actuales)
+  const factor = objetivo / totalActual
+
+  // ── 1. La regla de tres ───────────────────────────────────────────────────
+  const cantidades = actuales.map((c) => Math.max(1, Math.round(c * factor)))
+
+  // ── 2. El ajuste fino, dentro del margen que conserva la proporcion ───────
+  const piso_i = cantidades.map((c) => Math.max(1, c - Math.max(1, Math.round(c * MARGEN_DE_PROPORCION))))
+  const techo_i = cantidades.map((c) => c + Math.max(1, Math.round(c * MARGEN_DE_PROPORCION)))
+
+  let distancia = Math.abs(suma(cantidades) - objetivo)
+  for (let paso = 0; paso < TOPE_PASOS_AJUSTE; paso++) {
+    let mejorI = -1
+    let mejorD = 0
+    let mejorDistancia = distancia
+    for (let i = 0; i < cantidades.length; i++) {
+      for (const d of [-1, 1]) {
+        const propuesta = cantidades[i] + d
+        if (propuesta < piso_i[i] || propuesta > techo_i[i]) continue
+        cantidades[i] = propuesta
+        const nueva = Math.abs(suma(cantidades) - objetivo)
+        cantidades[i] = propuesta - d
+        if (nueva < mejorDistancia) {
+          mejorDistancia = nueva
+          mejorI = i
+          mejorD = d
+        }
+      }
+    }
+    if (mejorI === -1) break
+    cantidades[mejorI] += mejorD
+    distancia = mejorDistancia
+  }
+
+  return { ok: true, cantidades, total: suma(cantidades) }
+}
+
+// ============================================================================
 // 3. LA PUERTA
 // ============================================================================
 
@@ -122,6 +287,26 @@ export interface ContextoCotizacion {
   etiqueta: string
   hoy: string
   lineas: readonly LineaCotizada[]
+  /**
+   * Avisos que ya trae el endpoint y que tienen que salir en el MISMO mensaje
+   * que Norman revisa antes del "va" — hoy solo el del monto objetivo (D51).
+   * Van aqui y no concatenados despues porque el mensaje es uno solo: un aviso
+   * que llega en otro globo se lee como si fuera de otra cosa.
+   */
+  avisosPrevios?: readonly string[]
+  /**
+   * El descuento **ya resuelto y ya topado por la ruta** (D55/D56). Misma razon
+   * que en `ContextoVenta`: lo que esta en la propuesta lo dijo el modelo; lo
+   * que esta en el contexto ya lo verifico el servidor.
+   *
+   * ─── DONDE QUEDA ESCRITO, SI `cotizaciones` NO TIENE DOS COLUMNAS ────────
+   * La tabla solo tiene `total`. Asi que **`total` es el COBRADO** —que es el
+   * numero que el cliente va a pagar y el que se convierte en la venta— y la
+   * lista queda implicita en `items.precio_unitario`, que tambien va sellado.
+   * El descuento se escribe ademas en `notas` (`notaDeDescuento`), para que el
+   * papel lo diga con letras y no haya que restar para verlo.
+   */
+  descuento?: DescuentoAplicado
 }
 
 export interface PropuestaCotizacionLLM {
@@ -163,7 +348,7 @@ export function normalizarCotizacion(
   propuesta: PropuestaCotizacionLLM,
   contexto: ContextoCotizacion
 ): ResultadoCotizacionOk | ResultadoCotizacionFallido {
-  const avisos: string[] = []
+  const avisos: string[] = [...(contexto.avisosPrevios ?? [])]
 
   // ── A QUIEN ─────────────────────────────────────────────────────────────
   const prospecto = String(contexto.nombreProspecto ?? '').trim()
@@ -243,14 +428,39 @@ export function normalizarCotizacion(
     vigencia = dicha
   }
 
+  // ── D55/D56: EL DESCUENTO ───────────────────────────────────────────────
+  // Se revalida aunque la ruta ya lo haya topado, por lo mismo que en la venta:
+  // esta funcion la llama un endpoint, una prueba y manana cualquiera.
+  const descuento = contexto.descuento ?? sinDescuento(total)
+  if (Math.abs(descuento.subtotal - total) > 0.005) {
+    return { ok: false, error: 'El descuento se calculo sobre un total que ya no es el mismo.' }
+  }
+  if (descuento.porcentaje > TOPE_DESCUENTO_PORCENTAJE) {
+    return {
+      ok: false,
+      error:
+        `Un descuento de ${descuento.porcentaje}% no lo cotizo por chat: ` +
+        `el tope es ${TOPE_DESCUENTO_PORCENTAJE}%.`
+    }
+  }
+  if (!(descuento.total > 0) || descuento.total > total + 0.005) {
+    return { ok: false, error: 'Ese descuento me deja un total que no tiene sentido.' }
+  }
+
+  // La nota del descuento va ANTES de lo que haya dictado el modelo: lo primero
+  // que se lee en el papel es por que el precio no es el de lista.
+  const dictadas = String(propuesta.notas ?? '').trim()
+  const nota = notaDeDescuento(descuento)
+  const notas = [nota, dictadas].filter((n) => n !== '').join(' ')
+
   const payload: PayloadCotizacion = {
     id_vendedor: contexto.idVendedor,
     id_comprador: contexto.comprador?.id ?? null,
     nombre_prospecto: contexto.comprador ? null : prospecto,
     zona: contexto.zona,
     vigencia_dias: vigencia,
-    total,
-    notas: String(propuesta.notas ?? '').trim(),
+    total: descuento.total,
+    notas,
     usuario_creador: `telegram:${contexto.etiqueta}`,
     items
   }
@@ -277,7 +487,13 @@ export function mensajeDeConfirmacionCotizacion(
   payload: PayloadCotizacion,
   desglose: readonly DesgloseCotizado[],
   avisos: readonly string[],
-  contexto: { paraQuien: string; esDeLaRed: boolean; vigenteHasta: string }
+  contexto: {
+    paraQuien: string
+    esDeLaRed: boolean
+    vigenteHasta: string
+    /** Solo la etiqueta de la promocion. Las cifras salen de lo sellado. */
+    motivoDescuento?: string
+  }
 ): string {
   const lineas: string[] = ['Esta es la cotizacion. Revisala:', '']
   lineas.push(`Para: ${contexto.paraQuien}${contexto.esDeLaRed ? '' : ' (prospecto)'}`)
@@ -288,7 +504,16 @@ export function mensajeDeConfirmacionCotizacion(
     lineas.push(`   ${d.nombre}: ${piezas} x ${pesos(d.precioUnitario)} = ${pesos(d.subtotal)}`)
   }
 
-  lineas.push('', `TOTAL: ${pesos(payload.total)}`)
+  // D55: **las dos cifras a la vista.** La lista sale de sumar el desglose, que
+  // es lo mismo que `items.precio_unitario` y por lo tanto va sellado; el
+  // cobrado es `payload.total`. Ninguno de los dos se recalcula por fuera.
+  const lista = Number(desglose.reduce((suma, d) => suma + d.subtotal, 0).toFixed(2))
+  const descuento = descuentoDelPayload(lista, payload.total, contexto.motivoDescuento ?? '')
+  if (descuento.hay) {
+    lineas.push('', ...lineasDeDescuento(descuento))
+  } else {
+    lineas.push('', `TOTAL: ${pesos(payload.total)}`)
+  }
   lineas.push(`Vigencia: ${payload.vigencia_dias} dias (hasta el ${contexto.vigenteHasta})`)
 
   if (contexto.esDeLaRed) {

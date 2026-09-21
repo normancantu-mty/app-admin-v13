@@ -25,6 +25,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { preguntaDeProducto } from '@/lib/bot-tamanos'
 import type { Json } from '@/types/database'
 import {
   clienteDeServicio,
@@ -36,16 +37,19 @@ import {
 import {
   aProductoDelCatalogo,
   buscarProducto,
+  precioParaComprador,
   ZONA_POR_DEFECTO,
   type CompradorDeVenta,
   type ProductoDelCatalogo
 } from '@/lib/bot-venta'
 import {
+  escalarAObjetivo,
   mensajeDeConfirmacionCotizacion,
   normalizarCotizacion,
   sellarCotizacion,
   type LineaCotizada
 } from '@/lib/bot-cotizacion'
+import { aplicarDescuento } from '@/lib/bot-descuento'
 import { fechaLocal } from '@/lib/fechas'
 import { buscarPorNombre } from '@/lib/bot-nombres'
 
@@ -89,6 +93,12 @@ export async function POST(request: Request) {
       id_comprador?: unknown
       /** El boton "es un prospecto": el nombre se guarda tal cual, sin red. */
       prospecto?: unknown
+      /**
+       * D51: el TOTAL al que Norman quiere acercarse. Cuando viene, las
+       * cantidades de `productos` son solo la PROPORCION: se reescalan contra
+       * los precios del catalogo. El modelo no calcula ninguna de las dos cosas.
+       */
+      objetivo?: unknown
     }
 
     const telegramId = Number(cuerpo.telegram_id)
@@ -213,12 +223,15 @@ export async function POST(request: Request) {
         const hallazgo = buscarProducto(pedido.producto, catalogo)
         if (!hallazgo.ok) {
           const dicho = String(pedido.producto ?? '').trim()
+          // D39 (2026-09-19): *"No encontre X en el catalogo"* deja de ser una
+          // respuesta aceptable cuando el catalogo son tres botellas. Le echaba
+          // al usuario la culpa de no conocer el nombre interno del inventario.
+          // Ahora se ofrecen las que hay **con su tamano a la vista**, y la
+          // pregunta dice que si se entendio.
           const mensaje =
-            hallazgo.motivo === 'ambiguo'
-              ? `"${dicho}" me da mas de uno. Cual es?`
-              : hallazgo.motivo === 'sin-nombre'
-                ? 'No entendi que producto cotizar.'
-                : `No encontre "${dicho}" en el catalogo. Es alguno de estos?`
+            hallazgo.motivo === 'sin-nombre'
+              ? 'No entendi que producto cotizar.'
+              : preguntaDeProducto(dicho, hallazgo.candidatos, 'cotizar')
           return NextResponse.json({
             ok: false,
             hay_que_elegir: true,
@@ -235,8 +248,37 @@ export async function POST(request: Request) {
       lineas.push({ producto, cantidad: Number(pedido.cantidad) })
     }
 
+    // ── D51: EL MONTO OBJETIVO ──────────────────────────────────────────────
+    // Se escala DESPUES de resolver los productos, porque el precio sale del
+    // catalogo y de la cascada del comprador — nunca de lo que dijo el modelo.
+    const avisosPrevios: string[] = []
+    const objetivo = Number(cuerpo.objetivo ?? 0)
+    if (Number.isFinite(objetivo) && objetivo > 0) {
+      const escalado = escalarAObjetivo(
+        lineas.map((l) => ({
+          precioUnitario: precioParaComprador(l.producto, comprador),
+          cantidad: Number(l.cantidad)
+        })),
+        objetivo
+      )
+      if (!escalado.ok) {
+        return NextResponse.json({ error: escalado.error }, { status: 422 })
+      }
+      for (let i = 0; i < lineas.length; i++) lineas[i].cantidad = escalado.cantidades[i]
+      // **Se ensena el total que se logro, no el que se pidio.** "Lo mas cercano
+      // son $14,984" es la mitad honesta de haber hecho la cuenta; decir 15,000
+      // cuando salieron 14,984 seria el mismo defecto de D48 con numeros.
+      const pide = objetivo.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      const logra = escalado.total.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      avisosPrevios.push(
+        escalado.total === objetivo
+          ? `Ajuste las cantidades para llegar a $${pide}.`
+          : `Pediste cerca de $${pide}; con piezas enteras lo mas cercano son $${logra}.`
+      )
+    }
+
     const hoy = fechaLocal(new Date())
-    const normalizada = normalizarCotizacion(cuerpo.propuesta ?? {}, {
+    const contextoCotizacion = {
       idVendedor: identidad.idEntidad,
       nombreVendedor: identidad.nombreEntidad,
       comprador,
@@ -244,8 +286,30 @@ export async function POST(request: Request) {
       zona,
       etiqueta: identidad.etiqueta,
       hoy,
-      lineas
-    })
+      lineas,
+      avisosPrevios
+    }
+
+    // ── D55/D56: EL DESCUENTO, Y SU TOPE ────────────────────────────────────
+    // Mismo procedimiento que en `venta/proponer`, y por las mismas razones:
+    // el subtotal de lista lo calcula la funcion pura, el tope lo impone la
+    // RUTA (no el prompt), y arriba del tope sale **422** sin escribir nada.
+    const deLista = normalizarCotizacion(cuerpo.propuesta ?? {}, contextoCotizacion)
+    if (!deLista.ok) {
+      return NextResponse.json({ error: deLista.error }, { status: 422 })
+    }
+
+    const descuento = aplicarDescuento(
+      deLista.payload.total,
+      (cuerpo.propuesta as { descuento?: unknown } | undefined)?.descuento
+    )
+    if (!descuento.ok) {
+      return NextResponse.json({ error: descuento.error }, { status: 422 })
+    }
+
+    const normalizada = descuento.hay
+      ? normalizarCotizacion(cuerpo.propuesta ?? {}, { ...contextoCotizacion, descuento })
+      : deLista
     if (!normalizada.ok) {
       return NextResponse.json({ error: normalizada.error }, { status: 422 })
     }
@@ -273,7 +337,9 @@ export async function POST(request: Request) {
             avisos: normalizada.avisos,
             para_quien: paraQuien,
             es_de_la_red: comprador !== null,
-            vigente_hasta: normalizada.vigenteHasta
+            vigente_hasta: normalizada.vigenteHasta,
+            // Solo la etiqueta. Las cifras ya van selladas en `cotizacion`.
+            motivo_descuento: descuento.motivo
           }
         } as unknown as Json
       })
@@ -302,7 +368,8 @@ export async function POST(request: Request) {
         {
           paraQuien,
           esDeLaRed: comprador !== null,
-          vigenteHasta: normalizada.vigenteHasta
+          vigenteHasta: normalizada.vigenteHasta,
+          motivoDescuento: descuento.motivo
         }
       )
     })

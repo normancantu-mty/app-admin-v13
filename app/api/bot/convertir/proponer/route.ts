@@ -230,7 +230,13 @@ export async function POST(request: Request) {
         p.id,
         lista
           ? precioParaComprador(
-              { id: p.id, sku: p.sku, nombre: p.nombre, precio_final: lista.precio_final },
+              {
+                id: p.id,
+                sku: p.sku,
+                nombre: p.nombre,
+                ml_por_unidad: p.ml_por_unidad,
+                precio_final: lista.precio_final
+              },
               comprador
             )
           : null

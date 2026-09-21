@@ -6,6 +6,8 @@ import { createServerClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 import type { TablesInsert } from '@/types/database'
 import { annulComercialCascadePorTicketId, assertPermiteAnularTicketEnPerfil } from '@/lib/ticket-annul-cascade'
+import { comisionValidada, type PayloadAlta } from '@/lib/bot-entidad'
+import { crearEntidad, type PuertaDeAuth } from '@/lib/entidad-servidor'
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
@@ -39,12 +41,31 @@ interface UpdateEntidadInput {
   aplica_redondeo_costo?: boolean
 }
 
-/** Normalizes a commission value: accepts both percentage (20) and decimal (0.20). */
-function normalizeCommission(value: number | undefined | null): number {
-  if (value === undefined || value === null || !Number.isFinite(value)) return 0
-  const v = value > 1 ? value / 100 : value
-  return Math.max(0, Math.min(1, Math.round(v * 10000) / 10000))
-}
+/**
+ * ⛔ RETIRADO 2026-09-19, lo sustituye `normalizarComision` de `lib/bot-entidad.ts`.
+ *
+ * **Cero llamadores.** Se queda escrito, no borrado (regla 6): es la
+ * especificacion de las tres trampas que tenia vivas, y la replica congelada
+ * que vive en las pruebas es la prueba de que se cerraron.
+ *
+ *   1. Convertia a fraccion sin preguntar: `1` se leia como **100%** en
+ *      silencio, o sea regalar el producto. Hoy `normalizarComision` devuelve
+ *      `ambigua` y se pregunta cual de las dos lecturas es.
+ *   2. Redondeaba a **cuatro** decimales sin enterarse de que la columna es
+ *      `numeric(5,2)` y guarda **dos**: un 12.5% entraba como `0.125` y
+ *      Postgres lo guardaba `0.13` sin avisarle a nadie. Hoy eso es un error de
+ *      validacion que dice el numero real que quedaria.
+ *   3. Un valor invalido devolvia `0` -- comision cero, callado -- en vez de
+ *      detenerse.
+ *
+ * ```ts
+ * function normalizeCommission(value: number | undefined | null): number {
+ *   if (value === undefined || value === null || !Number.isFinite(value)) return 0
+ *   const v = value > 1 ? value / 100 : value
+ *   return Math.max(0, Math.min(1, Math.round(v * 10000) / 10000))
+ * }
+ * ```
+ */
 
 async function getServerSupabaseClient() {
   const cookieStore = await cookies()
@@ -108,6 +129,38 @@ export async function registrarSeguimientoAction(entidadId: string) {
   revalidatePath('/dashboard/distribuidores')
 }
 
+/**
+ * EL ALTA POR PANTALLA. **Un solo camino de servidor, el del bot (D16).**
+ *
+ * --- LA DEUDA QUE CIERRA (2026-09-19) ---------------------------------------
+ *
+ * La Fase 5 pedia EXTRAER esta funcion a `lib/entidad-servidor.ts`. No se
+ * extrajo: se construyo en paralelo. Quedaron dos verdades para la misma
+ * operacion -- `TKT-034`/`TKT-035`, la deuda recien creada otra vez -- y la
+ * misma alta daba resultados distintos segun la puerta:
+ *
+ * | | por el bot | por esta pantalla, hasta hoy |
+ * |---|---|---|
+ * | un `1` de comision | pregunta 1% o 100% | lo guardaba como **100%**, callado |
+ * | un 12.5% | avisa que quedaria 13% antes del "va" | lo guardaba **0.13**, callado |
+ * | la escritura | `crear_entidad_atomica`, UNA transaccion | **tres escrituras sueltas** |
+ *
+ * Esa tercera fila es la peor: si el proceso moria en medio quedaba una entidad
+ * sin cuenta, que no puede recibir ningun movimiento -- `finanzas_ledger` se
+ * asienta contra `cuentas_financieras` -- y aun asi aparece en el desplegable de
+ * compradores. La compensacion por `DELETE` que tenia no servia: la leccion de
+ * ERP-66 es que un DELETE denegado por RLS devuelve 200 y cero filas, asi que
+ * "funcionaba" sin borrar nada.
+ *
+ * **La direccion del arreglo no es simetrica: el bueno era el del bot.** Esta
+ * funcion pasa a llamar a lo que ya existe, y hereda gratis la atomicidad.
+ *
+ * --- LO QUE ESTO NO HACE, Y ES EL LIMITE DEL ENCARGO ------------------------
+ *
+ * **No se rediseña el formulario.** La pantalla sigue sin preguntar las tres
+ * comisiones como las pregunta el chat. Esta tanda hace que haya UN SOLO CAMINO
+ * DE SERVIDOR, no que la UI sea igual de buena que el bot.
+ */
 export async function registrarEntidadAction(payload: RegistrarEntidadInput) {
   const { id_nodo_padre } = payload
   const nombre = payload.nombre?.trim()
@@ -134,118 +187,94 @@ export async function registrarEntidadAction(payload: RegistrarEntidadInput) {
     .single()
 
   if (entidadError || !entidadOperadora) throw new Error('No se pudo validar tu identidad operativa.')
-  if (entidadOperadora.rol === 'SOCIO') throw new Error('No autorizado para crear miembros.')
 
   const parentNodeIdRaw = id_nodo_padre?.trim() || ''
   const isValidParentId = parentNodeIdRaw === '' || UUID_REGEX.test(parentNodeIdRaw)
   if (!isValidParentId) throw new Error('id_nodo_padre inválido.')
-  if (entidadOperadora.rol === 'DST' && payload.rol === 'DST') throw new Error('Unauthorized')
 
   let parentNodeId: string | null = null
   if (payload.rol === 'LOC') {
     parentNodeId = entidadOperadora.rol === 'DST' ? entidadOperadora.id : (parentNodeIdRaw || null)
   }
 
-  const rawComisionBase = payload.rol === 'DST' ? payload.comision_base : 0
-  const rawComisionBaseLocal = payload.rol === 'LOC' ? payload.comision_base_local : 0
-  const rawComisionHijoLocal = payload.rol === 'DST' ? payload.comision_hijo_local : 0
+  // -- LAS COMISIONES, CON EL MISMO CRITERIO QUE EL CHAT (D18/D20) ----------
+  // El aviso de redondeo vuelve como ERROR DE VALIDACION en vez de redondear en
+  // silencio: un 12.5% por pantalla **falla diciendo que quedaria 13%**. Y el
+  // `1` ambiguo se detiene en vez de leerse como 100%.
+  const comision = comisionValidada
 
-  const comisionBase = normalizeCommission(rawComisionBase)
-  const comisionBaseLocal = normalizeCommission(rawComisionBaseLocal)
-  const comisionHijoLocal = normalizeCommission(rawComisionHijoLocal)
-  const comisionLogistica = normalizeCommission(payload.comision_logistica)
-
-  const insertPayload: EntidadInsert = {
+  const datos: PayloadAlta = {
     nombre,
-    email,
-    auth_id: null,
     rol: payload.rol,
-    zona: payload.zona,
+    zona: payload.zona as PayloadAlta['zona'],
+    email,
     telefono: payload.telefono?.trim() || null,
-    ubicacion_maps: payload.ubicacion_maps?.trim() || null,
-    es_distribuidor: payload.rol === 'DST',
     id_nodo_padre: parentNodeId,
-    id_padre: parentNodeId,
-    comision_base: comisionBase,
-    comision_base_local: comisionBaseLocal,
-    comision_hijo_local: comisionHijoLocal,
-    comision_logistica: comisionLogistica,
-    aplica_redondeo_costo: payload.aplica_redondeo_costo ?? true
+    comision_base: payload.rol === 'DST' ? comision(payload.comision_base, 'Comisión base') : 0,
+    comision_base_local:
+      payload.rol === 'LOC' ? comision(payload.comision_base_local, 'Comisión base local') : 0,
+    comision_hijo_local:
+      payload.rol === 'DST' ? comision(payload.comision_hijo_local, 'Comisión hijo local') : 0
   }
 
-  let authUserId: string | null = null
-  let supabaseAdmin: ReturnType<typeof createClient> | null = null
-
+  // La puerta de Auth: la misma llamada de siempre, ahora detras de la interfaz
+  // que `crearEntidad` sabe deshacer si la transaccion falla.
+  let puerta: PuertaDeAuth | undefined
   if (payload.rol === 'DST') {
     const supabaseAdminUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!supabaseAdminUrl || !serviceRoleKey) throw new Error('Configuración de Supabase Admin incompleta.')
-
-    supabaseAdmin = createClient(supabaseAdminUrl, serviceRoleKey)
-    const { data: authData, error: createAuthError } = await supabaseAdmin.auth.admin.createUser({
-      email: email!,
-      password: password!,
-      email_confirm: true
-    })
-
-    if (createAuthError) {
-      const msgLower = createAuthError.message?.toLowerCase() ?? ''
-      const status = (createAuthError as { status?: number }).status
-      const isEmailAlreadyRegistered =
-        msgLower.includes('already been registered') ||
-        msgLower.includes('already exists') ||
-        status === 422 ||
-        status === 409
-      if (isEmailAlreadyRegistered) {
-        throw new Error(
-          'Este correo electrónico ya está registrado en el sistema de acceso. Por favor, utiliza un correo distinto o contacta a soporte para liberarlo.'
-        )
-      }
-      throw new Error(createAuthError.message ? `Fallo al crear credenciales: ${createAuthError.message}` : 'No se pudo crear el usuario de autenticación.')
+    if (!supabaseAdminUrl || !serviceRoleKey) {
+      throw new Error('Configuración de Supabase Admin incompleta.')
     }
-
-    if (!authData.user?.id) throw new Error('No se pudo crear el usuario de autenticación.')
-    authUserId = authData.user.id
-    insertPayload.auth_id = authUserId
+    const supabaseAdmin = createClient(supabaseAdminUrl, serviceRoleKey)
+    puerta = {
+      crear: async (correo: string, clave: string) => {
+        const { data: authData, error: createAuthError } =
+          await supabaseAdmin.auth.admin.createUser({
+            email: correo,
+            password: clave,
+            email_confirm: true
+          })
+        if (createAuthError) {
+          const msgLower = createAuthError.message?.toLowerCase() ?? ''
+          const status = (createAuthError as { status?: number }).status
+          const yaRegistrado =
+            msgLower.includes('already been registered') ||
+            msgLower.includes('already exists') ||
+            status === 422 ||
+            status === 409
+          if (yaRegistrado) {
+            throw new Error(
+              'Este correo electrónico ya está registrado en el sistema de acceso. Por favor, utiliza un correo distinto o contacta a soporte para liberarlo.'
+            )
+          }
+          throw new Error(
+            createAuthError.message
+              ? 'Fallo al crear credenciales: ' + createAuthError.message
+              : 'No se pudo crear el usuario de autenticación.'
+          )
+        }
+        if (!authData.user?.id) throw new Error('No se pudo crear el usuario de autenticación.')
+        return authData.user.id
+      },
+      borrar: async (authId: string) => {
+        const { error } = await supabaseAdmin.auth.admin.deleteUser(authId)
+        if (error) throw new Error(error.message)
+      }
+    }
   }
 
-  try {
-    const { data: entidadCreada, error: insertError } = await supabase
-      .from('entidades')
-      .insert(insertPayload)
-      .select('id')
-      .single()
-
-    if (insertError || !entidadCreada?.id) {
-      throw new Error(insertError?.message || 'No se pudo crear la entidad.')
+  await crearEntidad(
+    supabase,
+    { idEntidad: entidadOperadora.id, rol: entidadOperadora.rol },
+    datos,
+    password,
+    puerta,
+    {
+      ubicacion_maps: payload.ubicacion_maps ?? null,
+      aplica_redondeo_costo: payload.aplica_redondeo_costo ?? true
     }
-
-    const cuentaPayloads: CuentaFinancieraInsert[] = [
-      {
-        id_entidad: entidadCreada.id,
-        nombre: `Efectivo (${nombre})`,
-        tipo_fiscalidad: 'LIBRE'
-      }
-    ]
-
-    const { error: cuentaError } = await supabase.from('cuentas_financieras').insert(cuentaPayloads)
-
-    if (cuentaError) {
-      const { error: rollbackEntidadError } = await supabase.from('entidades').delete().eq('id', entidadCreada.id)
-      if (rollbackEntidadError) {
-        throw new Error(`Cuenta financiera no creada (${cuentaError.message}) y fallo rollback de entidad (${rollbackEntidadError.message}).`)
-      }
-      throw new Error(`No se pudo crear la cuenta financiera por defecto: ${cuentaError.message}`)
-    }
-  } catch (dbError) {
-    if (supabaseAdmin && authUserId) {
-      const { error: rollbackAuthError } = await supabaseAdmin.auth.admin.deleteUser(authUserId)
-      if (rollbackAuthError) {
-        throw new Error(`Fallo de persistencia en base de datos y rollback de auth fallido (${rollbackAuthError.message}).`)
-      }
-    }
-    throw dbError
-  }
+  )
 
   revalidatePath('/dashboard/distribuidores')
   return { success: true }
@@ -302,9 +331,13 @@ export async function updateEntidadAction(id: string, formData: UpdateEntidadInp
       telefono,
       ubicacion_maps,
       zona,
-      comision_base: normalizeCommission(rawComisionBase),
-      comision_base_local: normalizeCommission(rawComisionBaseLocal),
-      comision_hijo_local: normalizeCommission(rawComisionHijoLocal),
+      // El mismo criterio que el alta y que el chat. Editar una comision tenia
+      // EXACTAMENTE las mismas tres trampas que crearla -- un 12.5% editado
+      // desde la pantalla se guardaba 0.13 sin decirlo -- y arreglar solo el
+      // alta habria dejado la deuda de las dos verdades a medio cerrar.
+      comision_base: comisionValidada(rawComisionBase, 'Comision base'),
+      comision_base_local: comisionValidada(rawComisionBaseLocal, 'Comision base local'),
+      comision_hijo_local: comisionValidada(rawComisionHijoLocal, 'Comision hijo local'),
       aplica_redondeo_costo: formData.aplica_redondeo_costo ?? true
     })
     .eq('id', entidadId)

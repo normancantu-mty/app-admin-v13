@@ -64,3 +64,5 @@ supabase/_respaldos/
 /bot/_audios/
 /bot/*.log
 /bot/__pycache__/
+# El reloj de la espera del vigilante (D23): estado de ejecucion, no codigo.
+/bot/vigilante_espera.txt

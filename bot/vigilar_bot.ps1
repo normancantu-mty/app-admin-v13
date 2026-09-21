@@ -18,6 +18,15 @@
 #   - si el bot ESTA pero su log lleva mas de 20 min sin una linea, esta
 #     colgado (E-25) y se reinicia. 20 > 15 a proposito: un latido perdido por
 #     carga no es un cuelgue.
+#   - si el bot ESTA y contesta pero algun `bot/*.py` es MAS NUEVO que el
+#     proceso, esta sirviendo codigo viejo (D21) y se reinicia, escribiendo las
+#     dos fechas. Salvo que haya una conversacion a medias: entonces espera y
+#     lo anota (D23).
+#
+# QUIEN DECIDE: `decidir_reinicio.py`, no este archivo. Aqui estan las MANOS
+# --matar, arrancar, mirar la lista de procesos--; el JUICIO esta alla, como
+# funcion pura, y `probar_vigilante.py` lo corre con sus controles negativos.
+# El tope de 20 minutos vive alla tambien: una sola verdad, no dos.
 #
 # INSTALARLO (una vez, en una terminal de Norman - pide elevacion):
 #   schtasks /create /tn "VigilarBotERP" /sc minute /mo 5 /ru "$env:USERNAME" ^
@@ -28,9 +37,7 @@
 
 $ErrorActionPreference = 'Continue'
 $raiz    = Split-Path -Parent $PSScriptRoot
-$logBot  = Join-Path $PSScriptRoot 'bot_gastos.log'
 $logVig  = Join-Path $PSScriptRoot 'vigilante.log'
-$MAX_MIN = 20
 
 function Apuntar($texto) {
   $linea = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $texto
@@ -71,24 +78,63 @@ if (-not $servidorVivo) {
   else { Apuntar 'El servidor NO levanto en 90s. No arranco el bot a ciegas.'; exit 1 }
 }
 
-# --- 3. El bot: vive el proceso?
+# --- 3. El bot: vive el proceso, y CON QUE CODIGO?
+#
+#        El juicio NO vive aqui. Vive en `decidir_reinicio.py`, como funcion
+#        pura, y lo corre `probar_vigilante.py` con sus controles negativos. La
+#        razon es D24: mientras la decision estuvo escrita en PowerShell dentro
+#        de este `if`, **nadie podia probarla**, y por eso el 2026-09-19 el
+#        vigilante dejo al bot servir codigo de 24 horas sin decir una palabra.
+#
+#        Aqui se queda solo lo que unicamente Windows sabe: si el proceso existe
+#        y a que hora arranco. Todo lo demas -- el `.py` mas nuevo, la edad del
+#        log, los borradores del ultimo latido -- lo lee Python, que si se prueba.
 $proc = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
         Where-Object { $_.CommandLine -like '*bot_gastos.py*' }
 
-$razon = $null
-if (-not $proc) {
-  $razon = 'el proceso no existe'
-} elseif (Test-Path $logBot) {
-  # --- 4. Vive el proceso PERO esta colgado? El latido es lo unico que lo
-  #        distingue: un proceso en la lista de tareas no es un bot que
-  #        contesta. Es E-25, y ya paso una vez.
-  $edad = (New-TimeSpan -Start (Get-Item $logBot).LastWriteTime -End (Get-Date)).TotalMinutes
-  if ($edad -gt $MAX_MIN) {
-    $razon = ('el log lleva {0:N0} min sin una linea (tope {1}); esta colgado' -f $edad, $MAX_MIN)
-  }
+$existe = '0'
+$arranque = '-'
+if ($proc) {
+  $existe = '1'
+  $utc1970 = [datetime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+  $primero = $proc | Sort-Object CreationDate | Select-Object -First 1
+  $arranque = [string][int64](($primero.CreationDate.ToUniversalTime() - $utc1970).TotalSeconds)
 }
 
-if (-not $razon) { exit 0 }   # Todo bien. El silencio del vigilante es correcto.
+# El reloj de la espera de D23 tiene que sobrevivir entre corridas: el vigilante
+# nace y muere cada 5 minutos, asi que "llevo 20 minutos esperando" no cabe en
+# una variable. Cabe en este archivo de una linea.
+$archivoEspera = Join-Path $PSScriptRoot 'vigilante_espera.txt'
+$espera = '-'
+if (Test-Path $archivoEspera) {
+  $leido = (Get-Content $archivoEspera -Raw -ErrorAction SilentlyContinue)
+  if ($leido) { $espera = $leido.Trim() }
+  if (-not $espera) { $espera = '-' }
+}
+
+$veredicto = @(& python (Join-Path $PSScriptRoot 'decidir_reinicio.py') $existe $arranque $espera)
+$accion = if ($veredicto.Count -gt 0) { [string]$veredicto[0] } else { '' }
+$razon  = if ($veredicto.Count -gt 1) { ([string]$veredicto[1]).Trim() } else { '' }
+$nuevaEspera = if ($veredicto.Count -gt 2) { ([string]$veredicto[2]).Trim() } else { '' }
+$accion = $accion.Trim()
+
+# Si el juez no contesta, NO se mata nada. Un vigilante que reinicia cuando no
+# entiende la respuesta es un vigilante que reinicia cada 5 minutos.
+if ($accion -ne 'nada' -and $accion -ne 'esperar' -and $accion -ne 'reiniciar') {
+  Apuntar "No pude decidir (decidir_reinicio.py dijo '$accion'). No toco el bot."
+  exit 1
+}
+
+if ($accion -eq 'esperar') {
+  # D23: hay una conversacion a medias. No se tira por un cambio de codigo.
+  Apuntar $razon
+  if ($nuevaEspera) { Set-Content -Path $archivoEspera -Value $nuevaEspera -Encoding ASCII }
+  exit 0
+}
+
+Remove-Item $archivoEspera -ErrorAction SilentlyContinue
+
+if ($accion -eq 'nada') { exit 0 }   # El silencio del vigilante es correcto.
 
 Apuntar "REINICIO el bot: $razon"
 if ($proc) {

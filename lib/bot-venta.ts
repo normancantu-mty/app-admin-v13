@@ -44,6 +44,14 @@ import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { calculateWaterfall } from '@/lib/pricing-waterfall'
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
 import { buscarPorNombre, type ResultadoNombre } from '@/lib/bot-nombres'
+import { candidatosPorTamano } from '@/lib/bot-tamanos'
+import {
+  TOPE_DESCUENTO_PORCENTAJE,
+  descuentoDelPayload,
+  lineasDeDescuento,
+  sinDescuento,
+  type DescuentoAplicado
+} from '@/lib/bot-descuento'
 
 // ============================================================================
 // 1. LOS DOS RECHAZOS DEL ALCANCE
@@ -93,6 +101,8 @@ export interface ProductoDelCatalogo {
   id: string
   sku: string | null
   nombre: string
+  /** Mililitros por botella. `null` en lo que no es botella (la pasta). */
+  ml_por_unidad: number | null
   /** El precio de lista YA resuelto por la zona del comprador. Lo pone el endpoint. */
   precio_final: number
 }
@@ -110,7 +120,26 @@ export function buscarProducto(
   dicho: unknown,
   catalogo: readonly ProductoDelCatalogo[]
 ): ResultadoNombre<ProductoDelCatalogo> {
-  return buscarPorNombre(dicho, catalogo, (p) => (p.sku ? [p.nombre, p.sku] : [p.nombre]))
+  const porNombre = buscarPorNombre(dicho, catalogo, (p) =>
+    p.sku ? [p.nombre, p.sku] : [p.nombre]
+  )
+  if (porNombre.ok) return porNombre
+
+  // ── LA CUARTA PASADA: EL TAMANO (D37/D38, 2026-09-19) ────────────────────
+  // Va DESPUES de las tres de nombre, no antes: un nombre que empata exacto
+  // sigue ganando. Entra justo donde el comparador literal se rendia -- `750 ml`
+  // con un espacio, `750` pelado, `3/4`, `grandes`, `mini` -- que es como Norman
+  // escribe de verdad y es la conversacion que fracaso el 2026-09-19.
+  //
+  // Si el tamano deja MAS de uno (`chicas`: 250 o 50) no se adivina: se
+  // devuelve `ambiguo` con esos candidatos y se pregunta con un boton. Y si no
+  // deja ninguno, manda el resultado de nombre tal cual -- que es como
+  // "20 de cerveza" sigue sin empatar con nada.
+  const porTamano = candidatosPorTamano(dicho, catalogo)
+  if (porTamano.length === 1) return { ok: true, elegido: porTamano[0] }
+  if (porTamano.length > 1) return { ok: false, motivo: 'ambiguo', candidatos: porTamano }
+
+  return porNombre
 }
 
 /**
@@ -124,6 +153,7 @@ export interface ProductoConPrecios {
   id: string
   sku: string | null
   nombre: string
+  ml_por_unidad: number | null
   precios: readonly { zona: string; precio_final: number }[]
 }
 
@@ -141,6 +171,7 @@ export function aProductoDelCatalogo(p: ProductoConPrecios, zona: string): Produ
     id: p.id,
     sku: p.sku,
     nombre: p.nombre,
+    ml_por_unidad: p.ml_por_unidad,
     precio_final: Number(p.precios.find((l) => l.zona === zona)?.precio_final ?? 0)
   }
 }
@@ -235,6 +266,17 @@ export interface ContextoVenta {
   tipoFiscalidadCuenta: TipoFiscalidad
   etiqueta: string
   lineas: readonly LineaPedida[]
+  /**
+   * El descuento **ya resuelto y ya topado por la ruta** (D55/D56).
+   *
+   * Va en el CONTEXTO y no en `PropuestaVentaLLM` a proposito, y la distincion
+   * es la misma que separa `id_producto` de `producto`: lo que esta en la
+   * propuesta es lo que dijo el modelo, y lo que esta en el contexto es lo que
+   * el servidor ya verifico. `aplicarDescuento` corre en
+   * `app/api/bot/venta/proponer/route.ts` y el que se pasa del tope nunca llega
+   * hasta aqui: se va en **422**.
+   */
+  descuento?: DescuentoAplicado
 }
 
 export interface PropuestaVentaLLM {
@@ -443,6 +485,37 @@ export function normalizarVenta(
     }
   }
 
+  // ── D55/D56: EL DESCUENTO ─────────────────────────────────────────────────
+  // Llega ya resuelto y ya topado por la ruta. **Se vuelve a revisar aqui** por
+  // la misma razon por la que `_frase_de_hecho_suelto` revalida `otro_hecho`:
+  // esta funcion es exportada y se llama desde una prueba, desde un endpoint y
+  // manana desde donde sea. Una funcion que arma un payload de dinero no puede
+  // confiar en que su llamador ya valido.
+  const descuento = contexto.descuento ?? sinDescuento(total)
+  if (Math.abs(descuento.subtotal - total) > 0.005) {
+    return {
+      ok: false,
+      error: 'El descuento se calculo sobre un total que ya no es el mismo. No lo escribo.'
+    }
+  }
+  if (descuento.porcentaje > TOPE_DESCUENTO_PORCENTAJE) {
+    return {
+      ok: false,
+      error:
+        `Un descuento de ${descuento.porcentaje}% no lo aplico por chat: ` +
+        `el tope es ${TOPE_DESCUENTO_PORCENTAJE}%.`
+    }
+  }
+  if (!(descuento.total > 0) || descuento.total > total + 0.005) {
+    return { ok: false, error: 'Ese descuento me deja un cobro que no tiene sentido. No lo escribo.' }
+  }
+  if (descuento.hay) {
+    avisos.push(
+      `Lleva descuento: de lista ${pesos(descuento.subtotal)}, se cobran ` +
+        `${pesos(descuento.total)}. La diferencia queda escrita en el ticket.`
+    )
+  }
+
   // ── El monto dicho contra el monto de lista ───────────────────────────────
   // **Avisa, no detiene.** El precio del ERP es el de `listas_precios` mas la
   // cascada, y ese es el que se escribe; lo que la persona dijo no puede entrar
@@ -452,11 +525,16 @@ export function normalizarVenta(
   // actualizar, o el precio que de verdad cobro— y **el unico que puede saber
   // cual es el que lo dijo**. Por eso se le ensena la diferencia en vez de
   // decidirla aqui.
+  // **Se compara contra lo que se va a COBRAR, no contra la lista** (D55): con
+  // un descuento dictado, el numero que la persona tiene en la cabeza es el
+  // rebajado, y avisar de una diferencia que el descuento ya explica seria
+  // ruido que ensena a ignorar los avisos.
   const dicho = Number(propuesta.monto)
-  if (Number.isFinite(dicho) && dicho > 0 && Math.abs(dicho - total) > TOLERANCIA_MONTO_DICHO) {
+  const cobrado = descuento.total
+  if (Number.isFinite(dicho) && dicho > 0 && Math.abs(dicho - cobrado) > TOLERANCIA_MONTO_DICHO) {
     avisos.push(
-      `Dijiste $${dicho.toFixed(2)} y de lista me salen $${total.toFixed(2)}. ` +
-        'Voy a escribir el de lista. Si el bueno es el otro, dimelo y lo capturamos en la pantalla.'
+      `Dijiste $${dicho.toFixed(2)} y me salen $${cobrado.toFixed(2)}. ` +
+        'Voy a escribir el mio. Si el bueno es el otro, dimelo y lo capturamos en la pantalla.'
     )
   }
 
@@ -466,7 +544,12 @@ export function normalizarVenta(
 
   // Solo para el mensaje. La fila la recalcula `registrarVenta` con esta misma
   // funcion y esta misma cuenta.
-  const fiscal = calculateReverseTaxes(total, contexto.tipoFiscalidadCuenta)
+  //
+  // **Sobre el COBRADO, no sobre la lista.** `registrarVenta` recalcula los
+  // impuestos contra `totalCobradoReal`; si aqui se usara el de lista, un
+  // ticket con descuento ensenaria un IVA que la fila no va a tener. La prueba
+  // `tests/bot-venta.spec.ts` compara las dos para que no se separen callado.
+  const fiscal = calculateReverseTaxes(descuento.total, contexto.tipoFiscalidadCuenta)
   if (fiscal.iva > 0 || fiscal.ieps > 0) {
     avisos.push(
       `Esa cuenta es ${contexto.tipoFiscalidadCuenta}: del total se separan ` +
@@ -485,11 +568,16 @@ export function normalizarVenta(
       id_cuenta_destino: contexto.idCuentaDestino,
       condicion_pago: condicionPago,
       items,
-      // `subtotal_catalogo` y `total_cobrado_real` son el mismo numero, igual
-      // que en la pantalla (`app/pos/page.tsx` manda `precioFinalTotal` en los
-      // dos). El bot no aplica descuentos: no hay campo donde dictarlos.
+      // ── D55 (Fase 6): AQUI ES DONDE LAS DOS COLUMNAS SE SEPARAN ───────────
+      // Hasta hoy este comentario decia: *"son el mismo numero [...] el bot no
+      // aplica descuentos: no hay campo donde dictarlos."* **Ya hay campo.**
+      //
+      // `subtotal_catalogo` es lo que cuesta de lista y `total_cobrado_real` es
+      // lo que de verdad entra a la caja. Sin descuento siguen siendo el mismo
+      // numero, bit por bit — `sinDescuento(total).total === total` — que es lo
+      // que garantiza que una venta normal no cambie ni un centavo.
       subtotal_catalogo: total,
-      total_cobrado_real: total,
+      total_cobrado_real: descuento.total,
       usuario_creador: `telegram:${contexto.etiqueta}`
     }
   }
@@ -520,10 +608,20 @@ export function mensajeDeConfirmacionVenta(
     nombreComprador: string
     nombreCuentaDestino: string
     desglose: readonly DesgloseRenglon[]
+    /** Solo la etiqueta de la promocion. Las cifras salen del payload. */
+    motivoDescuento?: string
   },
   avisos: readonly string[]
 ): string {
   const piezas = payload.items.reduce((suma, i) => suma + i.cantidad, 0)
+  // **Las dos cifras salen del payload sellado**, no de una variable paralela:
+  // ver `descuentoDelPayload`. Asi el mensaje no puede decir una cosa y la fila
+  // otra ni aunque alguien cambie el orden de las llamadas.
+  const descuento = descuentoDelPayload(
+    payload.subtotal_catalogo,
+    payload.total_cobrado_real,
+    contexto.motivoDescuento ?? ''
+  )
 
   const lineas = [
     'Esto es lo que voy a escribir. Revisalo:',
@@ -542,10 +640,16 @@ export function mensajeDeConfirmacionVenta(
     lineas.push(`   ${r.cantidad} x ${r.nombre} a ${pesos(r.precioUnitario)}${distinto} = ${pesos(r.subtotal)}`)
   }
 
-  lineas.push(
-    '',
-    `TOTAL:      ${pesos(payload.total_cobrado_real)}   (${piezas} ${piezas === 1 ? 'pieza' : 'piezas'})`
-  )
+  const cuantas = `(${piezas} ${piezas === 1 ? 'pieza' : 'piezas'})`
+  if (descuento.hay) {
+    // D55: **las dos cifras a la vista.** Un total mas bajo, solo, se lee como
+    // un error de precios; con la lista al lado se lee como la promocion.
+    const tres = lineasDeDescuento(descuento)
+    tres[tres.length - 1] += `   ${cuantas}`
+    lineas.push('', ...tres)
+  } else {
+    lineas.push('', `TOTAL:      ${pesos(payload.total_cobrado_real)}   ${cuantas}`)
+  }
 
   if (payload.condicion_pago === 'CONTADO') {
     lineas.push(`El dinero entra a "${contexto.nombreCuentaDestino}".`)

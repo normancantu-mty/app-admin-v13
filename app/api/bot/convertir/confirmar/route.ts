@@ -38,8 +38,10 @@ import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import { registrarVenta, type OperadorDeVenta } from '@/lib/venta-servidor'
 import {
+  juzgarConversion,
   mensajeDeConversionHecha,
   selloConversionCoincide,
+  type CotizacionParaConvertir,
   type LineaConvertida,
   type PayloadConversion
 } from '@/lib/bot-conversion'
@@ -158,7 +160,9 @@ export async function POST(request: Request) {
     // solo fallaria al marcar, cuando el inventario ya salio dos veces.
     const { data: cotAhora } = await supabase
       .from('cotizaciones')
-      .select('id, folio, estado, id_ticket')
+      .select(
+        'id, folio, fecha, estado, zona, total, id_comprador, nombre_prospecto, vigente_hasta, id_ticket'
+      )
       .eq('id', fila.id_cotizacion)
       .maybeSingle()
 
@@ -170,6 +174,46 @@ export async function POST(request: Request) {
         { error: `${cotAhora.folio} ya se convirtio en venta. No la cobro dos veces.` },
         { status: 409 }
       )
+    }
+
+    // ── LOS 7 DIAS, OTRA VEZ, AQUI (D12/D13, 2026-09-19) ──────────────────
+    // El defecto que cierra: la puerta de los 7 dias vivia SOLO en el
+    // `proponer`. Entre la propuesta y el "va" pueden pasar dias — se propone
+    // el lunes por la noche y se pica "VA, hazla venta" el miercoles — y la
+    // venta se escribia igual, con precios de hace 9 dias. `anular/confirmar`
+    // ya hacia su segunda pasada; `convertir` no.
+    //
+    // Se juzga la cotizacion RELEIDA, no la copia que viaja sellada dentro del
+    // borrador (D13): juzgar el borrador es juzgar una foto vieja, y ademas se
+    // perderia lo que haya cambiado entre medias. Y con `new Date()` del
+    // momento del "va", que es el punto entero del arreglo.
+    //
+    // Los renglones se cuentan sobre los que se van a VENDER — son los que el
+    // sello cubre y los unicos que se van a escribir; `juzgarConversion` solo
+    // los usa para rechazar una cotizacion vacia.
+    const cotRevisada: CotizacionParaConvertir = {
+      id: cotAhora.id,
+      folio: cotAhora.folio,
+      fecha: String(cotAhora.fecha),
+      estado: cotAhora.estado,
+      zona: cotAhora.zona,
+      total: Number(cotAhora.total) || 0,
+      id_comprador: cotAhora.id_comprador,
+      nombre_prospecto: cotAhora.nombre_prospecto,
+      vigente_hasta: cotAhora.vigente_hasta ? String(cotAhora.vigente_hasta) : null
+    }
+    const juicio = juzgarConversion(cotRevisada, venta.items.length)
+    if (!juicio.ok) {
+      // 422 y CERO filas escritas (D14). No se ofrece recotizar desde aqui: se
+      // dice que caduco y que hay que volver a empezar con /convertir. El
+      // borrador se queda PENDIENTE a proposito — no se cancela algo que la
+      // persona no cancelo, y el proximo `proponer` lo apaga solo.
+      console.warn(
+        '[bot] conversion caducada entre la propuesta y el va:',
+        cotRevisada.folio,
+        juicio.motivo
+      )
+      return NextResponse.json({ error: juicio.mensaje, motivo: juicio.motivo }, { status: 422 })
     }
 
     // ── 1. LA VENTA ───────────────────────────────────────────────────────

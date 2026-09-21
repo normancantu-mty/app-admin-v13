@@ -63,6 +63,7 @@ const CATALOGO_CRUDO: ProductoConPrecios[] = [
     id: 'c1000000-0000-0000-0000-000000000001',
     sku: 'plata-750ml',
     nombre: 'Destilado Plata 750ml',
+    ml_por_unidad: 750,
     precios: [
       { zona: 'Zacatecas', precio_final: 599 },
       { zona: 'Foraneo', precio_final: 799 }
@@ -72,6 +73,7 @@ const CATALOGO_CRUDO: ProductoConPrecios[] = [
     id: 'c1000000-0000-0000-0000-000000000003',
     sku: 'plata-250ml',
     nombre: 'Destilado Plata 250ml',
+    ml_por_unidad: 250,
     precios: [
       { zona: 'Zacatecas', precio_final: 179 },
       { zona: 'Foraneo', precio_final: 199 }
@@ -81,6 +83,7 @@ const CATALOGO_CRUDO: ProductoConPrecios[] = [
     id: 'c1000000-0000-0000-0000-000000000004',
     sku: 'plata-50ml',
     nombre: 'Destilado Plata 50ml',
+    ml_por_unidad: 50,
     precios: [
       { zona: 'Zacatecas', precio_final: 69 },
       { zona: 'Foraneo', precio_final: 99 }
@@ -90,6 +93,7 @@ const CATALOGO_CRUDO: ProductoConPrecios[] = [
     id: '9f310b3c-9924-4b63-b08b-a50a88795347',
     sku: 'B-MVP-Pasta2kg',
     nombre: 'Pasta-Guajillo-2kg',
+    ml_por_unidad: null,
     precios: [
       { zona: 'Zacatecas', precio_final: 130 },
       { zona: 'Foraneo', precio_final: 130 }

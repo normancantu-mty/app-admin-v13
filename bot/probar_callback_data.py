@@ -15,8 +15,16 @@ alguien la reintroduce, esta prueba lo caza.
 """
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# D46 (Fase 6): **el log va a un temporal, y esta linea tiene que ir ANTES del
+# import.** `bot_gastos` instala su `FileHandler` al importarse; sin esto, correr
+# esta prueba escribe en `bot/bot_gastos.log` y le reinicia el reloj al detector
+# de cuelgue de `decidir_reinicio.py`, que mide por el `mtime` de ese archivo.
+os.environ.setdefault(
+    "BOT_LOG", os.path.join(tempfile.gettempdir(), "probar_bot.log"))
 
 import bot_gastos as B  # noqa: E402
 

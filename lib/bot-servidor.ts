@@ -369,7 +369,7 @@ export async function leerCatalogoDeVenta(
 ): Promise<ProductoConPrecios[]> {
   const { data, error } = await supabase
     .from('catalogo_productos')
-    .select('id, sku, nombre, listas_precios (zona, precio_final)')
+    .select('id, sku, nombre, ml_por_unidad, listas_precios (zona, precio_final)')
     .eq('tipo', 'TERMINADO')
     .order('nombre', { ascending: true })
 
@@ -382,6 +382,10 @@ export async function leerCatalogoDeVenta(
     id: p.id,
     sku: p.sku,
     nombre: p.nombre ?? '(sin nombre)',
+    // El tamano viaja desde aqui (D37, 2026-09-19). La columna ya existia y
+    // solo la usaba el envasado de lotes; sin ella `750 ml` no empata con
+    // `Destilado Plata 750ml` y el bot contesta que no encuentra el producto.
+    ml_por_unidad: p.ml_por_unidad === null ? null : Number(p.ml_por_unidad) || null,
     precios: (p.listas_precios ?? []).map((l) => ({
       zona: l.zona ?? '',
       precio_final: Number(l.precio_final) || 0

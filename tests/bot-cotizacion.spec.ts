@@ -29,6 +29,8 @@ import { join } from 'path'
 import { expect, test } from '@playwright/test'
 import {
   cotizacionCanonica,
+  escalarAObjetivo,
+  MARGEN_DE_PROPORCION,
   LLAVES_COTIZACION,
   mensajeDeConfirmacionCotizacion,
   normalizarCotizacion,
@@ -63,6 +65,7 @@ const CATALOGO_CRUDO: ProductoConPrecios[] = [
     id: 'c1000000-0000-0000-0000-000000000001',
     sku: 'plata-750ml',
     nombre: 'Destilado Plata 750ml',
+    ml_por_unidad: 750,
     precios: [
       { zona: 'Zacatecas', precio_final: 599 },
       { zona: 'Foraneo', precio_final: 799 }
@@ -72,6 +75,7 @@ const CATALOGO_CRUDO: ProductoConPrecios[] = [
     id: 'c1000000-0000-0000-0000-000000000003',
     sku: 'plata-250ml',
     nombre: 'Destilado Plata 250ml',
+    ml_por_unidad: 250,
     precios: [
       { zona: 'Zacatecas', precio_final: 179 },
       { zona: 'Foraneo', precio_final: 199 }
@@ -81,6 +85,7 @@ const CATALOGO_CRUDO: ProductoConPrecios[] = [
     id: 'c1000000-0000-0000-0000-000000000004',
     sku: 'plata-50ml',
     nombre: 'Destilado Plata 50ml',
+    ml_por_unidad: 50,
     precios: [
       { zona: 'Zacatecas', precio_final: 69 },
       { zona: 'Foraneo', precio_final: 99 }
@@ -337,7 +342,7 @@ test.describe('los renglones', () => {
 
   test('un producto sin precio en la zona no se cotiza en cero', () => {
     const sinPrecio = aProductoDelCatalogo(
-      { id: 'c1000000-0000-0000-0000-00000000000f', sku: 'x', nombre: 'Fantasma', precios: [] },
+      { id: 'c1000000-0000-0000-0000-00000000000f', sku: 'x', nombre: 'Fantasma', ml_por_unidad: null, precios: [] },
       ZONA_POR_DEFECTO
     )
     const r = normalizarCotizacion({}, contexto({ lineas: [{ producto: sinPrecio, cantidad: 1 }] }))
@@ -562,5 +567,160 @@ test.describe('el bot de cotizaciones', () => {
 
   test('ya no dice que todavia no sabe cotizar', () => {
     expect(BOT).not.toContain('Todavia no se cotizar')
+  })
+})
+
+
+// ============================================================================
+// D51/D52 (Fase 6) — LA COTIZACION POR MONTO OBJETIVO
+// ============================================================================
+//
+// ─── LA CONVERSACION QUE ESTO MIDE ──────────────────────────────────────────
+//
+//   Norman: ahora quiere una cotizacion cuyo total sea lo mas cercano a 15,000
+//           pesos, manteniendo una proporcion semejante, hazme esa cotizacion
+//   Bot:    Que le cotizo?
+//   Norman: nose tu dimelo, haz las cuentas
+//   Bot:    Que le cotizo?
+//
+// Con la cotizacion de $10,176.00 todavia en pantalla. **Los tres precios los
+// acababa de emitir el propio bot.**
+//
+// ─── POR QUE ESTA PRUEBA ES BARATA ──────────────────────────────────────────
+// Porque es la cotizacion REAL de Norman, con los fixtures que ya estaban
+// arriba y el mismo `precioParaComprador` del endpoint. No hay numero magico:
+// los $10,176.00 se calculan aqui y se comprueban antes de escalar nada.
+
+test.describe('el monto objetivo: la cotizacion que el bot no supo hacer (D51/D52)', () => {
+  // Aeropuerto, copiado de produccion: LOC de Zacatecas al 20%. Es a quien
+  // Norman le estaba cotizando el 2026-09-19.
+  const AEROPUERTO: CompradorDeVenta = {
+    id: '4cbad6ad-41f6-4397-86d3-0f5ec5be21dd',
+    nombre: 'Aeropuerto',
+    rol: 'LOC',
+    zona: 'Zacatecas',
+    comision_base: 0,
+    comision_base_local: 0.2,
+    aplica_redondeo_costo: true
+  }
+
+  /** Los renglones de la cotizacion real, con el precio que resuelve el endpoint. */
+  const RENGLONES = [
+    { producto: CATALOGO[0], cantidad: 12 },
+    { producto: CATALOGO[1], cantidad: 12 },
+    { producto: CATALOGO[2], cantidad: 48 }
+  ].map((l) => ({
+    precioUnitario: precioParaComprador(l.producto, AEROPUERTO),
+    cantidad: l.cantidad
+  }))
+
+  const totalDe = (cs: readonly number[]) =>
+    Number(cs.reduce((t, c, i) => t + c * RENGLONES[i].precioUnitario, 0).toFixed(2))
+
+  // El ancla de todo lo de abajo. Si este numero cambia, cambio un precio de
+  // produccion y hay que volver a mirar el resto.
+  test('la cotizacion real de Norman son $10,176.00', () => {
+    expect(totalDe(RENGLONES.map((r) => r.cantidad))).toBe(10176)
+  })
+
+  test('pedir 15,000 devuelve piezas enteras, en proporcion, cerca del objetivo', () => {
+    const r = escalarAObjetivo(RENGLONES, 15000)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+
+    // 1. **Enteras y positivas.** Es la mitad literal del encargo.
+    for (const c of r.cantidades) {
+      expect(Number.isInteger(c)).toBe(true)
+      expect(c).toBeGreaterThan(0)
+    }
+
+    // 2. **El total cae en la ventana que pidio el encargo.**
+    expect(r.total).toBeGreaterThan(14000)
+    expect(r.total).toBeLessThan(16000)
+
+    // 3. **El total que dice es el total que es.** Si estos dos numeros
+    //    divergieran, el bot estaria ensenando una cifra que no cobra — que es
+    //    D48 otra vez, con numeros en vez de promesas.
+    expect(r.total).toBe(totalDe(r.cantidades))
+
+    // 4. **La proporcion se parece.** La original es 1 : 1 : 4; se exige que
+    //    cada renglon quede dentro del margen declarado del escalado limpio, o
+    //    si no "mantener la proporcion" seria una frase del comentario y no una
+    //    propiedad del codigo.
+    const factor = 15000 / 10176
+    for (let i = 0; i < RENGLONES.length; i++) {
+      const limpio = Math.max(1, Math.round(RENGLONES[i].cantidad * factor))
+      const holgura = Math.max(1, Math.round(limpio * MARGEN_DE_PROPORCION))
+      expect(Math.abs(r.cantidades[i] - limpio)).toBeLessThanOrEqual(holgura)
+    }
+
+    // 5. **Los precios salen del catalogo, no del modelo.** Ninguna cantidad
+    //    puede haber cambiado un precio: se recalcula el total desde
+    //    `precioParaComprador` y tiene que dar lo mismo.
+    const desdeElCatalogo = Number(
+      [CATALOGO[0], CATALOGO[1], CATALOGO[2]]
+        .reduce((t, p, i) => t + precioParaComprador(p, AEROPUERTO) * r.cantidades[i], 0)
+        .toFixed(2)
+    )
+    expect(desdeElCatalogo).toBe(r.total)
+  })
+
+  test('escalar hacia ABAJO tambien funciona', () => {
+    const r = escalarAObjetivo(RENGLONES, 5000)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.total).toBeGreaterThan(4000)
+    expect(r.total).toBeLessThan(6000)
+    for (const c of r.cantidades) expect(c).toBeGreaterThan(0)
+  })
+
+  // ── CONTROL NEGATIVO, el que pidio el encargo por su nombre ───────────────
+  test('CONTROL NEGATIVO: un objetivo imposible ($5) NO devuelve ceros', () => {
+    const r = escalarAObjetivo(RENGLONES, 5)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    // Y lo dice con el numero, no con un "no se puede" pelado: el piso es una
+    // pieza de cada uno = 480 + 144 + 56.
+    expect(r.error).toContain('680')
+    expect(r.error.toLowerCase()).toContain('lo menos')
+  })
+
+  test('CONTROL NEGATIVO: ninguna cantidad puede salir en cero ni negativa', () => {
+    // Se barre toda la franja baja, no un solo caso: un `Math.round` sin el
+    // `Math.max(1, ...)` deja ceros justo aqui y en ningun otro lado.
+    for (let objetivo = 680; objetivo <= 3000; objetivo += 20) {
+      const r = escalarAObjetivo(RENGLONES, objetivo)
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      for (const c of r.cantidades) {
+        expect(c).toBeGreaterThanOrEqual(1)
+        expect(Number.isInteger(c)).toBe(true)
+      }
+    }
+  })
+
+  test('CONTROL NEGATIVO: sin cotizacion anterior no se inventa ninguna', () => {
+    const r = escalarAObjetivo([], 15000)
+    expect(r.ok).toBe(false)
+  })
+
+  test('CONTROL NEGATIVO: un objetivo que no es numero no escala nada', () => {
+    for (const malo of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(escalarAObjetivo(RENGLONES, malo).ok).toBe(false)
+    }
+  })
+
+  test('CONTROL NEGATIVO: un renglon sin precio no se escala a ciegas', () => {
+    const r = escalarAObjetivo([{ precioUnitario: 0, cantidad: 3 }], 1000)
+    expect(r.ok).toBe(false)
+  })
+
+  // El endpoint es quien tiene que mandar el `objetivo` hacia la funcion; si
+  // esa linea se cae, la funcion de arriba queda perfecta y muerta.
+  test('la ruta de proponer llama al escalado y contesta 422 si no se puede', () => {
+    const RUTA = LEER('app/api/bot/cotizacion/proponer/route.ts')
+    expect(RUTA).toContain('escalarAObjetivo')
+    expect(RUTA).toContain('cuerpo.objetivo')
+    expect(RUTA).toContain('status: 422')
   })
 })

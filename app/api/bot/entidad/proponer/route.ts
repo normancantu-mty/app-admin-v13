@@ -44,6 +44,7 @@ import {
   esZonaValida,
   mensajeDeAlta,
   normalizarComision,
+  OPCIONES_DE_AMBIGUEDAD,
   nombreDelRol,
   preguntaDeAmbiguedad,
   preguntaDeDuplicado,
@@ -209,10 +210,9 @@ export async function POST(request: Request) {
           hay_que_elegir: true,
           campo: pedida.columna,
           mensaje: preguntaDeAmbiguedad(pedida.etiqueta),
-          opciones: [
-            { valor: '0.01', etiqueta: '1%' },
-            { valor: '1', etiqueta: '100%' }
-          ]
+          // D10/D11: las dos salidas viven en `lib/bot-entidad.ts`, donde una
+          // prueba puede exigirles que ninguna vuelva a salir `ambigua`.
+          opciones: OPCIONES_DE_AMBIGUEDAD
         })
       }
       if (!juicio.ok) {

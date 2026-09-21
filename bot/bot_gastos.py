@@ -32,8 +32,10 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import socket
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -88,7 +90,38 @@ class _TapaSecretos(logging.Filter):
         return True
 
 
-_manejadores = [logging.FileHandler(RAIZ / "bot_gastos.log", encoding="utf-8"),
+# ─── D46 (Fase 6): EL LOG SE PUEDE REDIRIGIR SIN EDITAR ESTE ARCHIVO ────────
+#
+# **El defecto que cierra, y no era cosmetico.** El `FileHandler` se instalaba
+# sobre `bot_gastos.log` al IMPORTAR el modulo y sin interruptor, asi que
+# cualquier prueba que hiciera `import bot_gastos` escribia en el log de
+# PRODUCCION. Y `bot/decidir_reinicio.py` calcula `edad_log_min` con el `mtime`
+# de ese archivo y reinicia el bot cuando pasa de `TOPE_LOG_MIN`: **correr la
+# suite le reiniciaba el reloj al detector de cuelgue.** El auditor lo comprobo
+# causandolo el 2026-09-19 -- el `mtime` de las 12:17:15 era suyo, el ultimo
+# latido real del bot era de las 12:03:39. Un bot colgado durante una tanda de
+# pruebas no se detectaba.
+#
+# Se llama `BOT_LOG` porque es lo que es y porque empata con las otras tres
+# variables del bot (`BOT_API_TOKEN`, `BOT_GASTOS_TELEGRAM_TOKEN`, `ERP_API_URL`):
+# prefijo `BOT_`, nombre de lo que apunta. **El default es el de siempre**, asi
+# que ni el arranque ni el vigilante cambian de comportamiento.
+def ruta_del_log(entorno=None):
+    """A que archivo escribe el log. **Funcion pura: no abre nada.**
+
+    Se separa de la instalacion del handler para poder comprobar el default sin
+    tocar el archivo de produccion -- que es, exactamente, el dano que esto
+    existe para evitar.
+    """
+    if entorno is None:
+        entorno = os.environ
+    dicho = str(entorno.get("BOT_LOG") or "").strip()
+    return Path(dicho) if dicho else RAIZ / "bot_gastos.log"
+
+
+RUTA_LOG = ruta_del_log()
+
+_manejadores = [logging.FileHandler(RUTA_LOG, encoding="utf-8"),
                 logging.StreamHandler()]
 for _m in _manejadores:
     _m.addFilter(_TapaSecretos())
@@ -587,21 +620,177 @@ def _propuesta_de_abono(campos):
     }
 
 
+# Cuanto vive un borrador a medias. Media hora: lo suficiente para una
+# conversacion que se interrumpe por una llamada, y poco para que el "500 de
+# gasolina" del lunes contamine la primera frase del martes.
+VIDA_DEL_BORRADOR = 1800
+
+
 def _tomar_borrador_a_medias(chat):
     """Saca de `_memoria` los campos de una captura que quedo incompleta.
 
-    **Se CONSUME al leerlo.** Vive exactamente una vuelta: si el mensaje nuevo
-    tampoco alcanza, el camino que corresponda lo vuelve a guardar, ya fundido
-    con lo que se acabe de entender. Dejarlo pegado seria peor que no tenerlo --
-    un "500 de gasolina" que quedo a medias el lunes contaminaria la primera
-    frase del martes, y el sintoma seria un monto que aparece solo.
+    **Ya NO se consume al leerlo (D28, 2026-09-19), y ese era un defecto.**
+    Vivia exactamente una vuelta y solo 6 de las 12 intenciones lo volvian a
+    guardar: `reporte` y `charla` no guardaban nada, asi que una captura a
+    medias se perdia en cuanto el modelo leia un mensaje como conversacion.
+
+    Lo que si se conserva del diseno viejo es la razon de que caducara: un
+    borrador pegado para siempre contamina el dia siguiente. Se resuelve con el
+    reloj, que es lo que se queria de verdad, y no borrandolo al primer vistazo.
+    Ademas, cualquier `_proponer_*` que tenga exito PISA `_memoria[chat]`, asi
+    que un borrador resuelto desaparece solo.
     """
     dato = _memoria.get(chat)
     if not isinstance(dato, dict) or dato.get("estado") != "incompleto":
         return None
-    _memoria.pop(chat, None)
+    nacido = dato.get("nacido_en")
+    if isinstance(nacido, (int, float)) and (time.time() - nacido) > VIDA_DEL_BORRADOR:
+        _memoria.pop(chat, None)
+        return None
     campos = dato.get("campos")
     return dict(campos) if isinstance(campos, dict) and campos else None
+
+
+# El centinela de los teclados de lista ("Mejor no"): ahi todavia no hay
+# borrador sellado que apagar, asi que el callback_data no lleva uuid.
+_NO_HAY_BORRADOR = ("", "x")
+
+
+def _catalogo_de_productos(chat):
+    """Lo que se vende, leido del servidor. **D35.**
+
+    El modelo extraia el nombre del producto A CIEGAS: `_pedazo_contexto` le
+    mandaba el borrador, las categorias de gasto y los deudores, y **del
+    catalogo nada**. El empate lo hacia despues un comparador literal de
+    TypeScript, que se rompe con un espacio de mas -- "750 ml" contra
+    "Destilado Plata 750ml". Al modelo, que con tres filas enfrente resuelve
+    "las grandes" sin despeinarse, no se le preguntaba.
+
+    Si el servidor no contesta se devuelve lo ultimo que se supo, o una lista
+    vacia: **el bot no se cae por esto**. Sin catalogo el modelo trabaja como
+    trabajaba antes y la red de TypeScript (`lib/bot-tamanos.ts`) sigue puesta.
+    """
+    global _productos, _productos_leidos_en
+    ahora = time.time()
+    if _productos and (ahora - _productos_leidos_en) < TTL_PRODUCTOS:
+        return _productos
+    estado, r = _post("/api/bot/catalogo", {"telegram_id": chat})
+    if estado == 200 and r.get("ok") and r.get("productos"):
+        _productos = r["productos"]
+        _productos_leidos_en = ahora
+        log.info("catalogo leido: %s productos", len(_productos))
+    elif not _productos:
+        log.warning("no pude leer el catalogo de productos: %s", estado)
+    return _productos
+
+
+# Como se le dice a cada tipo de propuesta cuando hay que nombrarla en una frase.
+_COMO_SE_LLAMA = {
+    "gasto": "un gasto",
+    "abono": "un abono",
+    "venta": "una venta",
+    "lote": "un lote",
+    "cotizacion": "una cotizacion",
+    "anulacion": "una anulacion",
+    "correccion": "una correccion",
+    "alta": "un alta",
+    "conversion": "una conversion",
+}
+
+
+def _en_pantalla(chat, esperando=""):
+    """Que tiene Norman enfrente ahora mismo, en una linea. **D28.**
+
+    Esta es la pieza que faltaba para el `sii`. `_tomar_borrador_a_medias` solo
+    mira los borradores INCOMPLETOS, asi que cuando hay una propuesta COMPLETA
+    esperando el "va" -- el caso normal -- el modelo recibia el mensaje pelado y
+    un "sii" no tenia contra que interpretarse. Salia `charla`.
+
+    **Sin historial largo, y es deliberado**: con el ultimo turno basta y es lo
+    barato. `[Filtro: DOC02 -- YAGNI]`
+    """
+    if esperando:
+        return "te acabo de preguntar: " + esperando
+    dato = _memoria.get(chat)
+    if not isinstance(dato, dict):
+        return ""
+    tipo = str(dato.get("tipo") or "")
+    if dato.get("borrador_id"):
+        return ("una propuesta de " + _COMO_SE_LLAMA.get(tipo, "captura")
+                + " lista, esperando que digas que va o que no")
+    if tipo.endswith("_eligiendo"):
+        campo = str(dato.get("campo") or "cual")
+        return ("una pregunta con botones para escoger " + campo
+                + ", de " + _COMO_SE_LLAMA.get(tipo.split("_")[0], "una captura"))
+    if dato.get("estado") == "incompleto":
+        return ("una captura de " + _COMO_SE_LLAMA.get(str(dato.get("intencion")), "algo")
+                + " a la que todavia le falta un dato")
+    return ""
+
+
+def _cancelar_de_verdad(chat, borrador_id):
+    """Apaga el borrador en la BASE, no solo en la memoria de este proceso.
+
+    **El defecto que cierra (2026-09-19).** `app/api/bot/cancelar/route.ts`
+    estaba escrita, probada y bien — y **no la llamaba nadie**: `grep -rn
+    "bot/cancelar"` sobre `.py` y `.ts` daba cero. Los dos "no" (el boton y el
+    texto) hacian solo `_memoria.pop`, asi que la fila de `bot_borradores` se
+    quedaba `PENDIENTE` para siempre. No truena —cada `proponer` cancela lo
+    pendiente antes de insertar— **pero el rastro miente**: dice que hay un
+    borrador vivo que nadie abandono.
+
+    Las reglas, y cada una tapa una forma de fallar:
+
+    - **D2 — sin `borrador_id` no se llama a la ruta y se contesta igual.** Un
+      "no" suelto sin propuesta viva es normal. **Cancelar no puede fallarle
+      nunca a la persona.**
+    - **D3 — el texto no cambia**, salvo el 409: si el borrador ya estaba
+      CONFIRMADO, *"no escribi nada"* es mentira y hay que decirlo.
+    - **D4 — `_memoria` se limpia SIEMPRE**, pase lo que pase con la red. El
+      orden es: primero la base, luego la memoria, luego la respuesta. Un fallo
+      de red no puede dejar el estado local colgado.
+    - **D5 — se registra.** Esta ruta solo borra logicamente, asi que es la que
+      MAS lo necesita (la leccion de `E-244`: lo unico que no dejaba rastro era
+      justo lo que no escribia filas). Van `borrador_id`, `telegram_id` y el
+      estado devuelto. **Nunca el contenido del borrador.**
+
+    Devuelve el texto que hay que contestarle a la persona.
+    """
+    texto = "Cancelado. No escribi nada."
+    try:
+        if borrador_id:
+            estado, r = _post("/api/bot/cancelar", {
+                "telegram_id": chat,
+                "borrador_id": borrador_id,
+            })
+            log.info("cancelar: borrador=%s telegram=%s -> %s%s",
+                     borrador_id, chat, estado,
+                     " (ya estaba cancelado)" if r.get("ya_estaba") else "")
+            if estado == 409:
+                texto = ("Eso ya habia quedado escrito, asi que no lo cancele. "
+                         "Si lo quieres deshacer, dime que lo anule.")
+    finally:
+        # El `finally` NO es adorno, y lo encontro una prueba, no una relectura:
+        # sin el, un `_post` que revienta se lleva por delante el `pop` y deja
+        # el borrador vivo en memoria. Norman ya dijo que no, y el siguiente
+        # mensaje le contestaria sobre algo que el ya cancelo. Hoy `_post`
+        # atrapa sus propias excepciones y devuelve (0, ...), asi que esto no
+        # dispara en produccion -- pero **D4 dice SIEMPRE, y "siempre" no puede
+        # depender de que otra funcion siga siendo amable.**
+        _memoria.pop(chat, None)
+    return texto
+
+
+def _borrador_vivo(chat):
+    """El id del borrador sellado que hay en pantalla ahora mismo, o "".
+
+    Es la misma llave que lee `_confirmar_venta`. Se lee ANTES de limpiar la
+    memoria, porque `_cancelar_de_verdad` la limpia.
+    """
+    dato = _memoria.get(chat)
+    if not isinstance(dato, dict):
+        return ""
+    return str(dato.get("borrador_id") or "")
 
 
 def _recordar_a_medias(chat, intencion, campos):
@@ -616,6 +805,7 @@ def _recordar_a_medias(chat, intencion, campos):
         "estado": "incompleto",
         "intencion": intencion,
         "campos": dict(campos or {}),
+        "nacido_en": time.time(),
     }
 
 
@@ -682,10 +872,226 @@ _esperando_alta = {}
 # del diccionario local y se actualiza sola: **la autoridad es la base**, esto
 # es solo para que el extractor tenga el vocabulario completo la proxima vez.
 _catalogo = list(CATEGORIAS_SEMILLA)
+# Lo que se vende. **Arranca vacio y NO hay semilla local, a proposito**: un id
+# de producto escrito en este archivo seria una segunda fuente de verdad que
+# caduca sin avisar, y un id caducado que el modelo copiara se convertiria en un
+# 422 ("ese producto ya no esta en el catalogo"), que es peor que el defecto que
+# esto arregla. Los ids salen de la base o no salen.
+_productos = []
+_productos_leidos_en = 0.0
+# Diez minutos. El catalogo son tres botellas y cambia una vez al ano; el TTL
+# existe para que un alta nueva aparezca sola, no porque haga falta frescura.
+TTL_PRODUCTOS = 600
 # Los nombres de la cartera viva (Fase 2). Arranca VACIO a proposito: no hay
 # una lista local de deudores que pudiera caducar. Hasta la primera respuesta
 # del servidor, el extractor trabaja sin vocabulario y el servidor empata igual.
 _deudores = []
+
+
+# ─── D48 (Fase 6): EL BOT NO PROMETE NADA QUE VAYA A HACER DESPUES ──────────
+#
+# **Este es el peor defecto de toda la Fase 5, y no lo encontro una prueba: lo
+# encontro Norman.** Transcripcion del 2026-09-19, textual:
+#
+#   Norman: tienes pensado Aplicar el envio como un gasto?
+#   Bot:    Si, el envio se captura como gasto en Logistica_Envios, y no importa
+#           en que orden lo hagas.
+#   Bot:    Listo. Quedo escrita.
+#   Norman: Y luego el gasto?, No lo has escrito o si?
+#
+# Medido contra `finanzas_ledger`: **no hay ninguna fila de $45.** El modelo
+# estaba describiendo un sistema que creia conocer. No hay una sola linea en
+# este repo que encole un gasto para escribirlo despues.
+#
+# ─── POR QUE NO BASTA CON ARREGLARLO EN EL PROMPT ───────────────────────────
+# La regla 16 de `enrutador.py` se lo prohibe, y esa regla es la mitad correcta.
+# Pero **un prompt se puede desobedecer y esto no.** Es el mismo criterio con el
+# que ya se recorta `respuesta` a una linea y se valida `intencion` contra la
+# lista cerrada: lo que viene del modelo se revisa aqui.
+#
+# ─── LA INVARIANTE QUE LO HACE BARATO ───────────────────────────────────────
+# `respuesta` --el texto que REDACTA el modelo-- solo llega a pantalla por dos
+# caminos, y **los dos son caminos donde no se escribio nada**: la guarda de
+# confianza y `_responder_natural`. Las confirmaciones de verdad ("Listo. Quedo
+# escrita") las redacta Python con cadenas fijas y no pasan por aqui.
+#
+# Asi que cualquier compromiso que aparezca en este texto es falso POR
+# CONSTRUCCION, y no hay que adivinar si se cumplio: no se cumplio.
+# **El presente de primera persona NO entra, y lo decidio una prueba.** La
+# alternativa 3 decia `(lo|la|los|las) (capturo|registro|...)`, y eso mordia de
+# mas: *"Ese gasto no lo he escrito. Dimelo y lo capturo."* --que es EXACTAMENTE
+# la respuesta correcta-- quedaba reemplazada por `SIN_COLA`. "Lo capturo" no es
+# una promesa: es un ofrecimiento en presente, y el bot lo cumple en el mismo
+# turno. Lo que promete es el FUTURO (`lo capturare`, `voy a capturar`) o el
+# aplazamiento (`ahorita lo`, `despues`). Un filtro que se come la respuesta
+# buena no protege nada: solo cambia un defecto por otro.
+_PROMESA = re.compile(
+    r"\bse (captura|registra|guarda|escribe|aplica|anota|mete)n?\b"
+    r"|\bqued(a|an) (registrad|guardad|escrit|capturad|anotad|aplicad)"
+    r"|\b(lo|la|los|las) (capturare|registrare|escribire|guardare|aplicare|anotare|metere)\b"
+    r"|\bvoy a (capturar|registrar|escribir|guardar|aplicar|anotar|meter)\b"
+    r"|\bahorita (lo|la|los|las)\b"
+    r"|\bno importa en que orden\b",
+    re.IGNORECASE)
+
+# Lo que se dice en su lugar. **Es la respuesta correcta mientras no exista una
+# cola de verdad**: no lo hizo, y hay que dictarlo aparte.
+SIN_COLA = ("Eso no lo he escrito, y no lo dejo encolado para despues: no tengo "
+            "donde. Dictamelo aparte y lo capturo en el momento.")
+
+
+def _sin_promesas(texto):
+    """Devuelve el texto del modelo, o `SIN_COLA` si prometio algo.
+
+    Se REEMPLAZA en vez de recortar: la promesa no es un adorno sobre una
+    respuesta buena, es toda la respuesta, y dejarla a medias diria lo mismo.
+    """
+    limpio = str(texto or "").strip()
+    if limpio and _PROMESA.search(limpio):
+        log.warning("el modelo prometio una escritura futura; lo reemplace: %r", limpio)
+        return SIN_COLA
+    return limpio
+
+
+# ─── D49 (Fase 6): EL SEGUNDO HECHO NO SE PIERDE EN SILENCIO ────────────────
+#
+# Mismo incidente que D48, la otra mitad. El mensaje traia DOS hechos --una
+# venta de $599 y un envio de $45-- y el bot escribio uno y tiro el otro **sin
+# decir nada**. Ese silencio es el defecto: Norman solo lo descubrio porque
+# pregunto, y una captura que se pierde callada no deja rastro de haberse
+# perdido.
+#
+# **Lo que esto hace es DECIRLO, no encolarlo**, y la diferencia es de diseno,
+# no de esfuerzo. Escribir dinero que Norman no vio propuesto va contra la
+# frontera del sello, que es la mejor pieza del sistema: entre el "va" y el
+# INSERT no hay ningun campo que el modelo pueda mandar. Decir lo que quedo
+# fuera cuesta una linea y elimina el dano entero.
+_COMO_SE_DICE_EL_HECHO = {
+    "gasto": "un gasto",
+    "abono": "un abono",
+    "venta": "una venta",
+    "lote": "un lote",
+    "cotizacion": "una cotizacion",
+}
+
+
+def _frase_de_hecho_suelto(otro, intencion=""):
+    """La linea que se le dice a Norman, o "" si no hay segundo hecho.
+
+    --- POR QUE SE VALIDA OTRA VEZ AQUI, SI `enrutador.py` YA VALIDO ---------
+    `_normaliza_otro_hecho` hace la misma criba al salir del modelo, y esa capa
+    es la correcta. **Pero esta funcion no debe CONFIAR en ella.** El campo
+    nace de un JSON que redacta un LLM, y entre el enrutador y la pantalla hay
+    un `dict` suelto que cualquiera puede armar a mano. La prueba que dobla
+    `enrutar` --que es justo el escenario donde `_normaliza_otro_hecho` no
+    corre-- descubrio las dos consecuencias: un `monto: -45` salia a pantalla
+    como **`$-45.00`**, y un eco de la venta se anunciaba como "eso no lo
+    escribi" **justo despues de escribirlo**.
+
+    Es el mismo criterio con el que `_sin_promesas` revisa `respuesta` aunque
+    la regla 16 del prompt ya lo prohiba: **lo que se le ensena a Norman se
+    valida donde se le ensena.**
+
+    Las cuatro cribas, y lo que cuesta cada una si falta:
+      1. `tipo` fuera de la lista cerrada -> "otro movimiento" era una frase sin
+         significado sobre un hecho que nadie sabe leer.
+      2. `tipo == intencion` -> el ECO: se escribio la venta y acto seguido se
+         dice que no se escribio. Es una mentira NUEVA, peor que el silencio
+         que D49 vino a cerrar.
+      3. sin descripcion -> no hay nada que decir.
+      4. `monto` no positivo -> se dice el hecho **sin cifra**. Callarse por un
+         monto raro seria volver al silencio de D49; ensenar `$-45.00` seria
+         ensenar una cifra falsa. Se dice lo que se sabe y nada mas.
+    """
+    if not isinstance(otro, dict):
+        return ""
+    tipo = str(otro.get("tipo") or "").strip().lower()
+    if tipo not in _COMO_SE_DICE_EL_HECHO:
+        return ""
+    if tipo == str(intencion or "").strip().lower():
+        return ""
+    descripcion = str(otro.get("descripcion") or "").strip()
+    if not descripcion:
+        return ""
+    monto = otro.get("monto")
+    sirve = (isinstance(monto, (int, float)) and not isinstance(monto, bool)
+             and float(monto) > 0)
+    cuanto = (" de $" + "{:,.2f}".format(float(monto))) if sirve else ""
+    return ("Tambien oi " + descripcion + cuanto + ", que es "
+            + _COMO_SE_DICE_EL_HECHO[tipo]
+            + ". Ese NO lo escribi todavia. Dimelo y lo capturo.")
+
+
+async def _avisar_hecho_suelto(update, ruta):
+    """Lo dice al terminar el primero. Va como mensaje aparte, a proposito:
+    pegado al final de la confirmacion se lee como parte de lo que SI se
+    escribio, que es exactamente la confusion que se esta cerrando.
+
+    Recibe la RUTA entera y no solo `otro_hecho` porque la criba del eco
+    necesita saber que fue lo que SI se escribio.
+    """
+    ruta = ruta if isinstance(ruta, dict) else {}
+    frase = _frase_de_hecho_suelto(ruta.get("otro_hecho"), ruta.get("intencion"))
+    if frase:
+        await update.effective_message.reply_text(frase)
+
+
+# ─── D50 (Fase 6): "EL MISMO CLIENTE" ───────────────────────────────────────
+#
+# Transcripcion del 2026-09-19:
+#
+#   Norman: Olvidalo, ahora cotizame por favor para **el mismo cliente** 35
+#           grandes, 43 chicas y 25 mini.
+#   Bot:    No tengo a "el mismo cliente" en la red. Es alguno de estos, o es
+#           cliente nuevo?
+#
+# Tres mensajes antes habia cotizado a Aeropuerto. **El bot tenia el dato y lo
+# tiro.**
+#
+# ─── EL VENCIMIENTO, Y POR QUE UNA HORA ─────────────────────────────────────
+# Una cotizacion se dicta en minutos; una hora cubre de sobra una conversacion
+# que se interrumpe por una llamada. Y es corto para lo que importa: que
+# "el mismo cliente" del martes en la manana NO herede al Aeropuerto del lunes.
+# Es el mismo criterio de `VIDA_DEL_BORRADOR` (media hora), con el doble de
+# holgura porque aqui no hay dinero en juego todavia -- una cotizacion se
+# ensena, se sella y se confirma antes de existir.
+VIDA_DEL_CLIENTE = 3600
+
+# Las formas de decir "ese, el de hace rato". **No incluye pronombres sueltos**
+# ("el", "ella"): un "para el" suelto dentro de otra frase empataria de mas, y
+# resolver callado un cliente equivocado manda la cotizacion al distribuidor que
+# no era -- que es peor que preguntar.
+_DICE_EL_MISMO = re.compile(
+    r"^\s*(a|para|al|con)?\s*(el|la|los|las)?\s*mism[oa]s?"
+    r"(\s+(cliente|distribuidor|local|lugar|de (antes|hace rato|siempre)))?\s*$"
+    r"|^\s*(el|la)\s+(de\s+)?(antes|anterior|de hace rato)\s*$"
+    r"|^\s*(a|para|con)\s+(el|ella|ellos|ellas)\s*$",
+    re.IGNORECASE)
+
+_ultimo_cliente = {}
+
+
+def _dice_el_mismo(dicho):
+    """True si el texto es una referencia al cliente anterior, no un nombre."""
+    limpio = str(dicho or "").strip()
+    return bool(limpio) and bool(_DICE_EL_MISMO.match(limpio))
+
+
+def _recordar_cliente(chat, nombre):
+    nombre = str(nombre or "").strip()
+    if nombre:
+        _ultimo_cliente[chat] = {"nombre": nombre, "en": time.time()}
+
+
+def _cliente_recordado(chat):
+    """El ultimo cliente cotizado en este chat, si no ha caducado."""
+    dato = _ultimo_cliente.get(chat)
+    if not isinstance(dato, dict):
+        return ""
+    if (time.time() - float(dato.get("en") or 0)) > VIDA_DEL_CLIENTE:
+        _ultimo_cliente.pop(chat, None)
+        return ""
+    return str(dato.get("nombre") or "")
 
 
 async def _responder_natural(update, ruta):
@@ -697,30 +1103,50 @@ async def _responder_natural(update, ruta):
     entrena a la gente a no volver a intentarlo.
     """
     intencion = ruta.get("intencion")
-    entendido = ruta.get("entendido") or ""
+    # D27: **el modelo redacta, Python despacha.** El contrato del enrutador
+    # gano un campo `respuesta` -- que DECIRLE a Norman, en segunda persona,
+    # una linea -- y aqui se usa en vez de la cadena fija. No es reescribir el
+    # bot: es un campo mas en un JSON que el modelo ya devolvia, y la misma
+    # unica llamada al modelo.
+    #
+    # **Lo que NO cambia:** las confirmaciones de dinero, los montos y los
+    # botones siguen siendo texto de Python. El modelo redacta la conversacion,
+    # nunca la cifra.
+    redactada = _sin_promesas(ruta.get("respuesta"))
 
+    # `entendido` NO SALE A PANTALLA. NUNCA. (D26, 2026-09-19)
+    # Es telemetria: `enrutador.py` se lo pide al modelo como "frase MUY corta
+    # de lo que si entendiste", o sea el modelo reportandose a si mismo, EN
+    # TERCERA PERSONA, *sobre* Norman. Publicarlo crudo produjo, literal:
+    #   "anula el movimiento anterior" -> "quiere anular el movimiento anterior"
+    #   "sii"                          -> "solo dijo que si, sin decir a que"
+    # El bot no le hablaba a Norman: lo narraba ante un tercero que no existe.
+    # Ademas la regla 3 del prompt del propio enrutador prohibe el eco
+    # ("NUNCA le repitas de vuelta lo que ya entendiste. El ya lo dijo") y el
+    # Python lo hacia igual, cinco veces.
     if intencion == "venta":
         # Desde la Fase 3 las ventas SI se guardan: aqui solo se llega si el
         # camino de la venta no logro proponer nada. Decirle "esa va por el POS"
         # seria mentirle sobre lo que el bot sabe hacer.
-        aviso = ("Entendido: " + entendido + ". Dimela otra vez diciendo que producto "
-                 "y cuantas piezas.")
+        aviso = "Dimela otra vez diciendo que producto y cuantas piezas."
     elif intencion == "lote":
         # Desde la Fase 3.3 los lotes SI se guardan. Aqui solo se llega si el
         # camino del lote no logro proponer nada.
-        aviso = ("Entendido: " + entendido + ". Dimelo otra vez diciendo cuanto chile entro y cuantos litros y grados salieron.")
+        aviso = ("Dimelo otra vez diciendo cuanto chile entro y cuantos litros "
+                 "y grados salieron.")
     elif intencion == "cotizacion":
         # Desde la Fase 4 las cotizaciones SI se guardan. Aqui solo se llega si
         # el camino de la cotizacion no logro proponer nada.
-        aviso = ("Entendido: " + entendido + ". Dimela otra vez diciendo que producto "
-                 "y cuantas piezas.")
+        aviso = "Dimela otra vez diciendo que producto y cuantas piezas."
     elif intencion == "reporte":
         aviso = "Todavia no tengo el reporte del dia. Por ahora: /ventas, /stock o /cartera."
     elif intencion == "consulta":
-        aviso = ("Entendido: " + entendido + ". Eso todavia no lo se consultar. "
-                 "Hoy puedo: stock, cartera y ventas.")
+        aviso = "Eso todavia no lo se consultar. Hoy puedo: stock, cartera y ventas."
     else:
-        aviso = entendido if entendido else "No te entendi. Dime que hiciste o que quieres saber."
+        # Aqui caen `charla` y el "no entendi", que son justo los dos caminos
+        # donde una cadena fija se siente un formulario. Si el modelo redacto
+        # algo, habla el modelo.
+        aviso = redactada or "No te entendi. Dime que hiciste o que quieres saber."
 
     await update.effective_message.reply_text(aviso)
 
@@ -833,9 +1259,19 @@ def _renglones_de(campos):
             cantidad = 1
         if cantidad <= 0:
             cantidad = 1
-        renglones.append({"producto": c.get("producto") or c.get("nombre"),
-                          "cantidad": cantidad})
-    return [r for r in renglones if r["producto"]]
+        # D36: el `id_producto` que escogio el modelo DE LA LISTA CERRADA. La
+        # ruta lo sigue validando contra el catalogo leido de la base en ese
+        # momento (422 si no esta), asi que esto no afloja nada: el modelo
+        # ESCOGE de una lista, no INVENTA un producto.
+        renglon = {"producto": c.get("producto") or c.get("nombre"),
+                   "cantidad": cantidad}
+        id_producto = str(c.get("id_producto") or "").strip()
+        if id_producto:
+            renglon["id_producto"] = id_producto
+        renglones.append(renglon)
+    # Un renglon con id vale aunque el nombre venga vacio: el id es el dato
+    # fuerte y el nombre solo servia para buscarlo.
+    return [r for r in renglones if r.get("producto") or r.get("id_producto")]
 
 
 async def _proponer_venta(update, chat, peticion):
@@ -1083,6 +1519,50 @@ async def _confirmar_lote(update, chat):
 # FASE 4 - LA COTIZACION. Un precio por escrito que todavia no es una venta.
 # ===========================================================================
 
+# Los renglones de la ultima cotizacion propuesta en cada chat. Es lo que se
+# vuelve a escalar cuando Norman pide un TOTAL en vez de cantidades (D51).
+_ultima_cotizacion = {}
+
+# Arriba de esto no se escala por chat: es el mismo tope que la venta y que la
+# cotizacion (`TOPE_VENTA` en `lib/bot-venta.ts`). El servidor lo vuelve a
+# aplicar -- esto solo evita el viaje.
+TOPE_OBJETIVO = 500000
+
+
+def _monto_objetivo(campos):
+    """El total al que Norman quiere acercar la cotizacion, o 0. **D51.**
+
+    Devuelve 0 ante cualquier cosa rara en vez de lanzar: si el modelo manda
+    basura aqui, el camino correcto es cotizar como siempre, no reventar.
+    """
+    crudo = campos.get("monto_objetivo")
+    if crudo in (None, ""):
+        return 0
+    try:
+        valor = float(str(crudo).replace("$", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return 0
+    if not (valor > 0) or valor > TOPE_OBJETIVO:
+        return 0
+    return valor
+
+
+# ─── D55 (Fase 6): EL DESCUENTO VIAJA, NO SE CALCULA ────────────────────────
+#
+# Norman: *"en ocasiones vamos a poner promociones, mi pregunta es si las
+# podemos meter por medio de este bot. Eso si me interesa."*
+#
+# Este proceso **no hace ni una cuenta**: recoge lo que `_normaliza_descuento`
+# dejo pasar en `enrutador.py` y lo manda tal cual. Quien multiplica, quien
+# resta y quien topa es la ruta (`lib/bot-descuento.ts` desde
+# `venta/proponer` y `cotizacion/proponer`), y esta reparticion es la misma que
+# ya rige el precio: **el bot dice cuanto, el servidor dice cuanto cuesta.**
+def _descuento_dictado(campos):
+    """El descuento que viene en los campos, o `None`."""
+    dicho = campos.get("descuento")
+    return dicho if isinstance(dicho, dict) and dicho else None
+
+
 def _peticion_de_cotizacion(campos):
     """Traduce los campos del enrutador a lo que espera `/api/bot/cotizacion/proponer`.
 
@@ -1098,6 +1578,9 @@ def _peticion_de_cotizacion(campos):
         peticion["propuesta"]["vigencia_dias"] = campos.get("vigencia_dias")
     if campos.get("notas"):
         peticion["propuesta"]["notas"] = campos.get("notas")
+    descuento = _descuento_dictado(campos)
+    if descuento:
+        peticion["propuesta"]["descuento"] = descuento
     return peticion
 
 
@@ -1140,6 +1623,13 @@ async def _proponer_cotizacion(update, chat, peticion):
         await update.effective_message.reply_text(
             r.get("error", "No pude armar la cotizacion."))
         return True
+
+    # D50/D51: lo que hace falta para entender el mensaje SIGUIENTE. El cliente,
+    # para que "el mismo cliente" no vuelva a preguntarse; los renglones, para
+    # que "una de unos 15 mil" tenga que escalar. Las dos cosas las tenia el bot
+    # el 2026-09-19 y las dos las tiro.
+    _recordar_cliente(chat, r.get("para_quien"))
+    _ultima_cotizacion[chat] = [dict(x) for x in (peticion.get("productos") or [])]
 
     _memoria[chat] = {
         "tipo": "cotizacion",
@@ -1415,8 +1905,15 @@ async def _proponer_anulacion(update, chat, cuerpo, accion="anular"):
     cuerpo = dict(cuerpo)
     cuerpo["accion"] = accion
     estado, r = _post("/api/bot/anular/proponer", cuerpo)
+    # D34: **cuando no hay modo, el log dice que no hay modo.** Decia
+    # `modo=anular` con el valor por defecto puesto encima, y el primer paso
+    # -- el que solo pide la lista de movimientos -- NO lleva modo. Esa linea
+    # hizo creer a una auditoria que pedir una correccion proponia una
+    # anulacion. No lo hace. Pero el log afirmo algo que no paso, que es la
+    # misma clase de defecto que dejo correr 24 horas al proceso viejo: una
+    # linea verdadera en su literal y falsa en lo que cualquiera concluye.
     log.info("anulacion propuesta: accion=%s modo=%s -> %s",
-             accion, cuerpo.get("modo") or "anular", estado)
+             accion, cuerpo.get("modo") or "(sin modo: solo la lista)", estado)
 
     if estado == 200 and r.get("hay_que_elegir"):
         opciones = r.get("opciones") or []
@@ -1484,7 +1981,43 @@ async def _confirmar_anulacion(update, chat):
         await update.effective_message.reply_text(r.get("error", "No pude anularlo."))
 
 
-async def _enrutar_y_despachar(update, chat, texto):
+# Las que ESCRIBEN. Sobre estas, dudar tiene precio: una fila de dinero o de
+# inventario que despues hay que anular. Sobre `consulta`, `reporte` y `charla`
+# una lectura equivocada se vuelve a preguntar y ya.
+#
+# ─── COMO SE MANTIENE SINCRONIZADA (D42, Fase 6) ─────────────────────────────
+# **Esta lista tenia cinco y las que escriben eran nueve.** Faltaban `anular`,
+# `corregir`, `alta` y `convertir`: las cuatro de la Fase 5, agregadas al
+# despacho sin agregarse aqui. Con `confianza: baja` las cuatro esquivaban la
+# guarda, y el auditor lo ejercito una por una el 2026-09-19.
+#
+# **La regla, en una linea: si el bloque `if intencion == "X"` de
+# `_enrutar_y_despachar` llama a un `_proponer_*` o a `_confirmar`, entonces "X"
+# va en esta tupla.** Lo que NO va: `consulta`, `reporte`, `charla` (solo leen)
+# y `cancelar` (apaga un borrador que todavia no es una fila -- bloquearlo
+# dejaria vivo lo que Norman acaba de rechazar, que es el fallo caro al reves).
+#
+# Y no se queda en la buena voluntad: `bot/probar_confianza.py` recorre las diez
+# y falla en rojo si alguna escribe con `confianza: baja`.
+INTENCIONES_QUE_ESCRIBEN = (
+    "gasto", "abono", "venta", "lote", "cotizacion",
+    # Fase 5. Escriben igual que las de arriba, aunque la fila la elija un boton.
+    "anular", "corregir", "alta", "convertir",
+    # Y la que de verdad aprieta el gatillo: `confirmar` es el paso que convierte
+    # el borrador sellado en INSERT. El sello protege el CONTENIDO -- el monto es
+    # el que Norman vio en pantalla -- pero no protege el DISPARADOR.
+    "confirmar",
+)
+
+# De estas se guarda lo que se alcanzo a entender para fundirlo con la respuesta.
+# Las otras (`confirmar`, `anular`, `corregir`, `convertir`) **no traen campos
+# que valga la pena recordar, y pisar `_memoria` con ellas seria un defecto**:
+# ahi vive la propuesta sellada que esta en pantalla, y sobreescribirla con un
+# borrador vacio la mataria justo cuando Norman iba a decir que va.
+INTENCIONES_CON_BORRADOR = ("gasto", "abono", "venta", "lote", "cotizacion", "alta")
+
+
+async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     """UNA llamada al modelo decide que quiso decir Norman, y se despacha.
 
     Antes esto era una cascada de tres intentos EN FILA -- gasto, abono,
@@ -1507,9 +2040,10 @@ async def _enrutar_y_despachar(update, chat, texto):
     que ya se sabian y el bot nunca se los mandaba, asi que una captura a medias
     volvia a empezar de cero en cada vuelta.
     """
+    productos = await asyncio.to_thread(_catalogo_de_productos, chat)
     ok, ruta = await asyncio.to_thread(
         enrutar, texto, _tomar_borrador_a_medias(chat), list(_catalogo),
-        _nombres_deudores())
+        _nombres_deudores(), productos, _en_pantalla(chat, esperando))
 
     if not ok:
         log.warning("el enrutador fallo: %s", ruta)
@@ -1519,9 +2053,72 @@ async def _enrutar_y_despachar(update, chat, texto):
             "modelo y siguen funcionando.")
         return
 
-    log.info("enrutado como %s (confianza %s)", ruta.get("intencion"), ruta.get("confianza"))
+    # D33: **el texto crudo, junto a su enrutamiento.** Hasta hoy el log
+    # guardaba la decision y nunca el mensaje, asi que no se podia construir un
+    # conjunto de prueba a partir de la historia: la historia no existia. Sin
+    # esto, "?comprende?" no se puede medir ni hoy ni dentro de un mes. Es su
+    # bot, su maquina y sus propios mensajes.
+    log.info("enrutado como %s (confianza %s) | dijo: %r | entendido: %r",
+             ruta.get("intencion"), ruta.get("confianza"), texto,
+             ruta.get("entendido"))
     intencion = ruta.get("intencion")
     campos = ruta.get("campos") or {}
+
+    # ── D30: LA CONFIANZA DEJA DE CALCULARSE PARA TIRARSE ───────────────────
+    # `enrutador.py` la calcula y el unico lector era el log: **cero `if` sobre
+    # `confianza` en todo el repo**. Con `baja`, el bot adivinaba y ejecutaba
+    # igual -- una propuesta de DINERO REAL en pantalla con la misma cara que
+    # si estuviera seguro, y el unico que supo que dudo fue el archivo de log.
+    # **Preguntar bien es comprension; adivinar callado es lo contrario.**
+    #
+    # El borrador se guarda, asi que la respuesta se funde con lo que ya se
+    # entendio en vez de empezar de cero.
+    # ── D41 (Fase 6): LA GUARDA VA ARRIBA DEL DESPACHO, NO EN MEDIO ─────────
+    # Este bloque estaba VEINTITRES LINEAS MAS ABAJO, debajo de los despachos de
+    # `confirmar` y `cancelar`, **y los dos despachaban con `return`**. O sea que
+    # la guarda existia y `confirmar` nunca llegaba a ella: un mensaje que el
+    # modelo clasificara `confirmar` con `confianza: baja` disparaba el INSERT.
+    #
+    # No era un defecto de logica sino de COLOCACION, y por eso ninguna lectura
+    # del `if` lo encontraba: el `if` estaba bien escrito y jamas se evaluaba.
+    # Ahora nada se despacha antes de que la confianza se haya mirado.
+    if ruta.get("confianza") == "baja" and intencion in INTENCIONES_QUE_ESCRIBEN:
+        # Solo las que traen campos dejan borrador. Pisar `_memoria` con un
+        # `confirmar` vacio mataria la propuesta sellada que esta en pantalla.
+        if intencion in INTENCIONES_CON_BORRADOR:
+            _recordar_a_medias(chat, intencion, campos)
+        log.info("confianza baja sobre %s: pregunto antes de proponer", intencion)
+        await update.effective_message.reply_text(
+            ruta.get("pregunta")
+            or _sin_promesas(ruta.get("respuesta"))
+            or ("No acabo de entenderte, y esto escribe "
+                + _COMO_SE_LLAMA.get(intencion, "un movimiento")
+                + ". Me lo dices de otra forma?"))
+        return
+
+    # ── D28/D29: EL "SI" Y EL "NO" DE LO QUE HAY EN PANTALLA ────────────────
+    # La lista literal de `manejar_texto` se queda -- cuesta cero llamadas al
+    # modelo y es el camino rapido -- pero ya no es el unico. "ok", "sale",
+    # "va pues", "andale", "ya quedo" y "simon" llegan hasta aqui, y ahora el
+    # modelo los resuelve CON LA PROPUESTA A LA VISTA en vez de degradarlos a
+    # charla. Esa es, exacta, la escena del "sii" del 2026-09-19.
+    if intencion == "confirmar":
+        await _confirmar(update, chat)
+        return
+
+    if intencion == "cancelar":
+        # D40: "No nada olvidalo" tiene que CANCELAR de verdad. En la
+        # transcripcion del 2026-09-19 el bot contesto el eco de `entendido`
+        # ("quiere cancelar lo que estaba diciendo") **y ademas no cancelo
+        # nada**: el mensaje siguiente cayo dentro de la misma cotizacion a
+        # medias. Se entendio la intencion y no se ejecuto.
+        #
+        # **`cancelar` a proposito NO esta en `INTENCIONES_QUE_ESCRIBEN`**: no
+        # escribe ninguna fila, apaga un borrador. Bloquearlo por dudar dejaria
+        # vivo justo lo que Norman acaba de rechazar.
+        await update.effective_message.reply_text(
+            _cancelar_de_verdad(chat, _borrador_vivo(chat)))
+        return
 
     if intencion == "gasto":
         # Si al enrutador le falto lo indispensable, se PREGUNTA una sola cosa
@@ -1532,6 +2129,7 @@ async def _enrutar_y_despachar(update, chat, texto):
                 ruta.get("pregunta") or "Cuanto fue?")
             return
         await _proponer_gasto_directo(update, chat, _propuesta_de_gasto(campos, _catalogo))
+        await _avisar_hecho_suelto(update, ruta)
         return
 
     if intencion == "abono":
@@ -1546,6 +2144,7 @@ async def _enrutar_y_despachar(update, chat, texto):
             return
         if await _proponer_abono(update, chat, _propuesta_de_abono(campos),
                                  nombre=campos.get("deudor")):
+            await _avisar_hecho_suelto(update, ruta)
             return
         await _responder_natural(update, ruta)
         return
@@ -1569,9 +2168,18 @@ async def _enrutar_y_despachar(update, chat, texto):
                 "monto": campos.get("monto"),
             },
         }
+        # D55: el descuento dictado. Va en `propuesta` y no en el cuerpo por la
+        # misma razon que `monto`: es lo que DIJO la persona, no lo que el
+        # servidor resolvio, y la ruta lo trata como tal.
+        descuento = _descuento_dictado(campos)
+        if descuento:
+            peticion["propuesta"]["descuento"] = descuento
         if campos.get("comprador"):
             peticion["comprador"] = campos.get("comprador")
         if await _proponer_venta(update, chat, peticion):
+            # D49: **la escena exacta del 2026-09-19.** La venta de $599 quedo
+            # propuesta; el envio de $45 se decia aqui en vez de perderse.
+            await _avisar_hecho_suelto(update, ruta)
             return
         await _responder_natural(update, ruta)
         return
@@ -1587,6 +2195,7 @@ async def _enrutar_y_despachar(update, chat, texto):
                 ruta.get("pregunta") or "Cuanto chile entro?")
             return
         if await _proponer_lote(update, chat, peticion):
+            await _avisar_hecho_suelto(update, ruta)
             return
         await _responder_natural(update, ruta)
         return
@@ -1596,12 +2205,52 @@ async def _enrutar_y_despachar(update, chat, texto):
         # pregunta aqui: el servidor lo pregunta con botones, y entre ellos va
         # "es cliente nuevo", que es el caso normal de una cotizacion.
         peticion = _peticion_de_cotizacion(campos)
+
+        # ── D51: LA COTIZACION POR MONTO OBJETIVO ───────────────────────────
+        # *"ahora quiere una cotizacion cuyo total sea lo mas cercano a 15,000
+        # pesos, manteniendo una proporcion semejante"* -> *"Que le cotizo?"*,
+        # dos veces, la segunda ya con *"nose tu dimelo, haz las cuentas"*
+        # enfrente. Norman creyo que habia sido exigente. No lo fue: los tres
+        # precios estaban en la cotizacion que el bot acababa de emitir y la
+        # operacion es una regla de tres.
+        #
+        # **Las cantidades las escala el SERVIDOR con los precios del catalogo**
+        # (`escalarAObjetivo` en `lib/bot-cotizacion.ts`). Aqui solo se recupera
+        # de que cotizacion se esta hablando. El modelo no pone ni un precio ni
+        # una cantidad: pone el numero que Norman dijo, y ya.
+        objetivo = _monto_objetivo(campos)
+        if objetivo and not peticion["productos"]:
+            anteriores = _ultima_cotizacion.get(chat)
+            if anteriores:
+                peticion["productos"] = [dict(p) for p in anteriores]
+        if objetivo and peticion["productos"]:
+            peticion["objetivo"] = objetivo
+
+        # ── D50: "EL MISMO CLIENTE" ─────────────────────────────────────────
+        # Y cuando se resuelve por memoria, SE DICE. Resolver callado un cliente
+        # equivocado manda la cotizacion al distribuidor que no era.
+        aviso_cliente = ""
+        recordado = _cliente_recordado(chat)
+        if _dice_el_mismo(peticion.get("cliente")) and recordado:
+            peticion["cliente"] = recordado
+            aviso_cliente = "Para " + recordado + " (el ultimo que cotizaste)."
+        elif objetivo and not peticion.get("cliente") and recordado:
+            # Reescalar la cotizacion anterior es seguir hablando del MISMO
+            # cliente. Preguntar por el aqui seria volver a pedir un dato que se
+            # acaba de dar, que es de lo que Norman se queja cuando dice
+            # "cuadrado". Se dice igual: nada se resuelve callado.
+            peticion["cliente"] = recordado
+            aviso_cliente = "Para " + recordado + " (el ultimo que cotizaste)."
+
         if not peticion["productos"]:
             _recordar_a_medias(chat, "cotizacion", campos)
             await update.effective_message.reply_text(
                 ruta.get("pregunta") or "Que le cotizo?")
             return
+        if aviso_cliente:
+            await update.effective_message.reply_text(aviso_cliente)
         if await _proponer_cotizacion(update, chat, peticion):
+            await _avisar_hecho_suelto(update, ruta)
             return
         await _responder_natural(update, ruta)
         return
@@ -1665,8 +2314,10 @@ async def manejar_texto(update, context):
         await _confirmar(update, chat)
         return
     if texto.lower() in ("no", "cancela", "cancelar"):
-        _memoria.pop(chat, None)
-        await update.message.reply_text("Cancelado. No escribi nada.")
+        # D1: por texto el id no viene en la mano. Sale de la propuesta viva,
+        # y se lee ANTES de que `_cancelar_de_verdad` limpie la memoria.
+        await update.message.reply_text(
+            _cancelar_de_verdad(chat, _borrador_vivo(chat)))
         return
 
     # Corrigiendo el monto de una propuesta viva: entra el numero y se
@@ -1676,8 +2327,16 @@ async def manejar_texto(update, context):
         try:
             monto = float(limpio)
         except ValueError:
-            _esperando_monto[chat] = True
-            await update.message.reply_text("No lo lei como numero. Solo la cifra, por favor.")
+            # D31: **se ENRUTA en vez de regañar.** Estando en un estado
+            # `_esperando_*` el modelo quedaba apagado y el bot era un
+            # formulario: contestar "mejor cancela" a "De cuanto era? Solo el
+            # numero" respondia "No lo lei como numero. Solo la cifra, por
+            # favor." Eso es exactamente lo "cuadrado", y con nombre propio.
+            # El camino rapido sigue existiendo para cuando el texto SI es el
+            # dato; lo que cambia es el fallo.
+            await update.message.chat.send_action("typing")
+            await _enrutar_y_despachar(update, chat, texto,
+                                       esperando="de cuanto era, solo el numero")
             return
         dato = _memoria.get(chat) or {}
         if dato.get("tipo") == "abono":
@@ -1717,8 +2376,10 @@ async def manejar_texto(update, context):
         try:
             monto = float(limpio)
         except ValueError:
-            _esperando_correccion[chat] = "monto"
-            await update.message.reply_text("No lo lei como numero. Solo la cifra, por favor.")
+            # D31, igual que arriba: si no es el dato, se enruta.
+            await update.message.chat.send_action("typing")
+            await _enrutar_y_despachar(update, chat, texto,
+                                       esperando="de cuanto era el movimiento que estas corrigiendo")
             return
         await _proponer_correccion_de_campo(update, chat, "monto", monto)
         return
@@ -1746,8 +2407,10 @@ async def manejar_texto(update, context):
         digitos = "".join(c for c in texto if c.isdigit())
         dias = int(digitos) if digitos else 0
         if dias <= 0:
-            _esperando_vigencia[chat] = True
-            await update.message.reply_text("Cuantos dias? Solo el numero.")
+            # D31, igual que el monto.
+            await update.message.chat.send_action("typing")
+            await _enrutar_y_despachar(update, chat, texto,
+                                       esperando="cuantos dias de vigencia le pongo a la cotizacion")
             return
         dato = _memoria.get(chat) or {}
         peticion = dict(dato.get("peticion") or {})
@@ -2222,8 +2885,12 @@ async def manejar_boton(update, context):
     elif accion == "va":
         await _confirmar(update, chat)
     elif accion == "no":
-        _memoria.pop(chat, None)
-        await q.message.reply_text("Cancelado. No escribi nada.")
+        # D1: el boton YA trae el id -- `callback_data` es `"no:" + borrador_id`
+        # en los ocho teclados de confirmacion. El unico sin uuid es el "Mejor
+        # no" de las listas (`no:x`), que es el centinela.
+        crudo = partes[1] if len(partes) > 1 else ""
+        borrador_id = "" if crudo in _NO_HAY_BORRADOR else crudo
+        await q.message.reply_text(_cancelar_de_verdad(chat, borrador_id))
     elif accion == "cat":
         dato = _memoria.get(chat)
         if not dato:
@@ -2443,12 +3110,56 @@ async def manejar_no_autorizado(update, context):
     log.warning("mensaje de chat no dado de alta: %s", update.effective_chat.id)
 
 
+def _version_cargada():
+    """La fecha del `.py` mas nuevo de `bot/`, tal como estaba AL ARRANCAR.
+
+    **Python carga el modulo al arrancar; editar el `.py` no cambia el proceso.**
+    Esto se calcula una sola vez, en el momento del arranque, asi que si alguien
+    edita el codigo mientras el bot corre, este numero se queda con la version
+    que de verdad esta en memoria -- que es justo el dato que faltaba.
+    """
+    mas_nuevo = 0.0
+    for archivo in Path(__file__).parent.glob("*.py"):
+        try:
+            mas_nuevo = max(mas_nuevo, archivo.stat().st_mtime)
+        except OSError:
+            continue
+    return mas_nuevo
+
+
+# Se fija al importar, no al latir. Ver `_version_cargada`.
+ARRANCADO_EN = time.time()
+VERSION_CARGADA = _version_cargada()
+
+
 async def _latir(app):
     """El latido. Su valor es el silencio: sin lineas durante mas de 15 min, el
-    bot esta colgado aunque el proceso siga en la lista de tareas (E-25)."""
+    bot esta colgado aunque el proceso siga en la lista de tareas (E-25).
+
+    ─── D22, 2026-09-19: EL LATIDO DEJA DE MENTIR ──────────────────────────────
+
+    El 2026-09-18 a las 10:44 arranco un proceso. El 2026-09-19 a las 09:49 se
+    edito `bot_gastos.py` con toda la Fase 5 dentro. **El bot siguio sirviendo el
+    codigo de antes durante 24 horas**, y en ese rato escribio noventa y seis
+    latidos diciendo *"vivo, 0 borradores en memoria"*. Cada uno era **verdadero**.
+
+    Norman corrio su prueba de cinco minutos y el bot contesto disparates:
+    `/anular` no dejo ni una linea en el log (para ese proceso el comando no
+    existia), y *"anula el movimiento anterior"* salio como charla. No era un
+    defecto de la Fase 5: **era que la Fase 5 nunca se cargo.**
+
+    *"Vivo"* sin decir QUE VERSION esta viva es lo que dejo pasar esto. Desde hoy
+    el latido publica la hora de arranque y la fecha del `.py` mas nuevo que
+    cargo, que es lo que el vigilante compara.
+    """
     while True:
         await asyncio.sleep(INTERVALO_LATIDO)
-        log.info("latido: vivo, %d borrador(es) en memoria", len(_memoria))
+        log.info(
+            "latido: vivo, %d borrador(es) en memoria | arranque %s | codigo %s",
+            len(_memoria),
+            dt.datetime.fromtimestamp(ARRANCADO_EN).strftime("%Y-%m-%d %H:%M:%S"),
+            dt.datetime.fromtimestamp(VERSION_CARGADA).strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
 
 async def _al_arrancar(app):
@@ -2502,7 +3213,8 @@ def main():
         sys.exit(1)
 
     candado = _candado()  # noqa: F841 - vive hasta que muere el proceso
-    log.info("arrancando bot de gastos contra %s", API)
+    log.info("arrancando bot de gastos contra %s | codigo del %s", API,
+             dt.datetime.fromtimestamp(VERSION_CARGADA).strftime("%Y-%m-%d %H:%M:%S"))
 
     app = Application.builder().token(TOKEN_TG).post_init(_al_arrancar).build()
     app.add_handler(CommandHandler("start", comando_inicio))

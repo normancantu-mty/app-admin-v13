@@ -160,6 +160,20 @@ export interface PuertaDeAuth {
 }
 
 /**
+ * Lo que la PANTALLA recoge y el chat no pregunta (D18, 2026-09-19).
+ *
+ * `PayloadAlta` no se toca: sus llaves estan congeladas porque el sello del
+ * borrador se calcula sobre una lista ordenada de ellas, y agregarle un campo
+ * romperia todos los sellos vivos. Estos dos viajan por fuera, con exactamente
+ * los mismos valores que la funcion ponia fijos, asi que **el camino del bot no
+ * cambia ni un byte**: no le pasa `extras` y sigue escribiendo `null` y `true`.
+ */
+export interface ExtrasDeAlta {
+  ubicacion_maps?: string | null
+  aplica_redondeo_costo?: boolean
+}
+
+/**
  * La entidad y su cuenta, en UNA transaccion (D13).
  *
  * ─── EL ORDEN, Y POR QUE EL USUARIO DE AUTH VA FUERA ────────────────────────
@@ -183,7 +197,8 @@ export async function crearEntidad(
   actor: ActorDeAlta,
   datos: PayloadAlta,
   password: string | null,
-  auth?: PuertaDeAuth
+  auth?: PuertaDeAuth,
+  extras?: ExtrasDeAlta
 ): Promise<ResultadoDeAlta> {
   assertPuedeDarDeAlta(actor)
 
@@ -210,7 +225,7 @@ export async function crearEntidad(
         email,
         auth_id: authId,
         telefono: datos.telefono?.trim() || null,
-        ubicacion_maps: null,
+        ubicacion_maps: extras?.ubicacion_maps?.trim() || null,
         es_distribuidor: datos.rol === 'DST',
         // El puente legacy: las dos columnas se leen para resolver al padre, asi
         // que las dos se escriben. Poner solo una deja la jerarquia a medias
@@ -223,7 +238,7 @@ export async function crearEntidad(
         // La columna muerta. Se escribe 0 explicito y no se pregunta nunca.
         // Ver `COLUMNA_MUERTA` en `lib/bot-entidad.ts`.
         comision_logistica: 0,
-        aplica_redondeo_costo: true
+        aplica_redondeo_costo: extras?.aplica_redondeo_costo ?? true
       },
       p_cuenta: {
         // Exactamente UNA, y `LIBRE`. Una cuenta fiscal creada por chat caeria
