@@ -237,50 +237,44 @@ export function textoVentas(filas: readonly FilaVentasPorMes[]): string {
 // FASE 9 (D99) — "QUIEN DEBE" COMPLETO, Y LOS PRECIOS POR ENTIDAD.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** De `v_saldo_entidad`: lo que el nodo ya cobro y no ha entregado a la matriz. */
-export type PorEntregar = ReadonlyMap<string, number>
+/**
+ * FASE 10 (D104): la linea de "cobrado por entregar" se OCULTA. Medido el
+ * 2026-09-23 con SQL: el cobro se registra (`DEUDA_A_MATRIZ`), pero la entrega
+ * no tiene registro propio — resta como `ABONO_DEUDA/ABONO_REAL`, el mismo
+ * renglon que el pago de concesion. `v_saldo_entidad.saldo_por_pagar_efectivo`
+ * salia negativo en las 11 entidades y el bot mostraba $0 a todos, incluidos
+ * los dos DST que si cobraron. Mientras no exista un movimiento de entrega, el
+ * numero no se puede separar y no se inventa. Tabla:
+ * `Fresnillo/ERP_Fresnillo/_avance_fase10_2026-09-23.md`, D104.
+ */
+export const NOTA_EFECTIVO_NO_SEPARABLE =
+  'El efectivo que ya cobraron y no han entregado no se muestra: el ERP no separa su entrega del pago de concesion.'
 
 /**
  * Norman, textual: *"debes de poner el total y el dinero que no te ha dado que
- * ya tiene el"*. Por deudor: la deuda de concesion (`v_cartera`) **y** el
- * efectivo cobrado por entregar (`v_saldo_entidad.saldo_por_pagar_efectivo`,
- * el `DEUDA_A_MATRIZ` de `lib/venta-servidor.ts:696-742`), cada uno con su
- * nombre. Aparece quien tenga cualquiera de los dos. **Pura.**
+ * ya tiene el"*. Por deudor, la deuda de concesion (`v_cartera`); el efectivo
+ * por entregar, ver `NOTA_EFECTIVO_NO_SEPARABLE`. **Pura.**
  */
-export function textoQuienDebe(
-  filas: readonly FilaCarteraVista[],
-  porEntregar: PorEntregar,
-  filtro?: string | null
-): string {
+export function textoQuienDebe(filas: readonly FilaCarteraVista[], filtro?: string | null): string {
   const renglones = filas
-    .map((f) => ({
-      f,
-      deuda: Math.max(0, Number(f.deuda) || 0),
-      entregar: Math.max(0, Number(porEntregar.get(f.id_entidad) ?? 0))
-    }))
-    .filter((r) => r.deuda > 0.005 || r.entregar > 0.005)
+    .map((f) => ({ f, deuda: Math.max(0, Number(f.deuda) || 0) }))
+    .filter((r) => r.deuda > 0.005)
   if (filtro && filas.length === 0) {
     return `No encuentro a "${filtro}" en la cartera. Pregunta "quien me debe" para ver la lista.`
   }
   if (renglones.length === 0) {
     return filtro
-      ? `${filas.map((f) => f.nombre).join(', ')}: no te debe nada hoy, ni tiene cobrado por entregar.`
+      ? `${filas.map((f) => f.nombre).join(', ')}: no te debe nada de concesion hoy.\n${NOTA_EFECTIVO_NO_SEPARABLE}`
       : sinDatos('cartera con deuda')
   }
   const totalDeuda = renglones.reduce((s, r) => s + r.deuda, 0)
-  const totalEntregar = renglones.reduce((s, r) => s + r.entregar, 0)
-  const lineas: string[] = [
-    `QUIEN DEBE — ${pesos(totalDeuda + totalEntregar)} en total`,
-    `   ${pesos(totalDeuda)} de concesion + ${pesos(totalEntregar)} cobrado por entregar`,
-    ''
-  ]
-  const ordenadas = [...renglones].sort((a, b) => b.deuda + b.entregar - (a.deuda + a.entregar))
+  const lineas: string[] = [`QUIEN DEBE — ${pesos(totalDeuda)} de concesion`, '']
+  const ordenadas = [...renglones].sort((a, b) => b.deuda - a.deuda)
   for (const r of ordenadas.slice(0, TOPE_RENGLONES)) {
-    lineas.push(
-      `${r.f.nombre} (${r.f.rol}) — debe ${pesos(r.deuda)} de concesion · tiene ${pesos(r.entregar)} cobrado por entregar`
-    )
+    lineas.push(`${r.f.nombre} (${r.f.rol}) — debe ${pesos(r.deuda)} de concesion`)
   }
   if (ordenadas.length > TOPE_RENGLONES) lineas.push(`... y ${ordenadas.length - TOPE_RENGLONES} mas.`)
+  lineas.push('', NOTA_EFECTIVO_NO_SEPARABLE)
   return lineas.join('\n')
 }
 

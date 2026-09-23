@@ -531,8 +531,10 @@ async def _boton_de_aprobacion(update, clave, q, accion, bid):
             await decir(r.get("error", "No pude rechazarlo."))
             return
         await decir("Rechazado. No se escribio nada.")
+        # Fase 10 (D106): Norman o Kevin; el nombre lo da el servidor.
+        quien = r.get("rechazado_por") or _nombre_de(_persona(clave))
         await _avisar_en(update, r.get("chat_id"),
-                         "Norman rechazo lo que propusiste. No se escribio nada.", clave)
+                         quien + " rechazo lo que propusiste. No se escribio nada.", clave)
         return
     estado, r = _post("/api/bot/aprobacion", {"telegram_id": clave, "borrador_id": bid})
     if estado != 200 or not r.get("ok"):
@@ -549,7 +551,8 @@ async def _boton_de_aprobacion(update, clave, q, accion, bid):
         return
     await decir("Aprobado. Quedo escrito.")
     await _avisar_en(update, r.get("chat_id"),
-                     "Aprobado por Norman: lo que propuso " + str(r.get("autor") or "")
+                     "Aprobado por " + str(r.get("aprobador") or _nombre_de(_persona(clave)))
+                     + ": lo que propuso " + str(r.get("autor") or "")
                      + " quedo escrito.", clave)
     ruta_imagen = r2.get("ruta_imagen")
     if ruta_imagen and r.get("chat_id") is not None:

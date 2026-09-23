@@ -40,7 +40,7 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   selloVentaCoincide,
@@ -184,6 +184,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'una venta')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     // ── LA ESCRITURA. Un solo `registrarVenta`, que por dentro es un solo RPC ─
     // `registrar_venta_atomica` (ERP-11): las cuatro tablas en una transaccion

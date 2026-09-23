@@ -33,7 +33,8 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe } from '@/lib/bot-aprobacion'
+import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { buscarEnLaLista } from '@/lib/bot-anulables'
 import {
   anularFinanzas,
@@ -91,8 +92,9 @@ export async function POST(request: Request) {
     if (!borrador) {
       return NextResponse.json({ error: 'Ese borrador ya no existe.' }, { status: 404 })
     }
-    // Anular no esta en la tabla de permisos de la Fase 9: se queda la regla de
-    // siempre (`lib/anulacion-servidor.ts`), y solo se agrega la puerta.
+    // Anular puro y editar la descripcion no estan en la tabla de permisos: se
+    // queda la regla de siempre (`lib/anulacion-servidor.ts`) y la puerta.
+    // Recapturar SI (FASE 10, D102): escribe un gasto, y se comprueba abajo.
     const puerta = await abrirPuerta(supabase, quien, borrador)
     if (!puerta.ok) return puerta.respuesta
     const identidad = puerta.autor
@@ -120,6 +122,17 @@ export async function POST(request: Request) {
         { error: 'El sello no empata con lo que te ensene. No toco nada.' },
         { status: 409 }
       )
+    }
+
+    // FASE 10 (D102): recapturar escribe un GASTO; pide el permiso del gasto,
+    // del AUTOR (con el Aprobar de Norman se escribe la captura de Kevin) y de
+    // quien aprieta. Antes de cualquier escritura, espera incluida.
+    if (
+      fila.modo === 'recapturar' &&
+      (permisoDeAccion(actorDe(identidad), 'gasto') === 'no' ||
+        permisoDeAccion(actorDe(quien), 'gasto') === 'no')
+    ) {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO.gasto }, { status: 403 })
     }
 
     const actor: ActorDelBot = {
@@ -158,6 +171,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'una anulacion o correccion')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     let resultado: Record<string, unknown>
 

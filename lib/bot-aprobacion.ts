@@ -27,7 +27,7 @@
 import { NextResponse } from 'next/server'
 import type { ClienteServicio, IdentidadBot } from '@/lib/bot-servidor'
 import { resolverIdentidad } from '@/lib/bot-servidor'
-import { esAprobador, entidadesAlcanzables, type ActorBot, type Alcance } from '@/lib/bot-permisos'
+import { esAprobador, puedeAprobar, entidadesAlcanzables, type ActorBot, type Alcance } from '@/lib/bot-permisos'
 
 export type ModoPuerta = 'directo' | 'esperar' | 'aprobar'
 
@@ -43,20 +43,46 @@ export interface HechosDeLaPuerta {
   quien: number
   quienRol: string
   quienRequiereAprobacion: boolean
+  /**
+   * FASE 10 (D106): si el AUTOR requiere aprobacion (Kevin). Solo importa en
+   * ESPERA_APROBACION: lo de Kevin lo aprueba solo quien no la requiere.
+   */
+  duenoRequiereAprobacion?: boolean
+  /** El rol del autor. Sin dato, junto con la marca, se trata como Kevin. */
+  duenoRol?: string
+}
+
+function puedeAprobarHechos(h: HechosDeLaPuerta): boolean {
+  return puedeAprobar(
+    { telegramId: h.quien, rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion },
+    // Un autor sin dato se trata como Kevin: lo mas cerrado.
+    {
+      telegramId: h.dueno,
+      rol: h.duenoRol ?? 'ADMIN',
+      requiereAprobacion: h.duenoRequiereAprobacion ?? true
+    }
+  )
 }
 
 export function decidirPuerta(h: HechosDeLaPuerta): DecisionPuerta {
-  const aprobador = esAprobador({ rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
   if (h.estado === 'PENDIENTE') {
     if (h.dueno !== h.quien) return { ok: false, status: 403, error: 'Ese borrador no es tuyo.' }
     return { ok: true, modo: h.quienRequiereAprobacion ? 'esperar' : 'directo' }
   }
   if (h.estado === 'ESPERA_APROBACION') {
+    // FASE 10 (D106): nadie aprueba lo suyo. 403, no 409: no es un estado que
+    // cambie esperando, es una puerta que no le toca.
     if (h.dueno === h.quien) {
-      return { ok: false, status: 409, error: 'Ya esta esperando el Aprobar de Norman.' }
+      return { ok: false, status: 403, error: 'Nadie aprueba lo suyo: esto espera el Aprobar de otro.' }
     }
-    if (!aprobador) {
-      return { ok: false, status: 403, error: 'Aprobar lo que propone otro lo hace solo Norman.' }
+    if (!puedeAprobarHechos(h)) {
+      return {
+        ok: false,
+        status: 403,
+        error: esAprobador({ rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
+          ? 'Lo que propone Kevin lo aprueba Norman.'
+          : 'Aprobar lo que propone otro lo hacen Norman y Kevin.'
+      }
     }
     return { ok: true, modo: 'aprobar' }
   }
@@ -70,10 +96,8 @@ export function decidirPuerta(h: HechosDeLaPuerta): DecisionPuerta {
  */
 export function puedeCancelar(h: HechosDeLaPuerta): boolean {
   if (h.dueno === h.quien) return true
-  return (
-    h.estado === 'ESPERA_APROBACION' &&
-    esAprobador({ rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
-  )
+  // El Rechazar sigue la misma regla que el Aprobar (D106).
+  return h.estado === 'ESPERA_APROBACION' && puedeAprobarHechos(h)
 }
 
 // ─── EL LADO DEL SERVIDOR ───────────────────────────────────────────────────
@@ -100,16 +124,21 @@ export async function abrirPuerta(
   quien: IdentidadBot,
   borrador: BorradorEnPuerta
 ): Promise<PuertaAbierta> {
+  // En ESPERA_APROBACION se lee al autor ANTES de decidir: la regla de quien
+  // aprueba depende de si el autor requiere aprobacion (D106).
+  const ajeno = borrador.estado === 'ESPERA_APROBACION' && Number(borrador.telegram_id) !== quien.telegramId
+  const autor = ajeno ? await resolverIdentidad(supabase, Number(borrador.telegram_id)) : quien
   const d = decidirPuerta({
     estado: borrador.estado,
     dueno: Number(borrador.telegram_id),
     quien: quien.telegramId,
     quienRol: quien.rolEntidad,
-    quienRequiereAprobacion: quien.requiereAprobacion
+    quienRequiereAprobacion: quien.requiereAprobacion,
+    duenoRequiereAprobacion: autor?.requiereAprobacion,
+    duenoRol: autor?.rolEntidad
   })
   if (!d.ok) return { ok: false, respuesta: NextResponse.json({ error: d.error }, { status: d.status }) }
   if (d.modo !== 'aprobar') return { ok: true, modo: d.modo, autor: quien }
-  const autor = await resolverIdentidad(supabase, Number(borrador.telegram_id))
   if (!autor) {
     return {
       ok: false,
@@ -126,16 +155,83 @@ export function actorDe(identidad: IdentidadBot): ActorBot {
   return { rol: identidad.rolEntidad, requiereAprobacion: identidad.requiereAprobacion }
 }
 
-/** Los `telegram_id` de los aprobadores (ADMIN sin marca), para avisarles. */
-export async function aprobadoresDelBot(supabase: ClienteServicio): Promise<number[]> {
+/**
+ * A quienes avisar "lo apruebo?" (D106): los que PUEDEN aprobar lo de este
+ * autor. Norman y Kevin, nunca el autor, y lo de Kevin solo a Norman. El
+ * primero que decide gana; el otro ve que ya se resolvio.
+ */
+export async function aprobadoresDelBot(
+  supabase: ClienteServicio,
+  autor: Pick<IdentidadBot, 'telegramId' | 'rolEntidad' | 'requiereAprobacion'>
+): Promise<number[]> {
   const { data } = await supabase
     .from('bot_identidades')
     .select('telegram_id, requiere_aprobacion, entidades!inner(rol)')
     .eq('activo', true)
-    .eq('requiere_aprobacion', false)
+  const personaAutor = {
+    telegramId: autor.telegramId,
+    rol: autor.rolEntidad,
+    requiereAprobacion: autor.requiereAprobacion
+  }
   return (data ?? [])
-    .filter((f) => (f as unknown as { entidades: { rol: string | null } }).entidades?.rol === 'ADMIN')
+    .filter((f) =>
+      puedeAprobar(
+        {
+          telegramId: Number(f.telegram_id),
+          rol: (f as unknown as { entidades: { rol: string | null } }).entidades?.rol ?? '',
+          requiereAprobacion: Boolean(f.requiere_aprobacion)
+        },
+        personaAutor
+      )
+    )
     .map((f) => Number(f.telegram_id))
+}
+
+/**
+ * FASE 10 (D106): el Aprobar se RECLAMA antes de escribir. Con dos aprobadores
+ * (Norman y Kevin) los dos pueden apretar a la vez; sin esto, los dos pasan la
+ * puerta (los dos leyeron ESPERA_APROBACION) y se escribe dos veces. Un UPDATE
+ * condicionado es atomico: solo uno cambia la fila; el otro recibe 409.
+ * `resuelto_en` marca el reclamo: un borrador en espera nunca lo tiene.
+ * Devuelve `null` si se puede seguir escribiendo.
+ */
+/**
+ * Cuanto dura el reclamo. Si el primer aprobador reclamo y su escritura fallo
+ * (500), el borrador sigue en ESPERA con `resuelto_en` puesto: sin caducidad,
+ * cada Aprobar posterior diria "ya lo resolvio otro" para siempre. Dos minutos
+ * cubren de sobra una escritura (las rutas tardan segundos) y liberan el huerfano.
+ */
+export const RECLAMO_CADUCA_MS = 2 * 60 * 1000
+
+export async function reclamarAprobacion(
+  supabase: ClienteServicio,
+  borradorId: string,
+  modo: ModoPuerta
+): Promise<NextResponse | null> {
+  if (modo !== 'aprobar') return null
+  const ahora = Date.now()
+  const caduco = new Date(ahora - RECLAMO_CADUCA_MS).toISOString()
+  const r = await supabase
+    .from('bot_borradores')
+    .update({ resuelto_en: new Date(ahora).toISOString() })
+    .eq('id', borradorId)
+    .eq('estado', 'ESPERA_APROBACION')
+    .or(`resuelto_en.is.null,resuelto_en.lt."${caduco}"`)
+    .select('id')
+  // En ensayo la escritura no sale (`lib/bot-ensayo.ts`): no hay reclamo que
+  // hacer, y nada se va a escribir despues.
+  if ((r as { statusText?: string }).statusText === 'ENSAYO') return null
+  if (r.error) {
+    console.error('[bot] no pude reclamar la aprobacion', borradorId, r.error)
+    return NextResponse.json({ error: 'No pude aprobarlo. No escribi nada.' }, { status: 500 })
+  }
+  if (!r.data || r.data.length !== 1) {
+    return NextResponse.json(
+      { error: 'Eso ya lo resolvio otro aprobador. No escribi nada.', ya_resuelto: true },
+      { status: 409 }
+    )
+  }
+  return null
 }
 
 /** El nombre con que el bot llama a alguien: su etiqueta, capitalizada. */
@@ -170,9 +266,11 @@ export async function pasarAEspera(
     ok: false,
     espera_aprobacion: true,
     borrador_id: borradorId,
-    avisar_a: await aprobadoresDelBot(supabase),
+    avisar_a: await aprobadoresDelBot(supabase, autor),
     propuesto_por: nombre,
-    mensaje: `Listo, ${nombre}. No lo escribo todavia: se lo mande a Norman para que lo apruebe.`,
+    mensaje: autor.requiereAprobacion
+      ? `Listo, ${nombre}. No lo escribo todavia: se lo mande a Norman para que lo apruebe.`
+      : `Listo, ${nombre}. No lo escribo todavia: se lo mande a Norman y a Kevin para que lo aprueben.`,
     mensaje_aprobador: `${nombre} propone ${queEs} y espera tu Aprobar.`
   })
 }

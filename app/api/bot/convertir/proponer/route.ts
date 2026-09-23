@@ -32,7 +32,7 @@ import {
   tokenValido
 } from '@/lib/bot-servidor'
 import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
-import { actorDe } from '@/lib/bot-aprobacion'
+import { actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
 import { precioParaComprador, TOPE_VENTA, type PayloadVenta, type RenglonVenta } from '@/lib/bot-venta'
 import {
   juzgarConversion,
@@ -84,13 +84,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['convertir'] }, { status: 403 })
     }
 
+    // FASE 10 (D106): un DST convierte SOLO SUS cotizaciones (`id_vendedor` = su
+    // entidad); nunca las de otro. ADMIN, todas.
+    const soloLasSuyas = identidad.rolEntidad !== 'ADMIN'
+
     // ── SIN COTIZACION: SE OFRECE LA LISTA (D2) ───────────────────────────
     const idCotizacion = String(cuerpo.id_cotizacion ?? '').trim()
     if (idCotizacion === '') {
-      const { data, error } = await supabase
+      let consulta = supabase
         .from('cotizaciones')
         .select('id, folio, fecha, estado, total, nombre_prospecto, id_comprador, vigente_hasta, zona')
         .in('estado', ['VIGENTE', 'VENCIDA'])
+      if (soloLasSuyas) consulta = consulta.eq('id_vendedor', identidad.idEntidad)
+      const { data, error } = await consulta
         .order('fecha', { ascending: false })
         .limit(8) // Literal para que el centinela de ERP-25 lo pueda leer.
       if (error) throw new Error(error.message)
@@ -127,12 +133,18 @@ export async function POST(request: Request) {
     // ── LA COTIZACION Y SUS RENGLONES ─────────────────────────────────────
     const { data: cotRaw } = await supabase
       .from('cotizaciones')
-      .select('id, folio, fecha, estado, zona, total, id_comprador, nombre_prospecto, vigente_hasta')
+      .select('id, folio, fecha, estado, zona, total, id_comprador, nombre_prospecto, vigente_hasta, id_vendedor')
       .eq('id', idCotizacion)
       .maybeSingle()
 
     if (!cotRaw) {
       return NextResponse.json({ error: 'Esa cotizacion ya no existe.' }, { status: 404 })
+    }
+    if (soloLasSuyas && cotRaw.id_vendedor !== identidad.idEntidad) {
+      return NextResponse.json(
+        { error: 'Esa cotizacion no es tuya. Solo conviertes las que hiciste tu.' },
+        { status: 403 }
+      )
     }
     const cot: CotizacionParaConvertir = {
       id: cotRaw.id,
@@ -217,6 +229,13 @@ export async function POST(request: Request) {
         { error: 'El comprador y el vendedor son la misma entidad. No escribo eso.' },
         { status: 422 }
       )
+    }
+    // La misma puerta que la venta (D96): un DST solo a su red.
+    {
+      const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
+      if (red !== null && !red.has(comprador.id)) {
+        return NextResponse.json({ error: 'Ese comprador no es de tu red. No la convierto.' }, { status: 403 })
+      }
     }
 
     const catalogo = await leerCatalogoDeVenta(supabase)

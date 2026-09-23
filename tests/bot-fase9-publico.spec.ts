@@ -55,6 +55,14 @@ test.describe('D87 — publico en general es publico', () => {
     expect(esPublicoEnGeneral(null)).toBe(false)
   })
 
+  // Fase 10 (D105): el empate por SUFIJO no lo vigilaba nadie. "Bar El Publico"
+  // termina en " publico" y es un negocio. Mutacion que lo pone rojo:
+  // `SINONIMOS_NORMALIZADOS.has(n) || n.endsWith(' publico')`.
+  test('CONTROL: no empata por sufijo ("Bar El Publico" es un negocio)', () => {
+    expect(esPublicoEnGeneral('Bar El Publico')).toBe(false)
+    expect(esPublicoEnGeneral('Bar El Público')).toBe(false)
+  })
+
   test('el prospecto de la cotizacion se llama "Publico en general"', () => {
     expect(NOMBRE_PUBLICO).toBe('Publico en general')
   })

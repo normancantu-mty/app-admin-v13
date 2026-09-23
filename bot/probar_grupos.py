@@ -342,7 +342,9 @@ async def d95():
     caso("D95: al desconocido se le pregunta, una vez",
          ux1.message.dichos[:1] + ux2.message.dichos,
          ["No te tengo registrado. Norman, ¿quien es?\n(Norman: contesta a su mensaje con \"este es <nombre>\".)"])
-    caso("D95: lo que dijo el desconocido no llega al modelo", al_modelo, [])
+    # Fase 10 (D105): una COPIA. `caso` guarda la referencia y `limpiar()`
+    # vacia la lista antes de evaluarla: con `al_modelo` a secas pasaba siempre.
+    caso("D95: lo que dijo el desconocido no llega al modelo", list(al_modelo), [])
     # Norman le contesta a su mensaje.
     un = Update(GRUPO, NORMAN, "este es Gilberto", contesta_a=Mensaje(GRUPO, "vendi 3 grandes", DESCONOCIDO))
     await B.manejar_texto(un, Contexto())
@@ -377,7 +379,8 @@ S.respuestas["/api/bot/gasto/proponer"] = [GASTO_OK]
 S.respuestas["/api/bot/gasto/confirmar"] = [ESPERA, (200, {"ok": True})]
 S.respuestas["/api/bot/aprobacion"] = [(200, {"ok": True, "borrador_id": "b-gas", "tipo": None, "sello": "s-gas",
                                               "estado": "ESPERA_APROBACION", "chat_id": GRUPO,
-                                              "autor_telegram_id": KEVIN, "autor": "Kevin"})]
+                                              "autor_telegram_id": KEVIN, "autor": "Kevin",
+                                              "aprobador": "Norman"})]
 uk = Update(GRUPO, KEVIN)
 
 
@@ -412,7 +415,8 @@ limpiar()
 
 # Rechazar.
 S = Servidor()
-S.respuestas["/api/bot/cancelar"] = [(200, {"ok": True, "autor_telegram_id": KEVIN, "chat_id": GRUPO})]
+S.respuestas["/api/bot/cancelar"] = [(200, {"ok": True, "autor_telegram_id": KEVIN, "chat_id": GRUPO,
+                                            "rechazado_por": "Norman"})]
 
 
 async def rechazar():
@@ -512,6 +516,115 @@ async def d100():
          "QUIEN TE ESCRIBE" in E._pedazo_contexto(None, None, None), False)
 
 correr(S, d100())
+limpiar()
+
+# ═══ 7. FASE 10 (D105, D106): las guardas que ninguna prueba defendia ═══════
+# 7a. Auto-registro: Kevin (dado de alta) contesta A SU PROPIO mensaje con
+# "/registrar Norman". `/registrar` se salta la pregunta de identidad, asi que
+# lo unico que lo para en el bot es `miembro.id == quien habla`.
+# Mutacion: quitar esa guarda en `_quiza_registro` -> rojo.
+S = Servidor()
+S.respuestas["/api/bot/miembro/proponer"] = [(200, {"ok": True, "borrador_id": "b-mb", "sello": "s-mb",
+                                                    "mensaje": "REGISTRO: Gilberto -> Casa Verde (DST)"})]
+
+
+async def autorregistro():
+    uk = Update(GRUPO, KEVIN, "/registrar Norman", contesta_a=Mensaje(GRUPO, "gaste 300", KEVIN))
+    await B.manejar_texto(uk, Contexto())
+    caso("D105: nadie se registra a si mismo (Kevin contesta a lo suyo con /registrar)",
+         len(S.a("/api/bot/miembro/proponer")), 0)
+    un = Update(GRUPO, NORMAN, "/registrar Gilberto", contesta_a=Mensaje(GRUPO, "hola", DESCONOCIDO))
+    await B.manejar_texto(un, Contexto())
+    caso("D105 CONTROL: el /registrar de Norman sobre OTRO si propone el alta",
+         [(c["telegram_id"], c["miembro_telegram_id"]) for c in S.a("/api/bot/miembro/proponer")],
+         [(NORMAN, DESCONOCIDO)])
+
+correr(S, autorregistro())
+limpiar()
+
+
+# 7b. ERP que no contesta la identidad: lo cerrado es NO procesar y decirlo.
+# Mutacion: `if ident is None:` devuelve True (la puerta se abre) -> rojo.
+class ServidorCaido(Servidor):
+    def __call__(self, ruta, cuerpo):
+        if ruta == "/api/bot/identidad":
+            self.llamadas.append((ruta, dict(cuerpo)))
+            return 0, {"error": "no pude hablarle al ERP: timed out"}
+        return Servidor.__call__(self, ruta, cuerpo)
+
+
+S = ServidorCaido()
+
+
+async def erp_caido():
+    ug = Update(GRUPO, GILBERTO, "gaste 300 de gasolina")
+    await B.manejar_texto(ug, Contexto())
+    caso("D105: ERP caido -> se dice que no se pudo verificar",
+         ug.message.dichos, ["No pude revisar quien eres (el ERP no contesto). No hice nada."])
+    caso("D105: ERP caido -> nada llega al modelo", list(al_modelo), [])
+    caso("D105: ERP caido -> ninguna llamada mas que la identidad",
+         [r for r, _ in S.llamadas], ["/api/bot/identidad"])
+
+correr(S, erp_caido())
+limpiar()
+S = Servidor()
+
+
+async def erp_vivo():
+    ug = Update(GRUPO, GILBERTO, "gaste 300 de gasolina")
+    await B.manejar_texto(ug, Contexto())
+    caso("D105 CONTROL: con el ERP vivo, lo mismo de Gilberto si llega al modelo",
+         [t for t, _ in al_modelo], ["gaste 300 de gasolina"])
+
+correr(S, erp_vivo())
+limpiar()
+
+# 7c. D106: el aviso dice QUIEN aprobo o rechazo (Norman o Kevin), no "Norman".
+S = Servidor()
+S.respuestas["/api/bot/cancelar"] = [(200, {"ok": True, "autor_telegram_id": GILBERTO, "chat_id": GRUPO,
+                                            "rechazado_por": "Kevin"})]
+
+
+async def kevin_rechaza():
+    ur = UpdateBoton(KEVIN, KEVIN, "rch:b-gas")
+    await B.manejar_boton(ur, Contexto())
+    caso("D106: cuando rechaza Kevin, el grupo lee 'Kevin rechazo'", BOT.a(GRUPO),
+         ["Kevin rechazo lo que propusiste. No se escribio nada."])
+
+correr(S, kevin_rechaza())
+limpiar()
+S = Servidor()
+S.respuestas["/api/bot/aprobacion"] = [(200, {"ok": True, "borrador_id": "b-gas", "tipo": "gasto", "sello": "s-gas",
+                                              "estado": "ESPERA_APROBACION", "chat_id": GRUPO,
+                                              "autor_telegram_id": GILBERTO, "autor": "Gilberto",
+                                              "aprobador": "Kevin"})]
+S.respuestas["/api/bot/gasto/confirmar"] = [(200, {"ok": True})]
+
+
+async def kevin_aprueba():
+    ua = UpdateBoton(KEVIN, KEVIN, "apr:b-gas")
+    await B.manejar_boton(ua, Contexto())
+    caso("D106: cuando aprueba Kevin, el grupo lee 'Aprobado por Kevin'", BOT.a(GRUPO),
+         ["Aprobado por Kevin: lo que propuso Gilberto quedo escrito."])
+
+correr(S, kevin_aprueba())
+limpiar()
+S = Servidor()
+S.respuestas["/api/bot/aprobacion"] = [(200, {"ok": True, "borrador_id": "b-gas", "tipo": "gasto", "sello": "s-gas",
+                                              "estado": "ESPERA_APROBACION", "chat_id": GRUPO,
+                                              "autor_telegram_id": GILBERTO, "autor": "Gilberto"})]
+S.respuestas["/api/bot/gasto/confirmar"] = [(409, {"ok": False, "ya_resuelto": True,
+                                                   "error": "Eso ya lo resolvio otro aprobador. No escribi nada."})]
+
+
+async def segundo_aprobador():
+    ua = UpdateBoton(NORMAN, NORMAN, "apr:b-gas")
+    await B.manejar_boton(ua, Contexto())
+    caso("D106: el segundo aprobador ve que ya se resolvio, y el grupo no recibe otro aviso",
+         (ua.callback_query.message.dichos[-1], BOT.a(GRUPO)),
+         ("Eso ya lo resolvio otro aprobador. No escribi nada.", []))
+
+correr(S, segundo_aprobador())
 limpiar()
 
 # ─── Resultado ───────────────────────────────────────────────────────────────

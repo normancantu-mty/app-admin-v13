@@ -21,14 +21,16 @@ import {
   chatDelBorrador,
   entidadesAlcanzables,
   esAprobador,
+  esNorman,
   esGrupo,
+  puedeAprobar,
   permisoDeAccion,
   permisoDeConsulta,
   type AccionBot,
   type ActorBot
 } from '@/lib/bot-permisos'
 import { decidirPuerta, puedeCancelar, type HechosDeLaPuerta } from '@/lib/bot-aprobacion'
-import { textoPrecios, textoQuienDebe } from '@/lib/bot-consultas'
+import { NOTA_EFECTIVO_NO_SEPARABLE, textoPrecios, textoQuienDebe } from '@/lib/bot-consultas'
 import { etiquetaDeNombre, nombreDelRegistro, sellarMiembro, selloMiembroCoincide } from '@/lib/bot-miembro'
 import { filasDeAbono, type PayloadAbono } from '@/lib/bot-abonos'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
@@ -56,8 +58,10 @@ test.describe('D96 — la tabla de acciones', () => {
       entidad: 'aprobacion', registrar: 'no'
     },
     DST: {
+      // FASE 10 (D106): convertir SOLO SUS cotizaciones (la propiedad, en la ruta:
+      // `tests/bot-rutas-permisos.spec.ts`); alta de clientes, solo Norman.
       venta: 'si', abono: 'si', cotizacion: 'si', gasto: 'no', lote: 'no',
-      entrada_insumo: 'no', convertir: 'no', entidad: 'no', registrar: 'no'
+      entrada_insumo: 'no', convertir: 'si', entidad: 'no', registrar: 'no'
     },
     LOC: {
       venta: 'no', abono: 'no', cotizacion: 'no', gasto: 'no', lote: 'no',
@@ -78,8 +82,29 @@ test.describe('D96 — la tabla de acciones', () => {
     expect(permisoDeAccion({ rol: 'SOCIO', requiereAprobacion: false }, 'venta')).toBe('no')
   })
 
-  test('solo Norman es aprobador', () => {
-    expect([NORMAN, KEVIN, DST, LOC].map(esAprobador)).toEqual([true, false, false, false])
+  // FASE 10 (D106): "Yo, Kevin". Aprueban los dos ADMIN; nadie aprueba lo suyo.
+  test('Norman y Kevin son aprobadores; DST y LOC no', () => {
+    expect([NORMAN, KEVIN, DST, LOC].map(esAprobador)).toEqual([true, true, false, false])
+  })
+
+  test('D106 maker-checker: nadie aprueba lo suyo; lo de Kevin, solo Norman', () => {
+    const p = (a: ActorBot, id: number) => ({ ...a, telegramId: id })
+    expect(puedeAprobar(p(KEVIN, ID_KEVIN), p(DST, ID_GILBERTO))).toBe(true)
+    expect(puedeAprobar(p(NORMAN, ID_NORMAN), p(DST, ID_GILBERTO))).toBe(true)
+    expect(puedeAprobar(p(NORMAN, ID_NORMAN), p(KEVIN, ID_KEVIN))).toBe(true)
+    expect(puedeAprobar(p(KEVIN, ID_KEVIN), p(KEVIN, ID_KEVIN))).toBe(false)
+    expect(puedeAprobar(p(NORMAN, ID_NORMAN), p(NORMAN, ID_NORMAN))).toBe(false)
+    // Otra identidad con marca no aprueba lo de Kevin.
+    expect(puedeAprobar(p(KEVIN, 999), p(KEVIN, ID_KEVIN))).toBe(false)
+    // Kevin si aprueba lo que espera de un tercero con marca (un DST).
+    expect(puedeAprobar(p(KEVIN, ID_KEVIN), p({ rol: 'DST', requiereAprobacion: true }, ID_GILBERTO))).toBe(true)
+    expect(puedeAprobar(p(DST, ID_GILBERTO), p(KEVIN, ID_KEVIN))).toBe(false)
+  })
+
+  test('registrar sigue siendo solo de Norman (Kevin aprueba, no registra)', () => {
+    expect(esNorman(NORMAN)).toBe(true)
+    expect(esNorman(KEVIN)).toBe(false)
+    expect(permisoDeAccion(KEVIN, 'registrar')).toBe('no')
   })
 })
 
@@ -153,7 +178,7 @@ test.describe('D94/D98 — la puerta del VA', () => {
     expect(d).toEqual({ ok: true, modo: 'aprobar' })
   })
 
-  test('D98: Kevin no se aprueba a si mismo', () => {
+  test('D98/D106: Kevin no se aprueba a si mismo (403: nadie aprueba lo suyo)', () => {
     const d = decidirPuerta(
       hechos({
         estado: 'ESPERA_APROBACION',
@@ -163,7 +188,29 @@ test.describe('D94/D98 — la puerta del VA', () => {
         quienRequiereAprobacion: true
       })
     )
-    expect(d).toMatchObject({ ok: false, status: 409 })
+    expect(d).toMatchObject({ ok: false, status: 403 })
+  })
+
+  test('D106: Kevin aprueba lo que espera de un tercero', () => {
+    const d = decidirPuerta(
+      hechos({
+        estado: 'ESPERA_APROBACION',
+        dueno: ID_GILBERTO,
+        duenoRol: 'DST',
+        duenoRequiereAprobacion: true,
+        quien: ID_KEVIN,
+        quienRol: 'ADMIN',
+        quienRequiereAprobacion: true
+      })
+    )
+    expect(d).toEqual({ ok: true, modo: 'aprobar' })
+  })
+
+  test('D106: un autor sin dato de marca se trata como Kevin (Kevin no lo aprueba)', () => {
+    const d = decidirPuerta(
+      hechos({ estado: 'ESPERA_APROBACION', dueno: ID_GILBERTO, quien: ID_KEVIN, quienRol: 'ADMIN', quienRequiereAprobacion: true })
+    )
+    expect(d).toMatchObject({ ok: false, status: 403 })
   })
 
   test('D98: un DST no aprueba lo que espera a Norman', () => {
@@ -246,18 +293,34 @@ test.describe('D99 — quien debe, completo', () => {
     { ...base, id_entidad: 'c', nombre: 'Sin nada', deuda: 0 }
   ] as FilaCarteraVista[]
 
-  test('total = concesion + cobrado por entregar, y cada uno con su nombre', () => {
-    const t = textoQuienDebe(filas, new Map([['a', 250], ['b', 400]]))
-    expect(t).toContain('QUIEN DEBE — $1,650.00')
-    expect(t).toContain('$1,000.00 de concesion + $650.00 cobrado por entregar')
-    expect(t).toContain('Aeropuerto (DST) — debe $1,000.00 de concesion · tiene $250.00 cobrado por entregar')
-    // Casa Verde no debe concesion pero tiene efectivo: aparece.
-    expect(t).toContain('Casa Verde (DST) — debe $0.00 de concesion · tiene $400.00 cobrado por entregar')
+  // D104 (Fase 10): la linea de efectivo se oculta porque el ERP no separa la
+  // entrega del pago de concesion (tabla en el _avance de la Fase 10).
+  test('D104: el total es la suma de la concesion y dice por que no hay efectivo', () => {
+    const t = textoQuienDebe(filas)
+    expect(t).toContain('QUIEN DEBE — $1,000.00 de concesion')
+    expect(t).toContain('Aeropuerto (DST) — debe $1,000.00 de concesion')
+    expect(t).toContain(NOTA_EFECTIVO_NO_SEPARABLE)
+    expect(t).not.toContain('cobrado por entregar')
     expect(t).not.toContain('Sin nada')
   })
 
-  test('CONTROL: sin efectivo por entregar, el total es la concesion', () => {
-    expect(textoQuienDebe(filas, new Map())).toContain('QUIEN DEBE — $1,000.00')
+  test('D104: la suma del bot = la columna de concesion de la tabla a mano', () => {
+    // Las cifras de v_saldo_entidad.saldo_pendiente_consignacion del 2026-09-23.
+    const mano: Array<[string, number]> = [
+      ['Martin Reyes', 11327], ['Al son del Mezcal', 11852.01], ['Aeropuerto', 10170],
+      ['David Flores', 9012.93], ['Gilberto Franco', 8496], ['Delirio 85', 7992],
+      ['Nuevo Ideal', 4416], ['Dulceria ruiz', 3118], ['Casa Verde', 0]
+    ]
+    const f = mano.map(([nombre, deuda], k) => ({ ...base, id_entidad: `e${k}`, nombre, deuda })) as FilaCarteraVista[]
+    const total = mano.reduce((s, [, d]) => s + d, 0)
+    expect(textoQuienDebe(f)).toContain(`QUIEN DEBE — $${total.toLocaleString('en-US', { minimumFractionDigits: 2 })} de concesion`)
+  })
+
+  test('CONTROL D104: un filtro sin concesion no afirma que no tenga efectivo', () => {
+    const t = textoQuienDebe([filas[1]], 'casa verde')
+    expect(t).toContain('no te debe nada de concesion hoy')
+    expect(t).toContain(NOTA_EFECTIVO_NO_SEPARABLE)
+    expect(t).not.toContain('ni tiene cobrado por entregar')
   })
 })
 

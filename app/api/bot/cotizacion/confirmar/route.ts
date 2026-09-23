@@ -27,7 +27,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { hoyEnMX } from '@/lib/date-format'
 import { fechaParaPersona } from '@/lib/fechas'
@@ -143,6 +143,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'una cotizacion')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     // FASE 9 (D96): un DST solo a sus locales o a publico, comprobado tambien aqui.
     {

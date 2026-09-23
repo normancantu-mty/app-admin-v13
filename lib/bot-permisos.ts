@@ -43,9 +43,39 @@ export interface ActorBot {
   requiereAprobacion: boolean
 }
 
-/** Norman: ADMIN sin marca. Es el unico que aprueba y el unico que registra. */
-export function esAprobador(actor: ActorBot): boolean {
+/**
+ * Norman: ADMIN sin marca. Es el unico que registra quien es quien y el unico
+ * cuyo VA escribe directo.
+ */
+export function esNorman(actor: ActorBot): boolean {
   return actor.rol === 'ADMIN' && !actor.requiereAprobacion
+}
+
+/**
+ * FASE 10 (D106): "Yo, Kevin" — Norman y Kevin aprueban (los dos ADMIN). Esto
+ * solo dice quien PUEDE aprobar en general; que pueda aprobar ESTO lo decide
+ * `puedeAprobar`, que agrega la regla que mas cierra: nadie aprueba lo suyo.
+ */
+export function esAprobador(actor: ActorBot): boolean {
+  return actor.rol === 'ADMIN'
+}
+
+export interface PersonaBot extends ActorBot {
+  telegramId: number
+}
+
+/**
+ * Maker-checker (D106): el aprobador es ADMIN y **distinto del autor**. Y lo
+ * que propone Kevin (ADMIN con marca) sigue esperando a Norman: un aprobador con
+ * marca no aprueba a otro ADMIN con marca. Kevin si aprueba lo de un tercero (el
+ * abono pendiente de un DST, o lo que espere de alguien con marca). **Pura.**
+ */
+export function puedeAprobar(aprobador: PersonaBot, autor: PersonaBot): boolean {
+  if (!esAprobador(aprobador)) return false
+  if (aprobador.telegramId === autor.telegramId) return false
+  const autorEsKevin = autor.rol === 'ADMIN' && autor.requiereAprobacion
+  if (autorEsKevin && aprobador.requiereAprobacion) return false
+  return true
 }
 
 const DE_LA_MATRIZ: readonly AccionBot[] = [
@@ -59,11 +89,17 @@ const DE_LA_MATRIZ: readonly AccionBot[] = [
   'entidad'
 ]
 
-/** Lo que un DST hace a su nombre (la tabla: venta, abono, cotizacion). */
-const DEL_DISTRIBUIDOR: readonly AccionBot[] = ['venta', 'abono', 'cotizacion']
+/**
+ * Lo que un DST hace a su nombre (la tabla: venta, abono, cotizacion).
+ * FASE 10 (D106), decision del planeador que Norman confirma: `convertir` SOLO
+ * SUS cotizaciones (es una venta a su nombre). La propiedad la comprueban las
+ * rutas `convertir/*` (`id_vendedor` = su entidad). Se revierte quitandolo de
+ * aqui. `entidad` (alta de clientes) NO: "solo yo" (Norman, 2026-09-23).
+ */
+const DEL_DISTRIBUIDOR: readonly AccionBot[] = ['venta', 'abono', 'cotizacion', 'convertir']
 
 export function permisoDeAccion(actor: ActorBot, accion: AccionBot): Veredicto {
-  if (accion === 'registrar') return esAprobador(actor) ? 'si' : 'no'
+  if (accion === 'registrar') return esNorman(actor) ? 'si' : 'no'
   if (actor.rol === 'ADMIN') {
     if (!DE_LA_MATRIZ.includes(accion)) return 'no'
     return actor.requiereAprobacion ? 'aprobacion' : 'si'

@@ -31,7 +31,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, actorDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   crearEntidad,
@@ -136,6 +136,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'un alta de cliente')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     // ── LA CONTRASENA. Se genera aqui, se ensena una vez, no se guarda. ────
     const password = fila.rol === 'DST' ? generarPassword() : null

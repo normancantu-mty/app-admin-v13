@@ -14,8 +14,8 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { esAprobador } from '@/lib/bot-permisos'
-import { actorDe } from '@/lib/bot-aprobacion'
+import { esAprobador, puedeAprobar } from '@/lib/bot-permisos'
+import { actorDe, nombreDeEtiqueta } from '@/lib/bot-aprobacion'
 import { resolverAprobacionDeAbono } from '@/lib/aprobacion-abonos'
 
 export const dynamic = 'force-dynamic'
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     const supabase = clienteDeServicio(request)
     const quien = await resolverIdentidad(supabase, telegramId)
     if (!quien || !esAprobador(actorDe(quien))) {
-      return NextResponse.json({ error: 'Aprobar abonos lo hace solo Norman.' }, { status: 403 })
+      return NextResponse.json({ error: 'Aprobar abonos lo hacen Norman y Kevin.' }, { status: 403 })
     }
 
     const { data: borrador } = await supabase
@@ -56,6 +56,29 @@ export async function POST(request: Request) {
     const ids = payload?.meta?.ids_pendientes ?? []
     if (!borrador || payload?.tipo !== 'abono' || borrador.estado !== 'CONFIRMADO' || ids.length === 0) {
       return NextResponse.json({ error: 'Ese no es un abono pendiente de aprobar.' }, { status: 409 })
+    }
+
+    // FASE 10 (D106): maker-checker. Kevin aprueba el abono de un DST; nadie
+    // aprueba lo suyo; lo de Kevin, Norman.
+    const autor = await resolverIdentidad(supabase, Number(borrador.telegram_id))
+    const permitido = puedeAprobar(
+      { telegramId: quien.telegramId, rol: quien.rolEntidad, requiereAprobacion: quien.requiereAprobacion },
+      {
+        telegramId: Number(borrador.telegram_id),
+        rol: autor?.rolEntidad ?? 'ADMIN',
+        requiereAprobacion: autor?.requiereAprobacion ?? true
+      }
+    )
+    if (!permitido) {
+      return NextResponse.json(
+        {
+          error:
+            Number(borrador.telegram_id) === quien.telegramId
+              ? 'Nadie aprueba lo suyo: ese abono lo aprueba otro.'
+              : 'Lo que propone Kevin lo aprueba Norman.'
+        },
+        { status: 403 }
+      )
     }
 
     let hechos = 0
@@ -73,6 +96,7 @@ export async function POST(request: Request) {
     }
 
     const verbo = accion === 'APPROVE' ? 'aprobado' : 'rechazado'
+    const aprobador = nombreDeEtiqueta(quien.etiqueta)
     return NextResponse.json({
       ok: true,
       accion: verbo,
@@ -80,8 +104,9 @@ export async function POST(request: Request) {
       avisos: errores,
       chat_id: borrador.chat_id ?? Number(borrador.telegram_id),
       autor_telegram_id: Number(borrador.telegram_id),
+      aprobador,
       mensaje:
-        `Abono de ${payload?.meta?.nombre_deudor ?? 'la red'} ${verbo} por Norman` +
+        `Abono de ${payload?.meta?.nombre_deudor ?? 'la red'} ${verbo} por ${aprobador}` +
         (accion === 'APPROVE' ? ': ya cuenta en la cartera.' : ': no cuenta.')
     })
   } catch (e) {

@@ -27,7 +27,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { puedeCancelar } from '@/lib/bot-aprobacion'
+import { puedeCancelar, nombreDeEtiqueta } from '@/lib/bot-aprobacion'
 
 export const dynamic = 'force-dynamic'
 
@@ -70,12 +70,19 @@ export async function POST(request: Request) {
     // el id — un dano pequeno, pero gratuito.
     // FASE 9 (D98): un borrador que espera aprobacion lo puede apagar tambien
     // el aprobador — ese es el boton Rechazar de Norman.
+    // FASE 10 (D106): el Rechazar sigue la regla del Aprobar, que depende de
+    // quien es el AUTOR (lo de Kevin solo lo rechaza Norman; lo de un tercero,
+    // Norman o Kevin). Sin leerlo, `puedeCancelar` lo trata como Kevin.
+    const ajeno = borrador.estado === 'ESPERA_APROBACION' && Number(borrador.telegram_id) !== telegramId
+    const autor = ajeno ? await resolverIdentidad(supabase, Number(borrador.telegram_id)) : identidad
     const hechos = {
       estado: borrador.estado,
       dueno: Number(borrador.telegram_id),
       quien: telegramId,
       quienRol: identidad.rolEntidad,
-      quienRequiereAprobacion: identidad.requiereAprobacion
+      quienRequiereAprobacion: identidad.requiereAprobacion,
+      duenoRol: autor?.rolEntidad,
+      duenoRequiereAprobacion: autor?.requiereAprobacion
     }
     if (!puedeCancelar(hechos)) {
       return NextResponse.json({ error: 'Ese borrador no es tuyo.' }, { status: 403 })
@@ -110,6 +117,7 @@ export async function POST(request: Request) {
       ok: true,
       ya_estaba: false,
       rechazado: rechazo,
+      rechazado_por: rechazo ? nombreDeEtiqueta(identidad.etiqueta) : null,
       autor_telegram_id: hechos.dueno,
       chat_id: borrador.chat_id ?? hechos.dueno
     })

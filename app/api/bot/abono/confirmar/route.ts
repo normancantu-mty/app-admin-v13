@@ -32,6 +32,7 @@ import {
 import {
   abrirPuerta,
   pasarAEspera,
+  reclamarAprobacion,
   actorDe,
   alcanceDeCaptura,
   aprobadoresDelBot,
@@ -215,6 +216,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'un abono')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     // ── EL INSERT. Un solo INSERT multi-fila: una sentencia, atomica. ────────
     // Es la unica atomicidad disponible en este sistema, y la razon esta en la
@@ -305,9 +309,9 @@ export async function POST(request: Request) {
         borrador_id: borradorId,
         ids: creadas.map((f) => f.id),
         filas_escritas: creadas.length,
-        avisar_a: await aprobadoresDelBot(supabase),
+        avisar_a: await aprobadoresDelBot(supabase, identidad),
         mensaje:
-          `Listo: registre el abono de $${abono.monto.toFixed(2)}. Queda PENDIENTE hasta que Norman lo apruebe.`,
+          `Listo: registre el abono de $${abono.monto.toFixed(2)}. Queda PENDIENTE hasta que Norman o Kevin lo aprueben.`,
         mensaje_aprobador:
           `${autorNombre} registro un abono de $${abono.monto.toFixed(2)} de ${guardado.meta.nombre_deudor}. ¿Lo apruebo?`
       })

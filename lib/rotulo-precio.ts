@@ -10,7 +10,7 @@
 // misma condicion**: si una cambia, la otra esta a tres lineas.
 export const ROTULO_PUBLICO = 'Precio al publico en general'
 export const ROTULO_DISTRIBUIDOR = 'Precio de distribuidor'
-/** Texto provisional: va como pregunta de una linea a Norman (informe Fase 9). */
+/** Confirmado por Norman en el chat el 2026-09-23 (Fase 10, D106): se queda. */
 export const ROTULO_LOCAL = 'Precio de punto de venta'
 
 export function rotuloDePrecio(rolComprador: string | null | undefined): string {

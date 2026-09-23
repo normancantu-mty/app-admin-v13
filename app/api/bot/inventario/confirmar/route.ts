@@ -15,7 +15,7 @@
 import { NextResponse } from 'next/server'
 import type { TablesInsert } from '@/types/database'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, actorDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { selloEntradaCoincide, type PayloadEntradaInsumo } from '@/lib/bot-entrada-insumo'
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
@@ -97,6 +97,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'una entrada de inventario')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     const filas: TablesInsert<'inventario_ledger'>[] = entrada.renglones.map((r) => ({
       id_producto: r.id_insumo,

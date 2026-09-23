@@ -44,8 +44,8 @@
 
 import { NextResponse } from 'next/server'
 import type { Json } from '@/types/database'
-import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, actorDe } from '@/lib/bot-aprobacion'
+import { clienteDeServicio, resolverIdentidad, tokenValido, type IdentidadBot } from '@/lib/bot-servidor'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe, type ModoPuerta } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   mensajeDeRendimiento,
@@ -177,7 +177,8 @@ export async function POST(request: Request) {
         borrador.sello,
         selloRecibido,
         (borrador.payload as unknown as BorradorAgregar).agregar,
-        identidad.etiqueta
+        identidad,
+        puerta.modo
       )
     }
     if (guardado?.tipo !== 'lote') {
@@ -216,6 +217,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'un lote')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     // El codigo, RELEIDO: entre la propuesta y el "va" pudo entrar otro lote con
     // el mismo codigo desde la pantalla. `codigo_lote` es `unique`, asi que sin
@@ -318,8 +322,10 @@ async function confirmarAgregar(
   selloGuardado: string,
   selloRecibido: string,
   agregar: PayloadAgregar | undefined,
-  etiqueta: string
+  identidad: IdentidadBot,
+  modo: ModoPuerta
 ) {
+  const etiqueta = identidad.etiqueta
   if (!agregar || !selloAgregarCoincide(agregar, selloGuardado)) {
     await supabase
       .from('bot_borradores')
@@ -343,6 +349,17 @@ async function confirmarAgregar(
       { status: 409 }
     )
   }
+
+  // ── FASE 10 (D101): el VA de quien requiere aprobacion NO escribe ────────
+  // Hasta la Fase 9 esta rama salia del handler ANTES de la espera, y el VA de
+  // Kevin escribia el envasado sin el Aprobar de Norman. Mismo orden que el lote
+  // nuevo: sellos -> espera -> escritura.
+  if (modo === 'esperar') {
+    return pasarAEspera(supabase, borradorId, identidad, `envasar o agregar al lote ${agregar.codigo_lote}`)
+  }
+  // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+  const reclamo = await reclamarAprobacion(supabase, borradorId, modo)
+  if (reclamo) return reclamo
 
   const { data: hechos, error } = await registrarEnLote(supabase, agregar.id_lote, agregar)
   if (error) {

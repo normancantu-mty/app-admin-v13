@@ -36,7 +36,14 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, actorDe } from '@/lib/bot-aprobacion'
+import {
+  abrirPuerta,
+  pasarAEspera,
+  reclamarAprobacion,
+  actorDe,
+  alcanceDeCaptura,
+  redDe
+} from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { registrarVenta, type OperadorDeVenta } from '@/lib/venta-servidor'
 import {
@@ -156,13 +163,27 @@ export async function POST(request: Request) {
     const { data: cotAhora } = await supabase
       .from('cotizaciones')
       .select(
-        'id, folio, fecha, estado, zona, total, id_comprador, nombre_prospecto, vigente_hasta, id_ticket'
+        'id, folio, fecha, estado, zona, total, id_comprador, nombre_prospecto, vigente_hasta, id_ticket, id_vendedor'
       )
       .eq('id', fila.id_cotizacion)
       .maybeSingle()
 
     if (!cotAhora) {
       return NextResponse.json({ error: 'Esa cotizacion ya no existe.' }, { status: 409 })
+    }
+    // FASE 10 (D106): un DST convierte SOLO SUS cotizaciones, comprobado otra
+    // vez aqui, contra la fila releida; y solo a su red, como la venta.
+    if (identidad.rolEntidad !== 'ADMIN') {
+      if (cotAhora.id_vendedor !== identidad.idEntidad) {
+        return NextResponse.json(
+          { error: 'Esa cotizacion no es tuya. Solo conviertes las que hiciste tu.' },
+          { status: 403 }
+        )
+      }
+      const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
+      if (red !== null && venta.id_comprador && !red.has(venta.id_comprador)) {
+        return NextResponse.json({ error: 'Ese comprador no es de tu red. No escribo nada.' }, { status: 403 })
+      }
     }
     if (cotAhora.estado === 'CONVERTIDA' || cotAhora.id_ticket) {
       return NextResponse.json(
@@ -215,6 +236,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'una venta desde cotizacion')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     // ── 1. LA VENTA ───────────────────────────────────────────────────────
     const operador: OperadorDeVenta = {

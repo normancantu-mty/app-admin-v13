@@ -47,6 +47,8 @@ import {
 } from '@/lib/bot-anulacion'
 import { normalizarPropuesta, type PayloadGasto } from '@/lib/bot-gastos'
 import { leerCatalogo } from '@/lib/bot-servidor'
+import { actorDe } from '@/lib/bot-aprobacion'
+import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 
 export const dynamic = 'force-dynamic'
 
@@ -191,6 +193,12 @@ export async function POST(request: Request) {
       mensaje = mensajeDeEdicion(movimiento, actualRaw?.descripcion ?? null, texto.texto, avisos)
     } else {
       // ── RECAPTURAR (D6): anular y volver a escribir, en UN "va" ────────
+      // FASE 10 (D102): recapturar ESCRIBE un gasto, asi que pide el permiso
+      // del gasto (la tabla de la Fase 9): un DST o un LOC no registran gastos,
+      // tampoco por la puerta de "corregir".
+      if (permisoDeAccion(actorDe(identidad), 'gasto') === 'no') {
+        return NextResponse.json({ error: MENSAJE_NO_PERMITIDO.gasto }, { status: 403 })
+      }
       if (tabla !== 'finanzas') {
         return NextResponse.json(
           { error: 'Por ahora solo se recaptura un movimiento de dinero.' },

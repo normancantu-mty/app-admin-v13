@@ -30,7 +30,7 @@ import {
 } from '@/lib/bot-envasado'
 import { mensajeDeRendimiento } from '@/lib/bot-lotes'
 import { fechaLocal } from '@/lib/fechas'
-import { leerCartera, leerSaldosEntidad, leerStockPorCubeta, leerVentasPorMes } from '@/lib/vistas'
+import { leerCartera, leerStockPorCubeta, leerVentasPorMes } from '@/lib/vistas'
 import { esGrupo, permisoDeConsulta, type ConsultaBot } from '@/lib/bot-permisos'
 import { actorDe, redDe } from '@/lib/bot-aprobacion'
 import { buscarPorNombre } from '@/lib/bot-nombres'
@@ -177,15 +177,14 @@ export async function POST(request: Request) {
       // D76 (Fase 8): "cuanto me debe aeropuerto" contesta SOLO Aeropuerto.
       // El filtro se aplica DESPUES del alcance: un DST no ve a otros por nombre.
       const filas = filtrarCartera(suyas, filtro)
-      // D99: y el efectivo que ya cobraron y no han entregado (`v_saldo_entidad`).
-      const porEntregar = new Map(
-        (await leerSaldosEntidad(supabase)).map((f) => [f.id_entidad, Number(f.saldo_por_pagar_efectivo) || 0])
-      )
+      // D104 (Fase 10): el efectivo por entregar NO se lee de `v_saldo_entidad`:
+      // ahi la entrega y el pago de concesion son el mismo renglon. Ver
+      // `NOTA_EFECTIVO_NO_SEPARABLE`.
       return NextResponse.json({
         ok: true,
         texto:
-          textoQuienDebe(filas, porEntregar, filtro) +
-          pieDeConsulta('v_cartera + v_saldo_entidad', filas[0]?.calculado_en ?? suyas[0]?.calculado_en ?? null),
+          textoQuienDebe(filas, filtro) +
+          pieDeConsulta('v_cartera', filas[0]?.calculado_en ?? suyas[0]?.calculado_en ?? null),
         privado
       })
     }

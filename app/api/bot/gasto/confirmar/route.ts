@@ -21,7 +21,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, actorDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   CATEGORIA_SIN_CATEGORIZAR_BOT,
@@ -156,6 +156,9 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'un gasto')
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
 
     // ── LA CATEGORIA NUEVA, SI LA HAY ───────────────────────────────────────
     // No se le cree a la bandera que dejo el proponer: se mira el catalogo AQUI.

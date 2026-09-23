@@ -47,6 +47,12 @@ export function calcularDesgloseFiscal(
 
 export type ResultadoAprobacion = { ok: true } | { ok: false; status: number; error: string }
 
+const YA_PROCESADO: ResultadoAprobacion = {
+  ok: false,
+  status: 404,
+  error: 'No se encontró el movimiento pendiente o ya fue procesado.'
+}
+
 export async function resolverAprobacionDeAbono(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: SupabaseClient<any, any, any>,
@@ -66,15 +72,18 @@ export async function resolverAprobacionDeAbono(
   }
 
   if (action === 'REJECT') {
-    const { error: rejectError } = await supabase
+    const { data: rechazadas, error: rejectError } = await supabase
       .from('finanzas_ledger')
       .update({ status: 'ANULADO' })
       .eq('id', id)
       .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
+      .eq('status', 'ACTIVO')
+      .select('id')
 
     if (rejectError) {
       return { ok: false, status: 500, error: rejectError.message }
     }
+    if (!rechazadas || rechazadas.length !== 1) return YA_PROCESADO
 
     return { ok: true }
   }
@@ -95,15 +104,20 @@ export async function resolverAprobacionDeAbono(
 
     const desglose = calcularDesgloseFiscal(movimiento.monto, cuenta?.tipo_fiscalidad || '')
 
-    const { error: baseError } = await supabase
+    const { data: tocadas, error: baseError } = await supabase
       .from('finanzas_ledger')
       .update({ monto: desglose.base, categoria: CATEGORIA_ABONO_REAL, status: 'ACTIVO' })
       .eq('id', id)
       .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
+      .select('id')
 
     if (baseError) {
       return { ok: false, status: 500, error: baseError.message }
     }
+    // FASE 10 (D106): dos aprobadores a la vez leen los dos PENDIENTE; el UPDATE
+    // condicionado solo lo gana uno. Sin contar filas, el segundo escribiria las
+    // reservas de IVA/IEPS otra vez (ERP-66: un UPDATE que no toca nada da 200).
+    if (!tocadas || tocadas.length !== 1) return YA_PROCESADO
 
     const reservas: Array<{
       tipo_movimiento: 'PASIVO_IVA' | 'PASIVO_IEPS'
@@ -149,15 +163,17 @@ export async function resolverAprobacionDeAbono(
       }
     }
   } else {
-    const { error: approveErrorSimple } = await supabase
+    const { data: tocadas, error: approveErrorSimple } = await supabase
       .from('finanzas_ledger')
       .update({ categoria: CATEGORIA_ABONO_REAL, status: 'ACTIVO' })
       .eq('id', id)
       .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
+      .select('id')
 
     if (approveErrorSimple) {
       return { ok: false, status: 500, error: approveErrorSimple.message }
     }
+    if (!tocadas || tocadas.length !== 1) return YA_PROCESADO
   }
 
   return { ok: true }
