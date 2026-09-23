@@ -31,6 +31,8 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
+import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import { actorDe } from '@/lib/bot-aprobacion'
 import { precioParaComprador, TOPE_VENTA, type PayloadVenta, type RenglonVenta } from '@/lib/bot-venta'
 import {
   juzgarConversion,
@@ -60,6 +62,8 @@ export async function POST(request: Request) {
   try {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
+      /** FASE 9 (D94): el chat donde se hablo; en privado es la persona. */
+      chat_id?: unknown
       id_cotizacion?: unknown
       condicion_pago?: unknown
       id_cuenta_destino?: unknown
@@ -76,11 +80,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No te tengo dado de alta.' }, { status: 403 })
     }
     // Mismo alcance que capturar una venta: una conversion ES una venta.
-    if (identidad.rolEntidad !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Cerrar ventas por chat es de la matriz; tu alta no alcanza.' },
-        { status: 403 }
-      )
+    if (permisoDeAccion(actorDe(identidad), 'convertir') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['convertir'] }, { status: 403 })
     }
 
     // ── SIN COTIZACION: SE OFRECE LA LISTA (D2) ───────────────────────────
@@ -349,6 +350,7 @@ export async function POST(request: Request) {
       .from('bot_borradores')
       .insert({
         telegram_id: telegramId,
+        chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
         sello,
         estado: 'PENDIENTE',
         payload: {

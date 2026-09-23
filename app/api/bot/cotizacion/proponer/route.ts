@@ -35,6 +35,8 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
+import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import { actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
 import {
   aProductoDelCatalogo,
   buscarProducto,
@@ -53,6 +55,7 @@ import {
 import { aplicarDescuento } from '@/lib/bot-descuento'
 import { fechaLocal } from '@/lib/fechas'
 import { buscarPorNombre } from '@/lib/bot-nombres'
+import { esPublicoEnGeneral, NOMBRE_PUBLICO } from '@/lib/bot-publico'
 
 export const dynamic = 'force-dynamic'
 
@@ -86,6 +89,8 @@ export async function POST(request: Request) {
   try {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
+      /** FASE 9 (D94): el chat donde se hablo; en privado es la persona. */
+      chat_id?: unknown
       propuesta?: Record<string, unknown>
       productos?: ProductoPedido[]
       /** El nombre dicho. Solo se usa para BUSCAR en la red. */
@@ -116,16 +121,15 @@ export async function POST(request: Request) {
         { status: 403 }
       )
     }
-    if (identidad.rolEntidad !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Cotizar por chat es de la matriz; tu alta no alcanza.' },
-        { status: 403 }
-      )
+    if (permisoDeAccion(actorDe(identidad), 'cotizacion') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['cotizacion'] }, { status: 403 })
     }
 
     // ── A QUIEN SE LE COTIZA ────────────────────────────────────────────────
+    // FASE 9 (D96): un DST cotiza a su nombre, a sus locales o a un prospecto.
+    const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
     const clientes = (await leerCompradoresDeVenta(supabase)).filter(
-      (c) => c.id !== identidad.idEntidad
+      (c) => c.id !== identidad.idEntidad && (red === null || red.has(c.id))
     )
     const idPedido = String(cuerpo.id_comprador ?? '')
     const prospectoPedido = String(cuerpo.prospecto ?? '').trim()
@@ -136,6 +140,10 @@ export async function POST(request: Request) {
 
     if (prospectoPedido !== '') {
       nombreProspecto = prospectoPedido
+    } else if (idPedido === '' && esPublicoEnGeneral(nombreDicho)) {
+      // D87 (Fase 9): "publico en general" no es alguien de la red; es un
+      // prospecto con precio de lista de la zona por defecto.
+      nombreProspecto = NOMBRE_PUBLICO
     } else if (idPedido !== '') {
       comprador = clientes.find((c) => c.id === idPedido) ?? null
       if (!comprador) {
@@ -355,6 +363,7 @@ export async function POST(request: Request) {
       .from('bot_borradores')
       .insert({
         telegram_id: telegramId,
+        chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
         sello,
         payload: {
           tipo: 'cotizacion',
@@ -395,6 +404,7 @@ export async function POST(request: Request) {
         {
           paraQuien,
           esDeLaRed: comprador !== null,
+          rolComprador: comprador?.rol ?? null,
           vigenteHasta: normalizada.vigenteHasta,
           motivoDescuento: descuento.motivo
         }

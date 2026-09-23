@@ -32,6 +32,8 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, conservaPendientes, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import { actorDe } from '@/lib/bot-aprobacion'
 import {
   buscarParecidas,
   puedeDarDeAlta,
@@ -70,6 +72,8 @@ export async function POST(request: Request) {
   try {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
+      /** FASE 9 (D94): el chat donde se hablo; en privado es la persona. */
+      chat_id?: unknown
       nombre?: unknown
       rol?: unknown
       zona?: unknown
@@ -99,6 +103,9 @@ export async function POST(request: Request) {
     // Se comprueba aqui y NO se confia en que el bot no ofrezca el boton: el
     // endpoint es alcanzable con el token, y el token lo tiene el proceso del
     // bot entero, no una persona.
+    if (permisoDeAccion(actorDe(identidad), 'entidad') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['entidad'] }, { status: 403 })
+    }
     if (!puedeDarDeAlta(actor)) {
       return NextResponse.json(
         { error: 'Solo administracion da de alta distribuidores y locales.' },
@@ -284,6 +291,7 @@ export async function POST(request: Request) {
       .from('bot_borradores')
       .insert({
         telegram_id: telegramId,
+        chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
         sello,
         estado: 'PENDIENTE',
         payload: {

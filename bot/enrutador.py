@@ -92,7 +92,7 @@ MAX_HECHOS = 5
 # Fase 8 (D83): `produccion` -- cuantas botellas se envasaron (hoy, ayer,
 # semana, mes o un lote). `tests/bot-enrutador.spec.ts` compara esta tupla
 # contra `CONSULTAS` de `lib/bot-consultas.ts`.
-CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas", "produccion")
+CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas", "produccion", "precios")
 CONSULTAS = CONSULTAS_QUE_CONTESTA + ("otra",)
 
 # ---------------------------------------------------------------------------
@@ -151,8 +151,11 @@ CATEGORIAS_SEMILLA = (
 )
 
 PROMPT = u"""Eres el asistente de Norman en su destileria de chile en Mexico:
-ENTIENDES, CONTESTAS y CAPTURAS. Norman te escribe o te dicta notas de voz
-mientras trabaja, y del otro lado no hay nadie mas: le hablas A EL, tuteandolo.
+ENTIENDES, CONTESTAS y CAPTURAS. Casi siempre te escribe Norman, en privado,
+mientras trabaja: le hablas A EL, tuteandolo. Pero tambien estas en GRUPOS de
+Telegram con varias personas (Kevin, distribuidores): entonces el contexto trae
+"QUIEN TE ESCRIBE" y le hablas A ESA PERSONA, tuteandola, nunca como si fuera
+Norman. En el historial de un grupo cada turno dice quien lo dijo.
 
 Hasta el 2026-09-19 este prompt decia "eres el enrutador... NO ejecutas nada", y
 se notaba: devolvias una etiqueta y contestaba Python con noventa cadenas fijas.
@@ -164,9 +167,9 @@ Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:
 {
   "intencion": una de: <<INTENCIONES>>. Si el mensaje trae hechos (ver "hechos"), la del PRIMERO,
   "consulta": si intencion es consulta, una de: <<CONSULTAS>>. Si no, null,
-  "filtro": SOLO para consulta stock, cartera o produccion. En stock y cartera, el nombre propio que menciono, tal cual lo dijo (en stock, un producto O un punto de venta; en cartera, quien debe). En produccion, el periodo -- "hoy", "ayer", "semana" o "mes" -- o el codigo del lote tal cual lo dijo. Si no menciona ninguno, o es otra consulta, null,
+  "filtro": SOLO para consulta stock, cartera, produccion o precios. En stock y cartera, el nombre propio que menciono, tal cual lo dijo (en stock, un producto O un punto de venta; en cartera, quien debe). En produccion, el periodo -- "hoy", "ayer", "semana" o "mes" -- o el codigo del lote tal cual lo dijo. En precios, el distribuidor o punto de venta por el que pregunta, tal cual lo dijo. Si no menciona ninguno, o es otra consulta, null,
   "entendido": frase MUY corta de lo que si entendiste. **ES TELEMETRIA: va al log, NUNCA a la pantalla.** Nunca vacia,
-  "respuesta": QUE DECIRLE A NORMAN, en segunda persona, tuteandolo, UNA LINEA. Nunca hables de el en tercera persona. Nunca vacia,
+  "respuesta": QUE DECIRLE A QUIEN TE ESCRIBE (Norman, salvo que el contexto diga otro nombre), en segunda persona, tuteandolo, UNA LINEA. Nunca hables de el en tercera persona. Nunca vacia,
   "campos": objeto con lo que lograste sacar del mensaje. Solo lo que DE VERDAD dijo. Si hay hechos, los del primero,
   "faltantes": lista de los campos obligatorios que NO dijo,
   "pregunta": UNA sola pregunta corta para el faltante mas importante, o null si no falta nada,
@@ -207,6 +210,8 @@ QUE ES CADA INTENCION
 - consulta: pregunta por algo que ya esta en el sistema. No escribe nada.
   Campos: ninguno. Lo que menciona va en "filtro", no en "campos".
   "cuantas botellas se hicieron hoy", "cuanto envasamos esta semana", "que salio del lote L-0915" es consulta "produccion".
+  "a como le sale a Aeropuerto", "que precio tiene Casa Verde", "precios", "a como damos la grande" es consulta "precios":
+  pregunta el PRECIO de lista, sin cantidades. Si trae cantidades o dice "cotizale", es cotizacion, no consulta.
 - anular: quiere DESHACER algo que ya se escribio. "cancela", "borra", "quitale",
   "ese gasto estuvo mal", "anula la venta de ayer".
   Campos: ninguno. NO intentes decir CUAL: el bot le ensena la lista y el escoge
@@ -419,16 +424,20 @@ def _pedazo_historial(historial):
         return []
     partes = ["LO QUE SE DIJO ANTES EN ESTE CHAT (PASADO: ya se atendio; solo sirve "
               "para saber de quien o de que se habla; montos y cantidades NO salen de aqui):"]
-    for hace, dijo, contesto in historial:
+    for turno in historial:
+        # D100 (Fase 9): en un grupo el turno trae, en cuarta posicion, QUIEN lo
+        # dijo. En privado son tres y quien habla es Norman.
+        hace, dijo, contesto = turno[:3]
+        quien = (turno[3] if len(turno) > 3 else None) or "Norman"
         cuando = "hace %d min" % int(hace) if hace >= 1 else "hace un momento"
-        partes.append("  [%s] Norman: %s" % (cuando, " ".join(str(dijo or "").split())[:300]))
+        partes.append("  [%s] %s: %s" % (cuando, quien, " ".join(str(dijo or "").split())[:300]))
         if contesto:
             partes.append("  [%s] Bot: %s" % (cuando, " ".join(str(contesto).split())[:300]))
     return partes
 
 
 def _pedazo_contexto(borrador, catalogo, deudores, productos=None, en_pantalla=None,
-                     historial=None):
+                     historial=None, hablante=None):
     """Lo que el modelo necesita saber del mundo, y nada mas.
 
     **Lo que faltaba y costo la conversacion del 2026-09-19 (D35):** el catalogo
@@ -442,7 +451,13 @@ def _pedazo_contexto(borrador, catalogo, deudores, productos=None, en_pantalla=N
     interpretarlo, y sale `charla`. Con el ultimo turno basta -- no hace falta
     historial largo, y ahi esta lo barato.
     """
-    partes = _pedazo_historial(historial)
+    partes = []
+    if hablante:
+        # D100 (Fase 9): solo en un grupo. En privado no se agrega nada y el
+        # contexto queda identico al de siempre.
+        partes.append("QUIEN TE ESCRIBE: " + str(hablante) + " (es un GRUPO de Telegram con "
+                      "varias personas; le hablas a " + str(hablante) + ").")
+    partes += _pedazo_historial(historial)
     if en_pantalla:
         # D74 (Fase 8): trae el CONTENIDO (lo que Norman ve), no solo el tipo,
         # y puede ser mas de una propuesta: una por renglon.
@@ -740,7 +755,8 @@ def _normaliza(obj):
     filtro = obj.get("filtro")
     filtro = str(filtro).strip()[:60] if filtro else None
     # D83 (Fase 8): en `produccion` el filtro es el periodo o el lote.
-    if consulta not in ("stock", "cartera", "produccion"):
+    # D99 (Fase 9): en `precios` el filtro es la entidad.
+    if consulta not in ("stock", "cartera", "produccion", "precios"):
         filtro = None
 
     campos = _normaliza_campos(obj.get("campos"))
@@ -791,7 +807,7 @@ def _normaliza(obj):
 
 
 def enrutar(texto, borrador=None, catalogo=None, deudores=None,
-            productos=None, en_pantalla=None, historial=None):
+            productos=None, en_pantalla=None, historial=None, hablante=None):
     """Devuelve (ok, objeto_o_error). Nunca lanza por culpa del modelo.
 
     `borrador` es lo que ya se sabia de una captura a medias. Si viene, el
@@ -807,7 +823,7 @@ def enrutar(texto, borrador=None, catalogo=None, deudores=None,
 
     entrada = (PROMPT
                + _pedazo_contexto(borrador, catalogo, deudores, productos, en_pantalla,
-                                  historial)
+                                  historial, hablante)
                + str(texto).strip())
 
     try:

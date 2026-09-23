@@ -46,7 +46,7 @@ import {
 import { desactivarTextoFiscal, disparadoresFiscalesEn, TOPE_DESCRIPCION } from '@/lib/bot-gastos'
 import { buscarPorNombre, normalizarNombre, type FalloNombre } from '@/lib/bot-nombres'
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
-import { CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
+import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
 
 // ============================================================================
 // 1. LA LISTA CERRADA DE `referencia`
@@ -276,16 +276,16 @@ export interface FilaAbono {
  * — mientras la suma cuadre. Por eso `sumaCuadra` corre otra vez en el confirmar
  * y no solo aqui: una defensa que solo corre en el camino feliz no es defensa.
  */
-export function filasDeAbono(payload: PayloadAbono): FilaAbono[] {
+export function filasDeAbono(payload: PayloadAbono, capturaUnAdmin = true): FilaAbono[] {
   const base = {
     tipo_movimiento: 'ABONO_DEUDA' as const,
     id_cuenta_origen: payload.id_cuenta_origen,
     id_cuenta_destino: payload.id_cuenta_destino,
     id_entidad_relacionada: payload.id_entidad,
-    // Siempre ABONO_REAL y nunca ABONO_PENDIENTE: solo una identidad ADMIN llega
-    // hasta aqui (lo veta el endpoint), y para un ADMIN
-    // `requiereAprobacionAdmin` es false en la accion original.
-    categoria: CATEGORIA_ABONO_REAL,
+    // El criterio de `app/actions/abonos.ts:572-582`: un abono de un no-ADMIN a
+    // la matriz entra PENDIENTE y no cuenta hasta que un ADMIN lo aprueba.
+    // FASE 9 (D97): desde que un DST abona por el bot, aqui llegan los dos.
+    categoria: capturaUnAdmin ? CATEGORIA_ABONO_REAL : CATEGORIA_ABONO_PENDIENTE,
     categoria_gasto: payload.referencia,
     descripcion: payload.nota || null,
     metodo_pago: payload.metodo_pago,

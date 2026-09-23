@@ -22,13 +22,24 @@
  */
 
 import { NextResponse } from 'next/server'
-import type { TablesInsert } from '@/types/database'
+import type { Json, TablesInsert } from '@/types/database'
 import {
   clienteDeServicio,
   leerTicketsAbiertos,
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
+import {
+  abrirPuerta,
+  pasarAEspera,
+  actorDe,
+  alcanceDeCaptura,
+  aprobadoresDelBot,
+  cuentaDeLaMatrizParaAbono,
+  nombreDeEtiqueta,
+  redDe
+} from '@/lib/bot-aprobacion'
+import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   filasDeAbono,
   referenciaEsInocua,
@@ -80,20 +91,17 @@ export async function POST(request: Request) {
 
     const supabase = clienteDeServicio(request)
 
-    const identidad = await resolverIdentidad(supabase, telegramId)
-    if (!identidad) {
+    const quien = await resolverIdentidad(supabase, telegramId)
+    if (!quien) {
       return NextResponse.json({ error: 'No te tengo dado de alta.' }, { status: 403 })
     }
-    if (identidad.rolEntidad !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Registrar cobranza es de la matriz; tu alta no alcanza.' },
-        { status: 403 }
-      )
+    if (permisoDeAccion(actorDe(quien), 'abono') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['abono'] }, { status: 403 })
     }
 
     const { data: borrador } = await supabase
       .from('bot_borradores')
-      .select('id, telegram_id, sello, payload, estado')
+      .select('id, telegram_id, sello, payload, estado, chat_id')
       .eq('id', borradorId)
       .maybeSingle()
 
@@ -102,15 +110,11 @@ export async function POST(request: Request) {
     }
     // El borrador es de quien lo creo. Sin esto, cualquiera dado de alta podria
     // confirmar la captura de otro con solo tener el id.
-    if (borrador.telegram_id !== telegramId) {
-      return NextResponse.json({ error: 'Ese borrador no es tuyo.' }, { status: 403 })
-    }
-    if (borrador.estado !== 'PENDIENTE') {
-      return NextResponse.json(
-        { error: `Ese borrador ya esta ${borrador.estado.toLowerCase()}.` },
-        { status: 409 }
-      )
-    }
+    const puerta = await abrirPuerta(supabase, quien, borrador)
+    if (!puerta.ok) return puerta.respuesta
+    // De aqui en adelante, la identidad es la del AUTOR del borrador (D98): con
+    // el Aprobar de Norman se escribe la captura de Kevin, con su etiqueta.
+    const identidad = puerta.autor
 
     const guardado = borrador.payload as unknown as BorradorAbono
     // El discriminador, comprobado ANTES de mirar nada mas: un borrador de gasto
@@ -144,8 +148,17 @@ export async function POST(request: Request) {
     // ── La identidad, otra vez contra la fila sellada ────────────────────────
     // Si a alguien le cambiaron la cuenta o la etiqueta despues de proponer, el
     // abono viejo ya no se escribe.
+    // FASE 9 (D97): la cuenta destino de un DST es la de la matriz (la del
+    // aprobador), releida aqui; la de un ADMIN, de su lista cerrada.
+    const esDeLaMatriz = identidad.rolEntidad === 'ADMIN'
+    const cuentaMatriz = esDeLaMatriz ? null : await cuentaDeLaMatrizParaAbono(supabase)
+    const cuentaValida = esDeLaMatriz
+      ? identidad.cuentas.some((c) => c.id === abono.id_cuenta_destino)
+      : cuentaMatriz?.id === abono.id_cuenta_destino
+    const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
     if (
-      !identidad.cuentas.some((c) => c.id === abono.id_cuenta_destino) ||
+      !cuentaValida ||
+      (red !== null && !red.has(abono.id_entidad)) ||
       abono.usuario_creador !== `telegram:${identidad.etiqueta}`
     ) {
       return NextResponse.json(
@@ -198,10 +211,15 @@ export async function POST(request: Request) {
       }
     }
 
+    // ── D98: el VA de quien requiere aprobacion NO escribe ──────────────────
+    if (puerta.modo === 'esperar') {
+      return pasarAEspera(supabase, borradorId, identidad, 'un abono')
+    }
+
     // ── EL INSERT. Un solo INSERT multi-fila: una sentencia, atomica. ────────
     // Es la unica atomicidad disponible en este sistema, y la razon esta en la
     // cabecera de `app/actions/abonos.ts`.
-    const filas = filasDeAbono(abono) as unknown as TablesInsert<'finanzas_ledger'>[]
+    const filas = filasDeAbono(abono, esDeLaMatriz) as unknown as TablesInsert<'finanzas_ledger'>[]
     const { data: creadas, error } = await supabase
       .from('finanzas_ledger')
       .insert(filas)
@@ -262,6 +280,36 @@ export async function POST(request: Request) {
           sobrante: abono.sobrante,
           pedidos_cubiertos: abono.aplicaciones.length
         }
+      })
+    }
+
+    // ── D97: el abono de un DST espera a Norman, como en la app ─────────────
+    // Las filas ya estan escritas como ABONO_PENDIENTE: no cuentan en
+    // `v_cartera` ni en `v_saldo_entidad` hasta que se aprueban. Los ids se
+    // guardan en `meta` (no esta sellado) para que el boton Aprobar del bot los
+    // encuentre despues de un reinicio.
+    if (!esDeLaMatriz) {
+      await supabase
+        .from('bot_borradores')
+        .update({
+          payload: {
+            ...guardado,
+            meta: { ...guardado.meta, ids_pendientes: creadas.map((f) => f.id) }
+          } as unknown as Json
+        })
+        .eq('id', borradorId)
+      const autorNombre = nombreDeEtiqueta(identidad.etiqueta)
+      return NextResponse.json({
+        ok: true,
+        pendiente_de_aprobacion: true,
+        borrador_id: borradorId,
+        ids: creadas.map((f) => f.id),
+        filas_escritas: creadas.length,
+        avisar_a: await aprobadoresDelBot(supabase),
+        mensaje:
+          `Listo: registre el abono de $${abono.monto.toFixed(2)}. Queda PENDIENTE hasta que Norman lo apruebe.`,
+        mensaje_aprobador:
+          `${autorNombre} registro un abono de $${abono.monto.toFixed(2)} de ${guardado.meta.nombre_deudor}. ¿Lo apruebo?`
       })
     }
 

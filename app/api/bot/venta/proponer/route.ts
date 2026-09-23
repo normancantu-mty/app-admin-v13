@@ -44,6 +44,8 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
+import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import { actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
 import {
   aProductoDelCatalogo,
   buscarProducto,
@@ -62,6 +64,7 @@ import {
 } from '@/lib/bot-venta'
 import { buscarPorNombre } from '@/lib/bot-nombres'
 import { aplicarDescuento } from '@/lib/bot-descuento'
+import { esPublicoEnGeneral, leerMontoDicho } from '@/lib/bot-publico'
 import { esCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 
 export const dynamic = 'force-dynamic'
@@ -104,6 +107,8 @@ export async function POST(request: Request) {
   try {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
+      /** FASE 9 (D94): el chat donde se hablo; en privado es la persona. */
+      chat_id?: unknown
       propuesta?: Record<string, unknown>
       productos?: ProductoPedido[]
       /** El nombre que dijo la persona. Solo se usa para BUSCAR, nunca se escribe. */
@@ -131,11 +136,8 @@ export async function POST(request: Request) {
         { status: 403 }
       )
     }
-    if (identidad.rolEntidad !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Capturar ventas por chat es de la matriz; tu alta no alcanza.' },
-        { status: 403 }
-      )
+    if (permisoDeAccion(actorDe(identidad), 'venta') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['venta'] }, { status: 403 })
     }
 
     // ── EL ALCANCE, RECHAZADO POR NOMBRE Y ANTES DE NADA ────────────────────
@@ -190,12 +192,19 @@ export async function POST(request: Request) {
     // como boton**. `normalizarVenta` lo rechazaria de todas formas, pero un
     // boton que al oprimirlo contesta "no escribo eso" es un boton que no debio
     // estar ahi: la lista que se ensena y la lista que se acepta son la misma.
+    // FASE 9 (D96): un DST vende a SU nombre y solo a sus locales (o a publico),
+    // igual que en la app (`mis_entidades()`). `null` = la matriz, a todos.
+    const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
     const compradores = (await leerCompradoresDeVenta(supabase)).filter(
-      (c) => c.id !== identidad.idEntidad
+      (c) => c.id !== identidad.idEntidad && (red === null || red.has(c.id))
     )
     const idCompradorPedido = String(cuerpo.id_comprador ?? '')
     const nombreDicho = String(cuerpo.comprador ?? '').trim()
-    const esPublico = cuerpo.publico === true
+    // D87 (Fase 9): "publico en general" dicho con palabras es el mismo boton.
+    // Se revisa ANTES de buscar en la red: no es alguien de la red, es la
+    // ausencia de comprador.
+    const esPublico =
+      cuerpo.publico === true || (idCompradorPedido === '' && esPublicoEnGeneral(nombreDicho))
 
     let comprador: CompradorDeVenta | null = null
 
@@ -370,20 +379,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: deLista.error }, { status: 422 })
     }
 
-    const descuento = aplicarDescuento(
+    // ── D89 (Fase 9): "EN 2900" — EL PRECIO DICHO SE COBRA, A LA VISTA ───────
+    // Un `monto` menor que la lista y sin descuento explicito se vuelve
+    // `descuento: {total_final}`: la propuesta ensena lista, descuento y cobro,
+    // y el VA decide. Mayor que la lista: el aviso de siempre (`normalizarVenta`).
+    const dictadoDescuento = (cuerpo.propuesta as { descuento?: unknown } | undefined)?.descuento
+    const piezas = deLista.payload.items.reduce((s, i) => s + i.cantidad, 0)
+    const lectura = leerMontoDicho(
+      cuerpo.propuesta?.monto,
       deLista.payload.subtotal_catalogo,
-      (cuerpo.propuesta as { descuento?: unknown } | undefined)?.descuento
+      piezas,
+      deLista.payload.items.length === 1,
+      dictadoDescuento !== null && dictadoDescuento !== undefined && typeof dictadoDescuento === 'object'
     )
+    const descuentoPedido =
+      lectura.tipo === 'descuento' ? { total_final: lectura.totalFinal } : dictadoDescuento
+    const descuento = aplicarDescuento(deLista.payload.subtotal_catalogo, descuentoPedido)
     if (!descuento.ok) {
       return NextResponse.json({ error: descuento.error }, { status: 422 })
     }
 
+    // Con el precio dicho ya convertido en descuento, el `monto` que viaja es el
+    // total que se cobra: si no, "580 cada una" avisaria "dijiste 580".
+    const propuestaFinal =
+      lectura.tipo === 'descuento'
+        ? { ...(cuerpo.propuesta ?? {}), monto: lectura.totalFinal }
+        : (cuerpo.propuesta ?? {})
     const normalizada = descuento.hay
-      ? normalizarVenta(cuerpo.propuesta ?? {}, { ...contextoVenta, descuento })
+      ? normalizarVenta(propuestaFinal, { ...contextoVenta, descuento })
       : deLista
     if (!normalizada.ok) {
       return NextResponse.json({ error: normalizada.error }, { status: 422 })
     }
+    if (lectura.tipo === 'descuento' && lectura.aviso) normalizada.avisos.unshift(lectura.aviso)
 
     // ── Un solo borrador PENDIENTE por persona ──────────────────────────────
     // La misma regla de las Fases 1 y 2, y **compartida con ellas a proposito**:
@@ -405,6 +433,7 @@ export async function POST(request: Request) {
       .from('bot_borradores')
       .insert({
         telegram_id: telegramId,
+        chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
         sello,
         payload: {
           // El discriminador. Sin el, `/venta/confirmar` tendria que adivinar el

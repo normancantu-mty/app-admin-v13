@@ -165,6 +165,18 @@ FRASES = [
     ("d83_lote", "cuantas salieron del lote L-0915?", None),
     # D83 control: vender no es producir.
     ("d83_control_ventas", "cuanto vendimos este mes?", None),
+    # ── FASE 9 ─────────────────────────────────────────────────────────────
+    # D90: las dos frases de Norman del 2026-09-23, con el modelo real.
+    ("d90_cotiza_publico_15", "cotizame para publico en general, 30 botellas grandes con 15% de descuento", None),
+    ("d90_vendi_publico_2900", "vendi 5 botellas grandes a publico en general en 2900", None),
+    # D99: la consulta nueva de precios; control: con cantidades es cotizacion.
+    ("d99_precios_aeropuerto", "a como le sale a aeropuerto?", None),
+    ("d99_precios_solo", "precios", None),
+    ("d99_control_cotizacion", "cotizale a aeropuerto 10 grandes", None),
+    # D100: en un grupo habla Kevin; la captura no cambia y no le habla a Norman.
+    ("d100_grupo_kevin_gasto", "gaste 300 de gasolina", None, {"hablante": "Kevin"}),
+    ("d100_grupo_historial_kevin", "y la deuda?", None,
+     {"hablante": "Kevin", "historial": [[3.0, "cuanto me debe aeropuerto", "Aeropuerto debe $1,000.00", "Kevin"]]}),
 ]
 
 
@@ -223,15 +235,18 @@ def grabar(solo_faltantes=False):
     def una(frase):
         clave, texto, en_pantalla = frase[:3]
         historial = (frase[3] if len(frase) > 3 else {}).get("historial")
+        hablante = (frase[3] if len(frase) > 3 else {}).get("hablante")
         for espera in (0, 30, 120, 300):
             if espera:
                 time.sleep(espera)
             ok, r = E.enrutar(texto, None, categorias, None, productos, en_pantalla,
-                              historial=historial)
+                              historial=historial, hablante=hablante)
             if ok:
                 grabacion = {"texto": texto, "en_pantalla": en_pantalla, "salida": r}
                 if historial:
                     grabacion["historial"] = historial
+                if hablante:
+                    grabacion["hablante"] = hablante
                 return clave, grabacion
         raise RuntimeError("el modelo no contesto para %r: %s" % (clave, r))
 

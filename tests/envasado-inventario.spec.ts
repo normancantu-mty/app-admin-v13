@@ -83,3 +83,61 @@ test.describe('D82 — envasado: Postgres y TS dicen lo mismo', () => {
     expect(ordenar(await desdeSql(id, 24))).not.toEqual(ordenar(movimientosDeEnvasado(id, 25, suya)))
   })
 })
+
+// ============================================================================
+// Fase 9, D92 — el STOCK del empaque, en dos lados: `stock_de_insumos`
+// (Postgres; lo usa `registrar_en_lote` para bloquear) y `stockDesdeLedger`
+// (TS; lo usa la propuesta, que en ensayo no puede llamar `rpc`). Sobre el
+// ledger REAL de la matriz, insumo por insumo. Solo lee.
+// ============================================================================
+
+import { stockDesdeLedger, type FilaLedgerStock } from '../lib/bot-envasado'
+
+async function idAdmin(): Promise<string> {
+  const { data, error } = await cliente().from('entidades').select('id').eq('rol', 'ADMIN').limit(1).single()
+  if (error || !data) throw new Error(error?.message ?? 'sin ADMIN')
+  return data.id as string
+}
+
+async function stockTsDe(admin: string, ids: string[]): Promise<Map<string, number>> {
+  const { data, error } = await cliente()
+    .from('inventario_ledger')
+    .select('id_producto, tipo_movimiento, cantidad, id_entidad_origen, id_entidad_destino, status')
+    .in('id_producto', ids)
+    .or(`id_entidad_destino.eq.${admin},id_entidad_origen.eq.${admin}`)
+  if (error) throw new Error(error.message)
+  return stockDesdeLedger((data ?? []) as FilaLedgerStock[], admin)
+}
+
+test.describe('D92 — stock del empaque: Postgres y TS dicen lo mismo', () => {
+  test.skip(SALTO, motivoDeSalto())
+
+  test('para cada insumo del catalogo, el stock de la matriz es el mismo en los dos lados', async () => {
+    const admin = await idAdmin()
+    const { data: insumos } = await cliente().from('catalogo_productos').select('id').eq('tipo', 'INSUMO')
+    const ids = (insumos ?? []).map((i) => i.id as string)
+    // Hoy hay 13; que no pase en vacio.
+    expect(ids.length).toBeGreaterThanOrEqual(5)
+    const { data: sql, error } = await cliente().rpc('stock_de_insumos', { p_id_entidad: admin, p_ids: ids })
+    if (error) throw new Error(error.message)
+    const deSql = new Map(((sql ?? []) as { id_producto: string; stock: number }[]).map((f) => [f.id_producto, Number(f.stock)]))
+    const deTs = await stockTsDe(admin, ids)
+    // Al menos un insumo con movimientos, o la comparacion no prueba nada.
+    expect(deSql.size).toBeGreaterThan(0)
+    for (const id of ids) {
+      expect(deTs.get(id) ?? 0, `insumo ${id}`).toBe(deSql.get(id) ?? 0)
+    }
+  })
+
+  test('CONTROL: la comparacion SI detecta una diferencia (contra un ledger vacio)', async () => {
+    const admin = await idAdmin()
+    const { data: insumos } = await cliente().from('catalogo_productos').select('id').eq('tipo', 'INSUMO')
+    const ids = (insumos ?? []).map((i) => i.id as string)
+    const deTs = await stockTsDe(admin, ids)
+    const conEntrada = [...deTs.values()].some((v) => v !== 0)
+    // Si todo estuviera en 0 este control no distinguiria nada: se exige lo contrario.
+    expect(conEntrada).toBe(true)
+    const falsa = stockDesdeLedger([], admin)
+    expect([...deTs.entries()].every(([id, v]) => (falsa.get(id) ?? 0) === v)).toBe(false)
+  })
+})

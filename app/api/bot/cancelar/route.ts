@@ -27,6 +27,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { puedeCancelar } from '@/lib/bot-aprobacion'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
 
     const { data: borrador } = await supabase
       .from('bot_borradores')
-      .select('id, telegram_id, estado')
+      .select('id, telegram_id, estado, chat_id')
       .eq('id', borradorId)
       .maybeSingle()
 
@@ -67,9 +68,19 @@ export async function POST(request: Request) {
     // Mismo criterio que confirmar: el borrador es de quien lo creo. Sin esto,
     // cualquiera dado de alta podria apagarle la captura a otro con solo tener
     // el id — un dano pequeno, pero gratuito.
-    if (borrador.telegram_id !== telegramId) {
+    // FASE 9 (D98): un borrador que espera aprobacion lo puede apagar tambien
+    // el aprobador — ese es el boton Rechazar de Norman.
+    const hechos = {
+      estado: borrador.estado,
+      dueno: Number(borrador.telegram_id),
+      quien: telegramId,
+      quienRol: identidad.rolEntidad,
+      quienRequiereAprobacion: identidad.requiereAprobacion
+    }
+    if (!puedeCancelar(hechos)) {
       return NextResponse.json({ error: 'Ese borrador no es tuyo.' }, { status: 403 })
     }
+    const rechazo = hechos.dueno !== telegramId
     if (borrador.estado === 'CONFIRMADO') {
       return NextResponse.json(
         { error: 'Eso ya quedo escrito. Para deshacerlo hay que anularlo, no cancelarlo.' },
@@ -87,14 +98,21 @@ export async function POST(request: Request) {
       // La condicion de carrera real: dos "no" seguidos, o un "no" mientras el
       // proponer de otra captura ya lo estaba cancelando. Acotar el UPDATE al
       // estado que se leyo evita pisar un CONFIRMADO que entro en medio.
-      .eq('estado', 'PENDIENTE')
+      .eq('estado', borrador.estado)
 
     if (error) {
       console.error('[bot] no pude cancelar el borrador', borradorId, error)
       return NextResponse.json({ error: 'No pude cancelarlo.' }, { status: 500 })
     }
 
-    return NextResponse.json({ ok: true, ya_estaba: false })
+    // Al rechazar, el bot le avisa al autor en el chat donde lo propuso.
+    return NextResponse.json({
+      ok: true,
+      ya_estaba: false,
+      rechazado: rechazo,
+      autor_telegram_id: hechos.dueno,
+      chat_id: borrador.chat_id ?? hechos.dueno
+    })
   } catch (e) {
     console.error('[bot] cancelar reviento:', e)
     return NextResponse.json({ error: 'Error interno.' }, { status: 500 })

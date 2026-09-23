@@ -9,6 +9,8 @@
 import { NextResponse } from 'next/server'
 import type { Json } from '@/types/database'
 import { clienteDeServicio, conservaPendientes, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import { actorDe } from '@/lib/bot-aprobacion'
 import { fetchTodasLasFilas, type ConsultaPaginable } from '@/lib/paginacion'
 import {
   buscarDuplicado,
@@ -29,6 +31,8 @@ export async function POST(request: Request) {
   try {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
+      /** FASE 9 (D94): el chat donde se hablo; en privado es la persona. */
+      chat_id?: unknown
       propuesta?: Record<string, unknown>
       id_cuenta?: unknown
     }
@@ -48,6 +52,10 @@ export async function POST(request: Request) {
         { error: 'No te tengo dado de alta. Pideselo a Norman.' },
         { status: 403 }
       )
+    }
+    // FASE 9 (D96): el gasto deja de ser de cualquiera dado de alta.
+    if (permisoDeAccion(actorDe(identidad), 'gasto') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['gasto'] }, { status: 403 })
     }
 
     // La cuenta, si viene, se valida contra la LISTA CERRADA de la identidad y
@@ -129,6 +137,7 @@ export async function POST(request: Request) {
       .from('bot_borradores')
       .insert({
         telegram_id: telegramId,
+        chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
         sello,
         payload: {
           fila: normalizada.payload,

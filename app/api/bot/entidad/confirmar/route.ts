@@ -31,6 +31,8 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { abrirPuerta, pasarAEspera, actorDe } from '@/lib/bot-aprobacion'
+import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   crearEntidad,
   generarPassword,
@@ -73,12 +75,15 @@ export async function POST(request: Request) {
     }
 
     const supabase = clienteDeServicio(request)
-    const identidad = await resolverIdentidad(supabase, telegramId)
-    if (!identidad) {
+    const quien = await resolverIdentidad(supabase, telegramId)
+    if (!quien) {
       return NextResponse.json({ error: 'No te tengo dado de alta.' }, { status: 403 })
     }
 
-    const actor: ActorDeAlta = { idEntidad: identidad.idEntidad, rol: identidad.rolEntidad }
+    const actor: ActorDeAlta = { idEntidad: quien.idEntidad, rol: quien.rolEntidad }
+    if (permisoDeAccion(actorDe(quien), 'entidad') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO.entidad }, { status: 403 })
+    }
 
     // El permiso, otra vez. No es redundante: entre la propuesta y el "va"
     // pueden pasar horas, y a alguien le pueden haber quitado el rol de ADMIN.
@@ -91,22 +96,16 @@ export async function POST(request: Request) {
 
     const { data: borrador } = await supabase
       .from('bot_borradores')
-      .select('id, telegram_id, sello, payload, estado')
+      .select('id, telegram_id, sello, payload, estado, chat_id')
       .eq('id', borradorId)
       .maybeSingle()
 
     if (!borrador) {
       return NextResponse.json({ error: 'Ese borrador ya no existe.' }, { status: 404 })
     }
-    if (borrador.telegram_id !== telegramId) {
-      return NextResponse.json({ error: 'Ese borrador no es tuyo.' }, { status: 403 })
-    }
-    if (borrador.estado !== 'PENDIENTE') {
-      return NextResponse.json(
-        { error: `Ese borrador ya esta ${borrador.estado.toLowerCase()}.` },
-        { status: 409 }
-      )
-    }
+    const puerta = await abrirPuerta(supabase, quien, borrador)
+    if (!puerta.ok) return puerta.respuesta
+    const identidad = puerta.autor
 
     const guardado = borrador.payload as unknown as BorradorGuardado
     // El discriminador, ANTES del sello. Ver el encabezado.
@@ -133,6 +132,11 @@ export async function POST(request: Request) {
       )
     }
 
+    // ── D98: el VA de quien requiere aprobacion NO crea nada ────────────────
+    if (puerta.modo === 'esperar') {
+      return pasarAEspera(supabase, borradorId, identidad, 'un alta de cliente')
+    }
+
     // ── LA CONTRASENA. Se genera aqui, se ensena una vez, no se guarda. ────
     const password = fila.rol === 'DST' ? generarPassword() : null
 
@@ -140,7 +144,7 @@ export async function POST(request: Request) {
     // para que la logica del alta se pueda probar sin un servidor de Auth
     // detras — y para que aqui se vea, en un solo lugar, que lo unico que sale
     // de la transaccion es esta llamada HTTP.
-    const puerta: PuertaDeAuth = {
+    const puertaAuth: PuertaDeAuth = {
       crear: async (email, clave) => {
         const { data, error } = await supabase.auth.admin.createUser({
           email,
@@ -158,7 +162,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const creada = await crearEntidad(supabase, actor, fila, password, puerta)
+    const creada = await crearEntidad(supabase, actor, fila, password, puertaAuth)
 
     await supabase
       .from('bot_borradores')

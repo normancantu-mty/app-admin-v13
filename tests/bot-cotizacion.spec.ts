@@ -409,6 +409,7 @@ test.describe('el mensaje', () => {
     const texto = mensajeDeConfirmacionCotizacion(r.payload, r.desglose, r.avisos, {
       paraQuien: 'Ferreteria del Centro',
       esDeLaRed: false,
+      rolComprador: null,
       vigenteHasta: r.vigenteHasta
     })
     expect(texto).toContain('$1,198.00')
@@ -425,6 +426,7 @@ test.describe('el mensaje', () => {
     const texto = mensajeDeConfirmacionCotizacion(r.payload, r.desglose, r.avisos, {
       paraQuien: GILBERTO.nombre,
       esDeLaRed: true,
+      rolComprador: 'DST',
       vigenteHasta: r.vigenteHasta
     })
     expect(texto).toContain('Precio de distribuidor')
@@ -436,6 +438,7 @@ test.describe('el mensaje', () => {
     const texto = mensajeDeConfirmacionCotizacion(r.payload, r.desglose, r.avisos, {
       paraQuien: 'Ferreteria del Centro',
       esDeLaRed: false,
+      rolComprador: null,
       vigenteHasta: r.vigenteHasta
     })
     expect(texto.split('\n').length).toBeLessThanOrEqual(12)
@@ -496,11 +499,13 @@ test.describe('cotizar no mueve nada', () => {
     expect(codigo).toContain("from('cotizaciones')")
   })
 
-  test('las dos rutas son solo de ADMIN y exigen el token', () => {
+  test('las dos rutas pasan por la tabla de permisos y exigen el token', () => {
+    // Fase 9 (D95): el candado ya no es `rolEntidad !== 'ADMIN'` sino la tabla
+    // de `lib/bot-permisos.ts` (Kevin cotiza con aprobacion, DST/LOC no).
     for (const ruta of [CONFIRMAR, PROPONER]) {
       const codigo = LEER(ruta)
       expect(codigo).toContain('tokenValido(request)')
-      expect(codigo).toContain("identidad.rolEntidad !== 'ADMIN'")
+      expect(codigo).toMatch(/permisoDeAccion\(actorDe\(\w+\), 'cotizacion'\) === 'no'/)
       expect(codigo).toContain("export const dynamic = 'force-dynamic'")
     }
   })

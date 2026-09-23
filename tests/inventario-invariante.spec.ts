@@ -187,7 +187,7 @@ test.describe('B - el instrumento, antes de creerle', () => {
 test.describe('B - el cableado sobre el repo real', () => {
   const archivos = archivosDeCodigo()
 
-  test('encuentra los 6 INSERT a inventario_ledger que hay hoy', () => {
+  test('encuentra los 7 INSERT a inventario_ledger que hay hoy', () => {
     // La guardia contra el modo de fallo silencioso de esta prueba: si el
     // recorrido devolviera cero archivos, la de abajo pasaria en verde sobre
     // nada. Un instrumento roto y un repo limpio se ven igual.
@@ -201,7 +201,10 @@ test.describe('B - el cableado sobre el repo real', () => {
     // `>=`: lo que esta prueba defiende es que **nadie meta un INSERT nuevo sin
     // darse cuenta**, y un umbral no caza eso. Si esto se pone rojo, primero
     // averigua cual archivo lo movio.
-    expect(total).toBe(6)
+    // Fase 9 (D93, 2026-09-23): vuelven a ser 7. El nuevo es la entrada de
+    // insumo por chat, `app/api/bot/inventario/confirmar/route.ts`, y llama a
+    // la puerta (lo comprueba la prueba de abajo).
+    expect(total).toBe(7)
   })
 
   test('cada archivo que inserta llama a la puerta, al menos una vez por INSERT', () => {

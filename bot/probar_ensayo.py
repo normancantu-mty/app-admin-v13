@@ -13,7 +13,7 @@ Todo sin red: `urllib.request.urlopen` esta doblado y registra la peticion que
 HABRIA salido, con sus cabeceras. Asi se mide lo que de verdad sale del
 proceso, no lo que una funcion dice que haria.
 
-1. `decision_de_ensayo`: las ocho rutas `/confirmar` que el bot llama hoy (se
+1. `decision_de_ensayo`: las once rutas `/confirmar` que el bot llama hoy (se
    sacan del codigo con una expresion regular, para que una novena no se
    cuele) no salen; una ruta que no existe todavia tampoco (lista cerrada por
    lo PERMITIDO); `/proponer` y las de solo lectura salen marcadas.
@@ -101,8 +101,11 @@ def con_red(ensayo, llamada):
 fuente = io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_gastos.py"),
                  encoding="utf-8").read()
 confirmar = sorted(set(re.findall(r'_post\("(/api/bot/[a-z_]+/confirmar)"', fuente)))
-caso("el bot llama hoy ocho rutas /confirmar (si cambia, revisa este archivo)",
-     len(confirmar), 8)
+# Fase 9: 8 -> 11. `inventario` (D92, la entrada de insumo), `aprobacion` (D97,
+# el Aprobar del abono de un DST) y `miembro` (D95, el alta de una persona).
+# Las tres terminan en `/confirmar` a proposito: en ensayo no salen.
+caso("el bot llama hoy once rutas /confirmar (si cambia, revisa este archivo)",
+     len(confirmar), 11)
 for ruta in confirmar:
     caso("no sale: " + ruta, B.decision_de_ensayo(ruta), "no_sale")
 

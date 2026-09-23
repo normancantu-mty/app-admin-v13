@@ -90,6 +90,118 @@ export function faltantesDeEmpaque(
 }
 
 // ============================================================================
+// D92 (Fase 9) — SIN EMPAQUE NO SE ENVASA: SE BLOQUEA Y SE PREGUNTA
+// ============================================================================
+
+/**
+ * Los tipos que suman y los que restan: la MISMA regla de
+ * `v_stock_por_cubeta` y de `stock_de_insumos` (migracion
+ * `20260923075244_fase9_d92_envasado_no_deja_negativo.sql`).
+ */
+const ENTRA = new Set(['ENTRADA_COMPRA', 'PRODUCCION', 'DEVOLUCION_FISICA', 'INGRESO_TRASPASO', 'ENTRADA_CONCESION'])
+const SALE = new Set(['SALIDA_VENTA', 'MERMA', 'TRASPASO', 'EGRESO_TRASPASO', 'SALIDA_CONCESION', 'DEVOLUCION_FISICA'])
+
+export interface FilaLedgerStock {
+  id_producto: string
+  tipo_movimiento: string
+  cantidad: number | string
+  id_entidad_origen: string | null
+  id_entidad_destino: string | null
+  status: string
+}
+
+/**
+ * El stock de cada producto de una entidad, desde las filas del ledger. Espejo
+ * puro de `stock_de_insumos` (la propuesta corre en ensayo, donde no hay
+ * `rpc`). `v_stock_por_cubeta` NO sirve para esto: filtra `TERMINADO` y
+ * `having > 0`, asi que para un insumo siempre decia 0 — por eso la Fase 8
+ * avisaba falta de empaque aunque hubiera.
+ */
+export function stockDesdeLedger(
+  filas: readonly FilaLedgerStock[],
+  idEntidad: string
+): Map<string, number> {
+  const stock = new Map<string, number>()
+  for (const f of filas) {
+    if (f.status !== 'ACTIVO' && f.status !== 'APPROVED') continue
+    if (f.id_entidad_destino !== idEntidad && f.id_entidad_origen !== idEntidad) continue
+    const n = Number(f.cantidad)
+    if (!Number.isFinite(n)) continue
+    let delta = 0
+    if (f.id_entidad_destino === idEntidad && ENTRA.has(f.tipo_movimiento)) delta += n
+    if (f.id_entidad_origen === idEntidad && SALE.has(f.tipo_movimiento)) delta -= n
+    stock.set(f.id_producto, Math.round(((stock.get(f.id_producto) ?? 0) + delta) * 10000) / 10000)
+  }
+  return stock
+}
+
+export interface FaltanteEmpaque {
+  id_insumo: string
+  nombre: string
+  ocupa: number
+  hay: number
+  falta: number
+}
+
+/**
+ * Lo que falta, por insumo, sumando TODO el envasado (dos formatos comparten
+ * lamina). Vacio = alcanza. La MISMA cuenta que `registrar_en_lote` hace antes
+ * de escribir; si esta dice que alcanza y la base no, la base gana y el VA
+ * contesta el error.
+ */
+export function faltantesDelEnvasado(
+  movimientos: readonly MovimientoEnvasado[],
+  stock: ReadonlyMap<string, number>,
+  nombres: ReadonlyMap<string, string>
+): FaltanteEmpaque[] {
+  const pedido = new Map<string, number>()
+  for (const m of movimientos) {
+    if (m.tipo_movimiento !== 'TRASPASO') continue
+    pedido.set(m.id_producto, (pedido.get(m.id_producto) ?? 0) + m.cantidad)
+  }
+  const salida: FaltanteEmpaque[] = []
+  for (const [id, ocupaCrudo] of pedido) {
+    const ocupa = Math.round(ocupaCrudo * 10000) / 10000
+    const hay = stock.get(id) ?? 0
+    if (hay + 1e-9 < ocupa) {
+      salida.push({
+        id_insumo: id,
+        nombre: nombres.get(id) ?? 'un insumo',
+        ocupa,
+        hay,
+        falta: Math.round((ocupa - hay) * 10000) / 10000
+      })
+    }
+  }
+  return salida.sort((a, b) => a.nombre.localeCompare(b.nombre))
+}
+
+/**
+ * El mensaje que NO se queda en "no se puede": dice que falta, cuanto, y
+ * pregunta que paso (Norman, D92).
+ */
+export function mensajeFaltaEmpaque(
+  envasado: readonly { nombre: string; botellas: number }[],
+  faltantes: readonly FaltanteEmpaque[]
+): string {
+  const que = envasado.map((e) => `${e.botellas} de ${e.nombre}`).join(' y ')
+  const lineas = [`Para envasar ${que} me falta empaque registrado:`]
+  for (const f of faltantes) {
+    lineas.push(
+      `   ${f.nombre}: ocupo ${numeroCorto(f.ocupa)}, tengo ${numeroCorto(f.hay)} ` +
+        `-> faltan ${numeroCorto(f.falta)}`
+    )
+  }
+  lineas.push(
+    '',
+    'No lo escribo: dejaria el inventario en negativo.',
+    'Que paso: llego una compra, o ya lo tenias y no esta capturado? Dime cuanto hay, ' +
+      'por ejemplo: "llegaron 500 botellas de 750" o "tengo 300 corchos".'
+  )
+  return lineas.join('\n')
+}
+
+// ============================================================================
 // D81 — A QUE LOTE VA
 // ============================================================================
 

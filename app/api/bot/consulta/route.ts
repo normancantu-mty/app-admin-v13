@@ -14,7 +14,14 @@
  */
 
 import { NextResponse } from 'next/server'
-import { clienteDeServicio, resolverIdentidad, tokenValido, type ClienteServicio } from '@/lib/bot-servidor'
+import {
+  clienteDeServicio,
+  leerCatalogoDeVenta,
+  leerCompradoresDeVenta,
+  resolverIdentidad,
+  tokenValido,
+  type ClienteServicio
+} from '@/lib/bot-servidor'
 import {
   filasDelPeriodo,
   periodoDeProduccion,
@@ -23,21 +30,37 @@ import {
 } from '@/lib/bot-envasado'
 import { mensajeDeRendimiento } from '@/lib/bot-lotes'
 import { fechaLocal } from '@/lib/fechas'
-import { leerCartera, leerStockPorCubeta, leerVentasPorMes } from '@/lib/vistas'
+import { leerCartera, leerSaldosEntidad, leerStockPorCubeta, leerVentasPorMes } from '@/lib/vistas'
+import { esGrupo, permisoDeConsulta, type ConsultaBot } from '@/lib/bot-permisos'
+import { actorDe, redDe } from '@/lib/bot-aprobacion'
+import { buscarPorNombre } from '@/lib/bot-nombres'
+import { esPublicoEnGeneral } from '@/lib/bot-publico'
+import { aProductoDelCatalogo, precioParaComprador, ZONA_POR_DEFECTO } from '@/lib/bot-venta'
 import {
   entidadALaQueSeAcota,
   esConsultaValida,
   filtrarCartera,
   pieDeConsulta,
-  textoCartera,
+  textoPrecios,
+  textoQuienDebe,
   textoStock,
   textoVentas,
-  type AlcanceConsulta
+  type AlcanceConsulta,
+  type TipoConsulta
 } from '@/lib/bot-consultas'
 
 export const dynamic = 'force-dynamic'
 
 const MESES_DE_VENTAS = 6
+
+/** Las consultas del bot, con el nombre que tienen en la tabla de permisos. */
+const CONSULTA_DE_LA_TABLA: Record<TipoConsulta, ConsultaBot> = {
+  stock: 'inventario',
+  cartera: 'deuda',
+  ventas: 'ventas',
+  produccion: 'produccion',
+  precios: 'precios'
+}
 
 /**
  * Fase 8, D83: todo `lote_envasado` con su lote y su producto. Son las filas de
@@ -77,6 +100,8 @@ export async function POST(request: Request) {
   try {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
+      /** FASE 9 (D96): el chat donde se pregunto; en privado es la persona. */
+      chat_id?: unknown
       consulta?: unknown
       filtro?: unknown
     }
@@ -104,11 +129,29 @@ export async function POST(request: Request) {
       nombreEntidad: identidad.nombreEntidad
     }
     const acotarA = entidadALaQueSeAcota(alcance)
+
+    // ── FASE 9 (D96/D99): LA TABLA DE PERMISOS, EN LA RUTA ──────────────────
+    // Que puede ver cada rol y que se contesta "por privado" vive en
+    // `lib/bot-permisos.ts`. Un DST ve lo suyo y lo de sus locales; un LOC, lo
+    // suyo; ventas y produccion, solo la matriz.
+    const permiso = permisoDeConsulta(actorDe(identidad), CONSULTA_DE_LA_TABLA[cuerpo.consulta])
+    if (!permiso.ok) {
+      return NextResponse.json(
+        { error: 'Esa consulta es de la empresa; tu alta solo alcanza a lo tuyo.' },
+        { status: 403 }
+      )
+    }
+    const red = await redDe(supabase, identidad, permiso.alcance)
+    // En un grupo, lo que la tabla manda "por privado" se marca: el bot lo
+    // manda al chat privado de quien pregunto y en el grupo solo lo avisa.
+    const privado = permiso.privado && esGrupo(cuerpo.chat_id, telegramId)
     const filtroCrudo = String(cuerpo.filtro ?? '').trim()
     const filtro = filtroCrudo === '' ? null : filtroCrudo
 
     if (cuerpo.consulta === 'stock') {
-      const filas = await leerStockPorCubeta(supabase, acotarA ?? undefined)
+      const filas = (
+        await leerStockPorCubeta(supabase, permiso.alcance === 'propio' ? identidad.idEntidad : undefined)
+      ).filter((f) => red === null || red.has(f.id_entidad))
       // El filtro se aplica AQUI y no en la base: el lector de la vista es el
       // que las pruebas de equivalencia validan, y meterle un `ilike` por fuera
       // lo sacaria de ese camino probado. Son decenas de filas.
@@ -121,7 +164,8 @@ export async function POST(request: Request) {
       const visibles = filtro ? filas.filter((f) => coincide(f, filtro)) : filas
       return NextResponse.json({
         ok: true,
-        texto: textoStock(visibles, filtro) + pieDeConsulta('v_stock_por_cubeta')
+        texto: textoStock(visibles, filtro) + pieDeConsulta('v_stock_por_cubeta'),
+        privado
       })
     }
 
@@ -129,15 +173,58 @@ export async function POST(request: Request) {
       const todas = await leerCartera(supabase)
       // `leerCartera` no acepta filtro de entidad: se acota aqui, con el mismo
       // `acotarA` que calcula `entidadALaQueSeAcota`. Un solo lugar decide.
-      const suyas = acotarA ? todas.filter((f) => f.id_entidad === acotarA) : todas
+      const suyas = red ? todas.filter((f) => red.has(f.id_entidad)) : todas
       // D76 (Fase 8): "cuanto me debe aeropuerto" contesta SOLO Aeropuerto.
       // El filtro se aplica DESPUES del alcance: un DST no ve a otros por nombre.
       const filas = filtrarCartera(suyas, filtro)
+      // D99: y el efectivo que ya cobraron y no han entregado (`v_saldo_entidad`).
+      const porEntregar = new Map(
+        (await leerSaldosEntidad(supabase)).map((f) => [f.id_entidad, Number(f.saldo_por_pagar_efectivo) || 0])
+      )
       return NextResponse.json({
         ok: true,
         texto:
-          textoCartera(filas, filtro) +
-          pieDeConsulta('v_cartera', filas[0]?.calculado_en ?? suyas[0]?.calculado_en ?? null)
+          textoQuienDebe(filas, porEntregar, filtro) +
+          pieDeConsulta('v_cartera + v_saldo_entidad', filas[0]?.calculado_en ?? suyas[0]?.calculado_en ?? null),
+        privado
+      })
+    }
+
+    // precios (D99) — publico y, segun la tabla, el de cada entidad, con la
+    // MISMA cascada que cobra la venta (`precioParaComprador` ->
+    // `calculateWaterfall`, la funcion de la pantalla de catalogo).
+    if (cuerpo.consulta === 'precios') {
+      const entidades = (await leerCompradoresDeVenta(supabase)).filter(
+        (e) => (red === null || red.has(e.id)) && (e.rol === 'DST' || e.rol === 'LOC')
+      )
+      let entidad = filtro ? null : identidad.rolEntidad === 'ADMIN' ? null : entidades.find((e) => e.id === identidad.idEntidad) ?? null
+      if (filtro && !esPublicoEnGeneral(filtro)) {
+        const hallazgo = buscarPorNombre(filtro, entidades, (e) => [e.nombre])
+        if (!hallazgo.ok) {
+          return NextResponse.json({
+            ok: true,
+            texto:
+              hallazgo.motivo === 'ambiguo'
+                ? `"${filtro}" me da mas de uno: ${hallazgo.candidatos.map((e) => e.nombre).join(', ')}.`
+                : `No tengo a "${filtro}" entre los que puedes consultar.`,
+            privado
+          })
+        }
+        entidad = hallazgo.elegido
+      }
+      const zona = entidad?.zona || ZONA_POR_DEFECTO
+      const catalogo = (await leerCatalogoDeVenta(supabase))
+        .map((p) => aProductoDelCatalogo(p, zona))
+        .filter((p) => p.precio_final > 0)
+      const renglones = catalogo.map((p) => ({
+        producto: p.nombre,
+        publico: p.precio_final,
+        entidad: entidad ? precioParaComprador(p, entidad) : null
+      }))
+      return NextResponse.json({
+        ok: true,
+        texto: textoPrecios(renglones, entidad?.nombre ?? null, entidad?.rol) + pieDeConsulta('listas_precios + cascada'),
+        privado
       })
     }
 
@@ -181,7 +268,8 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({
         ok: true,
-        texto: texto + pieDeConsulta(periodo.tipo === 'lote' ? 'lote_envasado + v_lote_rendimiento' : 'lote_envasado')
+        texto: texto + pieDeConsulta(periodo.tipo === 'lote' ? 'lote_envasado + v_lote_rendimiento' : 'lote_envasado'),
+        privado
       })
     }
 
@@ -197,7 +285,8 @@ export async function POST(request: Request) {
     const meses = (await leerVentasPorMes(supabase)).slice(0, MESES_DE_VENTAS)
     return NextResponse.json({
       ok: true,
-      texto: textoVentas(meses) + pieDeConsulta('v_ventas_por_mes')
+      texto: textoVentas(meses) + pieDeConsulta('v_ventas_por_mes'),
+      privado
     })
   } catch (e) {
     console.error('[bot] consulta reviento:', e)

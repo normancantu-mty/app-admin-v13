@@ -179,6 +179,7 @@ test.describe('D57 — el 10% que pidio el encargo', () => {
     const mensaje = mensajeDeConfirmacionCotizacion(r.payload, r.desglose, r.avisos, {
       paraQuien: 'Aeropuerto',
       esDeLaRed: true,
+      rolComprador: 'DST',
       vigenteHasta: '2026-10-04'
     })
 

@@ -36,6 +36,8 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { abrirPuerta, pasarAEspera, actorDe } from '@/lib/bot-aprobacion'
+import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { registrarVenta, type OperadorDeVenta } from '@/lib/venta-servidor'
 import {
   juzgarConversion,
@@ -81,35 +83,28 @@ export async function POST(request: Request) {
     }
 
     const supabase = clienteDeServicio(request)
-    const identidad = await resolverIdentidad(supabase, telegramId)
-    if (!identidad) {
+    const quien = await resolverIdentidad(supabase, telegramId)
+    if (!quien) {
       return NextResponse.json({ error: 'No te tengo dado de alta.' }, { status: 403 })
     }
-    if (identidad.rolEntidad !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Cerrar ventas por chat es de la matriz; tu alta no alcanza.' },
-        { status: 403 }
-      )
+    if (permisoDeAccion(actorDe(quien), 'convertir') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['convertir'] }, { status: 403 })
     }
 
     const { data: borrador } = await supabase
       .from('bot_borradores')
-      .select('id, telegram_id, sello, payload, estado')
+      .select('id, telegram_id, sello, payload, estado, chat_id')
       .eq('id', borradorId)
       .maybeSingle()
 
     if (!borrador) {
       return NextResponse.json({ error: 'Ese borrador ya no existe.' }, { status: 404 })
     }
-    if (borrador.telegram_id !== telegramId) {
-      return NextResponse.json({ error: 'Ese borrador no es tuyo.' }, { status: 403 })
-    }
-    if (borrador.estado !== 'PENDIENTE') {
-      return NextResponse.json(
-        { error: `Ese borrador ya esta ${borrador.estado.toLowerCase()}.` },
-        { status: 409 }
-      )
-    }
+    const puerta = await abrirPuerta(supabase, quien, borrador)
+    if (!puerta.ok) return puerta.respuesta
+    // De aqui en adelante, la identidad es la del AUTOR del borrador (D98): con
+    // el Aprobar de Norman se escribe la captura de Kevin, con su etiqueta.
+    const identidad = puerta.autor
 
     const guardado = borrador.payload as unknown as BorradorConversion
     // El discriminador, ANTES del sello. Un borrador de otra familia nunca
@@ -214,6 +209,11 @@ export async function POST(request: Request) {
         juicio.motivo
       )
       return NextResponse.json({ error: juicio.mensaje, motivo: juicio.motivo }, { status: 422 })
+    }
+
+    // ── D98: el VA de quien requiere aprobacion NO escribe ──────────────────
+    if (puerta.modo === 'esperar') {
+      return pasarAEspera(supabase, borradorId, identidad, 'una venta desde cotizacion')
     }
 
     // ── 1. LA VENTA ───────────────────────────────────────────────────────

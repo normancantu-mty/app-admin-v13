@@ -18,7 +18,7 @@ import type { FilaCarteraVista, FilaStockPorCubeta, FilaVentasPorMes } from '@/l
 import { fechaHoraParaPersona } from '@/lib/fechas'
 
 /** Lo que el modelo puede pedir. Lista cerrada, igual que las categorias. */
-export const CONSULTAS = ['stock', 'cartera', 'ventas', 'produccion'] as const
+export const CONSULTAS = ['stock', 'cartera', 'ventas', 'produccion', 'precios'] as const
 export type TipoConsulta = (typeof CONSULTAS)[number]
 
 export function esConsultaValida(x: unknown): x is TipoConsulta {
@@ -228,6 +228,81 @@ export function textoVentas(filas: readonly FilaVentasPorMes[]): string {
     // dinero cobrado, y juntarlas es el error que produjo ERP-77.
     lineas.push(
       `   contado ${pesos(Number(f.vendido_contado ?? 0))} · concesion ${pesos(Number(f.vendido_concesion ?? 0))}`
+    )
+  }
+  return lineas.join('\n')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FASE 9 (D99) — "QUIEN DEBE" COMPLETO, Y LOS PRECIOS POR ENTIDAD.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** De `v_saldo_entidad`: lo que el nodo ya cobro y no ha entregado a la matriz. */
+export type PorEntregar = ReadonlyMap<string, number>
+
+/**
+ * Norman, textual: *"debes de poner el total y el dinero que no te ha dado que
+ * ya tiene el"*. Por deudor: la deuda de concesion (`v_cartera`) **y** el
+ * efectivo cobrado por entregar (`v_saldo_entidad.saldo_por_pagar_efectivo`,
+ * el `DEUDA_A_MATRIZ` de `lib/venta-servidor.ts:696-742`), cada uno con su
+ * nombre. Aparece quien tenga cualquiera de los dos. **Pura.**
+ */
+export function textoQuienDebe(
+  filas: readonly FilaCarteraVista[],
+  porEntregar: PorEntregar,
+  filtro?: string | null
+): string {
+  const renglones = filas
+    .map((f) => ({
+      f,
+      deuda: Math.max(0, Number(f.deuda) || 0),
+      entregar: Math.max(0, Number(porEntregar.get(f.id_entidad) ?? 0))
+    }))
+    .filter((r) => r.deuda > 0.005 || r.entregar > 0.005)
+  if (filtro && filas.length === 0) {
+    return `No encuentro a "${filtro}" en la cartera. Pregunta "quien me debe" para ver la lista.`
+  }
+  if (renglones.length === 0) {
+    return filtro
+      ? `${filas.map((f) => f.nombre).join(', ')}: no te debe nada hoy, ni tiene cobrado por entregar.`
+      : sinDatos('cartera con deuda')
+  }
+  const totalDeuda = renglones.reduce((s, r) => s + r.deuda, 0)
+  const totalEntregar = renglones.reduce((s, r) => s + r.entregar, 0)
+  const lineas: string[] = [
+    `QUIEN DEBE — ${pesos(totalDeuda + totalEntregar)} en total`,
+    `   ${pesos(totalDeuda)} de concesion + ${pesos(totalEntregar)} cobrado por entregar`,
+    ''
+  ]
+  const ordenadas = [...renglones].sort((a, b) => b.deuda + b.entregar - (a.deuda + a.entregar))
+  for (const r of ordenadas.slice(0, TOPE_RENGLONES)) {
+    lineas.push(
+      `${r.f.nombre} (${r.f.rol}) — debe ${pesos(r.deuda)} de concesion · tiene ${pesos(r.entregar)} cobrado por entregar`
+    )
+  }
+  if (ordenadas.length > TOPE_RENGLONES) lineas.push(`... y ${ordenadas.length - TOPE_RENGLONES} mas.`)
+  return lineas.join('\n')
+}
+
+export interface RenglonPrecio {
+  producto: string
+  publico: number
+  /** Lo que se le cobra a esa entidad (la cascada); `null` = solo publico. */
+  entidad: number | null
+}
+
+/** **Pura.** `nombre` null = solo el precio al publico. */
+export function textoPrecios(renglones: readonly RenglonPrecio[], nombre: string | null, rol?: string): string {
+  if (renglones.length === 0) return sinDatos('precios')
+  const lineas = [
+    nombre ? `PRECIOS — publico y ${nombre}${rol ? ` (${rol})` : ''}` : 'PRECIOS AL PUBLICO',
+    ''
+  ]
+  for (const r of renglones) {
+    lineas.push(
+      nombre && r.entidad !== null
+        ? `   ${r.producto}: publico ${pesos(r.publico)} · a ${nombre} ${pesos(r.entidad)}`
+        : `   ${r.producto}: ${pesos(r.publico)}`
     )
   }
   return lineas.join('\n')

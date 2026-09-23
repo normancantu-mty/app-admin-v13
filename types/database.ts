@@ -143,6 +143,7 @@ export type Database = {
           estado: string
           id: string
           id_registro: string | null
+          chat_id: number | null
           payload: Json
           resuelto_en: string | null
           sello: string
@@ -153,6 +154,7 @@ export type Database = {
           estado?: string
           id?: string
           id_registro?: string | null
+          chat_id?: number | null
           payload: Json
           resuelto_en?: string | null
           sello: string
@@ -163,6 +165,7 @@ export type Database = {
           estado?: string
           id?: string
           id_registro?: string | null
+          chat_id?: number | null
           payload?: Json
           resuelto_en?: string | null
           sello?: string
@@ -209,6 +212,7 @@ export type Database = {
           id: string
           id_cuenta_destino: string
           id_entidad: string
+          requiere_aprobacion: boolean
           telegram_id: number
         }
         Insert: {
@@ -219,6 +223,7 @@ export type Database = {
           id?: string
           id_cuenta_destino: string
           id_entidad: string
+          requiere_aprobacion?: boolean
           telegram_id: number
         }
         Update: {
@@ -229,6 +234,7 @@ export type Database = {
           id?: string
           id_cuenta_destino?: string
           id_entidad?: string
+          requiere_aprobacion?: boolean
           telegram_id?: number
         }
         Relationships: [

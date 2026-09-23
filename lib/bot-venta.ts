@@ -370,6 +370,10 @@ export function precioParaComprador(
   return roundTo2(producto.precio_final)
 }
 
+// D88 (Fase 9): el ROTULO de este precio vive en `lib/rotulo-precio.ts`, con
+// la MISMA condicion (DST o LOC = cascada). Si cambias una, cambia la otra.
+export { rotuloDePrecio } from '@/lib/rotulo-precio'
+
 /**
  * Convierte lo que el endpoint ya resolvio en la venta exacta que se va a
  * escribir.

@@ -74,6 +74,43 @@ if datos:
     caso("D50 control: con nombre (%r) NO es 'el mismo'" % control,
          B._dice_el_mismo(control), False)
 
+    # ═══ 3b. FASE 9: lo que el modelo real emite para D90, D99 y D100 ═════════
+    def sal(clave):
+        return frases[clave]["salida"]
+
+    def cps(clave):
+        return sal(clave).get("campos") or {}
+
+    def piezas(campos):
+        return sum(int(x.get("cantidad") or 0) for x in campos.get("productos") or [])
+
+    caso("FASE 9: estan las grabaciones de D90, D99 y D100",
+         sorted({"d90", "d99", "d100"} - {c.split("_")[0] for c in frases}), [])
+    v = cps("d90_vendi_publico_2900")
+    caso("D90 venta: publico en general, 5 piezas, monto 2900 (el servidor lo vuelve total_final)",
+         (sal("d90_vendi_publico_2900")["intencion"], v.get("comprador"), v.get("monto"), piezas(v)),
+         ("venta", "publico en general", 2900, 5))
+    c = cps("d90_cotiza_publico_15")
+    caso("D90 cotizacion: publico en general, 30 piezas, 15%",
+         (sal("d90_cotiza_publico_15")["intencion"], c.get("cliente"),
+          (c.get("descuento") or {}).get("porcentaje"), piezas(c)),
+         ("cotizacion", "publico en general", 15, 30))
+    caso("D99: 'a como le sale a aeropuerto?' es consulta precios de Aeropuerto",
+         (sal("d99_precios_aeropuerto")["consulta"], str(sal("d99_precios_aeropuerto")["filtro"]).lower()),
+         ("precios", "aeropuerto"))
+    caso("D99: 'precios' solo es consulta precios sin filtro",
+         (sal("d99_precios_solo")["consulta"], sal("d99_precios_solo")["filtro"]), ("precios", None))
+    caso("D99 CONTROL: con cantidades es cotizacion, no consulta",
+         sal("d99_control_cotizacion")["intencion"], "cotizacion")
+    caso("D100: Kevin en grupo captura el gasto igual (300)",
+         (sal("d100_grupo_kevin_gasto")["intencion"], cps("d100_grupo_kevin_gasto").get("monto")),
+         ("gasto", 300))
+    caso("D100: a Kevin no le contesta como si fuera Norman",
+         "norman" in str(sal("d100_grupo_kevin_gasto").get("respuesta")).lower(), False)
+    caso("D100: con historial rotulado 'Kevin', 'y la deuda?' sabe de quien",
+         (sal("d100_grupo_historial_kevin")["consulta"],
+          str(sal("d100_grupo_historial_kevin")["filtro"]).lower()), ("cartera", "aeropuerto"))
+
 # ═══ 4. Una sola fuente ═══════════════════════════════════════════════════════
 
 caso("el PROMPT armado no deja marcas sin llenar", "<<" in E.PROMPT, False)

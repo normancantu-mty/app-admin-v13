@@ -40,6 +40,8 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
+import { abrirPuerta, pasarAEspera, actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
+import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   selloVentaCoincide,
   type DesgloseRenglon,
@@ -85,20 +87,17 @@ export async function POST(request: Request) {
 
     const supabase = clienteDeServicio(request)
 
-    const identidad = await resolverIdentidad(supabase, telegramId)
-    if (!identidad) {
+    const quien = await resolverIdentidad(supabase, telegramId)
+    if (!quien) {
       return NextResponse.json({ error: 'No te tengo dado de alta.' }, { status: 403 })
     }
-    if (identidad.rolEntidad !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Capturar ventas por chat es de la matriz; tu alta no alcanza.' },
-        { status: 403 }
-      )
+    if (permisoDeAccion(actorDe(quien), 'venta') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['venta'] }, { status: 403 })
     }
 
     const { data: borrador } = await supabase
       .from('bot_borradores')
-      .select('id, telegram_id, sello, payload, estado')
+      .select('id, telegram_id, sello, payload, estado, chat_id')
       .eq('id', borradorId)
       .maybeSingle()
 
@@ -107,15 +106,11 @@ export async function POST(request: Request) {
     }
     // El borrador es de quien lo creo. Sin esto, cualquiera dado de alta podria
     // confirmar la captura de otro con solo tener el id.
-    if (borrador.telegram_id !== telegramId) {
-      return NextResponse.json({ error: 'Ese borrador no es tuyo.' }, { status: 403 })
-    }
-    if (borrador.estado !== 'PENDIENTE') {
-      return NextResponse.json(
-        { error: `Ese borrador ya esta ${borrador.estado.toLowerCase()}.` },
-        { status: 409 }
-      )
-    }
+    const puerta = await abrirPuerta(supabase, quien, borrador)
+    if (!puerta.ok) return puerta.respuesta
+    // De aqui en adelante, la identidad es la del AUTOR del borrador (D98): con
+    // el Aprobar de Norman se escribe la captura de Kevin, con su etiqueta.
+    const identidad = puerta.autor
 
     const guardado = borrador.payload as unknown as BorradorVenta
     // ── EL DISCRIMINADOR, ANTES DE MIRAR NADA MAS ───────────────────────────
@@ -165,6 +160,16 @@ export async function POST(request: Request) {
     // Una defensa que solo corre en el camino feliz no es una defensa. El campo
     // ni siquiera existe en `PayloadVenta`, asi que esto solo puede fallar el
     // dia que alguien se lo agregue — y ese es exactamente el dia que importa.
+    // FASE 9 (D96): un DST solo a sus locales o a publico, comprobado tambien aqui.
+    {
+      const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
+      if (red !== null && venta.id_comprador && !red.has(venta.id_comprador)) {
+        return NextResponse.json(
+          { error: 'Ese comprador no es de tu red. No escribo nada.' },
+          { status: 409 }
+        )
+      }
+    }
     if (venta.id_comprador === venta.id_vendedor) {
       return NextResponse.json(
         { error: 'El comprador y el vendedor son la misma entidad. No escribo eso.' },
@@ -173,6 +178,11 @@ export async function POST(request: Request) {
     }
     if (venta.items.length === 0 || !(venta.total_cobrado_real > 0)) {
       return NextResponse.json({ error: 'Esa venta esta vacia. No escribo nada.' }, { status: 409 })
+    }
+
+    // ── D98: el VA de quien requiere aprobacion NO escribe ──────────────────
+    if (puerta.modo === 'esperar') {
+      return pasarAEspera(supabase, borradorId, identidad, 'una venta')
     }
 
     // ── LA ESCRITURA. Un solo `registrarVenta`, que por dentro es un solo RPC ─

@@ -12,6 +12,7 @@
  * resolver los datos por su cuenta.
  */
 import { test, expect } from '@playwright/test'
+import { precioParaComprador, type CompradorDeVenta } from '@/lib/bot-venta'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
@@ -97,6 +98,8 @@ import {
   etiquetaDeDescuento,
   LISTA_DISTRIBUIDOR,
   LISTA_PUBLICO,
+  LISTA_LOCAL,
+  listaDePrecioPara,
   type FilaCotizacionDocumento,
   type LineaDocumento
 } from '@/lib/documento'
@@ -148,8 +151,27 @@ test.describe('D70-D72 · el documento de la cotizacion', () => {
     expect(d.comprador).toBe('Juan Prospecto')
   })
 
-  test('un LOC tampoco es distribuidor: precio al publico', () => {
-    expect(datosDeCotizacion(fila({}), 'CEO Admin', LINEAS, 'LOC').listaDePrecio).toBe(LISTA_PUBLICO)
+  // D88 (Fase 9): esta prueba FIJABA el defecto E-360 ("un LOC tampoco es
+  // distribuidor: precio al publico"). Un LOC paga la cascada
+  // (`precioParaComprador`), asi que su papel no puede decir "publico".
+  test('D88: un LOC dice precio de punto de venta, NUNCA publico', () => {
+    const d = datosDeCotizacion(fila({}), 'CEO Admin', LINEAS, 'LOC')
+    expect(d.listaDePrecio).toBe(LISTA_LOCAL)
+    // CONTROL: el LOC ya no puede salir con "publico".
+    expect(d.listaDePrecio).not.toBe(LISTA_PUBLICO)
+    expect(String(d.listaDePrecio).toLowerCase()).not.toContain('publico')
+  })
+
+  test('D88: el rotulo sigue al PRECIO: cascada (DST, LOC) no es publico; lista (null, SOCIO) si', () => {
+    const prod = { id: 'p', sku: null, nombre: 'Plata 750', ml_por_unidad: 750, precio_final: 599 }
+    for (const rol of ['DST', 'LOC', 'SOCIO', 'SUB-ADMIN', null] as const) {
+      const comprador = rol
+        ? ({ id: 'c', nombre: 'X', rol, zona: 'Zacatecas', comision_base: 0.2, comision_base_local: 20 } as unknown as CompradorDeVenta)
+        : null
+      const cobraLista = precioParaComprador(prod, comprador) === 599
+      const rotulo = listaDePrecioPara(rol)
+      expect(rotulo === LISTA_PUBLICO, `rol ${rol}`).toBe(cobraLista)
+    }
   })
 
   test('vencida: lo dice con la fecha en DD/MM/AAAA', () => {

@@ -31,6 +31,7 @@
  * cotizaciones dictadas al mismo tiempo se llevarian el mismo numero.
  */
 
+import { rotuloDePrecio, ROTULO_PUBLICO } from '@/lib/rotulo-precio'
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
 import { fechaParaPersona, sumarDias } from '@/lib/fechas'
 import {
@@ -490,6 +491,8 @@ export function mensajeDeConfirmacionCotizacion(
   contexto: {
     paraQuien: string
     esDeLaRed: boolean
+    /** D88 (Fase 9): el rol del comprador de la red, o null (prospecto). Decide el rotulo. */
+    rolComprador: string | null
     vigenteHasta: string
     /** Solo la etiqueta de la promocion. Las cifras salen de lo sellado. */
     motivoDescuento?: string
@@ -516,10 +519,13 @@ export function mensajeDeConfirmacionCotizacion(
   }
   lineas.push(`Vigencia: ${payload.vigencia_dias} dias (hasta el ${fechaParaPersona(contexto.vigenteHasta)})`)
 
-  if (contexto.esDeLaRed) {
+  // D88 (Fase 9): el rotulo sale de la MISMA condicion que el precio. Hasta la
+  // Fase 8 decia "distribuidor" a cualquiera de la red, local incluido (E-360).
+  const rotulo = rotuloDePrecio(contexto.rolComprador)
+  if (rotulo !== ROTULO_PUBLICO) {
     // Es el precio de SU costo, no el de publico. Decirlo evita que se le pase
     // al cliente final una lista que no era para el.
-    lineas.push('Precio de distribuidor, no de publico.')
+    lineas.push(`${rotulo}, no de publico.`)
   }
 
   for (const aviso of avisos) lineas.push('', `OJO: ${aviso}`)

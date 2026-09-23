@@ -24,6 +24,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
 import { fechaParaPersona } from '@/lib/fechas'
+import { rotuloDePrecio } from '@/lib/rotulo-precio'
 
 export interface LineaDocumento {
   id: string
@@ -281,12 +282,19 @@ export interface FilaCotizacionDocumento {
   notas: string | null
 }
 
-export const LISTA_DISTRIBUIDOR = 'Precio de distribuidor'
-export const LISTA_PUBLICO = 'Precio al publico en general'
+export {
+  ROTULO_DISTRIBUIDOR as LISTA_DISTRIBUIDOR,
+  ROTULO_PUBLICO as LISTA_PUBLICO,
+  ROTULO_LOCAL as LISTA_LOCAL
+} from '@/lib/rotulo-precio'
 
-/** D71: la lista que aplica. Solo un comprador DST paga precio de distribuidor. */
+/**
+ * D71 -> D88 (Fase 9): la lista que aplica, **con el mismo criterio que el
+ * precio** (`precioParaComprador`: DST y LOC pagan la cascada). Hasta la Fase 8
+ * un LOC salia rotulado "publico" con precio de local (E-360).
+ */
 export function listaDePrecioPara(rolComprador: string | null | undefined): string {
-  return rolComprador === 'DST' ? LISTA_DISTRIBUIDOR : LISTA_PUBLICO
+  return rotuloDePrecio(rolComprador)
 }
 
 /**

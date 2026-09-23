@@ -4,7 +4,8 @@ export const dynamic = 'force-dynamic'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { getCurrentUser } from '@/lib/auth-utils'
-import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
+import { CATEGORIA_ABONO_PENDIENTE } from '@/lib/finance-utils'
+import { resolverAprobacionDeAbono, type AprobacionAction } from '@/lib/aprobacion-abonos'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
 
 // Cliente por request con la sesion del usuario. El cliente browser de
@@ -29,40 +30,6 @@ async function getSupabaseRoute() {
       },
     }
   )
-}
-
-type AprobacionAction = 'APPROVE' | 'REJECT'
-
-function calcularDesgloseFiscal(
-  monto: number,
-  tipoFiscalidad: string
-) {
-  if (tipoFiscalidad === 'FULL_TAX') {
-    const base = monto / 1.7748
-    const ieps = base * 0.53
-    const iva = (base + ieps) * 0.16
-    return {
-      base: Math.round(base * 100) / 100,
-      iva: Math.round(iva * 100) / 100,
-      ieps: Math.round(ieps * 100) / 100
-    }
-  }
-
-  if (tipoFiscalidad === 'IVA_ONLY') {
-    const base = monto / 1.16
-    const iva = base * 0.16
-    return {
-      base: Math.round(base * 100) / 100,
-      iva: Math.round(iva * 100) / 100,
-      ieps: 0
-    }
-  }
-
-  return {
-    base: Math.round(monto * 100) / 100,
-    iva: 0,
-    ieps: 0
-  }
 }
 
 export async function GET() {
@@ -121,117 +88,13 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Payload inválido.' }, { status: 400 })
     }
 
+    // La logica vive en `lib/aprobacion-abonos.ts` desde la FASE 9 (D97): el
+    // boton Aprobar del bot llama la MISMA funcion.
     const supabase = await getSupabaseRoute()
-    const { data: movimiento, error: movimientoError } = await supabase
-      .from('finanzas_ledger')
-      .select('id, tipo_movimiento, categoria, monto, id_cuenta_destino, id_entidad_relacionada, status')
-      .eq('id', id)
-      .eq('status', 'ACTIVO')
-      .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
-      .single()
-
-    if (movimientoError || !movimiento) {
-      return NextResponse.json(
-        { error: 'No se encontró el movimiento pendiente o ya fue procesado.' },
-        { status: 404 }
-      )
+    const resultado = await resolverAprobacionDeAbono(supabase, id, action)
+    if (!resultado.ok) {
+      return NextResponse.json({ error: resultado.error }, { status: resultado.status })
     }
-
-    if (action === 'REJECT') {
-      const { error: rejectError } = await supabase
-        .from('finanzas_ledger')
-        .update({ status: 'ANULADO' })
-        .eq('id', id)
-        .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
-
-      if (rejectError) {
-        return NextResponse.json({ error: rejectError.message }, { status: 500 })
-      }
-
-      return NextResponse.json({ ok: true })
-    }
-
-    if (
-      movimiento.tipo_movimiento === 'ABONO_DEUDA' &&
-      movimiento.id_cuenta_destino
-    ) {
-      const { data: cuenta, error: cuentaError } = await supabase
-        .from('cuentas_financieras')
-        .select('tipo_fiscalidad')
-        .eq('id', movimiento.id_cuenta_destino)
-        .single()
-
-      if (cuentaError) {
-        return NextResponse.json({ error: cuentaError.message }, { status: 500 })
-      }
-
-      const desglose = calcularDesgloseFiscal(movimiento.monto, cuenta?.tipo_fiscalidad || '')
-
-      const { error: baseError } = await supabase
-        .from('finanzas_ledger')
-        .update({ monto: desglose.base, categoria: CATEGORIA_ABONO_REAL, status: 'ACTIVO' })
-        .eq('id', id)
-        .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
-
-      if (baseError) {
-        return NextResponse.json({ error: baseError.message }, { status: 500 })
-      }
-
-      const reservas: Array<{
-        tipo_movimiento: 'PASIVO_IVA' | 'PASIVO_IEPS'
-        categoria: string
-        monto: number
-        id_cuenta_destino: string
-        id_entidad_relacionada: string | null
-        categoria_gasto: string
-        status: 'ACTIVO'
-      }> = []
-
-      if (desglose.iva > 0) {
-        reservas.push({
-          tipo_movimiento: 'PASIVO_IVA',
-          categoria: 'RESERVA_FISCAL_IVA',
-          monto: desglose.iva,
-          id_cuenta_destino: movimiento.id_cuenta_destino,
-          id_entidad_relacionada: movimiento.id_entidad_relacionada ?? null,
-          categoria_gasto: 'Reserva IVA por cobro de deuda aprobado',
-          status: 'ACTIVO'
-        })
-      }
-
-      if (desglose.ieps > 0) {
-        reservas.push({
-          tipo_movimiento: 'PASIVO_IEPS',
-          categoria: 'RESERVA_FISCAL_IEPS',
-          monto: desglose.ieps,
-          id_cuenta_destino: movimiento.id_cuenta_destino,
-          id_entidad_relacionada: movimiento.id_entidad_relacionada ?? null,
-          categoria_gasto: 'Reserva IEPS por cobro de deuda aprobado',
-          status: 'ACTIVO'
-        })
-      }
-
-      if (reservas.length > 0) {
-        const { error: reservasError } = await supabase
-          .from('finanzas_ledger')
-          .insert(reservas)
-
-        if (reservasError) {
-          return NextResponse.json({ error: reservasError.message }, { status: 500 })
-        }
-      }
-    } else {
-      const { error: approveErrorSimple } = await supabase
-        .from('finanzas_ledger')
-        .update({ categoria: CATEGORIA_ABONO_REAL, status: 'ACTIVO' })
-        .eq('id', id)
-        .eq('categoria', CATEGORIA_ABONO_PENDIENTE)
-
-      if (approveErrorSimple) {
-        return NextResponse.json({ error: approveErrorSimple.message }, { status: 500 })
-      }
-    }
-
     return NextResponse.json({ ok: true })
   } catch (error: unknown) {
     return NextResponse.json(

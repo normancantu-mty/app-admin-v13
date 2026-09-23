@@ -34,6 +34,8 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
+import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import { actorDe, alcanceDeCaptura, cuentaDeLaMatrizParaAbono, redDe } from '@/lib/bot-aprobacion'
 import { leerCartera } from '@/lib/vistas'
 import {
   buscarDeudor,
@@ -83,6 +85,8 @@ export async function POST(request: Request) {
   try {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
+      /** FASE 9 (D94): el chat donde se hablo; en privado es la persona. */
+      chat_id?: unknown
       propuesta?: Record<string, unknown>
       /** El nombre que dijo la persona. Solo se usa para BUSCAR, nunca se escribe. */
       deudor?: unknown
@@ -105,28 +109,48 @@ export async function POST(request: Request) {
         { status: 403 }
       )
     }
-    if (identidad.rolEntidad !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Registrar cobranza es de la matriz; tu alta no alcanza.' },
-        { status: 403 }
-      )
+    if (permisoDeAccion(actorDe(identidad), 'abono') === 'no') {
+      return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['abono'] }, { status: 403 })
     }
 
     // ── La cuenta de DESTINO: la de la identidad, o una de SU lista cerrada ──
     // Identico a la Fase 1: un id que no este en `identidad.cuentas` no existe
     // para este endpoint, venga de donde venga. Ahi es donde queda fuera la
     // `Cuenta Fresnillo` (FULL_TAX), que `cuentaUsableporElBot` ya filtro.
+    // FASE 9 (D97): el abono de un DST entra a la cuenta de la MATRIZ (la del
+    // aprobador) y queda PENDIENTE hasta que Norman lo aprueba, como en la app.
+    const esDeLaMatriz = identidad.rolEntidad === 'ADMIN'
     const pedida = String(cuerpo.id_cuenta ?? '')
-    if (pedida !== '' && !identidad.cuentas.some((c) => c.id === pedida)) {
-      return NextResponse.json({ error: 'Esa cuenta no es tuya o esta vetada.' }, { status: 422 })
+    let idCuentaDestino: string
+    let nombreCuentaDestino: string
+    if (esDeLaMatriz) {
+      if (pedida !== '' && !identidad.cuentas.some((c) => c.id === pedida)) {
+        return NextResponse.json({ error: 'Esa cuenta no es tuya o esta vetada.' }, { status: 422 })
+      }
+      idCuentaDestino = pedida !== '' ? pedida : identidad.idCuenta
+      nombreCuentaDestino =
+        identidad.cuentas.find((c) => c.id === idCuentaDestino)?.nombre ?? identidad.nombreCuenta
+    } else {
+      const matriz = await cuentaDeLaMatrizParaAbono(supabase)
+      if (!matriz) {
+        return NextResponse.json({ error: 'No encuentro la cuenta de la matriz. No propongo nada.' }, { status: 500 })
+      }
+      if (pedida !== '' && pedida !== matriz.id) {
+        return NextResponse.json({ error: 'La cuenta de la matriz la escoge Norman al aprobar.' }, { status: 422 })
+      }
+      idCuentaDestino = matriz.id
+      nombreCuentaDestino = matriz.nombre
     }
-    const idCuentaDestino = pedida !== '' ? pedida : identidad.idCuenta
-    const nombreCuentaDestino =
-      identidad.cuentas.find((c) => c.id === idCuentaDestino)?.nombre ?? identidad.nombreCuenta
 
     // ── El deudor. La lista cerrada es la cartera con saldo, leida al momento ──
     const cartera = await leerCartera(supabase)
-    const deudores = cartera.filter((f) => Number(f.deuda) > 0.005).map(aDeudor)
+    // FASE 9 (D96): un DST abona solo en su cuenta o la de sus locales
+    // (`app/actions/abonos.ts:127-152`, la misma regla).
+    const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
+    const deudores = cartera
+      .filter((f) => Number(f.deuda) > 0.005)
+      .map(aDeudor)
+      .filter((d) => red === null || red.has(d.id_entidad))
     if (deudores.length === 0) {
       return NextResponse.json(
         { error: 'Hoy nadie debe nada en la cartera. No hay a quien abonarle.' },
@@ -232,6 +256,7 @@ export async function POST(request: Request) {
       .from('bot_borradores')
       .insert({
         telegram_id: telegramId,
+        chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
         sello,
         payload: {
           // El discriminador. Sin el, `/gasto/confirmar` tendria que adivinar el
@@ -266,7 +291,8 @@ export async function POST(request: Request) {
       id_deudor: deudor.id_entidad,
       nombre_deudor: deudor.nombre,
       id_cuenta: idCuentaDestino,
-      cuentas: identidad.cuentas,
+      // Un DST no cambia la cuenta destino: es de la matriz.
+      cuentas: esDeLaMatriz ? identidad.cuentas : [],
       // La cartera viva entera, en la MISMA forma que cuando hay que elegir: el
       // proceso del bot la cachea para dos cosas —darle vocabulario al extractor
       // y poder ofrecer "otro deudor" sin volver a preguntar— y una sola forma
@@ -281,7 +307,7 @@ export async function POST(request: Request) {
           desglose: normalizada.desglose
         },
         normalizada.avisos
-      )
+      ) + (esDeLaMatriz ? '' : '\n\nQueda PENDIENTE: no cuenta hasta que Norman lo apruebe.')
     })
   } catch (e) {
     console.error('[bot] proponer abono reviento:', e)

@@ -25,6 +25,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, conservaPendientes, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { chatDelBorrador } from '@/lib/bot-permisos'
 import { buscarEnLaLista, listarAnulables } from '@/lib/bot-anulables'
 import {
   medirAlcanceDeAnulacion,
@@ -59,6 +60,8 @@ export async function POST(request: Request) {
   try {
     const cuerpo = (await request.json()) as {
       telegram_id?: unknown
+      /** FASE 9 (D94): el chat donde se hablo; en privado es la persona. */
+      chat_id?: unknown
       tabla?: unknown
       id_movimiento?: unknown
       modo?: unknown
@@ -245,6 +248,7 @@ export async function POST(request: Request) {
       .from('bot_borradores')
       .insert({
         telegram_id: telegramId,
+        chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
         sello,
         estado: 'PENDIENTE',
         payload: {

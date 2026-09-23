@@ -118,6 +118,13 @@ export interface IdentidadBot {
    * lugares es un alcance que algun dia discrepa.
    */
   rolEntidad: string
+  /**
+   * FASE 9 (D98): su VA no escribe; espera el Aprobar de un ADMIN sin esta
+   * marca (Kevin). Ver `lib/bot-permisos.ts`.
+   */
+  requiereAprobacion: boolean
+  /** La persona (FASE 9, D94): con ella se releen los borradores ajenos. */
+  telegramId: number
   nombreCuenta: string
   /**
    * Las OTRAS cuentas de la misma entidad que el bot puede usar. Es una lista
@@ -158,7 +165,7 @@ export async function resolverIdentidad(
 ): Promise<IdentidadBot | null> {
   const { data, error } = await supabase
     .from('bot_identidades')
-    .select('etiqueta, id_entidad, id_cuenta_destino, activo')
+    .select('etiqueta, id_entidad, id_cuenta_destino, activo, requiere_aprobacion')
     .eq('telegram_id', telegramId)
     .eq('activo', true)
     .maybeSingle()
@@ -184,6 +191,8 @@ export async function resolverIdentidad(
     // Si la lectura fallo, el rol por defecto es el MAS restrictivo. Un
     // default permisivo convierte un error de red en una fuga de datos.
     rolEntidad: entidad.data?.rol ?? 'DESCONOCIDO',
+    requiereAprobacion: data.requiere_aprobacion === true,
+    telegramId,
     nombreCuenta,
     cuentas: usables.map((c) => ({ id: c.id, nombre: c.nombre ?? '(cuenta)' }))
   }
