@@ -126,7 +126,6 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
   const DELIRIO_85 = 'Delirio 85'
   const DAVID_FLORES = 'David Flores'
   const AEROPUERTO = 'Aeropuerto'
-  const DULCERIA_EDEN = 'Dulceria el Eden'
   const MARTIN_REYES = 'Martin Reyes'
 
   /** Compara dinero al centavo, sin que un 0.1 + 0.2 de coma flotante lo tumbe. */
@@ -392,18 +391,36 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       }
     })
 
-    test('Dulceria el Eden: nunca abono, debe $3,610 y no tiene fecha de abono', async () => {
+    /**
+     * Antes afirmaba "el Eden nunca abono" y se puso roja el 2026-09-22 sin que
+     * cambiara una linea de codigo: Norman registro un abono REAL de $5,413.00.
+     * Tercera vez que un hecho de produccion escrito como `expect` tumba el push
+     * (2026-09-07, 2026-09-17). La invariante no es de una entidad: es que en
+     * TODA fila "sin abonos" y "sin fecha de abono" van juntos, y el saldo cuadra
+     * con la resta completa (tickets + cargos - abonos; con solo tickets - abonos
+     * Martin Reyes, que tiene CARGO_DEUDA, sale rojo — medido el 2026-09-22).
+     */
+    test('saldos: sin abonos no hay fecha ni dias; con abonos si, y el saldo cuadra', async () => {
       const vista = await leerSaldosEntidad(db)
-      const fila = vista.find((f) => f.nombre === DULCERIA_EDEN)
-      expect(fila, 'no aparece Dulceria el Eden').toBeTruthy()
+      expect(vista.length, 'la vista vino vacia').toBeGreaterThan(0)
 
-      expect(
-        centavos(Number(fila!.saldo_pendiente_consignacion)),
-        'lo que debe no decrece mientras no abone'
-      ).toBeGreaterThanOrEqual(centavos(3_610))
-      expect(centavos(Number(fila!.abonos_aprobados)), '0% pagado').toBe(0)
-      expect(fila!.ultimo_abono, 'nunca abono').toBeNull()
-      expect(fila!.dias_sin_abonar, 'sin abono no hay dias que contar').toBeNull()
+      for (const fila of vista) {
+        const donde = fila.nombre
+        const generada = Number(fila.deuda_generada_tickets)
+        const cargos = Number(fila.cargos_deuda)
+        const abonos = Number(fila.abonos_aprobados)
+        // La resta completa de la vista: tickets + CARGO_DEUDA - abonos.
+        expect(
+          centavos(Number(fila.saldo_pendiente_consignacion)),
+          `${donde} · generada + cargos - abonos = saldo`
+        ).toBe(centavos(generada + cargos - abonos))
+        if (centavos(abonos) === 0) {
+          expect(fila.ultimo_abono, `${donde} · sin abonos no hay fecha de abono`).toBeNull()
+          expect(fila.dias_sin_abonar, `${donde} · sin abono no hay dias que contar`).toBeNull()
+        } else {
+          expect(fila.ultimo_abono, `${donde} · con abonos tiene que haber fecha`).toBeTruthy()
+        }
+      }
     })
 
     /**
@@ -717,17 +734,28 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
    * fuerte que la constante: se rompe si la vista suma mal, cosa que un
    * `3_610` escrito a mano no podia ver.
    */
-  test('v_cartera: el Eden nunca abono, asi que debe todo lo generado y va en 0%', async () => {
+  //
+  // Y el 2026-09-22 se volvio a poner roja por la misma clase de causa: el Eden
+  // ABONO ($5,413.00, real). "Nunca abono" era un hecho, no una invariante. Ahora
+  // la regla se afirma sobre toda fila que la cumpla, sin nombrar a nadie. Si un
+  // dia ninguna fila esta sin abonos, el ciclo no afirma nada: la cobertura
+  // celda por celda de `porcentaje_pagado` la da la equivalencia de arriba.
+  test('v_cartera: quien no ha abonado debe todo lo generado y va en 0%, no en null', async () => {
     const vista = await leerCartera(db)
-    const fila = vista.find((f) => f.nombre === DULCERIA_EDEN)
-    expect(fila, 'no aparece Dulceria el Eden en la cartera').toBeTruthy()
+    expect(vista.length, 'la cartera vino vacia').toBeGreaterThan(0)
 
-    expect(centavos(Number(fila!.abonado)), 'nunca abono').toBe(0)
-    expect(centavos(Number(fila!.deuda)), 'sin abonos, deuda = generado').toBe(
-      centavos(Number(fila!.generado))
+    const sinAbonos = vista.filter(
+      (f) => centavos(Number(f.abonado)) === 0 && centavos(Number(f.generado)) > 0
     )
-    // `porcentaje_pagado` es una FRACCION 0-1 pese al nombre (E-243): aqui lo
-    // que se vigila es que un deudor sin abonos diga 0 y no null.
-    expect(Number(fila!.porcentaje_pagado), '0% pagado, no "no aplica"').toBeCloseTo(0, 10)
+    for (const fila of sinAbonos) {
+      expect(centavos(Number(fila.deuda)), `${fila.nombre} · sin abonos, deuda = generado`).toBe(
+        centavos(Number(fila.generado))
+      )
+      // `porcentaje_pagado` es una FRACCION 0-1 pese al nombre (E-243): aqui lo
+      // que se vigila es que un deudor sin abonos diga 0 y no null. El `not.toBeNull`
+      // va aparte porque `Number(null)` da 0 y dejaria pasar justo el null.
+      expect(fila.porcentaje_pagado, `${fila.nombre} · % pagado no puede ser null`).not.toBeNull()
+      expect(Number(fila.porcentaje_pagado), `${fila.nombre} · 0% pagado, no "no aplica"`).toBeCloseTo(0, 10)
+    }
   })
 })
