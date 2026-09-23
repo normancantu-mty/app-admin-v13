@@ -17,6 +17,16 @@
  * posible es "el lote existe y le faltan hijos", y **eso se deshace con un solo
  * `DELETE` sobre `lotes`**, que arrastra lo que hubiera quedado.
  *
+ * Fase 8 (D82): los hijos ya no son tres INSERT sueltos sino UNA llamada a
+ * `registrar_en_lote`, que en la misma transaccion escribe las entradas, las
+ * tandas, el envasado **y su inventario** (+ terminado, - empaque). Si falla, no
+ * queda nada de ella; el `DELETE` de la cabecera sigue siendo la compensacion,
+ * y sigue siendo segura: la funcion no dejo ni una fila de `inventario_ledger`.
+ *
+ * Fase 8 (D81): un borrador `lote_agregar` es envasar (o sumar tandas o
+ * insumos) a un lote que YA existe. No crea cabecera, asi que no hay nada que
+ * deshacer: la funcion escribe todo o nada.
+ *
  * Es una compensacion de un paso, no la cascada de `DELETE`s que ERP-11 quito
  * de la venta. Y es segura de una forma que aquella no era: un lote a medias no
  * movio dinero ni inventario, asi que borrarlo no deja un hueco en ningun
@@ -33,6 +43,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import type { Json } from '@/types/database'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import {
   mensajeDeRendimiento,
@@ -41,8 +52,62 @@ import {
   type PayloadLote,
   type RendimientoDelLote
 } from '@/lib/bot-lotes'
+import { selloAgregarCoincide, type PayloadAgregar } from '@/lib/bot-envasado'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * La unica escritura de hijos de un lote. Ver la migracion
+ * `20260923053510_fase8_d82_envasar_mueve_inventario.sql`.
+ */
+async function registrarEnLote(
+  supabase: ReturnType<typeof clienteDeServicio>,
+  idLote: string,
+  hijos: Pick<PayloadLote, 'entradas' | 'tandas' | 'envasado' | 'usuario_creador'>
+) {
+  return supabase.rpc('registrar_en_lote', {
+    p_id_lote: idLote,
+    p_entradas: hijos.entradas as unknown as Json,
+    p_tandas: hijos.tandas as unknown as Json,
+    p_envasado: hijos.envasado as unknown as Json,
+    p_usuario: hijos.usuario_creador
+  })
+}
+
+async function leerRendimiento(
+  supabase: ReturnType<typeof clienteDeServicio>,
+  idLote: string
+): Promise<RendimientoDelLote | null> {
+  const { data: rendimiento } = await supabase
+    .from('v_lote_rendimiento')
+    .select(
+      'alcohol_absoluto_l, litros_al_grado_objetivo, botellas_750_teoricas, grado_ponderado, alcanza_el_grado_diluyendo, costo_por_ml, tandas_sin_grado, insumos_sin_costo, faltan_costo'
+    )
+    .eq('id', idLote)
+    .maybeSingle()
+
+  const comoNumero = (v: unknown): number | null =>
+    v === null || v === undefined ? null : Number(v)
+
+  return rendimiento
+    ? {
+        alcohol_absoluto_l: comoNumero(rendimiento.alcohol_absoluto_l),
+        litros_al_grado_objetivo: comoNumero(rendimiento.litros_al_grado_objetivo),
+        botellas_750_teoricas: comoNumero(rendimiento.botellas_750_teoricas),
+        grado_ponderado: comoNumero(rendimiento.grado_ponderado),
+        alcanza_el_grado_diluyendo: rendimiento.alcanza_el_grado_diluyendo,
+        costo_por_ml: comoNumero(rendimiento.costo_por_ml),
+        tandas_sin_grado: comoNumero(rendimiento.tandas_sin_grado),
+        insumos_sin_costo: comoNumero(rendimiento.insumos_sin_costo),
+        faltan_costo: rendimiento.faltan_costo ?? null
+      }
+    : null
+}
+
+interface BorradorAgregar {
+  tipo: 'lote_agregar'
+  agregar: PayloadAgregar
+}
 
 interface BorradorLote {
   tipo?: string
@@ -110,6 +175,16 @@ export async function POST(request: Request) {
     // El discriminador, ANTES del sello y por la misma razon que en la venta:
     // sin el, un borrador de otro tipo caeria en la rama del sello roto, que
     // CANCELA, y una ruta equivocada del bot borraria una captura buena.
+    if (guardado?.tipo === 'lote_agregar') {
+      return confirmarAgregar(
+        supabase,
+        borradorId,
+        borrador.sello,
+        selloRecibido,
+        (borrador.payload as unknown as BorradorAgregar).agregar,
+        identidad.etiqueta
+      )
+    }
     if (guardado?.tipo !== 'lote') {
       return NextResponse.json({ error: 'Ese borrador no es un lote.' }, { status: 409 })
     }
@@ -187,44 +262,18 @@ export async function POST(request: Request) {
       await supabase.from('lotes').delete().eq('id', idLote)
     }
 
-    // ── 2, 3 y 4. LOS HIJOS. Un INSERT multi-fila por tabla ─────────────────
-    if (lote.entradas.length > 0) {
-      const { error } = await supabase
-        .from('lote_entradas')
-        .insert(lote.entradas.map((e) => ({ id_lote: idLote, ...e })))
+    // ── 2. LOS HIJOS Y SU INVENTARIO: una funcion, una transaccion (D82) ────
+    let filasInventario = 0
+    if (lote.entradas.length + lote.tandas.length + lote.envasado.length > 0) {
+      const { data: hechos, error } = await registrarEnLote(supabase, idLote, lote)
       if (error) {
-        await deshacer('las entradas', error)
+        await deshacer('los hijos', error)
         return NextResponse.json(
-          { error: 'No pude escribir lo que entro al lote. Deshice el lote entero.' },
+          { error: 'No pude escribir el lote. Deshice el lote entero; el inventario no se movio.' },
           { status: 500 }
         )
       }
-    }
-
-    if (lote.tandas.length > 0) {
-      const { error } = await supabase
-        .from('lote_salidas')
-        .insert(lote.tandas.map((t) => ({ id_lote: idLote, ...t })))
-      if (error) {
-        await deshacer('las tandas', error)
-        return NextResponse.json(
-          { error: 'No pude escribir las tandas. Deshice el lote entero.' },
-          { status: 500 }
-        )
-      }
-    }
-
-    if (lote.envasado.length > 0) {
-      const { error } = await supabase
-        .from('lote_envasado')
-        .insert(lote.envasado.map((e) => ({ id_lote: idLote, ...e })))
-      if (error) {
-        await deshacer('el envasado', error)
-        return NextResponse.json(
-          { error: 'No pude escribir el envasado. Deshice el lote entero.' },
-          { status: 500 }
-        )
-      }
+      filasInventario = Number((hechos as { filas_inventario?: unknown } | null)?.filas_inventario ?? 0)
     }
 
     await supabase
@@ -240,30 +289,7 @@ export async function POST(request: Request) {
     // Si la lectura falla no se deshace nada: el lote quedo bien escrito y lo
     // unico que se pierde es el resumen. Un rollback aqui destruiria una
     // captura buena por no poder ensenar un numero.
-    const { data: rendimiento } = await supabase
-      .from('v_lote_rendimiento')
-      .select(
-        'alcohol_absoluto_l, litros_al_grado_objetivo, botellas_750_teoricas, grado_ponderado, alcanza_el_grado_diluyendo, costo_por_ml, tandas_sin_grado, insumos_sin_costo, faltan_costo'
-      )
-      .eq('id', idLote)
-      .maybeSingle()
-
-    const comoNumero = (v: unknown): number | null =>
-      v === null || v === undefined ? null : Number(v)
-
-    const resumen: RendimientoDelLote | null = rendimiento
-      ? {
-          alcohol_absoluto_l: comoNumero(rendimiento.alcohol_absoluto_l),
-          litros_al_grado_objetivo: comoNumero(rendimiento.litros_al_grado_objetivo),
-          botellas_750_teoricas: comoNumero(rendimiento.botellas_750_teoricas),
-          grado_ponderado: comoNumero(rendimiento.grado_ponderado),
-          alcanza_el_grado_diluyendo: rendimiento.alcanza_el_grado_diluyendo,
-          costo_por_ml: comoNumero(rendimiento.costo_por_ml),
-          tandas_sin_grado: comoNumero(rendimiento.tandas_sin_grado),
-          insumos_sin_costo: comoNumero(rendimiento.insumos_sin_costo),
-          faltan_costo: rendimiento.faltan_costo ?? null
-        }
-      : null
+    const resumen = await leerRendimiento(supabase, idLote)
 
     return NextResponse.json({
       ok: true,
@@ -271,6 +297,7 @@ export async function POST(request: Request) {
       codigo_lote: lote.codigo_lote,
       filas_escritas:
         1 + lote.entradas.length + lote.tandas.length + lote.envasado.length,
+      filas_inventario: filasInventario,
       rendimiento: resumen,
       mensaje: mensajeDeRendimiento(resumen)
     })
@@ -278,4 +305,78 @@ export async function POST(request: Request) {
     console.error('[bot] confirmar lote reviento:', e)
     return NextResponse.json({ error: 'Error interno.' }, { status: 500 })
   }
+}
+
+/**
+ * D81: agregar a un lote que YA existe. Mismos dos sellos que el lote nuevo;
+ * la escritura entera es `registrar_en_lote` (todo o nada), sin cabecera que
+ * crear ni que deshacer.
+ */
+async function confirmarAgregar(
+  supabase: ReturnType<typeof clienteDeServicio>,
+  borradorId: string,
+  selloGuardado: string,
+  selloRecibido: string,
+  agregar: PayloadAgregar | undefined,
+  etiqueta: string
+) {
+  if (!agregar || !selloAgregarCoincide(agregar, selloGuardado)) {
+    await supabase
+      .from('bot_borradores')
+      .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+      .eq('id', borradorId)
+    console.error('[bot] SELLO ROTO en la base para agregar a lote', borradorId)
+    return NextResponse.json(
+      { error: 'La propuesta cambio desde que te la ensene. No escribo nada: vuelve a dictarla.' },
+      { status: 409 }
+    )
+  }
+  if (!selloAgregarCoincide(agregar, selloRecibido)) {
+    return NextResponse.json(
+      { error: 'El sello no empata con lo que te ensene. No escribo nada.' },
+      { status: 409 }
+    )
+  }
+  if (agregar.usuario_creador !== `telegram:${etiqueta}`) {
+    return NextResponse.json(
+      { error: 'Tu alta cambio desde que propusiste esto. Vuelve a dictarlo.' },
+      { status: 409 }
+    )
+  }
+
+  const { data: hechos, error } = await registrarEnLote(supabase, agregar.id_lote, agregar)
+  if (error) {
+    console.error('[bot] no se pudo agregar al lote', agregar.codigo_lote, error)
+    return NextResponse.json(
+      { error: 'No pude escribirlo. No quedo nada a medias: ni envasado ni inventario.' },
+      { status: 500 }
+    )
+  }
+
+  await supabase
+    .from('bot_borradores')
+    .update({ estado: 'CONFIRMADO', id_registro: agregar.id_lote, resuelto_en: new Date().toISOString() })
+    .eq('id', borradorId)
+
+  const resumen = await leerRendimiento(supabase, agregar.id_lote)
+  const filasInventario = Number((hechos as { filas_inventario?: unknown } | null)?.filas_inventario ?? 0)
+  const botellas = agregar.envasado.reduce((a, e) => a + e.botellas, 0)
+  const lineas = []
+  if (botellas > 0) {
+    lineas.push(
+      `Envasado: ${botellas} botella${botellas === 1 ? '' : 's'}; ` +
+        `${filasInventario} movimiento${filasInventario === 1 ? '' : 's'} de inventario.`
+    )
+  }
+  const rendimiento = mensajeDeRendimiento(resumen)
+  if (rendimiento) lineas.push(rendimiento)
+
+  return NextResponse.json({
+    ok: true,
+    id_lote: agregar.id_lote,
+    codigo_lote: agregar.codigo_lote,
+    filas_inventario: filasInventario,
+    rendimiento: resumen,
+    mensaje: lineas.join('\n')
+  })
 }

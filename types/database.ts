@@ -1985,6 +1985,27 @@ export type Database = {
         }[]
       }
       mis_entidades: { Args: never; Returns: string[] }
+      movimientos_de_envasado: {
+        Args: {
+          p_botellas: number
+          p_id_producto: string
+        }
+        Returns: {
+          cantidad: number
+          id_producto: string
+          tipo_movimiento: string
+        }[]
+      }
+      registrar_en_lote: {
+        Args: {
+          p_entradas: Json
+          p_envasado: Json
+          p_id_lote: string
+          p_tandas: Json
+          p_usuario: string
+        }
+        Returns: Json
+      }
       registrar_venta_atomica: {
         Args: {
           p_detalles: Json

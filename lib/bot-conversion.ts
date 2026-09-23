@@ -48,6 +48,7 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
+import { fechaParaPersona } from '@/lib/fechas'
 import { hoyEnMX } from '@/lib/date-format'
 import type { PayloadVenta, RenglonVenta } from '@/lib/bot-venta'
 
@@ -187,7 +188,7 @@ export function juzgarConversion(
     return {
       ok: false,
       motivo: 'fuera-de-los-siete-dias',
-      mensaje: `${cot.folio} esta fechada el ${cot.fecha}, que todavia no llega. No la convierto.`,
+      mensaje: `${cot.folio} esta fechada el ${fechaParaPersona(cot.fecha)}, que todavia no llega. No la convierto.`,
       ofrecerRecotizar: false
     }
   }
@@ -201,14 +202,14 @@ function mensajeFueraDePlazo(
   vencidaParaElCliente: boolean
 ): string {
   const cabeza =
-    `${cot.folio} es del ${cot.fecha}: ya pasaron ${dias} dias y por chat solo cierro ` +
+    `${cot.folio} es del ${fechaParaPersona(cot.fecha)}: ya pasaron ${dias} dias y por chat solo cierro ` +
     `las de ${DIAS_PARA_CONVERTIR} dias o menos, porque los precios que trae estan congelados ` +
     `desde entonces.`
   if (vencidaParaElCliente) {
-    return `${cabeza}\n\nAdemas su vigencia ya vencio el ${cot.vigente_hasta}.`
+    return `${cabeza}\n\nAdemas su vigencia ya vencio el ${fechaParaPersona(cot.vigente_hasta)}.`
   }
   return (
-    `${cabeza}\n\nPara el cliente sigue vigente hasta el ${cot.vigente_hasta ?? '(sin fecha)'}, ` +
+    `${cabeza}\n\nPara el cliente sigue vigente hasta el ${cot.vigente_hasta ? fechaParaPersona(cot.vigente_hasta) : '(sin fecha)'}, ` +
     `asi que el precio se le respeta — pero la capturamos en la pantalla, o te la recotizo ` +
     `con los precios de hoy.`
   )
@@ -328,7 +329,7 @@ export function mensajeDeConversion(
 ): string {
   const l: string[] = []
   l.push(
-    `Convierto ${cot.folio} (del ${cot.fecha}, hace ${ctx.diasDesdeLaCotizacion} ` +
+    `Convierto ${cot.folio} (del ${fechaParaPersona(cot.fecha)}, hace ${ctx.diasDesdeLaCotizacion} ` +
       `${ctx.diasDesdeLaCotizacion === 1 ? 'dia' : 'dias'}) en venta a ${ctx.nombreComprador}:`
   )
   l.push('')
@@ -367,7 +368,7 @@ export function mensajeDeConversion(
 
   if (ctx.vencidaParaElCliente) {
     l.push(
-      `⚠ Su vigencia vencio el ${cot.vigente_hasta}, pero todavia cae en los ` +
+      `⚠ Su vigencia vencio el ${fechaParaPersona(cot.vigente_hasta)}, pero todavia cae en los ` +
         `${DIAS_PARA_CONVERTIR} dias para cerrarla por chat.`
     )
   }

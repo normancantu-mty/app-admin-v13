@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'fs'
 import { join } from 'path'
+import { CONSULTAS } from '../lib/bot-consultas'
 
 /**
  * CENTINELA — el enrutador del bot (Fase 2 de "Telegram como unica interfaz").
@@ -134,9 +135,12 @@ test.describe('ERP-85 · el enrutador del bot', () => {
     const codigo = soloCodigo(leer(BOT))
     expect(codigo).toContain('_contestar_consulta(update, chat, ruta.get("consulta")')
 
-    // La lista cerrada vive en UN solo lugar, y son las tres que se contestan.
+    // La lista cerrada vive en UN solo lugar: la tupla de Python es, letra por
+    // letra, `CONSULTAS` de `lib/bot-consultas.ts` (Fase 8 D83 agrego produccion).
     const enrutador = leer(ENRUTADOR)
-    expect(enrutador).toContain('CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas")')
+    const tupla = `CONSULTAS_QUE_CONTESTA = (${CONSULTAS.map((c) => `"${c}"`).join(', ')})`
+    expect(CONSULTAS).toContain('produccion')
+    expect(enrutador).toContain(tupla)
 
     // Control negativo: el centinela tiene que saber cazar la vuelta atras.
     expect(soloCodigo('await _contestar_consulta(update, chat, texto)')).not.toContain(

@@ -27,6 +27,8 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { hoyEnMX } from '@/lib/date-format'
+import { fechaParaPersona } from '@/lib/fechas'
 import {
   selloCotizacionCoincide,
   type DesgloseCotizado,
@@ -146,6 +148,11 @@ export async function POST(request: Request) {
     const { data: creada, error: errorCabecera } = await supabase
       .from('cotizaciones')
       .insert({
+        // D69 (Fase 8): la fecha la pone ESTE codigo, en hora de Mexico. El
+        // `default` de la columna era CURRENT_DATE (UTC): COT-0002 nacio un dia
+        // adelantada. La migracion 20260923043832 arreglo el default; esto no
+        // depende de el.
+        fecha: hoyEnMX(new Date()),
         id_vendedor: cotizacion.id_vendedor,
         id_comprador: cotizacion.id_comprador,
         nombre_prospecto: cotizacion.nombre_prospecto,
@@ -205,7 +212,7 @@ export async function POST(request: Request) {
       // necesita el encabezado `x-bot-token`. La baja el proceso del bot y la
       // manda como foto.
       ruta_imagen: `/api/documento/${creada.id}/imagen?tipo=cotizacion`,
-      mensaje: `Listo. Quedo la cotizacion ${creada.folio}, vigente hasta el ${creada.vigente_hasta}.`
+      mensaje: `Listo. Quedo la cotizacion ${creada.folio}, vigente hasta el ${fechaParaPersona(creada.vigente_hasta)}.`
     })
   } catch (e) {
     console.error('[bot] confirmar cotizacion reviento:', e)

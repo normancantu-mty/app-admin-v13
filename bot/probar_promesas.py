@@ -134,6 +134,7 @@ def hablar(texto, ruta_del_modelo, respuestas=None, preparar=None):
 
 
 def limpiar():
+    B._olvidar_chat(CHAT)
     B._memoria.pop(CHAT, None)
     B._ultimo_cliente.pop(CHAT, None)
     B._ultima_cotizacion.pop(CHAT, None)
@@ -220,92 +221,13 @@ caso("ROJO  - el detector reconoce la frase original del incidente",
      B._sin_promesas(LA_PROMESA), B.SIN_COLA, "")
 
 
-# ═══════════════ D49 — EL SEGUNDO HECHO NO SE PIERDE EN SILENCIO ═════════════
+# ═══════════════ D49 -> D79/D80 (Fase 8) ═════════════════════════════════════
 #
-# El mensaje de Norman, textual, con sus dos hechos: una venta de $599 y un
-# envio de $45. Medido contra produccion: la fila de $45 nunca existio.
-
-EL_MENSAJE = ("Se acaba de vender una botella grande de 599 pesos, lo enviamos "
-              "a domicilio y nosotros absorbimos el costo del envio y de envio "
-              "fueron 45 pesos.")
-
-limpiar()
-dichos, doble = hablar(
-    EL_MENSAJE,
-    dict(intencion="venta", confianza="alta", entendido="una venta y un envio",
-         campos={"productos": [{"producto": "750 ml", "cantidad": 1,
-                                "id_producto": "c1000000-0000-0000-0000-000000000001"}]},
-         respuesta="Va.",
-         otro_hecho={"tipo": "gasto", "monto": 45,
-                     "descripcion": "un envio a domicilio"}),
-    respuestas=VENTA_OK)
-
-caso("VERDE - la venta SI se propone",
-     "/api/bot/venta/proponer" in doble.rutas(), True, str(doble.rutas()))
-caso("VERDE - y el envio de $45 queda constancia en la respuesta",
-     any("45" in d and "no lo escribi" in d.lower() for d in dichos), True,
-     str(dichos))
-caso("VERDE - ...diciendo que NO se escribio",
-     any("NO lo escribi todavia" in d for d in dichos), True, str(dichos))
-
-# **El gasto NO se escribe solo.** Decirlo es el alcance; encolarlo no lo es, y
-# escribir dinero que Norman no vio propuesto va contra el diseno de sellos.
-caso("VERDE - pero el gasto NO se escribe solo: cero llamadas a gasto/proponer",
-     [r for r in doble.rutas() if "gasto" in r], [], str(doble.rutas()))
-
-# ── CONTROL NEGATIVO: un mensaje con UN solo hecho no inventa un segundo ────
-limpiar()
-dichos, doble = hablar(
-    "vendi una botella de 750",
-    dict(intencion="venta", confianza="alta", entendido="una venta",
-         campos={"productos": [{"producto": "750 ml", "cantidad": 1,
-                                "id_producto": "c1000000-0000-0000-0000-000000000001"}]},
-         respuesta="Va.", otro_hecho=None),
-    respuestas=VENTA_OK)
-caso("ROJO  - con un solo hecho NO se inventa un segundo",
-     [d for d in dichos if "Tambien oi" in d], [], str(dichos))
-
-# ── CONTROL NEGATIVO: el ECO del primer hecho no se menciona ────────────────
-#    Si el modelo repite la venta dentro de `otro_hecho`, el bot escribiria la
-#    venta y acto seguido diria que no la escribio. Eso es una mentira NUEVA.
-limpiar()
-dichos, _ = hablar(
-    "vendi una de 750 en 599",
-    dict(intencion="venta", confianza="alta", entendido="x",
-         campos={"productos": [{"producto": "750 ml", "cantidad": 1,
-                                "id_producto": "c1000000-0000-0000-0000-000000000001"}]},
-         respuesta="Va.",
-         otro_hecho={"tipo": "venta", "monto": 599, "descripcion": "la botella"}),
-    respuestas=VENTA_OK)
-caso("ROJO  - un `otro_hecho` que repite la intencion NO se menciona",
-     [d for d in dichos if "Tambien oi" in d], [], str(dichos))
-
-# ── CONTROL NEGATIVO: basura en `otro_hecho` no llega a pantalla ────────────
-for basura in [{"tipo": "brujeria", "monto": 45, "descripcion": "algo"},
-               {"tipo": "gasto", "monto": 45, "descripcion": ""},
-               {"tipo": "gasto", "monto": -45, "descripcion": "un envio"},
-               "no soy un objeto", None]:
-    limpiar()
-    dichos, _ = hablar(
-        "vendi una de 750",
-        dict(intencion="venta", confianza="alta", entendido="x",
-             campos={"productos": [{"producto": "750 ml", "cantidad": 1,
-                                    "id_producto": "c1000000-0000-0000-0000-000000000001"}]},
-             respuesta="Va.", otro_hecho=basura),
-        respuestas=VENTA_OK)
-    sucias = [d for d in dichos if "brujeria" in d or "-45" in d]
-    if sucias:
-        caso("ROJO  - basura en otro_hecho (%r)" % (basura,), sucias, [], "")
-caso("ROJO  - nada de la basura de `otro_hecho` llego a pantalla",
-     len([c for c in casos if c[0].startswith("ROJO  - basura")]), 0, "")
-
-# Un monto negativo se cae, pero la descripcion sobrevive: se dice el hecho sin
-# inventarle una cifra. Callarse por un monto raro seria volver al silencio.
-caso("VERDE - sin monto valido, se menciona el hecho SIN cifra",
-     B._frase_de_hecho_suelto({"tipo": "gasto", "monto": None,
-                               "descripcion": "un envio"}),
-     "Tambien oi un envio, que es un gasto. Ese NO lo escribi todavia. "
-     "Dimelo y lo capturo.", "")
+# Aqui vivian las pruebas de D49 ("tambien oi un gasto de $45, ese no lo
+# escribi"), con el modelo DOBLADO a mano y un campo `otro_hecho` que ya no
+# existe. Desde la Fase 8 el segundo hecho no se avisa: SE PROPONE, con su VA.
+# Sus pruebas viven en `probar_hechos.py` y corren sobre GRABACIONES del modelo
+# real (el mensaje textual del 2026-09-19 incluido), no sobre salidas inventadas.
 
 
 # ═══════════════ D50 — "EL MISMO CLIENTE" ════════════════════════════════════

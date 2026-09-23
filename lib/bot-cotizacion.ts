@@ -32,7 +32,7 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
-import { sumarDias } from '@/lib/fechas'
+import { fechaParaPersona, sumarDias } from '@/lib/fechas'
 import {
   precioParaComprador,
   TOPE_PIEZAS_POR_LINEA,
@@ -514,7 +514,7 @@ export function mensajeDeConfirmacionCotizacion(
   } else {
     lineas.push('', `TOTAL: ${pesos(payload.total)}`)
   }
-  lineas.push(`Vigencia: ${payload.vigencia_dias} dias (hasta el ${contexto.vigenteHasta})`)
+  lineas.push(`Vigencia: ${payload.vigencia_dias} dias (hasta el ${fechaParaPersona(contexto.vigenteHasta)})`)
 
   if (contexto.esDeLaRed) {
     // Es el precio de SU costo, no el de publico. Decirlo evita que se le pase

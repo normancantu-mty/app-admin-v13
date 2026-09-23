@@ -88,3 +88,88 @@ test.describe('el documento termico se define una sola vez', () => {
     expect(impostora).not.toContain('armarDocumentoDeTicket')
   })
 })
+
+// ════════════════════════════════════════════════════════════════════════════
+// D70-D72 (Fase 8): LA COTIZACION, sobre datos de fixture
+// ════════════════════════════════════════════════════════════════════════════
+import {
+  datosDeCotizacion,
+  etiquetaDeDescuento,
+  LISTA_DISTRIBUIDOR,
+  LISTA_PUBLICO,
+  type FilaCotizacionDocumento,
+  type LineaDocumento
+} from '@/lib/documento'
+
+const LINEAS: LineaDocumento[] = [
+  { id: 'a', nombre: 'Destilado Plata 750ml', cantidad: 10, precioUnitario: 480 },
+  { id: 'b', nombre: 'Destilado Plata 250ml', cantidad: 5, precioUnitario: 179 }
+]
+const SUMA_RENGLONES = 10 * 480 + 5 * 179 // 5,695
+
+function fila(extra: Partial<FilaCotizacionDocumento>): FilaCotizacionDocumento {
+  return {
+    folio: 'COT-0099',
+    fecha: '2026-09-22',
+    vigente_hasta: '2026-10-07',
+    estado_efectivo: 'VIGENTE',
+    para_quien: 'Aeropuerto',
+    total: SUMA_RENGLONES,
+    notas: null,
+    ...extra
+  }
+}
+
+test.describe('D70-D72 · el documento de la cotizacion', () => {
+  test('a un DST con descuento: precio de distribuidor, "Para:", y la linea del descuento cuadra', () => {
+    const total = 5125.5 // 10% de 5,695
+    const d = datosDeCotizacion(
+      fila({ total, notas: 'promocion de septiembre 10%: de $5,695.00 a $5,125.50.' }),
+      'CEO Admin', LINEAS, 'DST')
+    expect(d.listaDePrecio).toBe(LISTA_DISTRIBUIDOR)
+    expect(d.etiquetaReceptor).toBe('Para:')
+    expect(d.subtitulo).toBe('Cotizacion vigente hasta el 07/10/2026')
+    expect(d.descuento).toEqual({ subtotal: 5695, etiqueta: 'promocion de septiembre (10%)', importe: 569.5 })
+    // La cuenta que el papel tiene que poder hacer: renglones - descuento = total.
+    const renglones = d.lineas.reduce((a, l) => a + l.cantidad * l.precioUnitario, 0)
+    expect(Math.round((renglones - d.descuento!.importe) * 100)).toBe(Math.round(d.total * 100))
+  })
+
+  test('CONTROL NEGATIVO: con descuento, los renglones SIN la linea de descuento no igualan el total', () => {
+    const d = datosDeCotizacion(fila({ total: 5125.5 }), 'CEO Admin', LINEAS, 'DST')
+    const renglones = d.lineas.reduce((a, l) => a + l.cantidad * l.precioUnitario, 0)
+    expect(renglones).not.toBe(d.total)
+  })
+
+  test('a publico sin descuento: precio al publico, sin linea de descuento', () => {
+    const d = datosDeCotizacion(fila({ para_quien: 'Juan Prospecto' }), 'CEO Admin', LINEAS, null)
+    expect(d.listaDePrecio).toBe(LISTA_PUBLICO)
+    expect(d.descuento).toBeUndefined()
+    expect(d.comprador).toBe('Juan Prospecto')
+  })
+
+  test('un LOC tampoco es distribuidor: precio al publico', () => {
+    expect(datosDeCotizacion(fila({}), 'CEO Admin', LINEAS, 'LOC').listaDePrecio).toBe(LISTA_PUBLICO)
+  })
+
+  test('vencida: lo dice con la fecha en DD/MM/AAAA', () => {
+    const d = datosDeCotizacion(
+      fila({ estado_efectivo: 'VENCIDA', vigente_hasta: '2026-09-01' }), 'CEO Admin', LINEAS, 'DST')
+    expect(d.subtitulo).toBe('Cotizacion VENCIDA el 01/09/2026')
+  })
+
+  test('un motivo ilegible no cambia una cifra: la etiqueta cae en "Descuento"', () => {
+    expect(etiquetaDeDescuento(null)).toBe('Descuento')
+    expect(etiquetaDeDescuento('nota libre sin formato')).toBe('Descuento')
+    expect(etiquetaDeDescuento('Descuento 12.5%: de $100.00 a $87.50.')).toBe('Descuento (12.5%)')
+  })
+
+  test('las dos pinturas ensenan el descuento, la lista y la etiqueta del receptor', () => {
+    for (const ruta of [IMAGEN, join(RAIZ, 'components', 'DocumentoTermico.tsx')]) {
+      const fuente = sinComentarios(leer(ruta))
+      expect(fuente, ruta).toContain('descuento.importe')
+      expect(fuente, ruta).toContain('istaDePrecio')
+      expect(fuente, ruta).toContain('tiquetaReceptor')
+    }
+  })
+})

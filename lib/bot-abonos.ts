@@ -34,6 +34,7 @@
  * `"6  de cada presentacion"` y `"fue transferencia del cliente, es lo mismo"`.
  */
 
+import { fechaParaPersona } from '@/lib/fechas'
 import {
   aCentavos,
   aPesos,
@@ -504,7 +505,8 @@ function dia(iso: string | null): string {
   if (!iso) return 's/f'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return 's/f'
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`
+  // D70 (Fase 8): fecha de Mexico, formato unico.
+  return fechaParaPersona(iso)
 }
 
 /**

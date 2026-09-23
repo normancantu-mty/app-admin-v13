@@ -57,7 +57,9 @@ UUID = "7c2d9e41-3b55-4a18-9f60-2e8d1c4b7a03"
 
 # Lo que puede llamarse sin escribir nada. Todo lo demas es una escritura, y una
 # escritura bajo `confianza: baja` es el defecto.
-SOLO_LECTURA = ("/api/bot/catalogo", "/api/bot/consulta", "/api/bot/cancelar")
+# Fase 8 (D77): `/api/bot/pendiente` solo lee (la rehidratacion tras reinicio).
+SOLO_LECTURA = ("/api/bot/catalogo", "/api/bot/consulta", "/api/bot/cancelar",
+                "/api/bot/pendiente")
 
 casos = []
 
@@ -150,6 +152,7 @@ def hablar(texto, ruta_del_modelo, preparar=None):
 
 
 def limpiar():
+    B._olvidar_chat(CHAT)
     B._memoria.pop(CHAT, None)
     B._esperando_monto.pop(CHAT, None)
     B._esperando_vigencia.pop(CHAT, None)

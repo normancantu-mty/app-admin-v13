@@ -33,6 +33,7 @@ import { NextResponse } from 'next/server'
 import type { Json } from '@/types/database'
 import {
   clienteDeServicio,
+  conservaPendientes,
   leerCodigosDeLote,
   leerFormatosDeBotella,
   leerInsumosDeLote,
@@ -50,6 +51,20 @@ import {
   type LineaEnvasadoPedida,
   type LineaInsumoPedida
 } from '@/lib/bot-lotes'
+import {
+  elegirLoteDestino,
+  esAgregarALote,
+  faltantesDeEmpaque,
+  mensajeDeAgregarALote,
+  movimientosDeEnvasado,
+  sellarAgregar,
+  type LoteExistente,
+  type MovimientoEnvasado,
+  type PayloadAgregar
+} from '@/lib/bot-envasado'
+import { fechaLocal } from '@/lib/fechas'
+import type { ClienteServicio } from '@/lib/bot-servidor'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
 
 export const dynamic = 'force-dynamic'
 
@@ -75,6 +90,67 @@ function opcionesDeInsumo(lista: readonly InsumoDelCatalogo[]) {
     sku: i.sku,
     unidad: i.unidad_medida
   }))
+}
+
+/**
+ * Fase 8, D82: lo que el envasado le va a hacer al inventario de la matriz y el
+ * empaque que no alcanza. Solo LEE (receta, nombres, stock): corre igual en
+ * ensayo. La escritura es `registrar_en_lote`, en la ruta de confirmar.
+ */
+async function inventarioDelEnvasado(
+  supabase: ClienteServicio,
+  envasado: readonly { id_producto: string; botellas: number }[]
+): Promise<{ movimientos: MovimientoEnvasado[]; nombres: Map<string, string>; avisos: string[] }> {
+  if (envasado.length === 0) return { movimientos: [], nombres: new Map(), avisos: [] }
+  const ids = envasado.map((e) => e.id_producto)
+  const [{ data: receta }, { data: admin }] = await Promise.all([
+    supabase
+      .from('recetas_produccion')
+      .select('id_producto_terminado, id_insumo, cantidad_requerida')
+      .in('id_producto_terminado', ids),
+    supabase.from('entidades').select('id').eq('rol', 'ADMIN').limit(1).maybeSingle()
+  ])
+  const movimientos = envasado.flatMap((e) =>
+    movimientosDeEnvasado(
+      e.id_producto,
+      e.botellas,
+      (receta ?? [])
+        .filter((r) => r.id_producto_terminado === e.id_producto)
+        .map((r) => ({ id_insumo: r.id_insumo, cantidad_requerida: Number(r.cantidad_requerida) }))
+    )
+  )
+  const idsMovidos = [...new Set(movimientos.map((m) => m.id_producto))]
+  const { data: productos } = await supabase
+    .from('catalogo_productos')
+    .select('id, nombre')
+    .in('id', idsMovidos)
+  // ERP-25: vista sobre el ledger -> paginada, aunque hoy sean unas cuantas filas.
+  const idAdmin = admin?.id
+  const stock = idAdmin
+    ? await fetchTodasLasFilas<{ id_producto: string | null; stock: number | null }>(
+        () =>
+          supabase
+            .from('v_stock_por_cubeta')
+            .select('id_producto, stock')
+            .eq('id_entidad', idAdmin)
+            .in('id_producto', idsMovidos),
+        'stock del empaque'
+      )
+    : []
+  const nombres = new Map((productos ?? []).map((p) => [p.id, p.nombre] as [string, string]))
+  const hay = new Map<string, number>()
+  for (const f of stock ?? []) {
+    if (!f.id_producto) continue
+    hay.set(f.id_producto, (hay.get(f.id_producto) ?? 0) + Number(f.stock ?? 0))
+  }
+  return { movimientos, nombres, avisos: faltantesDeEmpaque(movimientos, hay, nombres) }
+}
+
+async function leerLotes(supabase: ClienteServicio): Promise<LoteExistente[]> {
+  const { data } = await supabase.from('lotes').select('id, codigo_lote, fecha_inicio')
+  return (data ?? []).filter(
+    (l): l is LoteExistente => typeof l.codigo_lote === 'string' && typeof l.fecha_inicio === 'string'
+  )
 }
 
 function opcionesDeFormato(lista: readonly FormatoDeBotella[]) {
@@ -227,7 +303,111 @@ export async function POST(request: Request) {
       envasado.push({ formato, botellas: Number(pedido.botellas) })
     }
 
-    const normalizado = normalizarLote(cuerpo.propuesta ?? {}, {
+    // ── D81: ¿LOTE NUEVO, O AGREGAR A UNO QUE YA EXISTE? ───────────────────
+    const propuesta = cuerpo.propuesta ?? {}
+    const lleno = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== ''
+    const codigoDictado = lleno(propuesta.codigo_lote) ? String(propuesta.codigo_lote).trim() : null
+    const tandasPedidas = Array.isArray(propuesta.tandas) ? propuesta.tandas : []
+    const agregar = esAgregarALote({
+      codigoDictado,
+      codigosTomados,
+      hayInsumos: insumos.length > 0,
+      hayTandas: tandasPedidas.length > 0,
+      hayEnvasado: envasado.length > 0,
+      hayFermentacion: ['dias_fermentacion', 'horas_fermentacion', 'fecha_inicio'].some((k) =>
+        lleno(propuesta[k])
+      )
+    })
+
+    if (agregar) {
+      const ahora = new Date()
+      const destino = elegirLoteDestino(codigoDictado, await leerLotes(supabase), fechaLocal(ahora))
+      if (!destino.ok) {
+        return NextResponse.json({ error: destino.error }, { status: 422 })
+      }
+      // Se valida con la MISMA puerta que el lote nuevo (cantidades, grados,
+      // topes). El codigo va como dictado y sin "tomados": aqui el lote existe
+      // a proposito. Del resultado solo se usan los hijos.
+      const validado = normalizarLote(
+        { tandas: tandasPedidas, codigo_lote: destino.lote.codigo_lote },
+        { etiqueta: identidad.etiqueta, ahora, codigosTomados: [], insumos, envasado }
+      )
+      if (!validado.ok) {
+        return NextResponse.json({ error: validado.error }, { status: 422 })
+      }
+      const p = validado.payload
+      if (p.entradas.length === 0 && p.tandas.length === 0 && p.envasado.length === 0) {
+        return NextResponse.json(
+          { error: `Que le agrego al lote ${destino.lote.codigo_lote}? No oi insumos, tandas ni botellas.` },
+          { status: 422 }
+        )
+      }
+      const payloadAgregar: PayloadAgregar = {
+        id_lote: destino.lote.id,
+        codigo_lote: destino.lote.codigo_lote,
+        usuario_creador: validado.payload.usuario_creador,
+        entradas: validado.payload.entradas,
+        tandas: validado.payload.tandas,
+        envasado: validado.payload.envasado
+      }
+      const inv = await inventarioDelEnvasado(supabase, payloadAgregar.envasado)
+      const avisos = [...validado.avisos, ...inv.avisos]
+
+      // Fase 8 (D79): con `conservar_pendientes` se suma a las que esperan.
+      if (!conservaPendientes(cuerpo)) {
+        await supabase
+          .from('bot_borradores')
+          .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+          .eq('telegram_id', telegramId)
+          .eq('estado', 'PENDIENTE')
+      }
+
+      const selloAgregar = sellarAgregar(payloadAgregar)
+      const { data: borradorAgregar, error: errorAgregar } = await supabase
+        .from('bot_borradores')
+        .insert({
+          telegram_id: telegramId,
+          sello: selloAgregar,
+          payload: {
+            tipo: 'lote_agregar',
+            agregar: payloadAgregar,
+            meta: { avisos }
+          } as unknown as Json
+        })
+        .select('id')
+        .single()
+
+      if (errorAgregar || !borradorAgregar) {
+        console.error('[bot] no se pudo guardar el borrador de agregar a lote:', errorAgregar)
+        return NextResponse.json({ error: 'No pude guardar la propuesta.' }, { status: 500 })
+      }
+
+      return NextResponse.json({
+        ok: true,
+        borrador_id: borradorAgregar.id,
+        sello: selloAgregar,
+        codigo_lote: destino.lote.codigo_lote,
+        agregar: true,
+        movimientos: inv.movimientos,
+        mensaje: mensajeDeAgregarALote(
+          destino.lote,
+          destino.porDefault,
+          {
+            insumos: validado.desglose.insumos,
+            tandas: validado.desglose.tandas.map((t) => ({ litros: t.litros, grado: t.grado })),
+            envasado: validado.desglose.envasado,
+            movimientos: inv.movimientos.map((m) => ({
+              nombre: inv.nombres.get(m.id_producto) ?? m.id_producto,
+              tipo: m.tipo_movimiento,
+              cantidad: m.cantidad
+            }))
+          },
+          avisos
+        )
+      })
+    }
+
+    const normalizado = normalizarLote(propuesta, {
       etiqueta: identidad.etiqueta,
       ahora: new Date(),
       codigosTomados,
@@ -238,14 +418,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: normalizado.error }, { status: 422 })
     }
 
+    // D82: un lote NUEVO con envasado tambien mueve inventario al confirmar;
+    // la falta de empaque se dice aqui, antes del VA.
+    const invNuevo = await inventarioDelEnvasado(supabase, normalizado.payload.envasado)
+    if (invNuevo.movimientos.length > 0) {
+      normalizado.avisos.push(
+        'Al darle VA, el envasado entra al inventario de la matriz y se descuenta su empaque.'
+      )
+      normalizado.avisos.push(...invNuevo.avisos)
+    }
+
     // Un solo borrador PENDIENTE por persona. Misma regla que las otras tres
     // fases, y compartida con ellas a proposito: con dos borradores abiertos de
-    // distinto tipo, un "va" seria ambiguo.
-    await supabase
-      .from('bot_borradores')
-      .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
-      .eq('telegram_id', telegramId)
-      .eq('estado', 'PENDIENTE')
+    // distinto tipo, un "va" seria ambiguo.    // Fase 8 (D79): con `conservar_pendientes` la propuesta se SUMA a las que
+    // esperan su boton (varios hechos en un mensaje). Sin el, lo de siempre.
+    if (!conservaPendientes(cuerpo)) {
+      await supabase
+        .from('bot_borradores')
+        .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+        .eq('telegram_id', telegramId)
+        .eq('estado', 'PENDIENTE')
+    }
 
     const sello = sellarLote(normalizado.payload)
 

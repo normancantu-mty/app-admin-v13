@@ -413,7 +413,9 @@ test.describe('el mensaje', () => {
     })
     expect(texto).toContain('$1,198.00')
     expect(texto).toContain('15 dias')
-    expect(texto).toContain('2026-10-03')
+    // D70: la fecha va como la lee una persona; la ISO ya no debe salir.
+    expect(texto).toContain('03/10/2026')
+    expect(texto).not.toContain('2026-10-03')
     expect(texto).toContain('(prospecto)')
     expect(texto).not.toContain('Precio de distribuidor')
   })

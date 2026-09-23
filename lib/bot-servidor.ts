@@ -77,6 +77,24 @@ export function tokenValido(request: Request): boolean {
   return diferencia === 0
 }
 
+/**
+ * Fase 8 (D79): ¿esta propuesta se SUMA a los borradores PENDIENTE de la
+ * persona, en vez de cancelarlos? Solo con `conservar_pendientes: true`, literal.
+ *
+ * Norman, 2026-09-22: *"muchas veces en un solo mensaje implica varios
+ * movimientos... te van a esperar a mi respuesta con el boton"*. Cada hecho es
+ * su borrador y su boton VA, y el "va" escrito con dos o mas pendientes no
+ * adivina (lo resuelve el bot). **Sin la bandera, todo sigue como antes**:
+ * proponer algo nuevo cancela lo anterior.
+ */
+export function conservaPendientes(cuerpo: unknown): boolean {
+  return (
+    typeof cuerpo === 'object' &&
+    cuerpo !== null &&
+    (cuerpo as { conservar_pendientes?: unknown }).conservar_pendientes === true
+  )
+}
+
 export interface CuentaDelBot {
   id: string
   nombre: string

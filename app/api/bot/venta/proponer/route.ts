@@ -37,6 +37,7 @@ import { preguntaDeProducto } from '@/lib/bot-tamanos'
 import type { Json } from '@/types/database'
 import {
   clienteDeServicio,
+  conservaPendientes,
   leerCatalogoDeVenta,
   leerCompradoresDeVenta,
   leerCuentaDeVenta,
@@ -387,12 +388,15 @@ export async function POST(request: Request) {
     // ── Un solo borrador PENDIENTE por persona ──────────────────────────────
     // La misma regla de las Fases 1 y 2, y **compartida con ellas a proposito**:
     // proponer una venta cancela un gasto o un abono a medias y al reves. Con
-    // dos borradores abiertos de distinto tipo, un "va" seria ambiguo.
-    await supabase
-      .from('bot_borradores')
-      .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
-      .eq('telegram_id', telegramId)
-      .eq('estado', 'PENDIENTE')
+    // dos borradores abiertos de distinto tipo, un "va" seria ambiguo.    // Fase 8 (D79): con `conservar_pendientes` la propuesta se SUMA a las que
+    // esperan su boton (varios hechos en un mensaje). Sin el, lo de siempre.
+    if (!conservaPendientes(cuerpo)) {
+      await supabase
+        .from('bot_borradores')
+        .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+        .eq('telegram_id', telegramId)
+        .eq('estado', 'PENDIENTE')
+    }
 
     const sello = sellarVenta(normalizada.payload)
     const nombreComprador = comprador?.nombre ?? 'Publico en General'

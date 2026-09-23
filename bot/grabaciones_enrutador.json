@@ -2,18 +2,19 @@
  "contexto": "catalogo de productos real (/api/bot/catalogo), CATEGORIAS_SEMILLA, sin deudores, sin borrador a medias",
  "frases": {
   "d48_envio_como_gasto": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
     "consulta": null,
-    "entendido": "pregunta si el envio se aplica como gasto",
+    "entendido": "pregunta si el envio se va a aplicar como gasto",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "charla",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "Eso no lo he escrito; dimelo cuando quieras y lo capturo como gasto."
+    "respuesta": "Eso no lo he escrito ni lo escribo solo: dime el monto del envio y la categoria y te lo dejo listo para tu VA."
    },
    "texto": "tienes pensado Aplicar el envio como un gasto?"
   },
@@ -21,19 +22,32 @@
    "en_pantalla": null,
    "salida": {
     "campos": {
-     "descripcion": "envio"
+     "categoria": "Logistica_Envios"
     },
     "confianza": "media",
     "consulta": null,
-    "entendido": "quiere capturar el gasto del envio, sin monto",
+    "entendido": "pregunta por el envio, sin monto",
     "faltantes": [
      "monto"
     ],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "categoria": "Logistica_Envios"
+      },
+      "confianza": "media",
+      "faltantes": [
+       "monto"
+      ],
+      "intencion": "gasto",
+      "pregunta": "¿Cuánto fue el envío?"
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "gasto",
-    "otro_hecho": null,
-    "pregunta": "¿cuanto fue el envio?",
-    "respuesta": "eso no lo he escrito; dime cuanto fue el envio y lo capturo como gasto"
+    "pregunta": "¿Cuánto fue el envío?",
+    "respuesta": "Eso no lo tengo capturado; dime cuanto fue el envio y lo anoto como gasto."
    },
    "texto": "y el envio?"
   },
@@ -45,21 +59,44 @@
       {
        "cantidad": 1,
        "id_producto": "c1000000-0000-0000-0000-000000000001",
-       "producto": "botella de 750"
+       "producto": "750"
       }
      ]
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "venta botella 750ml sin monto",
+    "entendido": "venta botella 750",
     "faltantes": [
-     "monto"
+     "monto",
+     "comprador",
+     "condicion_pago"
     ],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "productos": [
+        {
+         "cantidad": 1,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "750"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [
+       "monto",
+       "comprador",
+       "condicion_pago"
+      ],
+      "intencion": "venta",
+      "pregunta": "¿en cuánto se la vendiste?"
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "venta",
-    "otro_hecho": null,
-    "pregunta": "¿En cuánto se vendió?",
-    "respuesta": "¿En cuánto se vendió la de 750?"
+    "pregunta": "¿en cuánto se la vendiste?",
+    "respuesta": "te falta el monto y a quien se la vendiste, o si fue de contado"
    },
    "texto": "vendi una botella de 750"
   },
@@ -78,13 +115,31 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "venta de una Plata 750ml en 599",
+    "entendido": "venta 750ml $599",
     "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "monto": 599,
+       "productos": [
+        {
+         "cantidad": 1,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "750"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "venta",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "venta",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "Va, ahi te la muestro pa que la confirmes."
+    "respuesta": "Va: una Destilado Plata 750ml en $599."
    },
    "texto": "vendi una de 750 en 599"
   },
@@ -97,23 +152,48 @@
       {
        "cantidad": 1,
        "id_producto": "c1000000-0000-0000-0000-000000000001",
-       "producto": "Destilado Plata 750ml"
+       "producto": "botella grande"
       }
      ]
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "venta botella grande 599, envio 45 no capturado",
+    "entendido": "venta botella grande $599 + gasto envio $45",
     "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "monto": 599,
+       "productos": [
+        {
+         "cantidad": 1,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "botella grande"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "venta",
+      "pregunta": null
+     },
+     {
+      "campos": {
+       "categoria": "Logistica_Envios",
+       "descripcion": "envio",
+       "monto": 45
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "gasto",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "venta",
-    "otro_hecho": {
-     "descripcion": "envio a domicilio",
-     "monto": 45.0,
-     "tipo": "gasto"
-    },
     "pregunta": null,
-    "respuesta": "Va la venta de la botella grande en 599; el envío de 45 no lo he escrito, dime si lo capturo como gasto aparte."
+    "respuesta": "Te armo la venta de la botella grande en 599 y el gasto del envio en 45, dale un vistazo a cada uno."
    },
    "texto": "Se vendio una botella grande de 599 pesos, el envio fue 45 pesos"
   },
@@ -142,11 +222,39 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "cotizacion al mismo cliente: 35 grandes, 43 chicas, 25 mini",
+    "entendido": "cotizacion mismo cliente, 35 grandes, 43 chicas, 25 mini",
     "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "cliente": "el mismo cliente",
+       "productos": [
+        {
+         "cantidad": 35,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "grande"
+        },
+        {
+         "cantidad": 43,
+         "id_producto": "c1000000-0000-0000-0000-000000000003",
+         "producto": "chica"
+        },
+        {
+         "cantidad": 25,
+         "id_producto": "c1000000-0000-0000-0000-000000000004",
+         "producto": "mini"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "cotizacion",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
     "pregunta": null,
     "respuesta": "Va la cotizacion para el mismo cliente: 35 grandes, 43 chicas y 25 mini."
    },
@@ -177,13 +285,41 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "cotizacion mismo cliente, 35 grandes 43 chicas 25 mini",
+    "entendido": "cotizacion al mismo cliente: 35 grandes, 43 chicas, 25 mini",
     "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "cliente": "el mismo cliente",
+       "productos": [
+        {
+         "cantidad": 35,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "grande"
+        },
+        {
+         "cantidad": 43,
+         "id_producto": "c1000000-0000-0000-0000-000000000003",
+         "producto": "chica"
+        },
+        {
+         "cantidad": 25,
+         "id_producto": "c1000000-0000-0000-0000-000000000004",
+         "producto": "mini"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "cotizacion",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "Va, cotizo para el mismo cliente: 35 grandes, 43 chicas y 25 mini."
+    "respuesta": "Va la cotizacion para el mismo cliente con 35 grandes, 43 chicas y 25 mini."
    },
    "texto": "Olvidalo, ahora cotizame por favor para el mismo cliente 35 grandes, 43 chicas y 25 mini."
   },
@@ -191,7 +327,7 @@
    "en_pantalla": null,
    "salida": {
     "campos": {
-     "cliente": "al mismo",
+     "cliente": "el mismo",
      "productos": [
       {
        "cantidad": 20,
@@ -207,13 +343,36 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "cotizacion mismo cliente: 20 grandes, 10 mini",
+    "entendido": "cotizacion mismo cliente 20 grandes y 10 mini",
     "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "cliente": "el mismo",
+       "productos": [
+        {
+         "cantidad": 20,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "grandes"
+        },
+        {
+         "cantidad": 10,
+         "id_producto": "c1000000-0000-0000-0000-000000000004",
+         "producto": "mini"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "cotizacion",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, cotizando 20 grandes y 10 mini para el mismo cliente."
+    "respuesta": "Va la cotizacion para el mismo cliente: 20 grandes y 10 mini."
    },
    "texto": "ahora al mismo 20 grandes y 10 mini"
   },
@@ -232,13 +391,31 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "cotizar 5 grandes para el mismo distribuidor",
+    "entendido": "cotizacion 5 grandes, mismo distribuidor de antes",
     "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "cliente": "el mismo distribuidor",
+       "productos": [
+        {
+         "cantidad": 5,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "grande"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "cotizacion",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, cotizo 5 grandes para el mismo distribuidor y te paso el precio."
+    "respuesta": "va, cotizo 5 grandes para el mismo distribuidor de antes"
    },
    "texto": "para el mismo distribuidor 5 grandes"
   },
@@ -246,7 +423,7 @@
    "en_pantalla": null,
    "salida": {
     "campos": {
-     "cliente": "el mismo",
+     "cliente": "el anterior",
      "productos": [
       {
        "cantidad": 12,
@@ -257,13 +434,31 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "cotizacion 12 de 750 para el mismo cliente anterior",
+    "entendido": "cotizacion al cliente anterior, 12 de 750",
     "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "cliente": "el anterior",
+       "productos": [
+        {
+         "cantidad": 12,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "750"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "cotizacion",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, saco la cotizacion para el mismo cliente"
+    "respuesta": "va, cotizando 12 de 750 para el mismo cliente."
    },
    "texto": "cotizale otra vez al anterior 12 de 750"
   },
@@ -282,98 +477,121 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "cotizacion 12 destilado 750 a aeropuerto",
+    "entendido": "cotizacion 12x750 a Aeropuerto",
     "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "cliente": "aeropuerto",
+       "productos": [
+        {
+         "cantidad": 12,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "750"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "cotizacion",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, te armo la cotizacion de 12 destilados de 750 para aeropuerto"
+    "respuesta": "va, te preparo la cotizacion de 12 botellas de 750 para aeropuerto"
    },
    "texto": "cotizale 12 de 750 a aeropuerto"
   },
   "d64_ambiguo_ahi_va": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "media",
     "consulta": null,
-    "entendido": "dijo 'ahi va', confirma pero no es una de las palabras exactas",
+    "entendido": "dijo 'ahi va' a la propuesta de venta",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "nomas pa curarme en salud: dime 'va' o 'escribelo' y lo capturo"
+    "respuesta": "Nomas dime 'va' y la escribo."
    },
    "texto": "ahi va"
   },
   "d64_ambiguo_mmm_va": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
-    "confianza": "media",
+    "confianza": "alta",
     "consulta": null,
-    "entendido": "dijo va, con muletilla antes",
+    "entendido": "confirma la venta en pantalla",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "necesito un va clarito, sin peros, para dejar la venta escrita"
+    "respuesta": "va, lo escribo"
    },
    "texto": "mmm va"
   },
   "d64_ambiguo_ok_pues": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "media",
     "consulta": null,
-    "entendido": "dice ok pues a la venta en pantalla",
+    "entendido": "dice ok pues, confirma con duda",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "Nomas para estar seguro, dime 'va' y la registro."
+    "respuesta": "para escribirlo dime nomas 'va'"
    },
    "texto": "ok pues"
   },
   "d64_ambiguo_ps_va": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
-    "confianza": "media",
+    "confianza": "alta",
     "consulta": null,
-    "entendido": "dijo va, con un ps de mas antes",
+    "entendido": "confirma la venta en pantalla",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "no me quedo tan claro el va, ¿si confirmas?"
+    "respuesta": "va, la escribo."
    },
    "texto": "ps va"
   },
   "d64_ambiguo_sale": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "media",
     "consulta": null,
-    "entendido": "dijo sale, ante propuesta de venta en pantalla",
+    "entendido": "dijo sale, no esta en la lista exacta de confirmacion",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "nomas para estar seguro, dime va y la escribo"
+    "respuesta": "Para escribirla dime VA, si o dale."
    },
    "texto": "sale"
   },
   "d64_ambiguo_va_pues_pregunta": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "media",
@@ -381,49 +599,50 @@
     "entendido": "confirma la venta en pantalla",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, dale"
+    "respuesta": "esa no la cuento como un VA limpio, dime va si es firme"
    },
    "texto": "va pues?"
   },
   "d64_ambiguo_y_eso": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "baja",
     "consulta": null,
-    "entendido": "no quedo claro si es un si o una duda",
-    "faltantes": [
-     "dato"
-    ],
+    "entendido": "no quedo claro que pregunta sobre la venta en pantalla",
+    "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "charla",
-    "otro_hecho": null,
-    "pregunta": "¿le doy va a esa venta o la cancelo?",
-    "respuesta": "¿le doy va a esa venta que tienes en pantalla o mejor la dejamos?"
+    "pregunta": null,
+    "respuesta": "¿qué quieres saber? si quieres que la escriba dime VA, o dime qué le cambio."
    },
    "texto": "y eso?"
   },
   "d64_explicito_dale_escribela": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
     "consulta": null,
-    "entendido": "confirma la venta en pantalla",
+    "entendido": "confirma la venta a Aeropuerto",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, la escribo."
+    "respuesta": "va, la escribo"
    },
    "texto": "dale, escribela"
   },
   "d64_explicito_si_confirmalo": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
@@ -431,15 +650,16 @@
     "entendido": "confirma la venta en pantalla",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
     "respuesta": "va"
    },
    "texto": "si, confirmalo"
   },
   "d64_explicito_si_escribelo": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
@@ -447,31 +667,33 @@
     "entendido": "confirma la venta en pantalla",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
     "respuesta": "va, la escribo."
    },
    "texto": "si escribelo"
   },
   "d64_explicito_si_va": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
     "consulta": null,
-    "entendido": "confirma la venta en pantalla",
+    "entendido": "confirma la venta a Aeropuerto en pantalla",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, la registro."
+    "respuesta": "listo, ya quedo escrita"
    },
    "texto": "si va"
   },
   "d64_explicito_va_escribelo": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
@@ -479,15 +701,16 @@
     "entendido": "confirma la venta en pantalla",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "confirmar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, la escribo"
+    "respuesta": "va, la escribo."
    },
    "texto": "va escribelo"
   },
   "d64_noconfirma_gasolina": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {
      "descripcion": "gasolina",
@@ -495,79 +718,93 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "gasto gasolina 200",
-    "faltantes": [
-     "categoria"
-    ],
+    "entendido": "gasto gasolina $200",
+    "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "descripcion": "gasolina",
+       "monto": 200
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "gasto",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "gasto",
-    "otro_hecho": null,
-    "pregunta": "esos 200 de gasolina los pongo en Insumos, Logistica_Envios o Gastos_Personales_Socio?",
-    "respuesta": "te falta la categoria, gasolina va en cual"
+    "pregunta": null,
+    "respuesta": "200 pesos de gasolina, gasto listo para revisar, dime VA y lo capturo."
    },
    "texto": "gaste 200 pesos en gasolina"
   },
   "d64_noconfirma_gracias": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
     "consulta": null,
-    "entendido": "dijo gracias",
+    "entendido": "agradecimiento",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "charla",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "de nada, ahi sigue la venta esperando que le des el va"
+    "respuesta": "De nada. La venta a Aeropuerto sigue esperando tu VA para quedar escrita."
    },
    "texto": "gracias"
   },
   "d64_noconfirma_hola": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
     "consulta": null,
-    "entendido": "saludo",
+    "entendido": "saludo, nada mas",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "charla",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "Hola Norman, aqui ando, dime que tienes."
+    "respuesta": "hola, dime que gasto, venta, abono o lote capturamos, o dime VA si quieres que escriba la venta que tienes en pantalla."
    },
    "texto": "hola"
   },
   "d64_noconfirma_olvidalo": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
     "confianza": "alta",
     "consulta": null,
-    "entendido": "dijo que no a la venta en pantalla",
+    "entendido": "cancela la venta en pantalla",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "cancelar",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "va, no la escribo"
+    "respuesta": "Va, la dejo sin escribir."
    },
    "texto": "olvidalo"
   },
   "d64_noconfirma_stock": {
-   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
    "salida": {
     "campos": {},
-    "confianza": "media",
+    "confianza": "alta",
     "consulta": "stock",
-    "entendido": "pregunta por stock general",
+    "entendido": "pregunta stock general",
     "faltantes": [],
     "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
     "intencion": "consulta",
-    "otro_hecho": null,
     "pregunta": null,
-    "respuesta": "dejame ver el stock que tienes."
+    "respuesta": "esa venta que tienes en pantalla sigue sin escribirse, dime VA o dime que cambio -- mientras tanto te busco el stock."
    },
    "texto": "cuanto stock tengo?"
   },
@@ -580,15 +817,25 @@
     },
     "confianza": "alta",
     "consulta": null,
-    "entendido": "cotizacion a 0 pesos, misma proporcion que la anterior",
-    "faltantes": [
-     "cliente"
-    ],
+    "entendido": "cotizacion escalada a $0, misma proporcion",
+    "faltantes": [],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "monto_objetivo": 0,
+       "productos": []
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "cotizacion",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
-    "pregunta": "¿para que cliente es esta cotizacion?",
-    "respuesta": "no me dijiste para quien es, ¿para que cliente armo esta cotizacion?"
+    "pregunta": null,
+    "respuesta": "va, te la escalo a 0 pesos manteniendo la misma proporcion."
    },
    "texto": "ahora una que salga en 0 pesos, con la misma proporcion"
   },
@@ -596,20 +843,32 @@
    "en_pantalla": null,
    "salida": {
     "campos": {
-     "monto_objetivo": 500,
-     "productos": []
+     "monto_objetivo": 500
     },
-    "confianza": "alta",
+    "confianza": "media",
     "consulta": null,
-    "entendido": "cotizacion nueva, monto objetivo 500, misma proporcion que la anterior",
+    "entendido": "cotizacion nueva de unos 500 pesos, misma proporcion",
     "faltantes": [
      "cliente"
     ],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "monto_objetivo": 500
+      },
+      "confianza": "media",
+      "faltantes": [
+       "cliente"
+      ],
+      "intencion": "cotizacion",
+      "pregunta": "¿Para quien es esta cotizacion?"
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
-    "pregunta": "¿para quién es esta cotización?",
-    "respuesta": "va, ¿para quién es esta cotización?"
+    "pregunta": "¿Para quien es esta cotizacion?",
+    "respuesta": "¿Para quien es esta cotizacion?"
    },
    "texto": "ahora una de menos 500 pesos con la misma proporcion"
   },
@@ -617,25 +876,737 @@
    "en_pantalla": null,
    "salida": {
     "campos": {},
-    "confianza": "baja",
+    "confianza": "media",
     "consulta": null,
-    "entendido": "quiere otra cotizacion en la misma proporcion, sin cliente ni monto",
+    "entendido": "cotizacion escalando la proporcion anterior, sin monto",
     "faltantes": [
-     "cliente",
      "monto_objetivo"
     ],
     "filtro": null,
+    "hechos": [
+     {
+      "campos": {},
+      "confianza": "media",
+      "faltantes": [
+       "monto_objetivo"
+      ],
+      "intencion": "cotizacion",
+      "pregunta": "¿de cuanto es el presupuesto para esa cotizacion?"
+     }
+    ],
+    "hechos_de_mas": 0,
     "intencion": "cotizacion",
-    "otro_hecho": null,
-    "pregunta": "¿Para quién es esta cotización?",
-    "respuesta": "¿Para quién es esta cotización?"
+    "pregunta": "¿de cuanto es el presupuesto para esa cotizacion?",
+    "respuesta": "¿de cuanto es el presupuesto para esa cotizacion?"
    },
    "texto": "ahora una por lo que alcance, con la misma proporcion"
+  },
+  "d73_control_sin_historial": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": "cartera",
+    "entendido": "pregunta por la deuda",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "consulta",
+    "pregunta": null,
+    "respuesta": "te paso la cartera."
+   },
+   "texto": "y la deuda?"
+  },
+  "d73_control_vendi_una_chica": {
+   "en_pantalla": null,
+   "historial": [
+    [
+     12.0,
+     "Se vendio una botella grande de 599 pesos, el envio fue 45 pesos",
+     "Esto es lo que voy a escribir. Revisalo: VENTA CONTADO 1 x Destilado Plata 750ml a $599.00 = $599.00 TOTAL: $599.00"
+    ],
+    [
+     11.0,
+     "va",
+     "Listo. Quedo escrita."
+    ]
+   ],
+   "salida": {
+    "campos": {
+     "productos": [
+      {
+       "cantidad": 1,
+       "id_producto": "",
+       "producto": "chica"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "venta botella chica, sin monto",
+    "faltantes": [
+     "monto"
+    ],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "productos": [
+        {
+         "cantidad": 1,
+         "id_producto": "",
+         "producto": "chica"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [
+       "monto"
+      ],
+      "intencion": "venta",
+      "pregunta": "¿en cuánto la vendiste?"
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "venta",
+    "pregunta": "¿en cuánto la vendiste?",
+    "respuesta": "va, ¿en cuánto la vendiste?"
+   },
+   "texto": "vendi una chica"
+  },
+  "d73_y_la_deuda": {
+   "en_pantalla": null,
+   "historial": [
+    [
+     2.0,
+     "cuanto me debe aeropuerto",
+     "CARTERA — $10,170.00 por cobrar, 1 deudor(es) $10,170.00 Aeropuerto (LOC) — 49.1% pagado, 3 d sin abonar"
+    ]
+   ],
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": "cartera",
+    "entendido": "pregunta de nuevo por la deuda de aeropuerto",
+    "faltantes": [],
+    "filtro": "Aeropuerto",
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "consulta",
+    "pregunta": null,
+    "respuesta": "va, checo cuanto debe aeropuerto"
+   },
+   "texto": "y la deuda?"
+  },
+  "d74_a_nombre_de_delirio": {
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
+   "salida": {
+    "campos": {
+     "comprador": "Delirio",
+     "sobre": "venta"
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cambia comprador a Delirio",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "ajustar",
+    "pregunta": null,
+    "respuesta": "va, se lo cambio a Delirio"
+   },
+   "texto": "no, a nombre de Delirio"
+  },
+  "d74_control_otra_venta": {
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
+   "salida": {
+    "campos": {
+     "comprador": "publico",
+     "productos": [
+      {
+       "cantidad": 2,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "750ml"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "venta 2x750ml a publico, falta monto",
+    "faltantes": [
+     "monto"
+    ],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "comprador": "publico",
+       "productos": [
+        {
+         "cantidad": 2,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "750ml"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [
+       "monto"
+      ],
+      "intencion": "venta",
+      "pregunta": "¿en cuánto se las vendiste?"
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "venta",
+    "pregunta": "¿en cuánto se las vendiste?",
+    "respuesta": "¿en cuánto se las vendiste?"
+   },
+   "texto": "vendi otras 2 de 750 a publico"
+  },
+  "d74_dos_en_pantalla_concesion": {
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.\npropuesta de un gasto esperando su VA: Esto es lo que voy a escribir. Revisalo: MONTO: $45.00 CATEGORIA: Logistica_Envios CONCEPTO: envio a domicilio FECHA: 22/09/2026 CUENTA: Efectivo (se asienta aqui) (la cuenta no la elige el modelo: sale de tu alta en CEO Admin, y si esta mal la cambias con el boton) Contesta VA para escribirlo, o dime que cambio.",
+   "salida": {
+    "campos": {
+     "condicion_pago": "CONCESION",
+     "sobre": "venta"
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cambia venta a concesion",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "ajustar",
+    "pregunta": null,
+    "respuesta": "va, la dejo a concesion"
+   },
+   "texto": "la venta fue a concesion"
+  },
+  "d74_fue_a_concesion": {
+   "en_pantalla": "propuesta de una venta esperando su VA: Esto es lo que voy a escribir. Revisalo: VENTA CONTADO VENDE: CEO Admin COMPRA: Aeropuerto 1 x Destilado Plata 750ml a $480.00 (lista $599.00) = $480.00 TOTAL: $480.00 (1 pieza) El dinero entra a \"Efectivo\". Contesta VA para escribirlo, o dime que cambio.",
+   "salida": {
+    "campos": {
+     "condicion_pago": "CONCESION",
+     "sobre": "venta"
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cambia condicion de pago a concesion",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "ajustar",
+    "pregunta": null,
+    "respuesta": "va a concesion, te la muestro de nuevo"
+   },
+   "texto": "fue venta a concesion"
+  },
+  "d74_gasto_eran_50": {
+   "en_pantalla": "propuesta de un gasto esperando su VA: Esto es lo que voy a escribir. Revisalo: MONTO: $45.00 CATEGORIA: Logistica_Envios CONCEPTO: envio a domicilio FECHA: 22/09/2026 CUENTA: Efectivo (se asienta aqui) (la cuenta no la elige el modelo: sale de tu alta en CEO Admin, y si esta mal la cambias con el boton) Contesta VA para escribirlo, o dime que cambio.",
+   "salida": {
+    "campos": {
+     "monto": 50,
+     "sobre": "gasto"
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "corrige monto a 50",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "ajustar",
+    "pregunta": null,
+    "respuesta": "va el monto en $50, checalo y dime VA"
+   },
+   "texto": "eran 50, no 45"
+  },
+  "d76_control_quien_me_debe": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": "cartera",
+    "entendido": "pregunta cartera general",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "consulta",
+    "pregunta": null,
+    "respuesta": "dejame ver quien te debe"
+   },
+   "texto": "quien me debe"
+  },
+  "d76_cuanto_me_debe_aeropuerto": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": "cartera",
+    "entendido": "consulta cartera de Aeropuerto",
+    "faltantes": [],
+    "filtro": "aeropuerto",
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "consulta",
+    "pregunta": null,
+    "respuesta": "Ahorita te checo cuanto debe Aeropuerto."
+   },
+   "texto": "cuanto me debe aeropuerto"
+  },
+  "d80_control_eco": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "comprador": "publico",
+     "productos": [
+      {
+       "cantidad": 1,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "750"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "venta de 1 botella 750ml a publico, falta monto",
+    "faltantes": [
+     "monto"
+    ],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "comprador": "publico",
+       "productos": [
+        {
+         "cantidad": 1,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "750"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [
+       "monto"
+      ],
+      "intencion": "venta",
+      "pregunta": "¿en cuánto se la vendiste?"
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "venta",
+    "pregunta": "¿en cuánto se la vendiste?",
+    "respuesta": "¿en cuánto se la vendiste?"
+   },
+   "texto": "vendi una de 750 a publico, si, una botella de 750 fue la que vendi"
+  },
+  "d80_gasto_incompleto_y_venta": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "descripcion": "gasolina"
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "gasto gasolina + venta 2x750 a publico, faltan montos",
+    "faltantes": [
+     "monto"
+    ],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "descripcion": "gasolina"
+      },
+      "confianza": "alta",
+      "faltantes": [
+       "monto"
+      ],
+      "intencion": "gasto",
+      "pregunta": "¿cuánto gastaste en gasolina?"
+     },
+     {
+      "campos": {
+       "comprador": "publico",
+       "productos": [
+        {
+         "cantidad": 2,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "750"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [
+       "monto"
+      ],
+      "intencion": "venta",
+      "pregunta": "¿en cuánto vendiste las dos de 750?"
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "gasto",
+    "pregunta": "¿cuánto gastaste en gasolina?",
+    "respuesta": "Te faltó decirme cuánto fue la gasolina y en cuánto vendiste las dos de 750, dime esos montos y los capturo."
+   },
+   "texto": "gaste en gasolina y vendi 2 de 750 a publico"
+  },
+  "d80_mensaje_2026_09_19": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "monto": 599,
+     "productos": [
+      {
+       "cantidad": 1,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "Destilado Plata 750ml"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "venta de $599 y gasto de envio $45",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "monto": 599,
+       "productos": [
+        {
+         "cantidad": 1,
+         "id_producto": "c1000000-0000-0000-0000-000000000001",
+         "producto": "Destilado Plata 750ml"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "venta",
+      "pregunta": null
+     },
+     {
+      "campos": {
+       "categoria": "Logistica_Envios",
+       "descripcion": "envio",
+       "monto": 45
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "gasto",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "venta",
+    "pregunta": null,
+    "respuesta": "Aqui tienes la venta de $599 y el gasto del envio de $45, dales VA cuando quieras."
+   },
+   "texto": "Se acaba de vender una botella grande de 599 pesos, lo enviamos a domicilio y nosotros absorbimos el costo del envio y de envio fueron 45 pesos."
+  },
+  "d80_seis_gastos": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "descripcion": "papel",
+     "monto": 10
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "6 gastos dictados, capturo los primeros 5",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "descripcion": "papel",
+       "monto": 10
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "gasto",
+      "pregunta": null
+     },
+     {
+      "campos": {
+       "descripcion": "cinta",
+       "monto": 20
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "gasto",
+      "pregunta": null
+     },
+     {
+      "campos": {
+       "descripcion": "gasolina",
+       "monto": 30
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "gasto",
+      "pregunta": null
+     },
+     {
+      "campos": {
+       "categoria": "Servicios_Basicos",
+       "descripcion": "luz",
+       "monto": 40
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "gasto",
+      "pregunta": null
+     },
+     {
+      "campos": {
+       "categoria": "Servicios_Basicos",
+       "descripcion": "agua",
+       "monto": 50
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "gasto",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "gasto",
+    "pregunta": null,
+    "respuesta": "van 5 gastos: papel, cinta, gasolina, luz y agua. la renta de 60 no entro por el limite, mandamela aparte."
+   },
+   "texto": "gaste 10 en papel, 20 en cinta, 30 en gasolina, 40 en luz, 50 en agua y 60 en renta"
+  },
+  "d80_venta_y_abono": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "comprador": "aeropuerto",
+     "productos": [
+      {
+       "cantidad": 2,
+       "id_producto": "c1000000-0000-0000-0000-000000000003",
+       "producto": "chica"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "venta 2 chicas aeropuerto + abono 1000 aeropuerto, falta monto de la venta",
+    "faltantes": [
+     "monto"
+    ],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "comprador": "aeropuerto",
+       "productos": [
+        {
+         "cantidad": 2,
+         "id_producto": "c1000000-0000-0000-0000-000000000003",
+         "producto": "chica"
+        }
+       ]
+      },
+      "confianza": "alta",
+      "faltantes": [
+       "monto"
+      ],
+      "intencion": "venta",
+      "pregunta": "¿En cuánto quedaron las 2 chicas para aeropuerto?"
+     },
+     {
+      "campos": {
+       "deudor": "aeropuerto",
+       "monto": 1000
+      },
+      "confianza": "media",
+      "faltantes": [],
+      "intencion": "abono",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "venta",
+    "pregunta": "¿En cuánto quedaron las 2 chicas para aeropuerto?",
+    "respuesta": "¿En cuánto quedaron las 2 chicas para aeropuerto?"
+   },
+   "texto": "vendi 2 chicas a aeropuerto y me abono 1000"
+  },
+  "d81_control_lote_nuevo_sin_chile": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "dias_fermentacion": 8
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "lote nuevo, 8 dias fermentacion",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "dias_fermentacion": 8
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "lote",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "lote",
+    "pregunta": null,
+    "respuesta": "va, lote nuevo con 8 dias de fermentacion"
+   },
+   "texto": "empezamos un lote nuevo, 8 dias de fermentacion"
+  },
+  "d81_envasado_con_lote": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "botellas": 40,
+     "codigo_lote": "L-0915",
+     "formato": "250"
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "envasado lote L-0915, 40 botellas de 250",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "botellas": 40,
+       "codigo_lote": "L-0915",
+       "formato": "250"
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "lote",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "lote",
+    "pregunta": null,
+    "respuesta": "Envasado del lote L-0915: 40 botellas de 250. ¿Le doy VA?"
+   },
+   "texto": "del lote L-0915 salieron 40 de 250"
+  },
+  "d81_envasamos_24": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "botellas": 24,
+     "formato": "750"
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "envasado 24 botellas de 750",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [
+     {
+      "campos": {
+       "botellas": 24,
+       "formato": "750"
+      },
+      "confianza": "alta",
+      "faltantes": [],
+      "intencion": "lote",
+      "pregunta": null
+     }
+    ],
+    "hechos_de_mas": 0,
+    "intencion": "lote",
+    "pregunta": null,
+    "respuesta": "va, 24 botellas de 750 al lote de hoy"
+   },
+   "texto": "hoy envasamos 24 de 750"
+  },
+  "d83_control_ventas": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": "ventas",
+    "entendido": "pregunta ventas del mes",
+    "faltantes": [],
+    "filtro": null,
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "consulta",
+    "pregunta": null,
+    "respuesta": "dejame checar cuanto llevamos vendido este mes."
+   },
+   "texto": "cuanto vendimos este mes?"
+  },
+  "d83_hoy": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": "produccion",
+    "entendido": "pregunta cuantas botellas hoy",
+    "faltantes": [],
+    "filtro": "hoy",
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "consulta",
+    "pregunta": null,
+    "respuesta": "dejame checar cuantas botellas salieron hoy."
+   },
+   "texto": "cuantas botellas se hicieron hoy?"
+  },
+  "d83_lote": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": "produccion",
+    "entendido": "pregunta botellas del lote L-0915",
+    "faltantes": [],
+    "filtro": "L-0915",
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "consulta",
+    "pregunta": null,
+    "respuesta": "dejame checar cuantas salieron del lote L-0915."
+   },
+   "texto": "cuantas salieron del lote L-0915?"
+  },
+  "d83_semana": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": "produccion",
+    "entendido": "consulta produccion envasado semana",
+    "faltantes": [],
+    "filtro": "semana",
+    "hechos": [],
+    "hechos_de_mas": 0,
+    "intencion": "consulta",
+    "pregunta": null,
+    "respuesta": "Dejame ver cuanto se envaso esta semana."
+   },
+   "texto": "cuanto envasamos esta semana?"
   }
  },
- "grabado_en": "2026-09-22 21:08:52",
- "llamadas": 3,
- "md5_prompt": "531c6173fbeb106acfefb262bbf51474",
+ "grabado_en": "2026-09-23 00:03:19",
+ "llamadas": 53,
+ "md5_prompt": "f354875c6ad9e9de694549b10744e911",
  "modelo": "claude -p --model sonnet (enrutador._claude)",
- "segundos": 33.5
+ "segundos": 167.3
 }

@@ -13,6 +13,7 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
+import { fechaParaPersona } from '@/lib/fechas'
 
 // ============================================================================
 // 1. LA LISTA CERRADA
@@ -568,8 +569,8 @@ export function mensajeDeConfirmacion(
   avisos: readonly string[],
   duplicado: MovimientoReciente | null
 ): string {
-  const fecha = new Date(payload.fecha_movimiento)
-  const dia = `${String(fecha.getDate()).padStart(2, '0')}/${String(fecha.getMonth() + 1).padStart(2, '0')}/${fecha.getFullYear()}`
+  // D70 (Fase 8): la fecha de MEXICO, no la del proceso (en Vercel es UTC).
+  const dia = fechaParaPersona(payload.fecha_movimiento)
   const monto = payload.monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   // La direccion del dinero, en palabras. Un `COMPRA_INSUMOS` descuenta de la

@@ -28,6 +28,7 @@ import {
   armarDocumentoDeTicket,
   type DocumentoDatos
 } from '@/lib/documento'
+import { fechaHoraParaPersona, fechaParaPersona } from '@/lib/fechas'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,34 +38,17 @@ const TENUE = '#6b7280'
 const MONO = 'ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace'
 
 /**
- * `AAAA-MM-DD` a secas es un dia de CALENDARIO, no un instante.
- *
- * `new Date('2026-09-18')` lo interpreta como medianoche UTC, que en Mexico es
- * **el 17 a las 6 de la tarde**. Un ticket no sufria esto porque
- * `fecha_transaccion` trae hora; la cotizacion si, porque `cotizaciones.fecha`
- * es `date`. Se vio en la primera imagen generada: decia "17/09/2026, 06:00
- * p.m." en una cotizacion hecha el 18.
- *
- * Asi que una fecha sin hora se arma como fecha local y se pinta SIN hora: un
- * documento que no tiene hora no debe inventarse una.
+ * D70 (Fase 8): las fechas salen de UNA sola funcion (`lib/fechas.ts`),
+ * `DD/MM/AAAA` en hora de Mexico. Antes esto usaba `toLocaleString` con la zona
+ * del PROCESO: en Vercel (UTC) un ticket de las 22:00 salia con fecha de manana.
+ * Un `AAAA-MM-DD` a secas se pinta SIN hora: no se le inventa una.
  */
-const SOLO_FECHA = /^\d{4}-\d{2}-\d{2}$/
-
 function fechaLarga(iso: string): string {
-  if (!iso) return '—'
-  if (SOLO_FECHA.test(iso)) {
-    const [y, m, d] = iso.split('-').map(Number)
-    return new Date(y, m - 1, d).toLocaleDateString('es-MX', {
-      year: 'numeric', month: '2-digit', day: '2-digit'
-    })
-  }
-  return new Date(iso).toLocaleString('es-MX', {
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-  })
+  return fechaHoraParaPersona(iso)
 }
 
 function fechaCorta(iso: string): string {
-  return new Date(iso).toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit' })
+  return fechaParaPersona(iso)
 }
 
 function montoFirmado(n: number): string {
@@ -105,7 +89,10 @@ function Documento({ d }: { d: DocumentoDatos }) {
         <div style={{ display: 'flex' }}>Fecha: {fechaLarga(d.fecha)}</div>
         <div style={{ display: 'flex' }}>Folio: {d.folio}</div>
         <div style={{ display: 'flex', marginTop: 8 }}>Vendedor: {d.vendedor}</div>
-        <div style={{ display: 'flex' }}>Comprador: {d.comprador}</div>
+        <div style={{ display: 'flex' }}>{d.etiquetaReceptor ?? 'Comprador:'} {d.comprador}</div>
+        {d.listaDePrecio && (
+          <div style={{ display: 'flex', marginTop: 4, fontWeight: 700 }}>{d.listaDePrecio}</div>
+        )}
       </div>
 
       <div style={rayada} />
@@ -131,6 +118,19 @@ function Documento({ d }: { d: DocumentoDatos }) {
       </div>
 
       <div style={rayada} />
+
+      {d.descuento && (
+        <div style={{ ...columna, width: '100%', fontSize: 14, gap: 4, marginBottom: 8 }}>
+          <div style={fila}>
+            <div style={{ display: 'flex' }}>Subtotal:</div>
+            <div style={{ display: 'flex' }}>${d.descuento.subtotal.toFixed(2)}</div>
+          </div>
+          <div style={fila}>
+            <div style={{ display: 'flex' }}>{d.descuento.etiqueta}:</div>
+            <div style={{ display: 'flex' }}>-${d.descuento.importe.toFixed(2)}</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ ...fila, fontSize: 20, fontWeight: 700, borderTop: `2px solid ${TINTA}`, paddingTop: 10 }}>
         <div style={{ display: 'flex' }}>{d.etiquetaTotal}</div>
@@ -196,7 +196,7 @@ export async function GET(request: Request, contexto: { params: Promise<{ id: st
 
   // La altura crece con las lineas y los movimientos: un ticket de 12 productos
   // no cabe en el alto de uno de 2, y Satori recorta sin avisar.
-  const alto = 420 + datos.lineas.length * 72 + datos.movimientos.length * 26 + datos.pie.length * 22
+  const alto = 420 + (datos.listaDePrecio ? 24 : 0) + (datos.descuento ? 56 : 0) + datos.lineas.length * 72 + datos.movimientos.length * 26 + datos.pie.length * 22
 
   return new ImageResponse(<Documento d={datos} />, { width: ANCHO, height: alto })
 }

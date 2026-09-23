@@ -14,6 +14,7 @@
  */
 
 import type { DocumentoDatos } from '@/lib/documento'
+import { fechaHoraParaPersona, fechaParaPersona } from '@/lib/fechas'
 
 /**
  * Los datos los arma `lib/documento.ts` y los mismos alimentan la imagen PNG.
@@ -27,43 +28,17 @@ export type DocumentoTermicoProps = Omit<DocumentoDatos, 'movimientos'> & {
 export const NOMBRE_EMPRESA = 'FRESNILLO / DESTILADO DE CHILE'
 
 /**
- * `AAAA-MM-DD` a secas es un dia de CALENDARIO, no un instante.
- *
- * `new Date('2026-09-18')` lo interpreta como medianoche UTC, que en Mexico es
- * **el 17 a las 6 de la tarde**. Un ticket no sufria esto porque
- * `fecha_transaccion` trae hora; la cotizacion si, porque `cotizaciones.fecha`
- * es `date`. Se vio en la primera imagen generada: decia "17/09/2026, 06:00
- * p.m." en una cotizacion hecha el 18.
- *
- * Asi que una fecha sin hora se arma como fecha local y se pinta SIN hora: un
- * documento que no tiene hora no debe inventarse una.
+ * D70 (Fase 8): las fechas salen de UNA sola funcion (`lib/fechas.ts`),
+ * `DD/MM/AAAA` en hora de Mexico. Un `AAAA-MM-DD` a secas es un dia de
+ * calendario y se pinta SIN hora: un documento que no tiene hora no debe
+ * inventarse una.
  */
-const SOLO_FECHA = /^\d{4}-\d{2}-\d{2}$/
-
 export function formatFechaDocumento(dateString: string) {
-  if (!dateString) return '—'
-  if (SOLO_FECHA.test(dateString)) {
-    const [y, m, d] = dateString.split('-').map(Number)
-    return new Date(y, m - 1, d).toLocaleDateString('es-MX', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    })
-  }
-  return new Date(dateString).toLocaleString('es-MX', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
+  return fechaHoraParaPersona(dateString)
 }
 
 export function formatFechaCorta(dateString: string) {
-  return new Date(dateString).toLocaleDateString('es-MX', {
-    day: '2-digit',
-    month: '2-digit'
-  })
+  return fechaParaPersona(dateString)
 }
 
 export function formatMontoFirmado(amount: number) {
@@ -81,7 +56,10 @@ export default function DocumentoTermico({
   folio,
   vendedor,
   comprador,
+  etiquetaReceptor = 'Comprador:',
+  listaDePrecio,
   lineas,
+  descuento,
   etiquetaTotal,
   total,
   movimientos = [],
@@ -115,7 +93,8 @@ export default function DocumentoTermico({
           <p className="text-xs">Fecha: {formatFechaDocumento(fecha)}</p>
           <p className="text-xs">Folio: {folio}</p>
           <p className="text-xs mt-2">Vendedor: {vendedor}</p>
-          <p className="text-xs">Comprador: {comprador}</p>
+          <p className="text-xs">{etiquetaReceptor} {comprador}</p>
+          {listaDePrecio && <p className="text-xs font-bold mt-1">{listaDePrecio}</p>}
         </div>
 
         <div className="border-t border-dashed border-gray-400 my-3"></div>
@@ -148,6 +127,18 @@ export default function DocumentoTermico({
 
         {/* Totales */}
         <div className="text-xs space-y-1">
+          {descuento && (
+            <>
+              <div className="flex justify-between">
+                <span>Subtotal:</span>
+                <span>${descuento.subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>{descuento.etiqueta}:</span>
+                <span>-${descuento.importe.toFixed(2)}</span>
+              </div>
+            </>
+          )}
           <div className="border-t border-gray-800 my-2"></div>
           <div className="flex justify-between text-base font-bold">
             <span>{etiquetaTotal}</span>

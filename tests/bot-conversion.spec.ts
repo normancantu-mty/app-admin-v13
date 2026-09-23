@@ -106,7 +106,9 @@ test.describe('Paso 6 · los siete dias no son los quince de la vigencia', () =>
     expect(j.ok).toBe(false)
     if (!j.ok) {
       expect(j.mensaje).toContain('sigue vigente')
-      expect(j.mensaje).toContain('2026-09-24')
+      // D70: la fecha va como la lee una persona; la ISO ya no debe salir.
+      expect(j.mensaje).toContain('24/09/2026')
+      expect(j.mensaje).not.toContain('2026-09-24')
     }
   })
 

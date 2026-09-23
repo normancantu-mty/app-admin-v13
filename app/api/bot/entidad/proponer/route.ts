@@ -31,7 +31,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { clienteDeServicio, conservaPendientes, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import {
   buscarParecidas,
   puedeDarDeAlta,
@@ -268,12 +268,15 @@ export async function POST(request: Request) {
     // con `estado = 'PENDIENTE'`: proponer algo nuevo TIENE que cancelar lo
     // anterior, o el insert revienta con 23505. Mismo criterio que los cinco
     // `proponer` de las fases 3 y 4, y por la misma razon: con dos borradores
-    // abiertos un "va" es ambiguo.
-    await supabase
-      .from('bot_borradores')
-      .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
-      .eq('telegram_id', telegramId)
-      .eq('estado', 'PENDIENTE')
+    // abiertos un "va" es ambiguo.    // Fase 8 (D79): con `conservar_pendientes` la propuesta se SUMA a las que
+    // esperan su boton (varios hechos en un mensaje). Sin el, lo de siempre.
+    if (!conservaPendientes(cuerpo)) {
+      await supabase
+        .from('bot_borradores')
+        .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+        .eq('telegram_id', telegramId)
+        .eq('estado', 'PENDIENTE')
+    }
 
     const sello = sellarAlta(payload)
 

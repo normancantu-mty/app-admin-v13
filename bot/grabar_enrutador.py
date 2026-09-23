@@ -46,10 +46,49 @@ import enrutador as E  # noqa: E402
 
 ARCHIVO = RAIZ / "grabaciones_enrutador.json"
 
-# La cadena EXACTA que arma `bot_gastos._en_pantalla` para una venta sellada.
-VENTA_EN_PANTALLA = "una propuesta de una venta lista, esperando que digas que va o que no"
+# Fase 8 (D74): lo que esta en pantalla lleva el CONTENIDO. Los dos mensajes
+# son los que devolvio el servidor real (ruta `proponer` en ensayo, 2026-09-22),
+# y las cadenas son las EXACTAS que arma `bot_gastos._en_pantalla` con ellos:
+# `probar_hechos.py` lo comprueba (productor y consumidor, misma cadena).
+MENSAJE_VENTA = (
+    "Esto es lo que voy a escribir. Revisalo:\n\nVENTA CONTADO\nVENDE:      CEO Admin\n"
+    "COMPRA:     Aeropuerto\n\n   1 x Destilado Plata 750ml a $480.00  (lista $599.00) = $480.00\n\n"
+    "TOTAL:      $480.00   (1 pieza)\nEl dinero entra a \"Efectivo\".\n\n"
+    "Contesta VA para escribirlo, o dime que cambio.")
+MENSAJE_GASTO = (
+    "Esto es lo que voy a escribir. Revisalo:\n\nMONTO:      $45.00\nCATEGORIA:  Logistica_Envios\n"
+    "CONCEPTO:   envio a domicilio\nFECHA:      22/09/2026\nCUENTA:     Efectivo (se asienta aqui)\n\n"
+    "(la cuenta no la elige el modelo: sale de tu alta en CEO Admin, y si esta mal la cambias con el boton)\n\n"
+    "Contesta VA para escribirlo, o dime que cambio.")
 
-# (clave, texto, en_pantalla). La clave dice de que `D` viene y a que grupo
+
+def en_pantalla_de(tipo, mensaje):
+    """La linea de `_en_pantalla` para UNA propuesta viva (misma regla)."""
+    como = {"venta": "una venta", "gasto": "un gasto", "abono": "un abono"}[tipo]
+    return "propuesta de " + como + " esperando su VA: " + " ".join(mensaje.split())[:320]
+
+
+VENTA_EN_PANTALLA = en_pantalla_de("venta", MENSAJE_VENTA)
+GASTO_EN_PANTALLA = en_pantalla_de("gasto", MENSAJE_GASTO)
+VENTA_Y_GASTO_EN_PANTALLA = VENTA_EN_PANTALLA + "\n" + GASTO_EN_PANTALLA
+
+# D73: historiales (hace_min, dijo, contesto), como los arma el bot.
+HIST_CARTERA_AEROPUERTO = [
+    (2.0, "cuanto me debe aeropuerto",
+     "CARTERA — $10,170.00 por cobrar, 1 deudor(es) $10,170.00 Aeropuerto (LOC) — "
+     "49.1% pagado, 3 d sin abonar"),
+]
+HIST_VENTA_599 = [
+    (12.0, "Se vendio una botella grande de 599 pesos, el envio fue 45 pesos",
+     "Esto es lo que voy a escribir. Revisalo: VENTA CONTADO 1 x Destilado Plata 750ml "
+     "a $599.00 = $599.00 TOTAL: $599.00"),
+    (11.0, "va", "Listo. Quedo escrita."),
+]
+EL_MENSAJE_2026_09_19 = (
+    "Se acaba de vender una botella grande de 599 pesos, lo enviamos a domicilio y "
+    "nosotros absorbimos el costo del envio y de envio fueron 45 pesos.")
+
+# (clave, texto, en_pantalla[, extra]). La clave dice de que `D` viene y a que grupo
 # pertenece; las pruebas filtran por prefijo.
 FRASES = [
     # ── D50: "el mismo cliente" (auditoria Fase 6, §8.1: las cinco) ──────────
@@ -89,6 +128,43 @@ FRASES = [
     ("d67_objetivo_negativo", "ahora una de menos 500 pesos con la misma proporcion", None),
     ("d67_objetivo_cero", "ahora una que salga en 0 pesos, con la misma proporcion", None),
     ("d67_objetivo_sin_numero", "ahora una por lo que alcance, con la misma proporcion", None),
+    # ── FASE 8. Cuarta posicion opcional: {"historial": [...]} ──────────────
+    # D73/D75: "y la deuda?" despues de preguntar por Aeropuerto.
+    ("d73_y_la_deuda", "y la deuda?", None, {"historial": HIST_CARTERA_AEROPUERTO}),
+    # D73 control de contaminacion: una venta de $599 en el historial y ahora
+    # "vendi una chica": la venta nueva NO lleva $599.
+    ("d73_control_vendi_una_chica", "vendi una chica", None, {"historial": HIST_VENTA_599}),
+    # D73 control: sin historial, "y la deuda?" no sabe de quien.
+    ("d73_control_sin_historial", "y la deuda?", None),
+    # D74/D75: una correccion se SUMA a lo que esta en pantalla.
+    ("d74_fue_a_concesion", "fue venta a concesion", VENTA_EN_PANTALLA),
+    ("d74_a_nombre_de_delirio", "no, a nombre de Delirio", VENTA_EN_PANTALLA),
+    ("d74_gasto_eran_50", "eran 50, no 45", GASTO_EN_PANTALLA),
+    ("d74_dos_en_pantalla_concesion", "la venta fue a concesion", VENTA_Y_GASTO_EN_PANTALLA),
+    # D74 control: un hecho NUEVO con una venta en pantalla no es ajustar.
+    ("d74_control_otra_venta", "vendi otras 2 de 750 a publico", VENTA_EN_PANTALLA),
+    # D76: la cartera de UN deudor; control, la cartera entera.
+    ("d76_cuanto_me_debe_aeropuerto", "cuanto me debe aeropuerto", None),
+    ("d76_control_quien_me_debe", "quien me debe", None),
+    # D78/D80: varios hechos en un mensaje.
+    ("d80_mensaje_2026_09_19", EL_MENSAJE_2026_09_19, None),
+    ("d80_venta_y_abono", "vendi 2 chicas a aeropuerto y me abono 1000", None),
+    ("d80_gasto_incompleto_y_venta", "gaste en gasolina y vendi 2 de 750 a publico", None),
+    ("d80_seis_gastos", "gaste 10 en papel, 20 en cinta, 30 en gasolina, 40 en luz, "
+                        "50 en agua y 60 en renta", None),
+    # D80 control: el eco de la venta (la misma dicha dos veces) es UNA venta.
+    ("d80_control_eco", "vendi una de 750 a publico, si, una botella de 750 fue la que vendi", None),
+    # ── D81: envasar es lote, y no le falta el chile ────────────────────────
+    ("d81_envasamos_24", "hoy envasamos 24 de 750", None),
+    ("d81_envasado_con_lote", "del lote L-0915 salieron 40 de 250", None),
+    # D81 control: un lote NUEVO sin chile si pide el chile (regla 11 intacta).
+    ("d81_control_lote_nuevo_sin_chile", "empezamos un lote nuevo, 8 dias de fermentacion", None),
+    # ── D83: cuantas botellas se hicieron ───────────────────────────────────
+    ("d83_hoy", "cuantas botellas se hicieron hoy?", None),
+    ("d83_semana", "cuanto envasamos esta semana?", None),
+    ("d83_lote", "cuantas salieron del lote L-0915?", None),
+    # D83 control: vender no es producir.
+    ("d83_control_ventas", "cuanto vendimos este mes?", None),
 ]
 
 
@@ -145,13 +221,18 @@ def grabar(solo_faltantes=False):
     categorias = list(E.CATEGORIAS_SEMILLA)
 
     def una(frase):
-        clave, texto, en_pantalla = frase
+        clave, texto, en_pantalla = frase[:3]
+        historial = (frase[3] if len(frase) > 3 else {}).get("historial")
         for espera in (0, 30, 120, 300):
             if espera:
                 time.sleep(espera)
-            ok, r = E.enrutar(texto, None, categorias, None, productos, en_pantalla)
+            ok, r = E.enrutar(texto, None, categorias, None, productos, en_pantalla,
+                              historial=historial)
             if ok:
-                return clave, {"texto": texto, "en_pantalla": en_pantalla, "salida": r}
+                grabacion = {"texto": texto, "en_pantalla": en_pantalla, "salida": r}
+                if historial:
+                    grabacion["historial"] = historial
+                return clave, grabacion
         raise RuntimeError("el modelo no contesto para %r: %s" % (clave, r))
 
     t0 = time.time()

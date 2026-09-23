@@ -310,6 +310,19 @@ test.describe('normalizar el lote', () => {
     expect(r.ok).toBe(false)
   })
 
+  test('Fase 8 D81: un lote se abre solo con su cabecera, y dice que va vacio', () => {
+    for (const cabecera of [{ dias_fermentacion: 8 }, { codigo_lote: 'L-0930' }, { horas_fermentacion: 36 }]) {
+      const r = normalizarLote(cabecera, contexto({ insumos: [], envasado: [] }))
+      expect(r.ok, JSON.stringify(cabecera)).toBe(true)
+      if (!r.ok) continue
+      expect(r.payload.entradas).toEqual([])
+      expect(r.avisos.join(' ')).toContain('Lo abro sin insumos, tandas ni envasado')
+    }
+    // CONTROL: con hijos no se dice que va vacio.
+    const conChile = normalizarLote({ dias_fermentacion: 8 }, contexto({ insumos: [{ insumo: CHILE, cantidad: 8 }] }))
+    expect(conChile.ok && conChile.avisos.join(' ')).not.toContain('Lo abro sin insumos')
+  })
+
   test('un lote que arranco y todavia no destila SI se registra', () => {
     // Es para lo que sirve `fecha_inicio`: el dia que se pone a fermentar.
     const r = normalizarLote({}, contexto({ insumos: [{ insumo: CHILE, cantidad: 8 }] }))

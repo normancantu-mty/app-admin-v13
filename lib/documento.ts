@@ -23,6 +23,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
+import { fechaParaPersona } from '@/lib/fechas'
 
 export interface LineaDocumento {
   id: string
@@ -45,7 +46,21 @@ export interface DocumentoDatos {
   folio: string
   vendedor: string
   comprador: string
+  /**
+   * D71 (Fase 8): como se llama el receptor. "Comprador:" en un ticket;
+   * "Para:" en una cotizacion, porque todavia no compro nada. Opcional para
+   * que quien no lo diga siga pintando "Comprador:".
+   */
+  etiquetaReceptor?: string
+  /** D71: que lista de precio aplica ("Precio de distribuidor" / "Precio al publico en general"). */
+  listaDePrecio?: string
   lineas: LineaDocumento[]
+  /**
+   * D72 (Fase 8): cuando hay descuento, los renglones suman el SUBTOTAL de
+   * lista y el total es menor. Sin esta linea el papel no cuadra: los
+   * renglones dicen una cifra y el total otra, sin explicar la diferencia.
+   */
+  descuento?: { subtotal: number; etiqueta: string; importe: number }
   etiquetaTotal: string
   total: number
   movimientos: MovimientoDocumento[]
@@ -252,19 +267,104 @@ export const PIE_COTIZACION = [
  * sea el EFECTIVO: una cotizacion caduca por el paso del tiempo, y la tabla
  * seguiria diciendo VIGENTE.
  */
+// ─── D71/D72 (Fase 8): EL ARMADO PURO DE LA COTIZACION ─────────────────────
+// Separado de la lectura para poder probarlo con datos de fixture
+// (`tests/documento-termico.spec.ts`), sin base.
+
+export interface FilaCotizacionDocumento {
+  folio: string | null
+  fecha: string | null
+  vigente_hasta: string | null
+  estado_efectivo: string | null
+  para_quien: string | null
+  total: number | string | null
+  notas: string | null
+}
+
+export const LISTA_DISTRIBUIDOR = 'Precio de distribuidor'
+export const LISTA_PUBLICO = 'Precio al publico en general'
+
+/** D71: la lista que aplica. Solo un comprador DST paga precio de distribuidor. */
+export function listaDePrecioPara(rolComprador: string | null | undefined): string {
+  return rolComprador === 'DST' ? LISTA_DISTRIBUIDOR : LISTA_PUBLICO
+}
+
+/**
+ * El nombre de la promocion, leido de `notas`. `notaDeDescuento`
+ * (`lib/bot-descuento.ts`) la escribe como `"<etiqueta> <N>%: de $X a $Y."`.
+ * Si no empata, "Descuento" a secas: el importe sale de los numeros, no de
+ * este texto, asi que un motivo ilegible nunca cambia una cifra.
+ */
+export function etiquetaDeDescuento(notas: string | null | undefined): string {
+  const m = /^\s*(.+?)\s+(\d+(?:\.\d+)?)%:\s+de\s+\$/.exec(String(notas ?? ''))
+  if (!m) return 'Descuento'
+  return `${m[1].trim()} (${m[2]}%)`
+}
+
+const centavos = (n: number) => Math.round(n * 100)
+
+export function datosDeCotizacion(
+  cot: FilaCotizacionDocumento,
+  vendedor: string,
+  lineas: LineaDocumento[],
+  rolComprador: string | null | undefined
+): DocumentoDatos {
+  // El estado efectivo va en el subtitulo cuando ya no sirve. Una cotizacion
+  // vencida que se imprime igual que una viva es una promesa que se cobra dos
+  // meses despues al precio del mes pasado.
+  const vigencia =
+    cot.estado_efectivo === 'CONVERTIDA'
+      ? 'Cotizacion ya convertida en venta'
+      : cot.estado_efectivo === 'VENCIDA'
+        ? `Cotizacion VENCIDA el ${fechaParaPersona(cot.vigente_hasta)}`
+        : `Cotizacion vigente hasta el ${fechaParaPersona(cot.vigente_hasta)}`
+
+  const total = Number(cot.total ?? 0)
+  // Los renglones se suman en centavos: la diferencia contra el total es la
+  // que decide si hay linea de descuento, y un 0.0000001 de flotante no puede
+  // inventar un descuento de cero pesos.
+  const subtotalCentavos = lineas.reduce((acc, l) => acc + centavos(l.precioUnitario * l.cantidad), 0)
+  const importeCentavos = subtotalCentavos - centavos(total)
+  const descuento =
+    importeCentavos > 0
+      ? {
+          subtotal: subtotalCentavos / 100,
+          etiqueta: etiquetaDeDescuento(cot.notas),
+          importe: importeCentavos / 100
+        }
+      : undefined
+
+  return {
+    subtitulo: vigencia,
+    fecha: cot.fecha ?? '',
+    folio: cot.folio ?? '',
+    vendedor: vendedor || 'Desconocido',
+    comprador: cot.para_quien || 'Sin nombre',
+    etiquetaReceptor: 'Para:',
+    listaDePrecio: listaDePrecioPara(rolComprador),
+    lineas,
+    descuento,
+    etiquetaTotal: 'Total cotizado:',
+    total,
+    movimientos: [],
+    pie: PIE_COTIZACION
+  }
+}
+
 export async function armarDocumentoDeCotizacion(
   client: Cliente,
   idCotizacion: string
 ): Promise<DocumentoDatos | null> {
   const { data: cot, error } = await client
     .from('v_cotizaciones')
-    .select('*, vendedor:entidades!id_vendedor(nombre)')
+    .select('*, vendedor:entidades!id_vendedor(nombre), receptor:entidades!id_comprador(rol)')
     .eq('id', idCotizacion)
     .maybeSingle()
 
   if (error || !cot) return null
 
   const vendedor = (cot.vendedor ?? null) as { nombre: string } | null
+  const receptor = (cot.receptor ?? null) as { rol: string } | null
 
   const { data: detalles } = await client
     .from('cotizacion_detalles')
@@ -281,26 +381,5 @@ export async function armarDocumentoDeCotizacion(
     }
   })
 
-  // El estado efectivo va en el subtitulo cuando ya no sirve. Una cotizacion
-  // vencida que se imprime igual que una viva es una promesa que se cobra dos
-  // meses despues al precio del mes pasado.
-  const vigencia =
-    cot.estado_efectivo === 'CONVERTIDA'
-      ? 'Cotizacion ya convertida en venta'
-      : cot.estado_efectivo === 'VENCIDA'
-        ? `Cotizacion VENCIDA el ${cot.vigente_hasta ?? ''}`
-        : `Cotizacion vigente hasta el ${cot.vigente_hasta ?? ''}`
-
-  return {
-    subtitulo: vigencia,
-    fecha: cot.fecha ?? '',
-    folio: cot.folio ?? '',
-    vendedor: vendedor?.nombre || 'Desconocido',
-    comprador: cot.para_quien || 'Sin nombre',
-    lineas,
-    etiquetaTotal: 'Total cotizado:',
-    total: Number(cot.total ?? 0),
-    movimientos: [],
-    pie: PIE_COTIZACION
-  }
+  return datosDeCotizacion(cot, vendedor?.nombre ?? '', lineas, receptor?.rol)
 }

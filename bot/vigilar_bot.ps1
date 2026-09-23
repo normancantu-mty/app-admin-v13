@@ -52,16 +52,31 @@ foreach ($n in 'BOT_GASTOS_TELEGRAM_TOKEN', 'BOT_API_TOKEN') {
   Set-Item -Path "env:$n" -Value $v
 }
 
+# --- D86 (Fase 8): CONTRA QUE ERP. `ERP_API_URL` del entorno de usuario (la
+#     misma variable que lee `bot_gastos.py`); sin ella, localhost:3000 como
+#     siempre. Si la URL NO es local (Vercel), no hay `npm run dev` que levantar:
+#     solo se comprueba que conteste.
+$api = [Environment]::GetEnvironmentVariable('ERP_API_URL', 'User')
+if (-not $api) { $api = 'http://localhost:3000' }
+$api = $api.TrimEnd('/')
+$esLocal = @('localhost', '127.0.0.1') -contains ([uri]$api).Host
+$env:ERP_API_URL = $api
+
 # --- 2. El servidor de Next. El bot sin el CONTESTA PERO NO GUARDA, que es
 #        peor que no contestar: el usuario cree que quedo registrado.
 $servidorVivo = $false
 try {
-  $null = Invoke-WebRequest -UseBasicParsing 'http://localhost:3000/' -TimeoutSec 8
+  $null = Invoke-WebRequest -UseBasicParsing "$api/" -TimeoutSec 8
   $servidorVivo = $true
 } catch { }
 
+if (-not $servidorVivo -and -not $esLocal) {
+  Apuntar "El ERP en $api no responde y no es local: no lo puedo levantar. No arranco el bot a ciegas."
+  exit 1
+}
+
 if (-not $servidorVivo) {
-  Apuntar 'El servidor 3000 no responde. Lo levanto.'
+  Apuntar "El servidor $api no responde. Lo levanto."
   Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'npm run dev' `
     -WorkingDirectory $raiz -WindowStyle Hidden
   # Next tarda en compilar la primera vez. Se espera hasta 90s antes de
@@ -70,11 +85,11 @@ if (-not $servidorVivo) {
   for ($i = 0; $i -lt 18; $i++) {
     Start-Sleep -Seconds 5
     try {
-      $null = Invoke-WebRequest -UseBasicParsing 'http://localhost:3000/' -TimeoutSec 5
+      $null = Invoke-WebRequest -UseBasicParsing "$api/" -TimeoutSec 5
       $servidorVivo = $true; break
     } catch { }
   }
-  if ($servidorVivo) { Apuntar 'Servidor 3000 arriba.' }
+  if ($servidorVivo) { Apuntar "Servidor $api arriba." }
   else { Apuntar 'El servidor NO levanto en 90s. No arranco el bot a ciegas.'; exit 1 }
 }
 
@@ -135,6 +150,17 @@ if ($accion -eq 'esperar') {
 Remove-Item $archivoEspera -ErrorAction SilentlyContinue
 
 if ($accion -eq 'nada') { exit 0 }   # El silencio del vigilante es correcto.
+
+# D86 (Fase 8): ANTES de matar nada, que el codigo nuevo compile. Si no, el
+# reinicio mataria un bot que funciona para arrancar uno que muere en el
+# import. Se deja vivo el viejo y se dice aqui, en cada vuelta, hasta que se
+# arregle. El juicio es `compila_bot.py` (lo prueba `probar_compila.py`).
+$compila = @(& python (Join-Path $PSScriptRoot 'compila_bot.py'))
+if ($LASTEXITCODE -ne 0) {
+  Apuntar ("NO REINICIO: $razon -- pero el codigo nuevo no compila: " + ($compila -join ' ') +
+           ". Dejo el bot como esta.")
+  exit 1
+}
 
 Apuntar "REINICIO el bot: $razon"
 if ($proc) {

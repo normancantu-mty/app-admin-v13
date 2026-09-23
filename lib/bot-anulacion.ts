@@ -39,6 +39,7 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
+import { fechaParaPersona } from '@/lib/fechas'
 import { desactivarTextoFiscal, TOPE_DESCRIPCION, type PayloadGasto } from '@/lib/bot-gastos'
 import { VENTANA_EDICION_HORAS, VENTANA_EDICION_MS } from '@/lib/constants'
 
@@ -183,7 +184,8 @@ function dia(fecha: string | null): string {
   if (!fecha) return 'sin fecha'
   const d = new Date(fecha)
   if (Number.isNaN(d.getTime())) return 'sin fecha'
-  return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })
+  // D70 (Fase 8): DD/MM/AAAA en hora de Mexico, el formato unico.
+  return fechaParaPersona(fecha)
 }
 
 function pesos(n: number): string {
@@ -458,7 +460,7 @@ export function mensajeDeRecaptura(
       `${pesos(nueva.monto)} — ${nueva.tipo_movimiento}` +
       (nueva.categoria ? ` (${nueva.categoria})` : '') +
       (nueva.descripcion ? `: ${recortar(nueva.descripcion, 60)}` : '') +
-      ` — ${String(nueva.fecha_movimiento ?? '').slice(0, 10)}`
+      ` — ${fechaParaPersona(String(nueva.fecha_movimiento ?? '').slice(0, 10) || null)}`
   ]
   const aviso = avisoDeCascada(alcance)
   if (aviso) {

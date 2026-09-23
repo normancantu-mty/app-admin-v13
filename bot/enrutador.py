@@ -62,9 +62,18 @@ INTENCIONES = (
     # a la vista**, en vez de contestar sobre otra cosa.
     "confirmar",
     "cancelar",
+    # --- Fase 8 (D74), 2026-09-22. Cambiar UN dato de la propuesta que esta en
+    # pantalla sin volver a dictarla: "fue venta a concesion". Hasta hoy eso se
+    # leia como una venta nueva a medias y REEMPLAZABA a la propuesta, y Norman
+    # tuvo que re-pegar todo (log 2026-09-22 09:33-09:39).
+    "ajustar",
     "reporte",
     "charla",
 )
+
+# D78 (Fase 8): cuantos hechos que escriben se aceptan de un solo mensaje. Mas
+# que esto no es un mensaje, es una captura masiva, y se le dice.
+MAX_HECHOS = 5
 
 # ---------------------------------------------------------------------------
 # LAS CONSULTAS QUE DE VERDAD EXISTEN
@@ -80,7 +89,10 @@ INTENCIONES = (
 # consultar y QUE SI puede. Si algun dia el servidor aprende una consulta nueva,
 # se agrega en los dos lados — `lib/bot-consultas.ts` manda, y lo que no empate
 # se rechaza con 422, que es un fallo ruidoso.
-CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas")
+# Fase 8 (D83): `produccion` -- cuantas botellas se envasaron (hoy, ayer,
+# semana, mes o un lote). `tests/bot-enrutador.spec.ts` compara esta tupla
+# contra `CONSULTAS` de `lib/bot-consultas.ts`.
+CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas", "produccion")
 CONSULTAS = CONSULTAS_QUE_CONTESTA + ("otra",)
 
 # ---------------------------------------------------------------------------
@@ -150,15 +162,15 @@ confirmaciones y los botones los sigue escribiendo Python, palabra por palabra.
 Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:
 
 {
-  "intencion": una de: <<INTENCIONES>>,
+  "intencion": una de: <<INTENCIONES>>. Si el mensaje trae hechos (ver "hechos"), la del PRIMERO,
   "consulta": si intencion es consulta, una de: <<CONSULTAS>>. Si no, null,
-  "filtro": SOLO para consulta stock: el nombre propio que menciono (un producto O un punto de venta), tal cual lo dijo. Si no menciona ninguno, o la consulta no es stock, null,
+  "filtro": SOLO para consulta stock, cartera o produccion. En stock y cartera, el nombre propio que menciono, tal cual lo dijo (en stock, un producto O un punto de venta; en cartera, quien debe). En produccion, el periodo -- "hoy", "ayer", "semana" o "mes" -- o el codigo del lote tal cual lo dijo. Si no menciona ninguno, o es otra consulta, null,
   "entendido": frase MUY corta de lo que si entendiste. **ES TELEMETRIA: va al log, NUNCA a la pantalla.** Nunca vacia,
   "respuesta": QUE DECIRLE A NORMAN, en segunda persona, tuteandolo, UNA LINEA. Nunca hables de el en tercera persona. Nunca vacia,
-  "campos": objeto con lo que lograste sacar del mensaje. Solo lo que DE VERDAD dijo,
+  "campos": objeto con lo que lograste sacar del mensaje. Solo lo que DE VERDAD dijo. Si hay hechos, los del primero,
   "faltantes": lista de los campos obligatorios que NO dijo,
   "pregunta": UNA sola pregunta corta para el faltante mas importante, o null si no falta nada,
-  "otro_hecho": si el mensaje trae UN SEGUNDO hecho economico que NO cabe en la intencion que elegiste, {"tipo": <<TIPOS_DE_HECHO>>, "monto": el numero si lo dijo o null, "descripcion": DE QUE es, en tres palabras}. Si el mensaje trae un solo hecho, null,
+  "hechos": la LISTA de los hechos que ESCRIBEN (<<TIPOS_DE_HECHO>>) que trae el mensaje, en el orden en que los dijo, maximo <<MAX_HECHOS>>. Cada uno es {"intencion", "campos", "faltantes", "pregunta", "confianza"}, con el mismo significado que arriba pero SOLO de ese hecho. Un mensaje con un solo hecho es una lista de UNO. Si la intencion no es de esas, [],
   "confianza": <<NIVELES>>
 }
 
@@ -171,7 +183,9 @@ QUE ES CADA INTENCION
   Campos: productos (lista de {producto, cantidad, id_producto}), comprador, monto, condicion_pago (CONTADO o CONCESION), fecha,
   descuento.
 - lote: se produjo. Fermentacion, kilos de chile, litros, grados, envasado.
-  Campos: codigo_lote, kg_chile, dias_fermentacion, horas_fermentacion, tandas (lista de {litros, grado}), botellas.
+  Campos: codigo_lote, kg_chile, dias_fermentacion, horas_fermentacion, tandas (lista de {litros, grado}), botellas, formato.
+  **formato** es el tamano de la botella tal cual lo dijo ("750", "250", "50"). Si no lo dijo, no lo pongas: el servidor pregunta.
+  **Envasar tambien es lote**: "hoy envasamos 24 de 750", "del lote L-0915 salieron 40 de 250". Si no dice el codigo, el servidor lo busca.
 - cotizacion: quiere un precio para un cliente ANTES de vender. "cotizale a", "cuanto le sale".
   Campos: productos (lista de {producto, cantidad, id_producto}), cliente, vigencia_dias,
   monto_objetivo, descuento.
@@ -192,6 +206,7 @@ QUE ES CADA INTENCION
   Si no hubo descuento, no pongas el campo.
 - consulta: pregunta por algo que ya esta en el sistema. No escribe nada.
   Campos: ninguno. Lo que menciona va en "filtro", no en "campos".
+  "cuantas botellas se hicieron hoy", "cuanto envasamos esta semana", "que salio del lote L-0915" es consulta "produccion".
 - anular: quiere DESHACER algo que ya se escribio. "cancela", "borra", "quitale",
   "ese gasto estuvo mal", "anula la venta de ayer".
   Campos: ninguno. NO intentes decir CUAL: el bot le ensena la lista y el escoge
@@ -214,6 +229,9 @@ QUE ES CADA INTENCION
   que estaba dictando. "olvidalo", "mejor no", "no nada", "ya no".
   Campos: ninguno. **No es lo mismo que "anular":** cancelar tira algo que
   todavia NO se ha escrito; anular deshace algo que YA se escribio.
+- ajustar: CAMBIA un dato de la propuesta que esta EN PANTALLA, todavia sin
+  escribir. "fue venta a concesion", "eran 3, no 2", "el monto es 450".
+  **Solo existe si hay una propuesta en pantalla.** Ver la regla 22.
 - reporte: quiere el resumen del dia o del periodo.
 - charla: saludo, agradecimiento, o algo que no cae en ninguna de las anteriores.
 
@@ -240,9 +258,11 @@ REGLAS QUE NO SE ROMPEN
    "faltantes" ni preguntes por ella. Preguntar algo que se puede suponer bien
    es justo lo que hace que un bot se sienta cuadrado.
 11. Solo va en "faltantes" lo que SIN ESO no se puede guardar: un gasto sin
-   monto, un abono sin deudor o sin monto, una venta sin producto o sin monto,
-   un lote sin kilos de chile. Todo lo demas se guarda vacio y se corrige
-   despues.
+   monto, un abono sin deudor o sin monto, una venta sin producto o sin monto.
+   **Un lote no tiene nada obligatorio** (Fase 8): se abre con lo que diga
+   (codigo, dias u horas de fermentacion, chile, tandas, botellas) y lo que no
+   se sabe al abrirlo se agrega despues con su codigo. Envasar tampoco pide
+   nada mas. Todo lo demas se guarda vacio y se corrige despues.
 12. "anular", "corregir" y "convertir" NUNCA llevan faltantes ni pregunta. El
    bot ensena una lista con botones y la persona escoge; preguntarle "cual?"
    antes de ensenarle la lista es pedirle que recuerde un identificador, que es
@@ -265,9 +285,9 @@ REGLAS QUE NO SE ROMPEN
    **Que sea "confirmar" no quiere decir que sea "alta"**: eso lo decide la
    regla 20.
 
-16. **NUNCA PROMETAS NADA QUE VAYAS A HACER DESPUES.** No tienes cola, no
-   tienes memoria de pendientes y no hay una sola linea de codigo que encole un
-   movimiento para escribirlo mas tarde. El 2026-09-19, preguntado "?tienes
+16. **NUNCA PROMETAS NADA QUE VAYAS A HACER DESPUES.** Tu no escribes nada, y
+   no hay una sola linea de codigo que escriba un movimiento mas tarde sin que
+   Norman le de VA a su propuesta. Lo que va a pasar lo dice el bot, no tu. El 2026-09-19, preguntado "?tienes
    pensado aplicar el envio como un gasto?", contestaste *"Si, el envio se
    captura como gasto en Logistica_Envios, y no importa en que orden lo hagas"*
    **y ese gasto no se escribio nunca.** Norman solo lo supo porque volvio a
@@ -280,14 +300,20 @@ REGLAS QUE NO SE ROMPEN
    **Un bot que dice "no puedo" es util. Un bot que dice "si" y no lo hace
    obliga a auditar cada respuesta.**
 
-17. **SI EL MENSAJE TRAE DOS HECHOS ECONOMICOS, EL SEGUNDO NO SE TIRA.** Es el
-   otro lado de la regla 16, y es el mismo incidente: *"Se acaba de vender una
-   botella grande de 599 pesos, lo enviamos a domicilio y nosotros absorbimos el
-   costo del envio y de envio fueron 45 pesos"* son **una venta de $599 y un
-   gasto de $45**. Escoge como "intencion" el hecho principal --el que trae mas
-   datos-- y pon el otro en "otro_hecho". El bot le dira a Norman que lo oyo y
-   que NO lo escribio. **Nunca pongas en "otro_hecho" el mismo hecho de la
-   intencion**: si el mensaje trae un solo hecho, es null.
+17. **SI EL MENSAJE TRAE VARIOS HECHOS QUE ESCRIBEN, VAN TODOS EN "hechos".**
+   Es el otro lado de la regla 16, y es el mismo incidente: *"Se acaba de vender
+   una botella grande de 599 pesos, lo enviamos a domicilio y nosotros
+   absorbimos el costo del envio y de envio fueron 45 pesos"* son **dos hechos:
+   una venta de $599 y un gasto de $45** -> "hechos" trae los dos, cada uno con
+   sus propios campos y faltantes. El bot propone cada uno aparte, con su boton
+   VA: nada se escribe sin que Norman lo vea. El 2026-09-19 el segundo solo se
+   anuncio, no se escribio, y al volver a dictarlo salio una venta DUPLICADA.
+   **Nunca pongas el mismo hecho dos veces** (el eco): la venta de $599 dicha
+   con otras palabras dentro de la misma frase es UNA venta. **Y no inventes un
+   segundo**: si el mensaje trae un solo hecho, la lista es de uno. Dos ventas
+   son dos solo si son dos cosas distintas ("una a Juan y otra a Pedro").
+   Consulta, charla, reporte, confirmar, cancelar, ajustar, anular, corregir,
+   alta y convertir NO van en la lista: esas son una sola respuesta.
 
 18. **EL DESCUENTO LO DICTAS, NO LO CALCULAS.** Norman lo pidio: *"en ocasiones
    vamos a poner promociones, mi pregunta es si las podemos meter por medio de
@@ -331,6 +357,27 @@ REGLAS QUE NO SE ROMPEN
    "ok pues" leido como si fuera un VA cuesta una fila de dinero que nadie
    decidio.
 
+21. **LO QUE SE DIJO ANTES ES PASADO.** Si abajo viene LO QUE SE DIJO ANTES, ya
+   se atendio. Sirve SOLO para saber DE QUIEN o DE QUE se habla cuando el
+   mensaje no lo dice: *"cuanto me debe aeropuerto"* y luego *"y la deuda?"* ->
+   consulta cartera con filtro "Aeropuerto". **Montos, cantidades y productos
+   salen SOLO del mensaje actual, del borrador a medias o de lo que esta en
+   pantalla, NUNCA de lo que se dijo antes**: si antes se hablo de una botella
+   de $599 y ahora dice *"vendi una chica"*, la venta nueva NO lleva $599. Si el
+   mensaje actual contradice lo de antes, manda el mensaje actual.
+
+22. **UNA CORRECCION A LO QUE ESTA EN PANTALLA SE SUMA, NO EMPIEZA DE CERO.** Si
+   en pantalla hay una propuesta esperando su VA y el mensaje CAMBIA un dato de
+   ella -- *"fue venta a concesion"*, *"eran 3, no 2"*, *"a nombre de
+   Delirio"*, *"el monto es 450"* -- la intencion es "ajustar". En "campos" van
+   SOLO los datos que cambian, con los nombres de campo de esa intencion
+   (venta: condicion_pago, comprador, productos, monto, descuento; gasto:
+   monto, descripcion, categoria; abono: deudor, monto; cotizacion: cliente,
+   productos, vigencia_dias, descuento), mas "sobre": el tipo de la propuesta
+   que cambias (uno de los de "hechos"). El bot conserva todo lo demas y la
+   vuelve a ensenar con su boton. **Un hecho NUEVO no es "ajustar"** (otra
+   venta, otro gasto): es su intencion de siempre.
+
 CAMPOS QUE YA SE SABEN
 Si abajo viene un borrador a medias, el mensaje nuevo lo COMPLETA: junta los dos
 y saca "faltantes" del resultado, no del mensaje suelto.
@@ -360,7 +407,28 @@ def _linea_de_producto(p):
     return "  " + str(p.get("id")) + " = " + str(p.get("nombre")) + tamano
 
 
-def _pedazo_contexto(borrador, catalogo, deudores, productos=None, en_pantalla=None):
+def _pedazo_historial(historial):
+    """D73 (Fase 8): los turnos anteriores de ESTE chat, marcados como pasado.
+
+    `historial` es una lista de `(hace_min, dijo, contesto)`, del mas viejo al
+    mas nuevo, ya recortada por el bot (15 turnos, 30 minutos). Va ANTES de lo
+    que esta en pantalla y del mensaje, y con la regla 21 del PROMPT encima: de
+    aqui solo se saca DE QUIEN se habla, nunca un monto.
+    """
+    if not historial:
+        return []
+    partes = ["LO QUE SE DIJO ANTES EN ESTE CHAT (PASADO: ya se atendio; solo sirve "
+              "para saber de quien o de que se habla; montos y cantidades NO salen de aqui):"]
+    for hace, dijo, contesto in historial:
+        cuando = "hace %d min" % int(hace) if hace >= 1 else "hace un momento"
+        partes.append("  [%s] Norman: %s" % (cuando, " ".join(str(dijo or "").split())[:300]))
+        if contesto:
+            partes.append("  [%s] Bot: %s" % (cuando, " ".join(str(contesto).split())[:300]))
+    return partes
+
+
+def _pedazo_contexto(borrador, catalogo, deudores, productos=None, en_pantalla=None,
+                     historial=None):
     """Lo que el modelo necesita saber del mundo, y nada mas.
 
     **Lo que faltaba y costo la conversacion del 2026-09-19 (D35):** el catalogo
@@ -374,10 +442,14 @@ def _pedazo_contexto(borrador, catalogo, deudores, productos=None, en_pantalla=N
     interpretarlo, y sale `charla`. Con el ultimo turno basta -- no hace falta
     historial largo, y ahi esta lo barato.
     """
-    partes = []
+    partes = _pedazo_historial(historial)
     if en_pantalla:
+        # D74 (Fase 8): trae el CONTENIDO (lo que Norman ve), no solo el tipo,
+        # y puede ser mas de una propuesta: una por renglon.
         partes.append("EN PANTALLA AHORA MISMO (es de esto de lo que se esta hablando):")
-        partes.append("  " + str(en_pantalla))
+        for renglon in str(en_pantalla).splitlines():
+            if renglon.strip():
+                partes.append("  " + renglon.strip())
     if borrador:
         partes.append("BORRADOR A MEDIAS (completalo con el mensaje nuevo):")
         partes.append(json.dumps(borrador, ensure_ascii=False))
@@ -414,7 +486,8 @@ def _armar_prompt(plantilla):
     piezas = (
         ("<<INTENCIONES>>", " | ".join(INTENCIONES)),
         ("<<CONSULTAS>>", " | ".join(CONSULTAS)),
-        ("<<TIPOS_DE_HECHO>>", "|".join(TIPOS_DE_HECHO)),
+        ("<<TIPOS_DE_HECHO>>", _enumera(TIPOS_DE_HECHO)),
+        ("<<MAX_HECHOS>>", str(MAX_HECHOS)),
         ("<<NIVELES>>", " | ".join('"%s"' % n for n in NIVELES_DE_CONFIANZA)),
         ("<<FORMAS_DEL_MISMO>>", _enumera('**"%s"**' % f for f in FORMAS_DEL_MISMO)),
         ("<<AFIRMACIONES>>", _enumera('"%s"' % a for a in AFIRMACIONES_EXPLICITAS)),
@@ -432,47 +505,157 @@ def _armar_prompt(plantilla):
 PROMPT = _armar_prompt(PROMPT)
 
 
-def _normaliza_otro_hecho(crudo, intencion):
-    """El SEGUNDO hecho economico del mensaje, o `None`. **D49.**
+# ─── D78 (Fase 8): LA LISTA DE HECHOS ───────────────────────────────────────
+#
+# Hasta la Fase 7 el contrato era UNA intencion + un `otro_hecho` que solo se
+# ANUNCIABA ("lo oi y no lo escribi", D49). El 2026-09-19 eso termino en el envio
+# de $45 sin escribir y, al re-pegarlo, en una venta duplicada. Ahora el modelo
+# devuelve `hechos`: cada hecho que escribe con sus campos, y el bot propone cada
+# uno por su ruta, con su borrador y su boton VA (D79). **Sigue sin haber un solo
+# renglon que se escriba sin que Norman lo vea**: la frontera del sello no cambia.
 
-    ─── QUE PROBLEMA CIERRA ────────────────────────────────────────────────
-    *"Se acaba de vender una botella grande de 599 pesos... y de envio fueron 45
-    pesos"* son dos hechos: una venta y un gasto. Hasta el 2026-09-19 el segundo
-    **se perdia en silencio**, y ese silencio era el defecto -- Norman solo lo
-    descubrio porque pregunto. Verificado contra `finanzas_ledger`: la fila de
-    $45 no existe.
 
-    ─── LO QUE NO HACE, Y ES DELIBERADO ────────────────────────────────────
-    **No encola nada.** Devuelve un dato para que el bot lo DIGA. Escribir dos
-    movimientos de un solo "va" iria contra el diseno entero de sellos: entre lo
-    que Norman lee y lo que se escribe no puede haber un renglon que el no vio.
+def _normaliza_confianza(valor):
+    """D44: el default es el RESTRICTIVO. Un modelo que no se compromete no
+    autoriza una escritura."""
+    confianza = str(valor or "baja").strip().lower()
+    return confianza if confianza in NIVELES_DE_CONFIANZA else "baja"
 
-    ─── POR QUE SE RECHAZA `tipo == intencion` ─────────────────────────────
-    Porque no hay forma de distinguir un segundo hecho de verdad ("vendi una a
-    Juan y otra a Pedro") del ECO del primero, y el eco es el error caro: el bot
-    escribiria la venta y acto seguido diria *"tambien oi una venta de $599 que
-    no escribi"* sobre la que acaba de escribir. Eso es una mentira nueva en la
-    direccion contraria, y arreglar una mentira con otra no es un arreglo.
-    """
+
+def _normaliza_faltantes_y_pregunta(faltantes, pregunta):
+    """Una pregunta sin faltantes no tiene a quien contestarle, y unos faltantes
+    sin pregunta dejan a Norman esperando. Se arregla aqui y no en el prompt,
+    porque un prompt se puede desobedecer y esto no."""
+    if not isinstance(faltantes, list):
+        faltantes = []
+    faltantes = [str(f) for f in faltantes if f]
+    pregunta = str(pregunta).strip() if pregunta else None
+    if faltantes and not pregunta:
+        pregunta = "Me falta " + faltantes[0] + ". Me lo dices?"
+    if pregunta and not faltantes:
+        faltantes = ["dato"]
+    return faltantes, pregunta
+
+
+def _normaliza_campos(campos):
+    """Los campos de un hecho. D55: el descuento se criba aqui para que lo que
+    viaje al endpoint tenga forma conocida; si no pasa la criba **se borra el
+    campo**, no se deja a medias."""
+    campos = dict(campos) if isinstance(campos, dict) else {}
+    descuento = _normaliza_descuento(campos.get("descuento"))
+    if descuento:
+        campos["descuento"] = descuento
+    else:
+        campos.pop("descuento", None)
+    return campos
+
+
+def _normaliza_hecho(crudo):
+    """Un hecho de la lista, o `None` si no es un hecho que escribe."""
     if not isinstance(crudo, dict):
         return None
-    tipo = str(crudo.get("tipo") or "").strip().lower()
-    if tipo not in TIPOS_DE_HECHO or tipo == intencion:
+    intencion = str(crudo.get("intencion") or "").strip().lower()
+    if intencion not in TIPOS_DE_HECHO:
         return None
-    descripcion = " ".join(str(crudo.get("descripcion") or "").split())[:80]
-    if not descripcion:
-        # Sin descripcion no hay nada que decirle a Norman que el pueda
-        # reconocer, y "oi algo mas" es peor que callarse.
-        return None
-    monto = crudo.get("monto")
-    try:
-        monto = float(monto)
-    except (TypeError, ValueError):
-        monto = None
-    if monto is not None and not (monto > 0):
-        monto = None
-    return {"tipo": tipo, "monto": monto, "descripcion": descripcion}
+    faltantes, pregunta = _normaliza_faltantes_y_pregunta(
+        crudo.get("faltantes"), crudo.get("pregunta"))
+    return {
+        "intencion": intencion,
+        "campos": _normaliza_campos(crudo.get("campos")),
+        "faltantes": faltantes,
+        "pregunta": pregunta,
+        "confianza": _normaliza_confianza(crudo.get("confianza")),
+    }
 
+
+def _vacio(valor):
+    return valor is None or valor == "" or valor == [] or valor == {}
+
+
+def _canonico(valor):
+    """Una forma comparable: sin mayusculas, numeros como float, llaves en orden."""
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    if isinstance(valor, str):
+        limpio = " ".join(valor.lower().split())
+        try:
+            return float(limpio.replace("$", "").replace(",", ""))
+        except ValueError:
+            return limpio
+    if isinstance(valor, dict):
+        return tuple(sorted((k, _canonico(v)) for k, v in valor.items() if not _vacio(v)))
+    if isinstance(valor, (list, tuple)):
+        return tuple(_canonico(v) for v in valor)
+    return str(valor)
+
+
+def es_eco(a, b):
+    """True si `b` es el MISMO hecho que `a` dicho otra vez. **Pura.**
+
+    Mismo tipo y ningun campo que los dos traigan con valores distintos. Un
+    campo que solo trae uno no los separa: "vendi una de 750... la de 599" trae
+    el monto en una mitad y no en la otra, y sigue siendo UNA venta.
+
+    **El costo es asimetrico, y por eso empata de mas:** dos ventas identicas de
+    verdad ("vendi una de 750 y otra de 750" sin nada que las distinga) salen
+    como una, y Norman la ve con cantidad 1 antes del VA y la corrige. Una venta
+    de mas es exactamente el duplicado del 2026-09-19, y ese se escribe con un VA.
+    """
+    if a.get("intencion") != b.get("intencion"):
+        return False
+    ca, cb = a.get("campos") or {}, b.get("campos") or {}
+    for llave in set(ca) | set(cb):
+        va, vb = ca.get(llave), cb.get(llave)
+        if _vacio(va) or _vacio(vb):
+            continue
+        if _canonico(va) != _canonico(vb):
+            return False
+    return True
+
+
+def _funde(a, b):
+    """Los dos ecos en uno: lo que trae `a`, completado con lo que solo trae `b`."""
+    campos = dict(a.get("campos") or {})
+    for llave, valor in (b.get("campos") or {}).items():
+        if _vacio(campos.get(llave)) and not _vacio(valor):
+            campos[llave] = valor
+    fundido = dict(a)
+    fundido["campos"] = campos
+    # Lo que falta es lo que ninguno de los dos trae.
+    fundido["faltantes"] = [f for f in (a.get("faltantes") or []) if _vacio(campos.get(f))]
+    if not fundido["faltantes"]:
+        fundido["pregunta"] = None
+    return fundido
+
+
+def normaliza_hechos(crudos):
+    """La lista de hechos, criba y sin ecos. Devuelve `(hechos, de_mas)`.
+
+    `de_mas` es cuantos hechos validos quedaron fuera por `MAX_HECHOS`: el bot
+    lo DICE, no los tira callado (la leccion de D49).
+    """
+    if not isinstance(crudos, list):
+        return [], 0
+    hechos = []
+    for crudo in crudos:
+        hecho = _normaliza_hecho(crudo)
+        if hecho is None:
+            continue
+        for i, previo in enumerate(hechos):
+            if es_eco(previo, hecho):
+                hechos[i] = _funde(previo, hecho)
+                break
+        else:
+            hechos.append(hecho)
+    return hechos[:MAX_HECHOS], max(0, len(hechos) - MAX_HECHOS)
+
+
+# Las intenciones que hablan de lo que esta EN PANTALLA o eligen de una lista:
+# si el modelo pone una de estas arriba, la lista de hechos no aplica.
+INTENCIONES_DE_UNA_SOLA_RESPUESTA = ("confirmar", "cancelar", "ajustar", "anular",
+                                      "corregir", "alta", "convertir")
 
 # Lo mas alto que puede valer un `total_final` dictado. Es el mismo orden de
 # magnitud que `TOPE_VENTA` del lado de TypeScript; aqui solo sirve para tirar
@@ -549,57 +732,37 @@ def _normaliza(obj):
     if consulta not in CONSULTAS:
         consulta = None
 
-    # El filtro solo significa algo en `stock`, igual que en el servidor
-    # (`app/api/bot/consulta/route.ts` lo prueba contra el producto Y contra el
-    # punto de venta). La lista cerrada se aplica AQUI tambien y no solo alla:
-    # un filtro colgado de `cartera` viajaria hasta el endpoint para que lo
-    # ignore, y un dato que viaja para ser ignorado acaba usandose algun dia.
+    # El filtro significa algo en `stock` (producto O punto de venta, lo prueba
+    # el servidor) y, desde D76 (Fase 8), en `cartera` (el deudor). Hasta hoy
+    # aqui se tiraba el de cartera, y "cuanto me debe aeropuerto" contestaba la
+    # cartera entera (log 2026-09-21 07:58). En `ventas` sigue sin significar
+    # nada, y un dato que viaja para ser ignorado acaba usandose algun dia.
     filtro = obj.get("filtro")
     filtro = str(filtro).strip()[:60] if filtro else None
-    if consulta != "stock":
+    # D83 (Fase 8): en `produccion` el filtro es el periodo o el lote.
+    if consulta not in ("stock", "cartera", "produccion"):
         filtro = None
 
-    campos = obj.get("campos")
-    if not isinstance(campos, dict):
-        campos = {}
+    campos = _normaliza_campos(obj.get("campos"))
+    faltantes, pregunta = _normaliza_faltantes_y_pregunta(
+        obj.get("faltantes"), obj.get("pregunta"))
+    confianza = _normaliza_confianza(obj.get("confianza"))
 
-    # D55: el descuento se criba aqui para que lo que viaje al endpoint tenga
-    # forma conocida. Si no pasa la criba **se borra el campo**, no se deja a
-    # medias: un descuento con la mitad de los datos es peor que ninguno.
-    descuento = _normaliza_descuento(campos.get("descuento"))
-    if descuento:
-        campos["descuento"] = descuento
-    else:
-        campos.pop("descuento", None)
-
-    faltantes = obj.get("faltantes")
-    if not isinstance(faltantes, list):
-        faltantes = []
-    faltantes = [str(f) for f in faltantes if f]
-
-    pregunta = obj.get("pregunta")
-    pregunta = str(pregunta).strip() if pregunta else None
-
-    # D44 (Fase 6): **el default es el RESTRICTIVO.** Hasta hoy un modelo que no
-    # declaraba `confianza` -- o que la declaraba con basura -- quedaba en
-    # "media", que es justo el valor que la guarda de `bot_gastos.py` deja
-    # pasar. O sea: el unico caso en el que de verdad no sabemos que tan seguro
-    # estaba el modelo era el caso que autorizaba escribir dinero.
-    #
-    # **Un modelo que no se compromete no autoriza una escritura.** El costo de
-    # equivocarse hacia "baja" es una pregunta de mas; hacia "media", una fila
-    # de dinero que hay que anular.
-    confianza = str(obj.get("confianza") or "baja").strip().lower()
-    if confianza not in NIVELES_DE_CONFIANZA:
-        confianza = "baja"
-
-    # Una pregunta sin faltantes no tiene a quien contestarle, y unos faltantes
-    # sin pregunta dejan a Norman esperando. Se arregla aqui y no en el prompt,
-    # porque un prompt se puede desobedecer y esto no.
-    if faltantes and not pregunta:
-        pregunta = "Me falta " + faltantes[0] + ". Me lo dices?"
-    if pregunta and not faltantes:
-        faltantes = ["dato"]
+    # D78: la lista de hechos. Si arriba viene un hecho que escribe --o una
+    # consulta o charla con hechos debajo (regla 8: gana la que escribe)--, el
+    # PRIMERO de la lista manda sobre los campos de arriba. Si el modelo no
+    # mando la lista, el hecho de arriba es una lista de uno.
+    hechos, de_mas = normaliza_hechos(obj.get("hechos"))
+    if intencion in INTENCIONES_DE_UNA_SOLA_RESPUESTA:
+        hechos, de_mas = [], 0
+    elif hechos:
+        primero = hechos[0]
+        intencion = primero["intencion"]
+        campos, faltantes = primero["campos"], primero["faltantes"]
+        pregunta, confianza = primero["pregunta"], primero["confianza"]
+    elif intencion in TIPOS_DE_HECHO:
+        hechos = [{"intencion": intencion, "campos": campos, "faltantes": faltantes,
+                   "pregunta": pregunta, "confianza": confianza}]
 
     # D27: lo que el modelo REDACTA para Norman. Se recorta a una linea aqui y
     # no en el prompt, porque un prompt se puede desobedecer y esto no. Puede
@@ -619,27 +782,32 @@ def _normaliza(obj):
         "campos": campos,
         "faltantes": faltantes,
         "pregunta": pregunta,
-        # D49: el segundo hecho economico del mensaje, ya validado contra la
-        # lista cerrada. `None` cuando el mensaje trae uno solo.
-        "otro_hecho": _normaliza_otro_hecho(obj.get("otro_hecho"), intencion),
+        # D78: los hechos que escriben, en orden, sin ecos. [] si la intencion
+        # es de una sola respuesta (consulta, charla, confirmar...).
+        "hechos": hechos,
+        "hechos_de_mas": de_mas,
         "confianza": confianza,
     }
 
 
 def enrutar(texto, borrador=None, catalogo=None, deudores=None,
-            productos=None, en_pantalla=None):
+            productos=None, en_pantalla=None, historial=None):
     """Devuelve (ok, objeto_o_error). Nunca lanza por culpa del modelo.
 
     `borrador` es lo que ya se sabia de una captura a medias. Si viene, el
     mensaje nuevo lo COMPLETA en vez de empezar de cero: eso es lo que hace que
     una conversacion de tres mensajes termine en un solo movimiento y no en tres
     intentos fallidos.
+
+    `historial` (D73, Fase 8) son los turnos anteriores del chat, ya recortados
+    por el bot. Viajan marcados como pasado (regla 21).
     """
     if not str(texto or "").strip():
         return False, "mensaje vacio"
 
     entrada = (PROMPT
-               + _pedazo_contexto(borrador, catalogo, deudores, productos, en_pantalla)
+               + _pedazo_contexto(borrador, catalogo, deudores, productos, en_pantalla,
+                                  historial)
                + str(texto).strip())
 
     try:

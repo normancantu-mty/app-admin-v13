@@ -145,6 +145,7 @@ def hablar(texto, ruta_del_modelo, respuestas=None, preparar=None):
 
 
 def limpiar():
+    B._olvidar_chat(CHAT)
     B._memoria.pop(CHAT, None)
     B._esperando_monto.pop(CHAT, None)
     B._esperando_vigencia.pop(CHAT, None)

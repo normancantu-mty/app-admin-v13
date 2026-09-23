@@ -8,7 +8,7 @@
 
 import { NextResponse } from 'next/server'
 import type { Json } from '@/types/database'
-import { clienteDeServicio, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import { clienteDeServicio, conservaPendientes, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import { fetchTodasLasFilas, type ConsultaPaginable } from '@/lib/paginacion'
 import {
   buscarDuplicado,
@@ -113,12 +113,15 @@ export async function POST(request: Request) {
     // ── Un solo borrador PENDIENTE por persona ──────────────────────────────
     // Proponer algo nuevo cancela lo anterior. Con dos abiertos, un "va" es
     // ambiguo, y preguntarle a la persona cual de los dos convierte la interfaz
-    // en justo lo que Q-14 prohibe: identificadores que recordar.
-    await supabase
-      .from('bot_borradores')
-      .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
-      .eq('telegram_id', telegramId)
-      .eq('estado', 'PENDIENTE')
+    // en justo lo que Q-14 prohibe: identificadores que recordar.    // Fase 8 (D79): con `conservar_pendientes` la propuesta se SUMA a las que
+    // esperan su boton (varios hechos en un mensaje). Sin el, lo de siempre.
+    if (!conservaPendientes(cuerpo)) {
+      await supabase
+        .from('bot_borradores')
+        .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+        .eq('telegram_id', telegramId)
+        .eq('estado', 'PENDIENTE')
+    }
 
     const sello = sellarPayload(normalizada.payload)
 

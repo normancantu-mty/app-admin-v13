@@ -30,7 +30,7 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
-import { fechaLocal, sumarDias } from '@/lib/fechas'
+import { fechaLocal, fechaParaPersona, sumarDias } from '@/lib/fechas'
 import { buscarPorNombre, type ResultadoNombre } from '@/lib/bot-nombres'
 
 // ============================================================================
@@ -376,8 +376,24 @@ export function normalizarLote(
   // Un lote sin NADA no es un lote. Con insumos pero sin tandas si: es un lote
   // que arranco y todavia no destila, y registrarlo el dia que arranca es
   // justamente para lo que sirve `fecha_inicio`.
-  if (porInsumo.size === 0 && tandas.length === 0 && porFormato.size === 0) {
+  //
+  // Fase 8 (D81): "el lote se abre con todas sus variables opcionales". Sin
+  // hijos se abre IGUAL si se dicto algo de su cabecera (codigo, fecha de
+  // inicio, dias u horas de fermentacion); lo que entre despues se agrega con
+  // el codigo (`esAgregarALote`). Vacio del todo sigue sin ser un lote.
+  const sinHijos = porInsumo.size === 0 && tandas.length === 0 && porFormato.size === 0
+  const hayCabecera =
+    dias !== null ||
+    horas !== null ||
+    String(propuesta.fecha_inicio ?? '').trim() !== '' ||
+    dictado !== ''
+  if (sinHijos && !hayCabecera) {
     return { ok: false, error: 'No entendi que entro ni que salio del lote.' }
+  }
+  if (sinHijos) {
+    avisos.push(
+      'Lo abro sin insumos, tandas ni envasado. Me los dices despues con el codigo del lote.'
+    )
   }
 
   const notas = String(propuesta.notas ?? '').trim().slice(0, 500)
@@ -445,11 +461,11 @@ export function mensajeDeConfirmacionLote(
     'Esto es lo que voy a escribir. Revisalo:',
     '',
     `LOTE ${payload.codigo_lote}${codigoEsSugerido ? '   (codigo que te propongo)' : ''}`,
-    `Arranco: ${payload.fecha_inicio}`
+    `Arranco: ${fechaParaPersona(payload.fecha_inicio)}`
   ]
 
   if (payload.fecha_fin_fermentacion) {
-    lineas.push(`Fermento hasta: ${payload.fecha_fin_fermentacion}`)
+    lineas.push(`Fermento hasta: ${fechaParaPersona(payload.fecha_fin_fermentacion)}`)
   }
   if (payload.horas_fermentacion !== null) {
     lineas.push(`Horas de fermentacion: ${numeroCorto(payload.horas_fermentacion)}`)

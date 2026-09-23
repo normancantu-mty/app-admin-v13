@@ -15,9 +15,10 @@
  */
 
 import type { FilaCarteraVista, FilaStockPorCubeta, FilaVentasPorMes } from '@/lib/vistas'
+import { fechaHoraParaPersona } from '@/lib/fechas'
 
 /** Lo que el modelo puede pedir. Lista cerrada, igual que las categorias. */
-export const CONSULTAS = ['stock', 'cartera', 'ventas'] as const
+export const CONSULTAS = ['stock', 'cartera', 'ventas', 'produccion'] as const
 export type TipoConsulta = (typeof CONSULTAS)[number]
 
 export function esConsultaValida(x: unknown): x is TipoConsulta {
@@ -70,7 +71,7 @@ export function pieDeConsulta(vista: string, calculadoEn?: string | null): strin
   const cuando = calculadoEn ? new Date(calculadoEn) : null
   const sello =
     cuando && !Number.isNaN(cuando.getTime())
-      ? cuando.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
+      ? fechaHoraParaPersona(cuando)
       : 'al momento'
   return `\n\n(de ${vista}, calculado ${sello})`
 }
@@ -144,8 +145,45 @@ export function textoStock(
  * La consulta que mas vale hoy: quien debe, cuanto, y desde hace cuanto.
  * Ordenada por deuda, que es como se decide a quien llamar primero.
  */
-export function textoCartera(filas: readonly FilaCarteraVista[]): string {
+/** Sin acentos ni mayusculas, espacios colapsados: "Aeropuerto " == "aeropuerto". */
+function llaveDeNombre(s: string): string {
+  return String(s ?? '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Fase 8 (D76): la cartera DE UN deudor. **Pura.**
+ *
+ * Norman, 2026-09-21, 07:58: *"cuanto me debe aeropuerto"* y cuatro veces *"y
+ * la deuda?"*: el filtro se tiraba en el enrutador y el servidor contestaba la
+ * cartera entera. Sin filtro (o vacio) devuelve todas las filas: *"quien me
+ * debe"* sigue siendo la lista completa. El empate es por nombre, en los dos
+ * sentidos ("aeropuerto" empata "Aeropuerto Zacatecas" y al reves).
+ */
+export function filtrarCartera<T extends { nombre: string }>(
+  filas: readonly T[],
+  filtro: string | null | undefined
+): T[] {
+  const q = llaveDeNombre(filtro ?? '')
+  if (!q) return [...filas]
+  return filas.filter((f) => {
+    const n = llaveDeNombre(f.nombre)
+    return n !== '' && (n.includes(q) || q.includes(n))
+  })
+}
+
+export function textoCartera(filas: readonly FilaCarteraVista[], filtro?: string | null): string {
   const deben = filas.filter((f) => Number(f.deuda) > 0.005)
+  if (filtro && filas.length === 0) {
+    return `No encuentro a "${filtro}" en la cartera. Pregunta "quien me debe" para ver la lista.`
+  }
+  if (filtro && deben.length === 0) {
+    return `${filas.map((f) => f.nombre).join(', ')}: no te debe nada hoy.`
+  }
   if (deben.length === 0) return sinDatos('cartera con deuda')
 
   const total = deben.reduce((s, f) => s + Number(f.deuda), 0)

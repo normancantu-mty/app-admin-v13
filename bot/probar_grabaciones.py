@@ -59,7 +59,7 @@ if datos:
     frases = datos["frases"]
 
     # ═══ 2. Cobertura ═════════════════════════════════════════════════════════
-    faltan = [c for c, _, _ in G.FRASES if c not in frases]
+    faltan = [f[0] for f in G.FRASES if f[0] not in frases]
     caso("cada frase de FRASES tiene su grabacion", faltan, [])
     caso("las grabaciones traen al menos las de D48, D49, D50, D64 y D67",
          sorted({"d48", "d49", "d50", "d64", "d67"} - {c.split("_")[0] for c in frases}), [])

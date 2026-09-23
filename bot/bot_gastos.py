@@ -52,7 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # mismo mensaje se podia leer de dos maneras distintas segun por donde entrara,
 # y cual mandaba dependia del orden de unos `if`.
 from enrutador import (  # noqa: E402
-    CATEGORIAS_SEMILLA, FORMAS_DEL_MISMO, enrutar, es_afirmacion_explicita)
+    CATEGORIAS_SEMILLA, FORMAS_DEL_MISMO, MAX_HECHOS, TIPOS_DE_HECHO, enrutar,
+    es_afirmacion_explicita)
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -179,7 +180,10 @@ ENSAYO = ensayo_activo()
 # en lo que importa). Es una lista de lo PERMITIDO, no de lo prohibido: una ruta
 # nueva que nadie agrego aqui NO sale. Asi se colaron cuatro intenciones en
 # `INTENCIONES_QUE_ESCRIBEN` en la Fase 6 (D42): por enumerar lo prohibido.
-RUTAS_SOLO_LECTURA = frozenset(("/api/bot/consulta", "/api/bot/catalogo"))
+# Fase 8 (D77): `/api/bot/pendiente` solo lee (un `select` sobre
+# `bot_borradores`, ninguna escritura): la rehidratacion funciona en ensayo.
+RUTAS_SOLO_LECTURA = frozenset(("/api/bot/consulta", "/api/bot/catalogo",
+                                "/api/bot/pendiente"))
 
 # Las `proponer` salen, MARCADAS: el servidor calcula la propuesta real (precios,
 # catalogo, cartera) y no escribe el borrador (`lib/bot-ensayo.ts`).
@@ -236,7 +240,12 @@ def _post(ruta, cuerpo):
     aqui. Las que salen llevan `x-bot-ensayo: 1`, y a su `mensaje` se le
     antepone el aviso, para que ninguna propuesta de un ensayo se confunda con
     una del bot real.
+
+    Fase 8 (D79): toda `proponer` sale con `conservar_pendientes: true` SALVO la
+    primera propuesta de un mensaje nuevo (`_modo_propuesta == "nuevo"`), que
+    conserva el comportamiento de siempre: el servidor cancela lo pendiente.
     """
+    cuerpo = _con_conservar(ruta, cuerpo)
     if ENSAYO:
         if decision_de_ensayo(ruta) == "no_sale":
             return _respuesta_de_ensayo(ruta, cuerpo)
@@ -244,6 +253,17 @@ def _post(ruta, cuerpo):
     if ENSAYO and isinstance(r, dict) and isinstance(r.get("mensaje"), str):
         r["mensaje"] = AVISO_ENSAYO + "\n" + r["mensaje"]
     return estado, r
+
+
+def _con_conservar(ruta, cuerpo):
+    """El cuerpo de una `proponer`, con `conservar_pendientes` si toca. **Pura
+    salvo por leer `_modo_propuesta`.**"""
+    limpia = str(ruta or "").split("?")[0].rstrip("/")
+    if not limpia.endswith(SUFIJO_PROPONER) or not isinstance(cuerpo, dict):
+        return cuerpo
+    if _modo_propuesta.get(cuerpo.get("telegram_id")) == "nuevo":
+        return cuerpo
+    return dict(cuerpo, conservar_pendientes=True)
 
 
 def _post_de_verdad(ruta, cuerpo):
@@ -806,8 +826,23 @@ _COMO_SE_LLAMA = {
 }
 
 
+def _tipo_de(dato):
+    """El tipo de un borrador del bot. El de gasto no lleva `tipo` (Fase 1)."""
+    return str((dato or {}).get("tipo") or "gasto")
+
+
+def _texto_plano(texto, tope=320):
+    limpio = str(texto or "").replace(AVISO_ENSAYO, "")
+    return " ".join(limpio.split())[:tope]
+
+
 def _en_pantalla(chat, esperando=""):
-    """Que tiene Norman enfrente ahora mismo, en una linea. **D28.**
+    """Que tiene Norman enfrente ahora mismo. **D28, y D74 (Fase 8).**
+
+    Fase 8: una linea POR PROPUESTA viva, con su CONTENIDO (el texto que Norman
+    ve), no solo su tipo. Sin el contenido, "fue venta a concesion" no tenia
+    contra que corregirse: el modelo sabia que habia "una venta" y no cual.
+    Lo de abajo (pregunta con botones, captura a medias) sigue igual.
 
     Esta es la pieza que faltaba para el `sii`. `_tomar_borrador_a_medias` solo
     mira los borradores INCOMPLETOS, asi que cuando hay una propuesta COMPLETA
@@ -819,21 +854,24 @@ def _en_pantalla(chat, esperando=""):
     """
     if esperando:
         return "te acabo de preguntar: " + esperando
+    renglones = []
+    for vivo in _pendientes_de(chat):
+        mostrado = vivo.get("mostrado")
+        contenido = _texto_plano(mostrado[1]) if mostrado else ""
+        renglones.append("propuesta de " + _COMO_SE_LLAMA.get(_tipo_de(vivo), "captura")
+                         + " esperando su VA" + (": " + contenido if contenido else ""))
     dato = _memoria.get(chat)
-    if not isinstance(dato, dict):
-        return ""
-    tipo = str(dato.get("tipo") or "")
-    if dato.get("borrador_id"):
-        return ("una propuesta de " + _COMO_SE_LLAMA.get(tipo, "captura")
-                + " lista, esperando que digas que va o que no")
-    if tipo.endswith("_eligiendo"):
-        campo = str(dato.get("campo") or "cual")
-        return ("una pregunta con botones para escoger " + campo
-                + ", de " + _COMO_SE_LLAMA.get(tipo.split("_")[0], "una captura"))
-    if dato.get("estado") == "incompleto":
-        return ("una captura de " + _COMO_SE_LLAMA.get(str(dato.get("intencion")), "algo")
-                + " a la que todavia le falta un dato")
-    return ""
+    if isinstance(dato, dict) and not dato.get("borrador_id"):
+        tipo = str(dato.get("tipo") or "")
+        if tipo.endswith("_eligiendo"):
+            campo = str(dato.get("campo") or "cual")
+            renglones.append("una pregunta con botones para escoger " + campo
+                             + ", de " + _COMO_SE_LLAMA.get(tipo.split("_")[0], "una captura"))
+        elif dato.get("estado") == "incompleto":
+            renglones.append("una captura de "
+                             + _COMO_SE_LLAMA.get(str(dato.get("intencion")), "algo")
+                             + " a la que todavia le falta un dato")
+    return "\n".join(renglones)
 
 
 def _cancelar_de_verdad(chat, borrador_id):
@@ -885,7 +923,35 @@ def _cancelar_de_verdad(chat, borrador_id):
         # atrapa sus propias excepciones y devuelve (0, ...), asi que esto no
         # dispara en produccion -- pero **D4 dice SIEMPRE, y "siempre" no puede
         # depender de que otra funcion siga siendo amable.**
-        _memoria.pop(chat, None)
+        #
+        # Fase 8 (D79): con varias propuestas vivas, se apaga LA QUE SE NOMBRO.
+        # Si no es la del foco, sale del registro y el foco se queda.
+        foco = _memoria.get(chat)
+        foco_bid = foco.get("borrador_id") if isinstance(foco, dict) else ""
+        if borrador_id and foco_bid and borrador_id != foco_bid:
+            (_pendientes.get(chat) or {}).pop(borrador_id, None)
+        else:
+            _memoria.pop(chat, None)
+    return texto
+
+
+def _cancelar_todo(chat):
+    """El "no" ESCRITO con dos o mas propuestas vivas: se apagan todas.
+
+    Un "no" suelto no dice cual, y dejar vivas las otras seria adivinar al
+    reves. Se apagan en la base una por una (la misma ruta de siempre) y la cola
+    de hechos por capturar se vacia. Devuelve el texto para Norman.
+    """
+    vivos = _pendientes_de(chat)
+    for vivo in vivos:
+        _cancelar_de_verdad(chat, vivo.get("borrador_id"))
+    _pendientes.pop(chat, None)
+    dict.pop(_memoria, chat, None)
+    _apartado.pop(chat, None)
+    cola = _cola.pop(chat, None)
+    texto = "Cancele las %d propuestas. No escribi nada." % len(vivos)
+    if cola and cola.get("hechos"):
+        texto += " Y lo que faltaba por capturar tampoco lo capturo."
     return texto
 
 
@@ -946,7 +1012,264 @@ def _recordar_a_medias(chat, intencion, campos):
 # Lo unico que el bot guarda en memoria: el ultimo borrador por chat, para poder
 # mandar el sello al confirmar. **El payload NO vive aqui** — vive en la base, y
 # por eso este proceso no puede alterarlo aunque tuviera un bug.
-_memoria = {}
+class _Memoria(dict):
+    """El FOCO por chat (lo que un "va" escrito confirmaria) + el registro.
+
+    Fase 8 (D79): hasta hoy era un `dict` de un solo borrador por chat, y cada
+    propuesta nueva pisaba la anterior. Ahora cada borrador SELLADO que entra
+    aqui se anota tambien en `_pendientes[chat][borrador_id]`, y al sacarlo
+    (`pop`, que es como TODOS los caminos lo sueltan al confirmar o cancelar)
+    sale del registro y el foco vuelve a la propuesta viva mas reciente. Asi
+    las 40 lineas que ya leen `_memoria[chat]` siguen leyendo "la de ahora".
+    """
+
+    def __setitem__(self, chat, dato):
+        viejo = dict.get(self, chat)
+        if isinstance(dato, dict):
+            if dato.get("borrador_id") and dato.get("sello"):
+                _registrar(chat, dato, viejo)
+            elif isinstance(viejo, dict):
+                # Una pregunta con botones sobre una propuesta viva (p. ej.
+                # "Otro comprador" que vuelve con `hay_que_elegir`) hereda a
+                # quien va a reemplazar cuando se selle.
+                reemplaza = viejo.get("borrador_id") or viejo.get("_reemplaza")
+                if reemplaza:
+                    dato["_reemplaza"] = reemplaza
+        dict.__setitem__(self, chat, dato)
+
+    def pop(self, chat, *defecto):
+        if not dict.__contains__(self, chat):
+            return defecto[0] if defecto else None
+        dato = dict.pop(self, chat)
+        bid = dato.get("borrador_id") if isinstance(dato, dict) else None
+        if bid:
+            (_pendientes.get(chat) or {}).pop(bid, None)
+        siguiente = _apartado.pop(chat, None)
+        if siguiente is None:
+            vivos = _pendientes_de(chat)
+            siguiente = vivos[-1] if vivos else None
+        if siguiente is not None:
+            dict.__setitem__(self, chat, siguiente)
+        return dato
+
+
+_memoria = _Memoria()
+# Fase 8 (D79): los borradores SELLADOS vivos por chat, `{borrador_id: dato}`,
+# en orden de llegada. Es lo que el boton VA de cada propuesta encuentra.
+_pendientes = {}
+# El foco a medias (pregunta o captura incompleta) que se aparto porque Norman
+# toco el boton de OTRA propuesta. Vuelve al foco cuando esa se resuelve.
+_apartado = {}
+# "nuevo": la primera propuesta de un mensaje nuevo (el servidor cancela lo
+# pendiente, como siempre). Cualquier otro valor: conservar.
+_modo_propuesta = {}
+# Las propuestas que un mensaje nuevo dejo canceladas: se DICEN al ensenar la
+# nueva (D49: nada se pierde callado).
+_caidos = {}
+# Los hechos de un mismo mensaje que esperan turno: {"hechos": [...], "en": t}.
+_cola = {}
+# Los chats que ya pidieron sus pendientes a la base despues de arrancar (D77).
+_rehidratado = set()
+
+
+def _pendientes_de(chat):
+    """Los borradores sellados vivos de este chat, del mas viejo al mas nuevo.
+    Caducan con `VIDA_DEL_BORRADOR`, igual que en el servidor (30 min)."""
+    reg = _pendientes.get(chat) or {}
+    ahora = time.time()
+    for bid, dato in list(reg.items()):
+        if ahora - float(dato.get("_sellado_en") or ahora) > VIDA_DEL_BORRADOR:
+            reg.pop(bid, None)
+    return list(reg.values())
+
+
+def _cancelar_en_base(chat, borrador_id):
+    """Apaga un borrador reemplazado. No toca la memoria (quien llama ya lo hizo)."""
+    estado, _r = _post("/api/bot/cancelar", {"telegram_id": chat, "borrador_id": borrador_id})
+    log.info("reemplazado: borrador=%s telegram=%s -> %s", borrador_id, chat, estado)
+
+
+def _registrar(chat, dato, viejo):
+    """Anota un borrador recien sellado. Tres casos, y cada uno es una regla:
+
+    - mensaje NUEVO (`_modo_propuesta == "nuevo"`): la `proponer` salio sin
+      `conservar_pendientes`, asi que el servidor ya cancelo todo lo pendiente.
+      El registro se vacia igual, y lo que cayo se dice (`_caidos`). Las
+      siguientes propuestas del MISMO mensaje ya conservan.
+    - REFINAMIENTO (el foco era una propuesta viva, o una pregunta sobre ella):
+      la nueva la sustituye. La vieja se apaga en la base explicitamente,
+      porque esta `proponer` salio conservando.
+    - si no, se agrega (el segundo hecho de un mensaje, o la pieza que faltaba).
+    """
+    reg = _pendientes.setdefault(chat, {})
+    bid = dato["borrador_id"]
+    dato.setdefault("_sellado_en", time.time())
+    if _modo_propuesta.get(chat) == "nuevo":
+        caidos = [d for b, d in reg.items() if b != bid]
+        reg.clear()
+        _modo_propuesta[chat] = "agrega"
+        if caidos:
+            _caidos[chat] = caidos
+    elif isinstance(viejo, dict):
+        reemplaza = viejo.get("borrador_id") or viejo.get("_reemplaza")
+        if reemplaza and reemplaza != bid and reemplaza in reg:
+            reg.pop(reemplaza, None)
+            _cancelar_en_base(chat, reemplaza)
+    reg[bid] = dato
+
+
+def _soltar_foco(chat):
+    """Deja el foco vacio SIN tocar el registro: el siguiente hecho de un
+    mensaje no es un refinamiento del anterior, es otra propuesta."""
+    dict.pop(_memoria, chat, None)
+
+
+def _enfocar(chat, borrador_id):
+    """El boton de una propuesta viva la pone en el foco. Devuelve True si pudo.
+
+    Si el foco era una pregunta o una captura a medias, se aparta y vuelve
+    cuando la propuesta tocada se resuelva."""
+    reg = _pendientes.get(chat) or {}
+    dato = reg.get(borrador_id)
+    if dato is None:
+        return False
+    foco = dict.get(_memoria, chat)
+    if isinstance(foco, dict) and foco.get("borrador_id") == borrador_id:
+        return True
+    if isinstance(foco, dict) and not foco.get("borrador_id"):
+        _apartado[chat] = foco
+    dict.__setitem__(_memoria, chat, dato)
+    return True
+
+
+def _rehidratar(chat):
+    """D77: tras un reinicio, los borradores PENDIENTE de menos de 30 min vuelven.
+
+    Una vez por chat y por proceso. Sin esto, el boton VA de una propuesta que
+    sigue en la pantalla de Norman contestaba "no tengo nada pendiente" despues
+    de cualquier reinicio del vigilante. Solo se trae lo que confirmar necesita
+    (`borrador_id`, `sello`, tipo): el payload vive en la base y alli se queda.
+    Devuelve cuantos rehidrato.
+    """
+    if chat in _rehidratado:
+        return 0
+    if _pendientes.get(chat):
+        _rehidratado.add(chat)
+        return 0
+    estado, r = _post("/api/bot/pendiente", {"telegram_id": chat})
+    if estado != 200 or not isinstance(r, dict) or not r.get("ok"):
+        log.warning("rehidratar: no pude leer lo pendiente de %s -> %s", chat, estado)
+        return 0
+    _rehidratado.add(chat)
+    reg = _pendientes.setdefault(chat, {})
+    ahora = time.time()
+    for p in r.get("pendientes") or []:
+        bid, sello, tipo = p.get("borrador_id"), p.get("sello"), p.get("tipo")
+        if not bid or not sello or not tipo:
+            continue
+        dato = {"borrador_id": bid, "sello": sello, "rehidratado": True}
+        if tipo != "gasto":
+            dato["tipo"] = tipo
+        try:
+            nacido = dt.datetime.fromisoformat(str(p.get("creado_en"))).timestamp()
+        except ValueError:
+            nacido = ahora
+        dato["_sellado_en"] = nacido
+        reg[bid] = dato
+    if reg and dict.get(_memoria, chat) is None:
+        dict.__setitem__(_memoria, chat, list(reg.values())[-1])
+    if reg:
+        log.info("rehidrate %d borrador(es) de %s", len(reg), chat)
+    return len(reg)
+
+
+def _olvidar_chat(chat):
+    """Todo el estado de conversacion de un chat, fuera. Lo usan las pruebas
+    para que un caso no herede el registro del anterior."""
+    for d in (_pendientes, _apartado, _modo_propuesta, _caidos, _cola,
+              _historial, _eventos):
+        d.pop(chat, None)
+    _rehidratado.discard(chat)
+    dict.pop(_memoria, chat, None)
+
+
+# ── D73 (Fase 8): EL HISTORIAL CORTO DEL CHAT ──────────────────────────────
+# "cuanto me debe aeropuerto" y despues cuatro veces "y la deuda?": el bot no
+# sabia de quien se hablaba porque cada mensaje llegaba solo. Van los ultimos
+# turnos, en RAM (se pierden al reiniciar, y esta bien: es contexto, no dato),
+# y marcados como PASADO en el prompt (regla 21: de aqui no sale ningun monto).
+HISTORIAL_TURNOS = 15
+HISTORIAL_TTL_S = 1800
+_historial = {}
+_eventos = {}
+
+
+def _anotar(chat, texto):
+    """Lo que el bot le dijo a Norman en este turno, para el historial."""
+    texto = _texto_plano(texto, 240)
+    if texto:
+        _eventos.setdefault(chat, []).append(texto)
+
+
+def _cerrar_turno(chat, dijo, ahora=None):
+    ahora = time.time() if ahora is None else ahora
+    contesto = " / ".join(_eventos.pop(chat, []))[:500]
+    turnos = _historial.setdefault(chat, [])
+    turnos.append((ahora, str(dijo or ""), contesto))
+    _podar_historial(chat, ahora)
+
+
+def _podar_historial(chat, ahora=None):
+    ahora = time.time() if ahora is None else ahora
+    turnos = [t for t in _historial.get(chat, []) if ahora - t[0] <= HISTORIAL_TTL_S]
+    _historial[chat] = turnos[-HISTORIAL_TURNOS:]
+    return _historial[chat]
+
+
+def historial_para_el_modelo(chat, ahora=None):
+    """[(hace_min, dijo, contesto)], del mas viejo al mas nuevo. **Pura salvo el
+    reloj.** Es lo que recibe `enrutar(historial=...)`."""
+    ahora = time.time() if ahora is None else ahora
+    return [((ahora - t) / 60.0, dijo, contesto)
+            for (t, dijo, contesto) in _podar_historial(chat, ahora)]
+
+
+class _MensajeQueAnota:
+    """El mensaje de Telegram, pero cada `reply_text` queda en el historial."""
+
+    def __init__(self, mensaje, chat):
+        self._mensaje = mensaje
+        self._chat = chat
+
+    async def reply_text(self, texto, *a, **k):
+        _anotar(self._chat, texto)
+        return await self._mensaje.reply_text(texto, *a, **k)
+
+    def __getattr__(self, nombre):
+        return getattr(self._mensaje, nombre)
+
+
+class _UpdateQueAnota:
+    """`update` envuelto: lo que se contesta por `effective_message` o
+    `message` se anota. Todo lo demas pasa tal cual."""
+
+    def __init__(self, update, chat):
+        self._update = update
+        self._chat = chat
+
+    @property
+    def effective_message(self):
+        return _MensajeQueAnota(self._update.effective_message, self._chat)
+
+    @property
+    def message(self):
+        m = self._update.message
+        return _MensajeQueAnota(m, self._chat) if m is not None else None
+
+    def __getattr__(self, nombre):
+        return getattr(self._update, nombre)
+
+
 # AQUI VIVIA `_pendiente`, y lo sustituye el borrador a medias de `_memoria`.
 # Guardaba el TEXTO literal de la vuelta anterior y lo pegaba con un ". " al de
 # la siguiente, para que el modelo volviera a leer las dos frases juntas. O sea
@@ -1061,87 +1384,14 @@ def _sin_promesas(texto):
     return limpio
 
 
-# ─── D49 (Fase 6): EL SEGUNDO HECHO NO SE PIERDE EN SILENCIO ────────────────
-#
-# Mismo incidente que D48, la otra mitad. El mensaje traia DOS hechos --una
-# venta de $599 y un envio de $45-- y el bot escribio uno y tiro el otro **sin
-# decir nada**. Ese silencio es el defecto: Norman solo lo descubrio porque
-# pregunto, y una captura que se pierde callada no deja rastro de haberse
-# perdido.
-#
-# **Lo que esto hace es DECIRLO, no encolarlo**, y la diferencia es de diseno,
-# no de esfuerzo. Escribir dinero que Norman no vio propuesto va contra la
-# frontera del sello, que es la mejor pieza del sistema: entre el "va" y el
-# INSERT no hay ningun campo que el modelo pueda mandar. Decir lo que quedo
-# fuera cuesta una linea y elimina el dano entero.
-_COMO_SE_DICE_EL_HECHO = {
-    "gasto": "un gasto",
-    "abono": "un abono",
-    "venta": "una venta",
-    "lote": "un lote",
-    "cotizacion": "una cotizacion",
-}
-
-
-def _frase_de_hecho_suelto(otro, intencion=""):
-    """La linea que se le dice a Norman, o "" si no hay segundo hecho.
-
-    --- POR QUE SE VALIDA OTRA VEZ AQUI, SI `enrutador.py` YA VALIDO ---------
-    `_normaliza_otro_hecho` hace la misma criba al salir del modelo, y esa capa
-    es la correcta. **Pero esta funcion no debe CONFIAR en ella.** El campo
-    nace de un JSON que redacta un LLM, y entre el enrutador y la pantalla hay
-    un `dict` suelto que cualquiera puede armar a mano. La prueba que dobla
-    `enrutar` --que es justo el escenario donde `_normaliza_otro_hecho` no
-    corre-- descubrio las dos consecuencias: un `monto: -45` salia a pantalla
-    como **`$-45.00`**, y un eco de la venta se anunciaba como "eso no lo
-    escribi" **justo despues de escribirlo**.
-
-    Es el mismo criterio con el que `_sin_promesas` revisa `respuesta` aunque
-    la regla 16 del prompt ya lo prohiba: **lo que se le ensena a Norman se
-    valida donde se le ensena.**
-
-    Las cuatro cribas, y lo que cuesta cada una si falta:
-      1. `tipo` fuera de la lista cerrada -> "otro movimiento" era una frase sin
-         significado sobre un hecho que nadie sabe leer.
-      2. `tipo == intencion` -> el ECO: se escribio la venta y acto seguido se
-         dice que no se escribio. Es una mentira NUEVA, peor que el silencio
-         que D49 vino a cerrar.
-      3. sin descripcion -> no hay nada que decir.
-      4. `monto` no positivo -> se dice el hecho **sin cifra**. Callarse por un
-         monto raro seria volver al silencio de D49; ensenar `$-45.00` seria
-         ensenar una cifra falsa. Se dice lo que se sabe y nada mas.
-    """
-    if not isinstance(otro, dict):
-        return ""
-    tipo = str(otro.get("tipo") or "").strip().lower()
-    if tipo not in _COMO_SE_DICE_EL_HECHO:
-        return ""
-    if tipo == str(intencion or "").strip().lower():
-        return ""
-    descripcion = str(otro.get("descripcion") or "").strip()
-    if not descripcion:
-        return ""
-    monto = otro.get("monto")
-    sirve = (isinstance(monto, (int, float)) and not isinstance(monto, bool)
-             and float(monto) > 0)
-    cuanto = (" de $" + "{:,.2f}".format(float(monto))) if sirve else ""
-    return ("Tambien oi " + descripcion + cuanto + ", que es "
-            + _COMO_SE_DICE_EL_HECHO[tipo]
-            + ". Ese NO lo escribi todavia. Dimelo y lo capturo.")
-
-
-async def _avisar_hecho_suelto(update, ruta):
-    """Lo dice al terminar el primero. Va como mensaje aparte, a proposito:
-    pegado al final de la confirmacion se lee como parte de lo que SI se
-    escribio, que es exactamente la confusion que se esta cerrando.
-
-    Recibe la RUTA entera y no solo `otro_hecho` porque la criba del eco
-    necesita saber que fue lo que SI se escribio.
-    """
-    ruta = ruta if isinstance(ruta, dict) else {}
-    frase = _frase_de_hecho_suelto(ruta.get("otro_hecho"), ruta.get("intencion"))
-    if frase:
-        await update.effective_message.reply_text(frase)
+# ─── D49 (Fase 6) -> D79 (Fase 8) ───────────────────────────────────────────
+# Aqui vivian `_frase_de_hecho_suelto` y `_avisar_hecho_suelto`: el segundo
+# hecho de un mensaje se DECIA ("tambien oi un gasto de $45, ese no lo
+# escribi"). Norman pidio lo otro: que se proponga, cada uno con su VA. Desde la
+# Fase 8 el enrutador devuelve la lista `hechos` y `_enrutar_y_despachar`
+# propone uno por uno (`_despachar_hechos`), asi que no queda nada que avisar.
+# Lo que si sigue diciendose: los hechos que pasan del tope (`MAX_HECHOS`) y los
+# que se quedan en cola por una pregunta.
 
 
 # ─── D50 (Fase 6): "EL MISMO CLIENTE" ───────────────────────────────────────
@@ -1256,7 +1506,7 @@ async def _responder_natural(update, ruta):
     elif intencion == "reporte":
         aviso = "Todavia no tengo el reporte del dia. Por ahora: /ventas, /stock o /cartera."
     elif intencion == "consulta":
-        aviso = "Eso todavia no lo se consultar. Hoy puedo: stock, cartera y ventas."
+        aviso = "Eso todavia no lo se consultar. Hoy puedo: stock, cartera, ventas y produccion."
     else:
         # Aqui caen `charla` y el "no entendi", que son justo los dos caminos
         # donde una cadena fija se siente un formulario. Si el modelo redacto
@@ -2168,10 +2418,13 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     que ya se sabian y el bot nunca se los mandaba, asi que una captura a medias
     volvia a empezar de cero en cada vuelta.
     """
+    a_medias = _tomar_borrador_a_medias(chat)
     productos = await asyncio.to_thread(_catalogo_de_productos, chat)
+    # D73 (Fase 8): el historial corto del chat viaja marcado como pasado.
     ok, ruta = await asyncio.to_thread(
-        enrutar, texto, _tomar_borrador_a_medias(chat), list(_catalogo),
-        _nombres_deudores(), productos, _en_pantalla(chat, esperando))
+        enrutar, texto, a_medias, list(_catalogo),
+        _nombres_deudores(), productos, _en_pantalla(chat, esperando),
+        historial_para_el_modelo(chat))
 
     if not ok:
         log.warning("el enrutador fallo: %s", ruta)
@@ -2186,9 +2439,10 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     # conjunto de prueba a partir de la historia: la historia no existia. Sin
     # esto, "?comprende?" no se puede medir ni hoy ni dentro de un mes. Es su
     # bot, su maquina y sus propios mensajes.
-    log.info("enrutado como %s (confianza %s) | dijo: %r | entendido: %r",
+    hechos = _hechos_de(ruta)
+    log.info("enrutado como %s (confianza %s) | dijo: %r | entendido: %r | hechos: %s",
              ruta.get("intencion"), ruta.get("confianza"), texto,
-             ruta.get("entendido"))
+             ruta.get("entendido"), [h.get("intencion") for h in hechos])
     intencion = ruta.get("intencion")
     campos = ruta.get("campos") or {}
 
@@ -2228,7 +2482,10 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         await _pedir_va_explicito(update, chat)
         return
 
-    if ruta.get("confianza") == "baja" and intencion in INTENCIONES_QUE_ESCRIBEN:
+    # Fase 8: los HECHOS llevan su propia guarda, uno por uno
+    # (`_despachar_hecho`): que el segundo dude no frena al primero.
+    if (ruta.get("confianza") == "baja" and intencion in INTENCIONES_QUE_ESCRIBEN
+            and not hechos):
         # Solo las que traen campos dejan borrador. Pisar `_memoria` con un
         # `confirmar` vacio mataria la propuesta sellada que esta en pantalla.
         if intencion in INTENCIONES_CON_BORRADOR:
@@ -2262,8 +2519,213 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         # **`cancelar` a proposito NO esta en `INTENCIONES_QUE_ESCRIBEN`**: no
         # escribe ninguna fila, apaga un borrador. Bloquearlo por dudar dejaria
         # vivo justo lo que Norman acaba de rechazar.
+        if len(_pendientes_de(chat)) >= 2:
+            await update.effective_message.reply_text(_cancelar_todo(chat))
+            return
         await update.effective_message.reply_text(
             _cancelar_de_verdad(chat, _borrador_vivo(chat)))
+        return
+
+    if intencion == "ajustar":
+        await _ajustar(update, chat, ruta)
+        return
+
+    if hechos:
+        await _despachar_hechos(update, chat, ruta, hechos, completando=a_medias is not None)
+        return
+
+    if intencion in ("anular", "corregir", "alta", "convertir"):
+        # Una accion nueva, como un hecho nuevo: su propuesta cancela lo que
+        # estaba esperando VA (el comportamiento de siempre).
+        _modo_propuesta[chat] = "nuevo"
+
+    if intencion == "anular":
+        # FASE 5. El enrutador NO dice cual: lo dice la persona, con un boton,
+        # contra una lista que arma el servidor (D2).
+        await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="anular")
+        return
+
+    if intencion == "corregir":
+        # FASE 5. Misma lista; lo que cambia es la pregunta de despues. Y
+        # "corregir" casi nunca acaba en un UPDATE: acaba en anular y volver a
+        # escribir, en un solo "va" (D6).
+        await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="corregir")
+        return
+
+    if intencion == "alta":
+        # PASO 5. El nombre es lo unico que el modelo aporta; la zona y el rol
+        # NUNCA (D9), y las comisiones se preguntan una por una segun el rol.
+        # Si ni el nombre vino, se pregunta por el y ya.
+        nombre = (campos.get("nombre") or "").strip()
+        if not nombre:
+            _recordar_a_medias(chat, "alta", campos)
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or "Como se llama?")
+            return
+        peticion = {"telegram_id": chat, "nombre": nombre}
+        if campos.get("email"):
+            peticion["email"] = campos.get("email")
+        if campos.get("telefono"):
+            peticion["telefono"] = campos.get("telefono")
+        await _proponer_alta(update, chat, peticion)
+        return
+
+    if intencion == "convertir":
+        # PASO 6. El folio, si lo dijo, solo sirve para no ensenar la lista; y
+        # aun asi la fila se busca por id, no por folio dictado. Si no lo dijo,
+        # se ensena la lista con botones, que es lo normal.
+        await _proponer_conversion(update, chat, {"telegram_id": chat})
+        return
+
+    if intencion == "consulta":
+        # `ruta["consulta"]` en vez de volver a clasificar con el modelo. Y el
+        # filtro tal cual: quien lo prueba contra el producto y contra el punto
+        # de venta es el servidor, no este proceso.
+        if await _contestar_consulta(update, chat, ruta.get("consulta"), ruta.get("filtro")):
+            return
+        await _responder_natural(update, ruta)
+        return
+
+    await _responder_natural(update, ruta)
+
+
+
+
+def _hechos_de(ruta):
+    """La lista de hechos de una ruta. Si viene de un enrutador anterior a la
+    Fase 8 (sin `hechos`), el hecho de arriba es una lista de uno."""
+    hechos = ruta.get("hechos")
+    if isinstance(hechos, list):
+        return [h for h in hechos if isinstance(h, dict)]
+    if ruta.get("intencion") in TIPOS_DE_HECHO:
+        return [{"intencion": ruta.get("intencion"), "campos": ruta.get("campos") or {},
+                 "faltantes": ruta.get("faltantes") or [], "pregunta": ruta.get("pregunta"),
+                 "confianza": ruta.get("confianza")}]
+    return []
+
+
+def _esperando_respuesta(chat):
+    """True si el bot le hizo una pregunta a Norman y la respuesta no ha llegado:
+    una captura a medias, una lista con botones, o un dato por texto."""
+    foco = dict.get(_memoria, chat)
+    if isinstance(foco, dict) and not foco.get("borrador_id") and (
+            foco.get("estado") == "incompleto"
+            or str(foco.get("tipo") or "").endswith("_eligiendo")):
+        return True
+    return any(chat in d for d in (_esperando_monto, _esperando_codigo,
+                                   _esperando_vigencia, _esperando_correccion,
+                                   _esperando_alta))
+
+
+def _nombres_de_hechos(hechos):
+    return ", ".join(_COMO_SE_LLAMA.get(str(h.get("intencion")), "algo") for h in hechos)
+
+
+async def _despachar_hechos(update, chat, ruta, hechos, completando=False):
+    """D79: CADA hecho del mensaje con su propia propuesta, su borrador y su VA.
+
+    Los completos van primero (salen de una vez); los que traen `faltantes`
+    despues, y de esos se pregunta UNA cosa a la vez: en cuanto el bot queda
+    esperando una respuesta, lo que falta se queda en `_cola[chat]` y sigue
+    solo cuando la respuesta llega (`_seguir_cola`).
+
+    Un mensaje NUEVO (no la respuesta a una pregunta) suelta la cola del
+    anterior, y lo dice. Y su primera propuesta cancela lo que estaba esperando
+    VA (`_modo_propuesta = "nuevo"`), como siempre.
+    """
+    vieja = _cola.pop(chat, None)
+    vigente = bool(vieja and (time.time() - vieja.get("en", 0)) <= VIDA_DEL_BORRADOR
+                   and vieja.get("hechos"))
+    restantes = []
+    if vigente and completando:
+        restantes = list(vieja["hechos"])
+    elif vigente:
+        await update.effective_message.reply_text(
+            "Lo que quedaba por capturar (" + _nombres_de_hechos(vieja["hechos"])
+            + ") lo deje: no lo escribi. Si va, dimelo otra vez.")
+    _modo_propuesta[chat] = "agrega" if completando else "nuevo"
+
+    # Completos primero; el orden de los incompletos es el dictado.
+    ordenados = ([h for h in hechos if not h.get("faltantes")]
+                 + [h for h in hechos if h.get("faltantes")])
+    # La captura a medias (o la pregunta con botones) que habia en el foco ya
+    # la leyo el modelo junto con este mensaje: el hecho nuevo la sustituye.
+    foco = dict.get(_memoria, chat)
+    if isinstance(foco, dict) and not foco.get("borrador_id"):
+        _soltar_foco(chat)
+    await _despachar_lista(update, chat, ordenados + restantes, ruta)
+
+    de_mas = int(ruta.get("hechos_de_mas") or 0)
+    if de_mas:
+        await update.effective_message.reply_text(
+            "Me dictaste mas de %d cosas en un mensaje. %s no la(s) tome: no las "
+            "escribi. Dimelas aparte." % (MAX_HECHOS, "La ultima" if de_mas == 1
+                                          else "Las ultimas %d" % de_mas))
+    elif len(hechos) >= MAX_HECHOS:
+        # El modelo tambien conoce el tope y a veces recorta EL: grabado el
+        # 2026-09-22, seis gastos dictados salieron cinco y `hechos_de_mas` en 0
+        # (la renta solo aparecia en su `respuesta`, que aqui no sale). El bot
+        # no puede saber si hubo un sexto, asi que dice el tope.
+        await update.effective_message.reply_text(
+            "Tome %d cosas de ese mensaje, que es el tope. Si dictaste mas, esas no "
+            "las tome ni las escribi: dimelas aparte." % MAX_HECHOS)
+
+
+async def _despachar_lista(update, chat, hechos, ruta=None):
+    for i, hecho in enumerate(hechos):
+        if i > 0 and _esperando_respuesta(chat):
+            _cola[chat] = {"hechos": list(hechos[i:]), "en": time.time()}
+            await update.effective_message.reply_text(
+                "Despues de eso sigo con " + _nombres_de_hechos(hechos[i:]) + ".")
+            return
+        foco = dict.get(_memoria, chat)
+        if isinstance(foco, dict) and foco.get("borrador_id"):
+            # La propuesta anterior se queda en el registro con su VA; el foco
+            # se suelta para que la siguiente no se lea como su reemplazo.
+            _soltar_foco(chat)
+        await _despachar_hecho(update, chat, hecho, ruta if i == 0 else None)
+    # Al terminar, el foco es la propuesta viva mas reciente.
+    if dict.get(_memoria, chat) is None:
+        vivos = _pendientes_de(chat)
+        if vivos:
+            dict.__setitem__(_memoria, chat, vivos[-1])
+
+
+async def _seguir_cola(update, chat):
+    """Si quedaron hechos en cola y el bot ya no espera respuesta, siguen."""
+    cola = _cola.get(chat)
+    if not cola:
+        return
+    if (time.time() - cola.get("en", 0)) > VIDA_DEL_BORRADOR:
+        _cola.pop(chat, None)
+        return
+    if _esperando_respuesta(chat):
+        return
+    _cola.pop(chat, None)
+    _modo_propuesta[chat] = "agrega"
+    await _despachar_lista(update, chat, list(cola.get("hechos") or []), None)
+
+
+async def _despachar_hecho(update, chat, hecho, ruta=None):
+    """UN hecho: el mismo codigo por intencion de siempre (Fases 1 a 7).
+
+    `ruta` solo viaja con el primer hecho: su `respuesta` la redacto el modelo
+    para el mensaje entero, y repetirla en el segundo seria decirla dos veces.
+    """
+    intencion = hecho.get("intencion")
+    campos = hecho.get("campos") or {}
+    pregunta = hecho.get("pregunta")
+    ruta = dict(ruta or {}, intencion=intencion)
+    if hecho.get("confianza") == "baja":
+        if intencion in INTENCIONES_CON_BORRADOR:
+            _recordar_a_medias(chat, intencion, campos)
+        log.info("confianza baja sobre %s: pregunto antes de proponer", intencion)
+        await update.effective_message.reply_text(
+            pregunta
+            or _sin_promesas(ruta.get("respuesta"))
+            or ("No acabo de entenderte, y esto escribe "
+                + _COMO_SE_LLAMA.get(intencion, "un movimiento")
+                + ". Me lo dices de otra forma?"))
         return
 
     if intencion == "gasto":
@@ -2272,10 +2734,9 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         if not campos.get("monto") or not campos.get("descripcion"):
             _recordar_a_medias(chat, "gasto", campos)
             await update.effective_message.reply_text(
-                ruta.get("pregunta") or "Cuanto fue?")
+                pregunta or "Cuanto fue?")
             return
         await _proponer_gasto_directo(update, chat, _propuesta_de_gasto(campos, _catalogo))
-        await _avisar_hecho_suelto(update, ruta)
         return
 
     if intencion == "abono":
@@ -2286,11 +2747,10 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         if not campos.get("monto"):
             _recordar_a_medias(chat, "abono", campos)
             await update.effective_message.reply_text(
-                ruta.get("pregunta") or "De cuanto fue el abono?")
+                pregunta or "De cuanto fue el abono?")
             return
         if await _proponer_abono(update, chat, _propuesta_de_abono(campos),
                                  nombre=campos.get("deudor")):
-            await _avisar_hecho_suelto(update, ruta)
             return
         await _responder_natural(update, ruta)
         return
@@ -2303,7 +2763,7 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         if not renglones:
             _recordar_a_medias(chat, "venta", campos)
             await update.effective_message.reply_text(
-                ruta.get("pregunta") or "Que vendiste?")
+                pregunta or "Que vendiste?")
             return
         peticion = {
             "productos": renglones,
@@ -2325,7 +2785,6 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         if await _proponer_venta(update, chat, peticion):
             # D49: **la escena exacta del 2026-09-19.** La venta de $599 quedo
             # propuesta; el envio de $45 se decia aqui en vez de perderse.
-            await _avisar_hecho_suelto(update, ruta)
             return
         await _responder_natural(update, ruta)
         return
@@ -2338,10 +2797,9 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         if not peticion["insumos"] and not peticion["propuesta"]["tandas"] and not peticion["envasado"]:
             _recordar_a_medias(chat, "lote", campos)
             await update.effective_message.reply_text(
-                ruta.get("pregunta") or "Cuanto chile entro?")
+                pregunta or "Cuanto chile entro?")
             return
         if await _proponer_lote(update, chat, peticion):
-            await _avisar_hecho_suelto(update, ruta)
             return
         await _responder_natural(update, ruta)
         return
@@ -2402,59 +2860,11 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         if not peticion["productos"]:
             _recordar_a_medias(chat, "cotizacion", campos)
             await update.effective_message.reply_text(
-                ruta.get("pregunta") or "Que le cotizo?")
+                pregunta or "Que le cotizo?")
             return
         if aviso_cliente:
             await update.effective_message.reply_text(aviso_cliente)
         if await _proponer_cotizacion(update, chat, peticion):
-            await _avisar_hecho_suelto(update, ruta)
-            return
-        await _responder_natural(update, ruta)
-        return
-
-    if intencion == "anular":
-        # FASE 5. El enrutador NO dice cual: lo dice la persona, con un boton,
-        # contra una lista que arma el servidor (D2).
-        await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="anular")
-        return
-
-    if intencion == "corregir":
-        # FASE 5. Misma lista; lo que cambia es la pregunta de despues. Y
-        # "corregir" casi nunca acaba en un UPDATE: acaba en anular y volver a
-        # escribir, en un solo "va" (D6).
-        await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="corregir")
-        return
-
-    if intencion == "alta":
-        # PASO 5. El nombre es lo unico que el modelo aporta; la zona y el rol
-        # NUNCA (D9), y las comisiones se preguntan una por una segun el rol.
-        # Si ni el nombre vino, se pregunta por el y ya.
-        nombre = (campos.get("nombre") or "").strip()
-        if not nombre:
-            _recordar_a_medias(chat, "alta", campos)
-            await update.effective_message.reply_text(
-                ruta.get("pregunta") or "Como se llama?")
-            return
-        peticion = {"telegram_id": chat, "nombre": nombre}
-        if campos.get("email"):
-            peticion["email"] = campos.get("email")
-        if campos.get("telefono"):
-            peticion["telefono"] = campos.get("telefono")
-        await _proponer_alta(update, chat, peticion)
-        return
-
-    if intencion == "convertir":
-        # PASO 6. El folio, si lo dijo, solo sirve para no ensenar la lista; y
-        # aun asi la fila se busca por id, no por folio dictado. Si no lo dijo,
-        # se ensena la lista con botones, que es lo normal.
-        await _proponer_conversion(update, chat, {"telegram_id": chat})
-        return
-
-    if intencion == "consulta":
-        # `ruta["consulta"]` en vez de volver a clasificar con el modelo. Y el
-        # filtro tal cual: quien lo prueba contra el producto y contra el punto
-        # de venta es el servidor, no este proceso.
-        if await _contestar_consulta(update, chat, ruta.get("consulta"), ruta.get("filtro")):
             return
         await _responder_natural(update, ruta)
         return
@@ -2462,10 +2872,124 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     await _responder_natural(update, ruta)
 
 
+def _vacio(valor):
+    return valor is None or valor == "" or valor == [] or valor == {}
+
+
+async def _ajustar(update, chat, ruta):
+    """D74: una correccion a lo que esta EN PANTALLA se SUMA, no empieza de cero.
+
+    "fue venta a concesion" despues de proponer una venta: se toma la peticion
+    de ESA propuesta, se le cambian SOLO los campos que dijo, y se vuelve a
+    proponer. La propuesta vieja se apaga (`_registrar`, refinamiento). **El
+    modelo no reescribe la venta: dice que campo cambia.**
+    """
+    campos = dict(ruta.get("campos") or {})
+    if ruta.get("confianza") == "baja":
+        await update.effective_message.reply_text(
+            ruta.get("pregunta") or "Que le cambio, exactamente?")
+        return
+    sobre = str(campos.pop("sobre", "") or "").strip().lower()
+    vivos = _pendientes_de(chat)
+    blanco = None
+    foco = _memoria.get(chat)
+    if isinstance(foco, dict) and foco.get("borrador_id") and (
+            not sobre or _tipo_de(foco) == sobre):
+        blanco = foco
+    if blanco is None:
+        for d in reversed(vivos):
+            if not sobre or _tipo_de(d) == sobre:
+                blanco = d
+                break
+    if blanco is None:
+        if isinstance(foco, dict) and foco.get("estado") == "incompleto":
+            # Una captura a medias: el cambio se suma a lo que ya se sabia.
+            juntos = dict(foco.get("campos") or {})
+            juntos.update({k: v for k, v in campos.items() if not _vacio(v)})
+            _soltar_foco(chat)
+            _modo_propuesta[chat] = "agrega"
+            await _despachar_lista(update, chat, [{
+                "intencion": foco.get("intencion"), "campos": juntos,
+                "faltantes": [], "pregunta": None, "confianza": "alta"}], ruta)
+            return
+        await update.effective_message.reply_text(
+            "No tengo ninguna propuesta viva a la que cambiarle eso. Dictamela completa.")
+        return
+
+    _enfocar(chat, blanco["borrador_id"])
+    if blanco.get("rehidratado"):
+        await update.effective_message.reply_text(
+            "Esa propuesta la recupere de la base despues de un reinicio y no tengo "
+            "su detalle para cambiarla. Cancelala y dictamela otra vez.")
+        return
+    _modo_propuesta[chat] = "agrega"
+    tipo = _tipo_de(blanco)
+    if tipo == "venta":
+        peticion = dict(blanco.get("peticion") or {})
+        propuesta = dict(peticion.get("propuesta") or {})
+        for llave in ("condicion_pago", "monto"):
+            if not _vacio(campos.get(llave)):
+                propuesta[llave] = campos[llave]
+        descuento = _descuento_dictado(campos)
+        if descuento:
+            propuesta["descuento"] = descuento
+        peticion["propuesta"] = propuesta
+        renglones = _renglones_de(campos)
+        if renglones:
+            peticion["productos"] = renglones
+        if campos.get("comprador"):
+            for llave in ("id_comprador", "publico"):
+                peticion.pop(llave, None)
+            peticion["comprador"] = campos["comprador"]
+        await _proponer_venta(update, chat, peticion)
+    elif tipo == "gasto":
+        cambios = {k: campos[k] for k in ("monto", "descripcion", "fecha")
+                   if not _vacio(campos.get(k))}
+        if campos.get("categoria"):
+            p = _propuesta_de_gasto({"categoria": campos["categoria"]}, _catalogo)
+            cambios["categoria"] = p["categoria"]
+            cambios["categoria_nueva"] = p["categoria_nueva"]
+        await _reproponer(update, chat, {"propuesta": cambios})
+    elif tipo == "abono":
+        propuesta = dict(blanco.get("propuesta") or {})
+        for llave in ("monto", "metodo_pago", "fecha"):
+            if not _vacio(campos.get(llave)):
+                propuesta[llave] = campos[llave]
+        if campos.get("deudor"):
+            await _proponer_abono(update, chat, propuesta, nombre=campos["deudor"])
+        else:
+            await _proponer_abono(update, chat, propuesta, id_deudor=blanco.get("id_deudor"))
+    elif tipo == "cotizacion":
+        peticion = dict(blanco.get("peticion") or {})
+        nueva = _peticion_de_cotizacion(campos)
+        if nueva["productos"]:
+            peticion["productos"] = nueva["productos"]
+        if nueva.get("cliente"):
+            for llave in ("id_comprador", "prospecto"):
+                peticion.pop(llave, None)
+            peticion["cliente"] = nueva["cliente"]
+        propuesta = dict(peticion.get("propuesta") or {})
+        propuesta.update(nueva["propuesta"])
+        peticion["propuesta"] = propuesta
+        await _proponer_cotizacion(update, chat, peticion)
+    else:
+        await update.effective_message.reply_text(
+            "Eso no lo puedo cambiar asi. Cancela la propuesta y dictamela otra vez.")
+
+
 async def manejar_texto(update, context):
     chat = update.effective_chat.id
     texto = (update.message.text or "").strip()
+    update = _UpdateQueAnota(update, chat)
+    await asyncio.to_thread(_rehidratar, chat)
+    try:
+        await _manejar_texto(update, chat, texto)
+        await _seguir_cola(update, chat)
+    finally:
+        _cerrar_turno(chat, texto)
 
+
+async def _manejar_texto(update, chat, texto):
     # "va" escrito, no solo el boton: el usuario ocasional contesta como habla.
     if texto.lower() in ("va", "si", "sí", "correcto", "asi es", "dale"):
         await _confirmar(update, chat)
@@ -2473,6 +2997,9 @@ async def manejar_texto(update, context):
     if texto.lower() in ("no", "cancela", "cancelar"):
         # D1: por texto el id no viene en la mano. Sale de la propuesta viva,
         # y se lee ANTES de que `_cancelar_de_verdad` limpie la memoria.
+        if len(_pendientes_de(chat)) >= 2:
+            await update.message.reply_text(_cancelar_todo(chat))
+            return
         await update.message.reply_text(
             _cancelar_de_verdad(chat, _borrador_vivo(chat)))
         return
@@ -2609,6 +3136,8 @@ async def manejar_voz(update, context):
         await update.message.reply_text(str(texto))
         return
     await update.message.reply_text('Te entendi: "' + texto + '"')
+    update = _UpdateQueAnota(update, chat)
+    await asyncio.to_thread(_rehidratar, chat)
 
     # 1.b. **La voz entra por el mismo sitio que el texto.** Hasta el
     # 2026-09-19 esta linea llamaba a `_proponer`, o sea a la cascada vieja: una
@@ -2616,7 +3145,11 @@ async def manejar_voz(update, context):
     # Delirio" no cotizaba nada -- se intentaba leer como gasto, fallaba; como
     # abono, fallaba; y contestaba el mensaje de ayuda. Todo lo que las fases 3 y
     # 4 agregaron existia solo para quien escribiera, y Norman dicta.
-    await _enrutar_y_despachar(update, chat, texto)
+    try:
+        await _enrutar_y_despachar(update, chat, texto)
+        await _seguir_cola(update, chat)
+    finally:
+        _cerrar_turno(chat, texto)
 
 
 # ===========================================================================
@@ -2663,11 +3196,21 @@ async def _ensenar_propuesta(update, chat, mensaje, teclado):
     if isinstance(dato, dict) and dato.get("borrador_id"):
         dato["mostrado"] = (dato["borrador_id"], mensaje, teclado)
     await update.effective_message.reply_text(mensaje, reply_markup=teclado)
+    caidos = _caidos.pop(chat, None)
+    if caidos:
+        # D79: el mensaje nuevo cancelo lo que estaba esperando su VA. Se DICE:
+        # una propuesta que desaparece callada es el silencio de D49.
+        nombres = ", ".join(_COMO_SE_LLAMA.get(_tipo_de(d), "una propuesta") for d in caidos)
+        await update.effective_message.reply_text(
+            "La propuesta anterior (" + nombres + ") la cancele: no le diste VA. "
+            "Si la querias, dictamela otra vez.")
 
 
 async def _pedir_va_explicito(update, chat):
     """D63: `confirmar` sin un "si" explicito NO llama la ruta. Vuelve a ensenar
     la propuesta y pide el VA. El boton VA no pasa por el modelo: sigue igual."""
+    if await _varias_vivas(update, chat):
+        return
     dato = _memoria.get(chat)
     if not isinstance(dato, dict):
         await update.effective_message.reply_text("No tengo nada pendiente que escribir.")
@@ -2689,8 +3232,35 @@ async def _pedir_va_explicito(update, chat):
         + ". Toca VA en la propuesta de arriba o escribe va.")
 
 
-async def _confirmar(update, chat):
+async def _varias_vivas(update, chat):
+    """D79: con DOS o mas propuestas vivas, un "va" escrito no dice cual.
+
+    No se adivina: se dicen cuales hay y se pide el VA de cada una. Con UNA,
+    esto no dice nada y el "va" escrito funciona como siempre (y D63 sigue
+    exigiendo un si explicito). Devuelve True si contesto.
+    """
+    vivos = _pendientes_de(chat)
+    if len(vivos) < 2:
+        return False
+    nombres = [_COMO_SE_LLAMA.get(_tipo_de(d), "una propuesta") for d in vivos]
+    await update.effective_message.reply_text(
+        "Tengo %d propuestas esperando: %s. Con un va escrito no se cual; toca el "
+        "VA de cada una." % (len(vivos), ", ".join(nombres)))
+    return True
+
+
+async def _confirmar(update, chat, por_boton=False):
+    if not por_boton and await _varias_vivas(update, chat):
+        return
     dato = _memoria.get(chat)
+    if (not por_boton and isinstance(dato, dict) and not dato.get("borrador_id")
+            and _pendientes_de(chat)):
+        # Una propuesta lista y otra a la que le falta un dato: el "va" escrito
+        # no se lo lleva la que esta lista a escondidas.
+        await update.effective_message.reply_text(
+            "La propuesta de arriba se escribe con su boton VA. A la otra todavia "
+            "le falta un dato: contestame lo que te pregunte.")
+        return
     if not dato:
         await update.effective_message.reply_text("No tengo nada pendiente que escribir.")
         return
@@ -2815,18 +3385,45 @@ async def _reproponer(update, chat, cambios):
         update, chat, r["mensaje"], _teclado_confirmar(r["borrador_id"]))
 
 
+# Los botones que ESCRIBEN. El `borrador_id` que traen es el de la propuesta
+# que Norman vio; si ya no esta viva, NO se confirma lo que haya en el foco.
+ACCIONES_VA = ("va", "vaan", "vaalt", "vacnv", "vaab", "vavt", "valt", "vact")
+
+
 async def manejar_boton(update, context):
     q = update.callback_query
     await q.answer()
     chat = q.message.chat.id
     partes = q.data.split(":", 2)
     accion = partes[0]
+    update = _UpdateQueAnota(update, chat)
+    await asyncio.to_thread(_rehidratar, chat)
+    try:
+        await _manejar_boton(update, chat, q, partes, accion)
+        await _seguir_cola(update, chat)
+    finally:
+        _cerrar_turno(chat, "[toco el boton " + accion + "]")
+
+
+async def _manejar_boton(update, chat, q, partes, accion):
+    # D79: el boton trae el `borrador_id` de SU propuesta. Si esta viva, pasa
+    # al foco (y lo que hubiera a medias se aparta); si es un VA de una que ya
+    # no esta viva, no se escribe nada: el foco es OTRA propuesta.
+    bid = partes[1] if len(partes) > 1 else ""
+    if bid and bid not in _NO_HAY_BORRADOR and not _enfocar(chat, bid):
+        foco = _memoria.get(chat)
+        foco_bid = foco.get("borrador_id") if isinstance(foco, dict) else ""
+        if accion in ACCIONES_VA and foco_bid and foco_bid != bid:
+            await update.effective_message.reply_text(
+                "Esa propuesta ya no esta viva (se cancelo o se reemplazo). "
+                "No escribi nada. La vigente es la de mas abajo.")
+            return
 
     if accion == "valt":
         await _confirmar_lote(update, chat)
     elif accion == "cod":
         _esperando_codigo[chat] = True
-        await q.message.reply_text("Que codigo le pongo?")
+        await update.effective_message.reply_text("Que codigo le pongo?")
     elif accion == "setins":
         dato = _memoria.get(chat) or {}
         peticion = dict(dato.get("peticion") or {})
@@ -2836,7 +3433,7 @@ async def manejar_boton(update, context):
             elegido = opciones[int(partes[1])]
             lineas[int(dato.get("indice"))]["id_insumo"] = elegido["id"]
         except (ValueError, IndexError, TypeError):
-            await q.message.reply_text("Ese insumo ya no esta en la lista. Dictamelo otra vez.")
+            await update.effective_message.reply_text("Ese insumo ya no esta en la lista. Dictamelo otra vez.")
             return
         peticion["insumos"] = lineas
         await _proponer_lote(update, chat, peticion)
@@ -2849,7 +3446,7 @@ async def manejar_boton(update, context):
             elegido = opciones[int(partes[1])]
             lineas[int(dato.get("indice"))]["id_producto"] = elegido["id"]
         except (ValueError, IndexError, TypeError):
-            await q.message.reply_text("Ese formato ya no esta en la lista. Dictamelo otra vez.")
+            await update.effective_message.reply_text("Ese formato ya no esta en la lista. Dictamelo otra vez.")
             return
         peticion["envasado"] = lineas
         await _proponer_lote(update, chat, peticion)
@@ -2862,19 +3459,19 @@ async def manejar_boton(update, context):
         dato = _memoria.get(chat) or {}
         opciones = dato.get("clientes") or []
         if not opciones:
-            await q.message.reply_text(
+            await update.effective_message.reply_text(
                 "Dictamela otra vez diciendo a quien se la cotizo.")
         else:
-            await q.message.reply_text(
+            await update.effective_message.reply_text(
                 "A quien?", reply_markup=_teclado_clientes(opciones))
     elif accion == "vig":
         _esperando_vigencia[chat] = True
-        await q.message.reply_text("Cuantos dias se la respeto? Solo el numero.")
+        await update.effective_message.reply_text("Cuantos dias se la respeto? Solo el numero.")
     elif accion == "setcli":
         dato = _memoria.get(chat) or {}
         peticion = dict(dato.get("peticion") or {})
         if not peticion:
-            await q.message.reply_text("Ya no tengo esa cotizacion. Dictamela otra vez.")
+            await update.effective_message.reply_text("Ya no tengo esa cotizacion. Dictamela otra vez.")
             return
         peticion.pop("cliente", None)
         peticion.pop("id_comprador", None)
@@ -2885,7 +3482,7 @@ async def manejar_boton(update, context):
             # bytes de `callback_data` y ademas se reescribiria a mano.
             nombre = dato.get("nombre_dicho") or ""
             if not nombre:
-                await q.message.reply_text("No me quedo el nombre. Dictamela otra vez.")
+                await update.effective_message.reply_text("No me quedo el nombre. Dictamela otra vez.")
                 return
             peticion["prospecto"] = nombre
         else:
@@ -2893,7 +3490,7 @@ async def manejar_boton(update, context):
             try:
                 elegido = opciones[int(partes[1])]
             except (ValueError, IndexError, TypeError):
-                await q.message.reply_text("Ese ya no esta en la lista. Dictamela otra vez.")
+                await update.effective_message.reply_text("Ese ya no esta en la lista. Dictamela otra vez.")
                 return
             peticion["id_comprador"] = elegido["id"]
         await _proponer_cotizacion(update, chat, peticion)
@@ -2906,17 +3503,17 @@ async def manejar_boton(update, context):
         dato = _memoria.get(chat) or {}
         opciones = dato.get("compradores") or []
         if not opciones:
-            await q.message.reply_text("Dictamela otra vez diciendo a quien se la vendiste.")
+            await update.effective_message.reply_text("Dictamela otra vez diciendo a quien se la vendiste.")
         else:
             peticion = dato.get("peticion") or {}
             publico = str(peticion.get("propuesta", {}).get("condicion_pago") or "").upper() != "CONCESION"
-            await q.message.reply_text(
+            await update.effective_message.reply_text(
                 "A quien?", reply_markup=_teclado_compradores(opciones, publico))
     elif accion == "setcomp":
         dato = _memoria.get(chat) or {}
         peticion = dict(dato.get("peticion") or {})
         if not peticion:
-            await q.message.reply_text("Ya no tengo esa venta. Dictamela otra vez.")
+            await update.effective_message.reply_text("Ya no tengo esa venta. Dictamela otra vez.")
             return
         peticion.pop("comprador", None)
         peticion.pop("id_comprador", None)
@@ -2928,7 +3525,7 @@ async def manejar_boton(update, context):
             try:
                 elegido = opciones[int(partes[1])]
             except (ValueError, IndexError, TypeError):
-                await q.message.reply_text("Ese ya no esta en la lista. Dictamela otra vez.")
+                await update.effective_message.reply_text("Ese ya no esta en la lista. Dictamela otra vez.")
                 return
             peticion["id_comprador"] = elegido["id"]
         await _proponer_venta(update, chat, peticion)
@@ -2942,7 +3539,7 @@ async def manejar_boton(update, context):
             indice = int(dato.get("indice"))
             renglones[indice]["id_producto"] = elegido["id"]
         except (ValueError, IndexError, TypeError):
-            await q.message.reply_text("Ese producto ya no esta en la lista. Dictamela otra vez.")
+            await update.effective_message.reply_text("Ese producto ya no esta en la lista. Dictamela otra vez.")
             return
         peticion["productos"] = renglones
         await _proponer_venta(update, chat, peticion)
@@ -2958,7 +3555,7 @@ async def manejar_boton(update, context):
             elegido = opciones[int(partes[1])]
         except (ValueError, IndexError, TypeError):
             # El indice solo significa algo contra la lista que se ofrecio.
-            await q.message.reply_text("Ese ya no esta en la lista. Empecemos otra vez.")
+            await update.effective_message.reply_text("Ese ya no esta en la lista. Empecemos otra vez.")
             return
         peticion = dict(dato.get("peticion") or {})
         peticion["telegram_id"] = chat
@@ -2966,7 +3563,7 @@ async def manejar_boton(update, context):
         if campo == "duplicado":
             if valor != "si":
                 _memoria.pop(chat, None)
-                await q.message.reply_text("Va, no lo creo. No escribi nada.")
+                await update.effective_message.reply_text("Va, no lo creo. No escribi nada.")
                 return
             # La persona ya vio con quien se parece y dijo que es otro. La
             # bandera la pone el BOT, nunca el modelo: es un consentimiento, no
@@ -2988,7 +3585,7 @@ async def manejar_boton(update, context):
         try:
             elegido = opciones[int(partes[1])]
         except (ValueError, IndexError, TypeError):
-            await q.message.reply_text("Esa ya no esta en la lista. Pidemela otra vez.")
+            await update.effective_message.reply_text("Esa ya no esta en la lista. Pidemela otra vez.")
             return
         peticion = dict(dato.get("peticion") or {})
         peticion["telegram_id"] = chat
@@ -3007,16 +3604,16 @@ async def manejar_boton(update, context):
         except (ValueError, IndexError, TypeError):
             # El indice solo significa algo contra la lista que se ofrecio. Si
             # ya no esta, NO se adivina: se vuelve a pedir la lista.
-            await q.message.reply_text("Ese ya no esta en la lista. Pidemela otra vez.")
+            await update.effective_message.reply_text("Ese ya no esta en la lista. Pidemela otra vez.")
             return
         if dato.get("accion") == "corregir":
             if not elegido.get("valores"):
-                await q.message.reply_text(
+                await update.effective_message.reply_text(
                     "Ese no se corrige: es un movimiento de inventario y el stock se "
                     "replaya desde el ledger entero. Lo puedo anular y lo recapturas.")
                 return
             if elegido.get("arrastra_venta"):
-                await q.message.reply_text(
+                await update.effective_message.reply_text(
                     "Ese renglon es de una venta y su concepto lleva el folio dentro. "
                     "Lo puedo anular entero, pero no reescribirlo.")
                 return
@@ -3024,7 +3621,7 @@ async def manejar_boton(update, context):
                               "accion": "corregir",
                               "elegido": elegido,
                               "opciones": opciones}
-            await q.message.reply_text(
+            await update.effective_message.reply_text(
                 "Que le cambio?" + NL + elegido.get("detalle", ""),
                 reply_markup=_teclado_campos_corregibles())
             return
@@ -3037,22 +3634,22 @@ async def manejar_boton(update, context):
     elif accion == "setcorr":
         dato = _memoria.get(chat) or {}
         if dato.get("tipo") != "correccion_eligiendo":
-            await q.message.reply_text("Ya no tengo ese movimiento. Dimelo otra vez.")
+            await update.effective_message.reply_text("Ya no tengo ese movimiento. Dimelo otra vez.")
             return
         cual = partes[1]
         if cual == "monto":
             _esperando_correccion[chat] = "monto"
-            await q.message.reply_text("De cuanto era? Solo el numero.")
+            await update.effective_message.reply_text("De cuanto era? Solo el numero.")
         elif cual == "desc":
             _esperando_correccion[chat] = "desc"
-            await q.message.reply_text("Como le pongo?")
+            await update.effective_message.reply_text("Como le pongo?")
         else:
             # La categoria reusa el teclado de siempre. La lista que se ofrece
             # se guarda EXACTA, porque el indice del boton solo significa algo
             # contra ella y no contra lo que el catalogo diga despues.
             vivas = list(_catalogo)
             dato["categorias_ofrecidas"] = vivas
-            await q.message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
+            await update.effective_message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
     elif accion == "vaab":
         await _confirmar_abono(update, chat)
     elif accion == "deu":
@@ -3061,41 +3658,41 @@ async def manejar_boton(update, context):
         dato = _memoria.get(chat) or {}
         opciones = dato.get("opciones") or []
         if not opciones:
-            await q.message.reply_text("Dictamelo otra vez diciendo de quien fue el pago.")
+            await update.effective_message.reply_text("Dictamelo otra vez diciendo de quien fue el pago.")
         else:
-            await q.message.reply_text("De quien fue?", reply_markup=_teclado_deudores(opciones))
+            await update.effective_message.reply_text("De quien fue?", reply_markup=_teclado_deudores(opciones))
     elif accion == "setdeu":
         dato = _memoria.get(chat) or {}
         opciones = dato.get("opciones") or []
         try:
             elegido = opciones[int(partes[1])]
         except (ValueError, IndexError, TypeError):
-            await q.message.reply_text("Ese ya no esta en la lista. Dictamelo otra vez.")
+            await update.effective_message.reply_text("Ese ya no esta en la lista. Dictamelo otra vez.")
             return
         await _proponer_abono(update, chat, dato.get("propuesta"),
                               id_deudor=elegido["id_entidad"])
     elif accion == "montoab":
         _esperando_monto[chat] = True
-        await q.message.reply_text("De cuanto fue el abono? Solo el numero.")
+        await update.effective_message.reply_text("De cuanto fue el abono? Solo el numero.")
     elif accion == "va":
-        await _confirmar(update, chat)
+        await _confirmar(update, chat, por_boton=True)
     elif accion == "no":
         # D1: el boton YA trae el id -- `callback_data` es `"no:" + borrador_id`
         # en los ocho teclados de confirmacion. El unico sin uuid es el "Mejor
         # no" de las listas (`no:x`), que es el centinela.
         crudo = partes[1] if len(partes) > 1 else ""
         borrador_id = "" if crudo in _NO_HAY_BORRADOR else crudo
-        await q.message.reply_text(_cancelar_de_verdad(chat, borrador_id))
+        await update.effective_message.reply_text(_cancelar_de_verdad(chat, borrador_id))
     elif accion == "cat":
         dato = _memoria.get(chat)
         if not dato:
-            await q.message.reply_text("Ya no tengo ese borrador. Dictamelo otra vez.")
+            await update.effective_message.reply_text("Ya no tengo ese borrador. Dictamelo otra vez.")
             return
         vivas = dato.get("categorias") or list(_catalogo)
         # Se guarda la lista EXACTA que se ofrecio: el indice del boton solo
         # significa algo contra ella, no contra lo que el catalogo diga despues.
         dato["categorias_ofrecidas"] = list(vivas)
-        await q.message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
+        await update.effective_message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
     elif accion == "setcat":
         dato = _memoria.get(chat) or {}
         ofrecidas = dato.get("categorias_ofrecidas") or dato.get("categorias") or []
@@ -3107,22 +3704,22 @@ async def manejar_boton(update, context):
             try:
                 i = int(partes[1])
             except (ValueError, IndexError, TypeError):
-                await q.message.reply_text("No entendi ese boton. Dimelo otra vez.")
+                await update.effective_message.reply_text("No entendi ese boton. Dimelo otra vez.")
                 return
             try:
                 nueva = None if i == -1 else ofrecidas[i]
             except IndexError:
-                await q.message.reply_text("Esa categoria ya no esta en la lista.")
+                await update.effective_message.reply_text("Esa categoria ya no esta en la lista.")
                 return
             if not nueva:
-                await q.message.reply_text("Para corregir la categoria tienes que escoger una.")
+                await update.effective_message.reply_text("Para corregir la categoria tienes que escoger una.")
                 return
             await _proponer_correccion_de_campo(update, chat, "categoria", nueva)
             return
         try:
             i = int(partes[1])
         except (ValueError, IndexError, TypeError):
-            await q.message.reply_text("No entendi ese boton. Dictamelo otra vez.")
+            await update.effective_message.reply_text("No entendi ese boton. Dictamelo otra vez.")
             return
         if i == -1:
             nueva = None
@@ -3130,26 +3727,26 @@ async def manejar_boton(update, context):
             try:
                 nueva = ofrecidas[i]
             except IndexError:
-                await q.message.reply_text("Esa categoria ya no esta en la lista. Dictamelo otra vez.")
+                await update.effective_message.reply_text("Esa categoria ya no esta en la lista. Dictamelo otra vez.")
                 return
         await _reproponer(update, chat, {"propuesta": {"categoria": nueva}})
     elif accion == "monto":
         _esperando_monto[chat] = True
-        await q.message.reply_text("De cuanto fue? Solo el numero.")
+        await update.effective_message.reply_text("De cuanto fue? Solo el numero.")
     elif accion == "cta":
         dato = _memoria.get(chat) or {}
         cuentas = dato.get("cuentas") or []
         if len(cuentas) < 2:
-            await q.message.reply_text("Solo tienes una cuenta dada de alta; no hay a cual cambiar.")
+            await update.effective_message.reply_text("Solo tienes una cuenta dada de alta; no hay a cual cambiar.")
         else:
-            await q.message.reply_text("Contra cual?", reply_markup=_teclado_cuentas(cuentas))
+            await update.effective_message.reply_text("Contra cual?", reply_markup=_teclado_cuentas(cuentas))
     elif accion == "setcta":
         dato = _memoria.get(chat) or {}
         cuentas = dato.get("cuentas") or []
         try:
             elegida = cuentas[int(partes[1])]
         except (ValueError, IndexError, TypeError):
-            await q.message.reply_text("Esa cuenta ya no esta en la lista. Dictamelo otra vez.")
+            await update.effective_message.reply_text("Esa cuenta ya no esta en la lista. Dictamelo otra vez.")
             return
         # Las dos fases comparten el boton de cuenta, pero NO la ruta que
         # repropone. Sin esta bifurcacion, cambiarle la cuenta a una venta la
@@ -3351,7 +3948,7 @@ async def _latir(app):
         await asyncio.sleep(INTERVALO_LATIDO)
         log.info(
             "latido: vivo, %d borrador(es) en memoria | arranque %s | codigo %s",
-            len(_memoria),
+            max(len(_memoria), sum(len(v) for v in _pendientes.values())),
             dt.datetime.fromtimestamp(ARRANCADO_EN).strftime("%Y-%m-%d %H:%M:%S"),
             dt.datetime.fromtimestamp(VERSION_CARGADA).strftime("%Y-%m-%d %H:%M:%S"),
         )

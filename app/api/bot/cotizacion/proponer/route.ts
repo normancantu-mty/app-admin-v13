@@ -29,6 +29,7 @@ import { preguntaDeProducto } from '@/lib/bot-tamanos'
 import type { Json } from '@/types/database'
 import {
   clienteDeServicio,
+  conservaPendientes,
   leerCatalogoDeVenta,
   leerCompradoresDeVenta,
   resolverIdentidad,
@@ -337,12 +338,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: normalizada.error }, { status: 422 })
     }
 
-    // Un solo borrador PENDIENTE por persona, igual que las otras cuatro fases.
-    await supabase
-      .from('bot_borradores')
-      .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
-      .eq('telegram_id', telegramId)
-      .eq('estado', 'PENDIENTE')
+    // Un solo borrador PENDIENTE por persona, igual que las otras cuatro fases.    // Fase 8 (D79): con `conservar_pendientes` la propuesta se SUMA a las que
+    // esperan su boton (varios hechos en un mensaje). Sin el, lo de siempre.
+    if (!conservaPendientes(cuerpo)) {
+      await supabase
+        .from('bot_borradores')
+        .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+        .eq('telegram_id', telegramId)
+        .eq('estado', 'PENDIENTE')
+    }
 
     const sello = sellarCotizacion(normalizada.payload)
     const paraQuien = comprador?.nombre ?? nombreProspecto ?? ''
