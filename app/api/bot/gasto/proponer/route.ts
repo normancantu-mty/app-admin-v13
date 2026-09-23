@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'telegram_id invalido.' }, { status: 400 })
     }
 
-    const supabase = clienteDeServicio()
+    const supabase = clienteDeServicio(request)
 
     // Un telegram_id sin mapeo NO escribe nada y tampoco averigua si el bot
     // existe para otros. No hay auto-registro (Q-14).

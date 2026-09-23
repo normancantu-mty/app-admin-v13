@@ -106,7 +106,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'telegram_id invalido.' }, { status: 400 })
     }
 
-    const supabase = clienteDeServicio()
+    const supabase = clienteDeServicio(request)
 
     const identidad = await resolverIdentidad(supabase, telegramId)
     if (!identidad) {
@@ -252,8 +252,31 @@ export async function POST(request: Request) {
     // Se escala DESPUES de resolver los productos, porque el precio sale del
     // catalogo y de la cascada del comprador — nunca de lo que dijo el modelo.
     const avisosPrevios: string[] = []
-    const objetivo = Number(cuerpo.objetivo ?? 0)
-    if (Number.isFinite(objetivo) && objetivo > 0) {
+    // ── D67 (Fase 7): "NO VINO" NO ES LO MISMO QUE "VINO Y NO SIRVE" ────────
+    // Hasta hoy `Number(cuerpo.objetivo ?? 0)` y `objetivo > 0`: un -500, un 0 o
+    // un "abc" se ignoraban y la ruta contestaba 200 con la cotizacion SIN
+    // escalar, sin decir que el objetivo se tiro. Es la clase de silencio de D49.
+    // Ausente (undefined, null o "") = cotizacion normal. Presente y no es un
+    // numero > 0 = 422 con el motivo. `escalarAObjetivo` ya lo rechazaba; la
+    // ruta nunca se lo pasaba.
+    const crudoObjetivo = cuerpo.objetivo
+    const vinoObjetivo =
+      crudoObjetivo !== undefined && crudoObjetivo !== null && crudoObjetivo !== ''
+    const objetivo = vinoObjetivo ? Number(crudoObjetivo) : 0
+    if (
+      vinoObjetivo &&
+      (typeof crudoObjetivo === 'boolean' || !Number.isFinite(objetivo) || objetivo <= 0)
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          motivo: 'objetivo_invalido',
+          error: `No entendi el monto objetivo (${String(crudoObjetivo)}). Te cotizo sin escalar, o dime el monto.`
+        },
+        { status: 422 }
+      )
+    }
+    if (vinoObjetivo) {
       const escalado = escalarAObjetivo(
         lineas.map((l) => ({
           precioUnitario: precioParaComprador(l.producto, comprador),

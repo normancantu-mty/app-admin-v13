@@ -48,6 +48,7 @@ os.environ.setdefault(
     "BOT_LOG", os.path.join(tempfile.gettempdir(), "probar_bot.log"))
 
 import bot_gastos as B  # noqa: E402
+import grabar_enrutador as G  # noqa: E402
 
 CHAT = 444333222
 UUID = "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9"
@@ -326,8 +327,15 @@ caso("VERDE - despues de cotizar, el bot recuerda a Aeropuerto",
      B._cliente_recordado(CHAT), "Aeropuerto", "")
 
 # 2. ...y "el mismo cliente" resuelve a Aeropuerto Y LO NOMBRA.
-dichos, doble = cotizar("cotizame para el mismo cliente 35 grandes",
-                        {"productos": DOS_RENGLONES, "cliente": "el mismo cliente"})
+#
+# D66 (Fase 7): la salida del modelo YA NO se escribe a mano. Hasta aqui esta
+# linea era `{"cliente": "el mismo cliente"}` tecleado, y el modelo real no
+# emitia eso: la prueba paso verde toda la Fase 6 con D50 roto (auditoria
+# §12.4). Ahora es lo que el modelo REAL contesto a la frase, grabado con el md5
+# del PROMPT; si el PROMPT cambia, `grabada` falla y pide volver a grabar.
+D50_1 = G.cargar()["frases"]["d50_1_mismo_cliente"]
+dichos, doble = hablar(D50_1["texto"], G.grabada("d50_1_mismo_cliente"),
+                       respuestas=COTIZACION_OK)
 cuerpo = doble.cuerpo_de("/api/bot/cotizacion/proponer") or {}
 caso("VERDE - `el mismo cliente` viaja a la ruta como Aeropuerto",
      cuerpo.get("cliente"), "Aeropuerto", str(cuerpo)[:160])
@@ -346,6 +354,21 @@ for forma in ["el mismo", "para el mismo", "al mismo", "el anterior", "para el"]
 caso("VERDE - las 5 formas de decir `el mismo` resuelven a Aeropuerto",
      len([c for c in casos if c[0].startswith("VERDE - `") and "resuelve a" in c[0]]),
      0, "")
+
+# D66: y las cinco frases de la auditoria (§8.1), con lo que el modelo REAL
+# emitio para cada una, por la tuberia entera.
+for clave in ("d50_1_mismo_cliente", "d50_2_olvidalo_textual", "d50_3_al_mismo",
+              "d50_4_mismo_distribuidor", "d50_5_al_anterior"):
+    limpiar()
+    cotizar("cotizale 12 de 750 a aeropuerto",
+            {"productos": DOS_RENGLONES, "cliente": "Aeropuerto"})
+    grabada = G.grabada(clave)
+    _, doble = hablar(G.cargar()["frases"][clave]["texto"], grabada,
+                      respuestas=COTIZACION_OK)
+    cuerpo = doble.cuerpo_de("/api/bot/cotizacion/proponer") or {}
+    caso("VERDE - grabacion real %s (cliente %r) resuelve a Aeropuerto"
+         % (clave, (grabada.get("campos") or {}).get("cliente")),
+         cuerpo.get("cliente"), "Aeropuerto", str(doble.rutas()))
 
 # ── CONTROL NEGATIVO 1: como PRIMER mensaje del chat, sigue preguntando ─────
 limpiar()
@@ -412,6 +435,53 @@ caso("ROJO  - sin cotizacion anterior, NO se propone nada",
      "/api/bot/cotizacion/proponer" in doble.rutas(), False, str(doble.rutas()))
 caso("ROJO  - ...y se pregunta que cotizar",
      dichos, ["Que le cotizo?"])
+
+# ── D67 (Fase 7): el objetivo que VINO y no sirve SE DICE ─────────────────
+#    Salida REAL del modelo (grabacion d67_objetivo_cero): a "ahora una que
+#    salga en 0 pesos" emite `monto_objetivo: 0`. Hasta hoy eso era identico a
+#    "no pidio objetivo" y la cotizacion salia sin escalar, callada.
+limpiar()
+cotizar("cotizale 12 de 750 a aeropuerto",
+        {"productos": DOS_RENGLONES, "cliente": "Aeropuerto"})
+D67_CERO = G.cargar()["frases"]["d67_objetivo_cero"]
+dichos, doble = hablar(D67_CERO["texto"], G.grabada("d67_objetivo_cero"),
+                       respuestas=COTIZACION_OK)
+cuerpo = doble.cuerpo_de("/api/bot/cotizacion/proponer") or {}
+caso("VERDE - D67: un objetivo de 0 (salida real) se DICE",
+     [d for d in dichos if d.startswith("No entendi el monto objetivo (0)")] != [],
+     True, str(dichos))
+caso("VERDE - D67: ...y se cotiza sin escalar (el objetivo no viaja)",
+     ("objetivo" in cuerpo, len(cuerpo.get("productos") or [])), (False, 1),
+     str(cuerpo)[:200])
+# Y sin cotizacion anterior NO promete cotizar: la regla 16 vale para el bot.
+B._ultima_cotizacion.pop(CHAT, None)
+dichos, doble = hablar(D67_CERO["texto"], G.grabada("d67_objetivo_cero"),
+                       respuestas=COTIZACION_OK)
+caso("VERDE - D67: sin cotizacion anterior dice 'no entendi' y NO promete cotizar",
+     ([d for d in dichos if d.startswith("No entendi el monto objetivo (0)")] != [],
+      [d for d in dichos if "Te cotizo" in d],
+      "/api/bot/cotizacion/proponer" in doble.rutas()),
+     (True, [], False), str(dichos))
+# CONTROL NEGATIVO: un objetivo bueno NO dispara el aviso.
+limpiar()
+cotizar("cotizale 12 de 750 a aeropuerto",
+        {"productos": DOS_RENGLONES, "cliente": "Aeropuerto"})
+dichos, _ = cotizar("ahora una de unos 15 mil", {"monto_objetivo": 15000})
+caso("ROJO  - D67: un objetivo que sirve no dice 'no entendi'",
+     [d for d in dichos if "No entendi el monto objetivo" in d], [], str(dichos))
+# CONTROL NEGATIVO: sin objetivo, tampoco.
+limpiar()
+dichos, _ = cotizar("cotizale 12 de 750 a aeropuerto",
+                    {"productos": DOS_RENGLONES, "cliente": "Aeropuerto"})
+caso("ROJO  - D67: sin objetivo no dice 'no entendi'",
+     [d for d in dichos if "No entendi el monto objetivo" in d], [], str(dichos))
+# La funcion, en la frontera: que vino, que no.
+caso("VERDE - D67: _objetivo_que_no_sirve distingue ausente de invalido",
+     [B._objetivo_que_no_sirve(c) for c in (
+         {}, {"monto_objetivo": None}, {"monto_objetivo": ""},
+         {"monto_objetivo": 0}, {"monto_objetivo": -500}, {"monto_objetivo": "abc"},
+         {"monto_objetivo": 15000})],
+     [None, None, None, "0", "-500", "abc", None], "")
 
 # ── CONTROL NEGATIVO: un objetivo basura no viaja ───────────────────────────
 limpiar()

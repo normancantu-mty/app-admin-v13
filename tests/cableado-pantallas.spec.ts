@@ -36,6 +36,7 @@ import {
   leerStockPorCubeta
 } from '../lib/vistas'
 
+import { avisar, centavos, ultimoAbonoVistaVsViejo, violacionesSaldo } from './invariantes-vistas'
 import {
   correnLasDeEquivalencia,
   llaveServiceRole,
@@ -103,9 +104,6 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
   /** Los dos nodos con nombre y apellido del prompt. */
   const DELIRIO_85 = 'Delirio 85'
   const DAVID_FLORES = 'David Flores'
-
-  /** Dinero al centavo, sin que un 0.1 + 0.2 de coma flotante lo tumbe. */
-  const centavos = (n: number): number => Math.round(n * 100)
 
   let db: SupabaseClient<Database>
   let crudo: LectorSuelto
@@ -336,25 +334,24 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     // excluye. Es una diferencia real, y esta prueba es la que dice si hoy mueve
     // algun numero: si un dia falla, es que nacio un abono pendiente vivo y hay
     // que decidir a proposito cual de las dos fechas manda.
+    //
+    // Fase 7, D58: "si un dia falla" pasaba con CADA abono capturado por un
+    // no-ADMIN (`app/actions/abonos.ts:572-579`: ACTIVO + ABONO_PENDIENTE), rojo
+    // hasta que Norman lo aprobaba. Avisar no puede costar un push. Ahora:
+    // - BLOQUEA: la vista da la fecha del ultimo abono NO pendiente (invariante).
+    // - AVISA: los nodos donde el semaforo viejo daria otra fecha.
     const vista = await leerSaldosEntidad(db)
     const porId = new Map(vista.map((f) => [f.id_entidad, f]))
 
     const contables = finanzasTodas.filter((f) => f.status === 'ACTIVO' || f.status === 'APPROVED')
 
-    for (const entidad of entidades.filter((e) => e.rol !== 'ADMIN')) {
-      // Lo que hacia el bucle viejo: todos los ABONO_DEUDA, pendientes incluidos.
-      const abonos = contables.filter(
-        (f) => f.tipo_movimiento === 'ABONO_DEUDA' && f.id_entidad_relacionada === entidad.id
-      )
-      const antes = abonos.length
-        ? new Date(Math.max(...abonos.map((f) => new Date(f.fecha_movimiento).getTime()))).toISOString()
-        : null
-
-      const ultimoAbono = porId.get(entidad.id)?.ultimo_abono ?? null
-      const despues = ultimoAbono ? new Date(ultimoAbono).toISOString() : null
-
-      expect(despues, `ultimo abono de ${entidad.nombre}`).toBe(antes)
-    }
+    const { violaciones, avisos } = ultimoAbonoVistaVsViejo(
+      entidades.filter((e) => e.rol !== 'ADMIN'),
+      contables,
+      (id) => porId.get(id)?.ultimo_abono ?? null
+    )
+    expect(violaciones, 'la vista toma el ultimo abono aprobado').toEqual([])
+    for (const aviso of avisos) avisar(test.info(), `ultimo abono: ${aviso}`)
   })
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -485,13 +482,13 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     // 2026-09-07 entro un ticket de concesion de David por $3,552.00, y con la
     // igualdad vieja una venta real tumbaba el push.
     const generadaDavid = Number(david!.deuda_generada_tickets)
-    const abonosDavid = Number(david!.abonos_aprobados)
-    const netoDavid = Number(david!.saldo_pendiente_consignacion)
 
-    expect(centavos(netoDavid), 'generada - abonos = saldo').toBe(
-      centavos(generadaDavid - abonosDavid)
-    )
-    expect(centavos(generadaDavid), 'el bruto no es el neto').toBeGreaterThan(centavos(netoDavid))
+    // Fase 7, D58: era `generada - abonos = saldo` y `bruto > neto`. Las dos
+    // ignoraban CARGO_DEUDA (evento normal, `app/actions/abonos.ts:569`): un cargo
+    // mayor que los abonos las tumbaba. La relacion completa entre bruto y neto
+    // (generada + cargos - abonos = neto) vive en `violacionesSaldo`; que el
+    // bruto no se confunda con el neto queda amarrado por esa igualdad.
+    expect(violacionesSaldo([david!]), 'David: generada + cargos - abonos = neto').toEqual([])
     expect(centavos(generadaDavid), 'lo generado no decrece').toBeGreaterThanOrEqual(centavos(58_000))
     // ─── 2026-09-12: esta asercion se cayo, y la tumbo un COBRO DE VERDAD ────
     // Decia `saldo_pendiente_consignacion >= 19,476` — "no baja de su piso sin
@@ -506,12 +503,8 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     // crece cuando entra un pedido, y la relacion entre las tres columnas se
     // comprueba con una igualdad, igual que en David.
     const generadaDelirio = Number(delirio!.deuda_generada_tickets)
-    const abonosDelirio = Number(delirio!.abonos_aprobados)
-    const netoDelirio = Number(delirio!.saldo_pendiente_consignacion)
 
-    expect(centavos(netoDelirio), 'Delirio: generada - abonos = saldo').toBe(
-      centavos(generadaDelirio - abonosDelirio)
-    )
+    expect(violacionesSaldo([delirio!]), 'Delirio: generada + cargos - abonos = saldo').toEqual([])
     expect(
       centavos(generadaDelirio),
       'Delirio 85: lo generado en pedidos no decrece'
@@ -522,7 +515,13 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
   // 8. Cartera · las 11 filas, columna por columna, y el pie de tabla
   // ══════════════════════════════════════════════════════════════════════════
   test('Cartera: las filas y los tres totales del encabezado', async () => {
-    const hoy = new Date().toISOString()
+    // Fase 7, D58: "hoy" era `new Date()` —el reloj de NODE— y la vista cuenta
+    // con el `now()` de la BASE. Cruzando la medianoche de Mexico, los dias sin
+    // abono salian distintos sin defecto. Ahora se lee la vista primero y "hoy"
+    // es su `calculado_en`, como ya hacia `vistas-equivalencia.spec.ts`.
+    const despues = await leerCartera(db)
+    expect(despues.length, 'la cartera vino vacia').toBeGreaterThan(0)
+    const hoy = new Date(despues[0].calculado_en).toISOString()
 
     const antes = construirCartera({
       entidades: entidades as EntidadCartera[],
@@ -531,7 +530,6 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
       finanzas: finanzasTodas as unknown as FinanzaCartera[],
       hoy
     })
-    const despues = await leerCartera(db)
 
     console.log(`[cableado] Cartera · filas  antes ${antes.length}  despues ${despues.length}`)
     expect(despues.length, 'numero de filas de la cartera').toBe(antes.length)

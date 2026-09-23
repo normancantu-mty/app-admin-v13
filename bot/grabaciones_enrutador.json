@@ -1,0 +1,641 @@
+{
+ "contexto": "catalogo de productos real (/api/bot/catalogo), CATEGORIAS_SEMILLA, sin deudores, sin borrador a medias",
+ "frases": {
+  "d48_envio_como_gasto": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "pregunta si el envio se aplica como gasto",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "charla",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "Eso no lo he escrito; dimelo cuando quieras y lo capturo como gasto."
+   },
+   "texto": "tienes pensado Aplicar el envio como un gasto?"
+  },
+  "d48_y_el_envio": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "descripcion": "envio"
+    },
+    "confianza": "media",
+    "consulta": null,
+    "entendido": "quiere capturar el gasto del envio, sin monto",
+    "faltantes": [
+     "monto"
+    ],
+    "filtro": null,
+    "intencion": "gasto",
+    "otro_hecho": null,
+    "pregunta": "¿cuanto fue el envio?",
+    "respuesta": "eso no lo he escrito; dime cuanto fue el envio y lo capturo como gasto"
+   },
+   "texto": "y el envio?"
+  },
+  "d49_un_solo_hecho": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "productos": [
+      {
+       "cantidad": 1,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "botella de 750"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "venta botella 750ml sin monto",
+    "faltantes": [
+     "monto"
+    ],
+    "filtro": null,
+    "intencion": "venta",
+    "otro_hecho": null,
+    "pregunta": "¿En cuánto se vendió?",
+    "respuesta": "¿En cuánto se vendió la de 750?"
+   },
+   "texto": "vendi una botella de 750"
+  },
+  "d49_venta_con_precio": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "monto": 599,
+     "productos": [
+      {
+       "cantidad": 1,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "750"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "venta de una Plata 750ml en 599",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "venta",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "Va, ahi te la muestro pa que la confirmes."
+   },
+   "texto": "vendi una de 750 en 599"
+  },
+  "d49_venta_y_envio": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "monto": 599,
+     "productos": [
+      {
+       "cantidad": 1,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "Destilado Plata 750ml"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "venta botella grande 599, envio 45 no capturado",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "venta",
+    "otro_hecho": {
+     "descripcion": "envio a domicilio",
+     "monto": 45.0,
+     "tipo": "gasto"
+    },
+    "pregunta": null,
+    "respuesta": "Va la venta de la botella grande en 599; el envío de 45 no lo he escrito, dime si lo capturo como gasto aparte."
+   },
+   "texto": "Se vendio una botella grande de 599 pesos, el envio fue 45 pesos"
+  },
+  "d50_1_mismo_cliente": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "cliente": "el mismo cliente",
+     "productos": [
+      {
+       "cantidad": 35,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "grande"
+      },
+      {
+       "cantidad": 43,
+       "id_producto": "c1000000-0000-0000-0000-000000000003",
+       "producto": "chica"
+      },
+      {
+       "cantidad": 25,
+       "id_producto": "c1000000-0000-0000-0000-000000000004",
+       "producto": "mini"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cotizacion al mismo cliente: 35 grandes, 43 chicas, 25 mini",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "Va la cotizacion para el mismo cliente: 35 grandes, 43 chicas y 25 mini."
+   },
+   "texto": "cotizame para el mismo cliente 35 grandes, 43 chicas y 25 mini"
+  },
+  "d50_2_olvidalo_textual": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "cliente": "el mismo cliente",
+     "productos": [
+      {
+       "cantidad": 35,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "grande"
+      },
+      {
+       "cantidad": 43,
+       "id_producto": "c1000000-0000-0000-0000-000000000003",
+       "producto": "chica"
+      },
+      {
+       "cantidad": 25,
+       "id_producto": "c1000000-0000-0000-0000-000000000004",
+       "producto": "mini"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cotizacion mismo cliente, 35 grandes 43 chicas 25 mini",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "Va, cotizo para el mismo cliente: 35 grandes, 43 chicas y 25 mini."
+   },
+   "texto": "Olvidalo, ahora cotizame por favor para el mismo cliente 35 grandes, 43 chicas y 25 mini."
+  },
+  "d50_3_al_mismo": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "cliente": "al mismo",
+     "productos": [
+      {
+       "cantidad": 20,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "grandes"
+      },
+      {
+       "cantidad": 10,
+       "id_producto": "c1000000-0000-0000-0000-000000000004",
+       "producto": "mini"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cotizacion mismo cliente: 20 grandes, 10 mini",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, cotizando 20 grandes y 10 mini para el mismo cliente."
+   },
+   "texto": "ahora al mismo 20 grandes y 10 mini"
+  },
+  "d50_4_mismo_distribuidor": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "cliente": "el mismo distribuidor",
+     "productos": [
+      {
+       "cantidad": 5,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "grande"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cotizar 5 grandes para el mismo distribuidor",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, cotizo 5 grandes para el mismo distribuidor y te paso el precio."
+   },
+   "texto": "para el mismo distribuidor 5 grandes"
+  },
+  "d50_5_al_anterior": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "cliente": "el mismo",
+     "productos": [
+      {
+       "cantidad": 12,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "750"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cotizacion 12 de 750 para el mismo cliente anterior",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, saco la cotizacion para el mismo cliente"
+   },
+   "texto": "cotizale otra vez al anterior 12 de 750"
+  },
+  "d50_control_con_nombre": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "cliente": "aeropuerto",
+     "productos": [
+      {
+       "cantidad": 12,
+       "id_producto": "c1000000-0000-0000-0000-000000000001",
+       "producto": "750"
+      }
+     ]
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cotizacion 12 destilado 750 a aeropuerto",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, te armo la cotizacion de 12 destilados de 750 para aeropuerto"
+   },
+   "texto": "cotizale 12 de 750 a aeropuerto"
+  },
+  "d64_ambiguo_ahi_va": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": null,
+    "entendido": "dijo 'ahi va', confirma pero no es una de las palabras exactas",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "nomas pa curarme en salud: dime 'va' o 'escribelo' y lo capturo"
+   },
+   "texto": "ahi va"
+  },
+  "d64_ambiguo_mmm_va": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": null,
+    "entendido": "dijo va, con muletilla antes",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "necesito un va clarito, sin peros, para dejar la venta escrita"
+   },
+   "texto": "mmm va"
+  },
+  "d64_ambiguo_ok_pues": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": null,
+    "entendido": "dice ok pues a la venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "Nomas para estar seguro, dime 'va' y la registro."
+   },
+   "texto": "ok pues"
+  },
+  "d64_ambiguo_ps_va": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": null,
+    "entendido": "dijo va, con un ps de mas antes",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "no me quedo tan claro el va, ¿si confirmas?"
+   },
+   "texto": "ps va"
+  },
+  "d64_ambiguo_sale": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": null,
+    "entendido": "dijo sale, ante propuesta de venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "nomas para estar seguro, dime va y la escribo"
+   },
+   "texto": "sale"
+  },
+  "d64_ambiguo_va_pues_pregunta": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": null,
+    "entendido": "confirma la venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, dale"
+   },
+   "texto": "va pues?"
+  },
+  "d64_ambiguo_y_eso": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "baja",
+    "consulta": null,
+    "entendido": "no quedo claro si es un si o una duda",
+    "faltantes": [
+     "dato"
+    ],
+    "filtro": null,
+    "intencion": "charla",
+    "otro_hecho": null,
+    "pregunta": "¿le doy va a esa venta o la cancelo?",
+    "respuesta": "¿le doy va a esa venta que tienes en pantalla o mejor la dejamos?"
+   },
+   "texto": "y eso?"
+  },
+  "d64_explicito_dale_escribela": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "confirma la venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, la escribo."
+   },
+   "texto": "dale, escribela"
+  },
+  "d64_explicito_si_confirmalo": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "confirma la venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va"
+   },
+   "texto": "si, confirmalo"
+  },
+  "d64_explicito_si_escribelo": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "confirma la venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, la escribo."
+   },
+   "texto": "si escribelo"
+  },
+  "d64_explicito_si_va": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "confirma la venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, la registro."
+   },
+   "texto": "si va"
+  },
+  "d64_explicito_va_escribelo": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "confirma la venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "confirmar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, la escribo"
+   },
+   "texto": "va escribelo"
+  },
+  "d64_noconfirma_gasolina": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {
+     "descripcion": "gasolina",
+     "monto": 200
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "gasto gasolina 200",
+    "faltantes": [
+     "categoria"
+    ],
+    "filtro": null,
+    "intencion": "gasto",
+    "otro_hecho": null,
+    "pregunta": "esos 200 de gasolina los pongo en Insumos, Logistica_Envios o Gastos_Personales_Socio?",
+    "respuesta": "te falta la categoria, gasolina va en cual"
+   },
+   "texto": "gaste 200 pesos en gasolina"
+  },
+  "d64_noconfirma_gracias": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "dijo gracias",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "charla",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "de nada, ahi sigue la venta esperando que le des el va"
+   },
+   "texto": "gracias"
+  },
+  "d64_noconfirma_hola": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "saludo",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "charla",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "Hola Norman, aqui ando, dime que tienes."
+   },
+   "texto": "hola"
+  },
+  "d64_noconfirma_olvidalo": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "dijo que no a la venta en pantalla",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "cancelar",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "va, no la escribo"
+   },
+   "texto": "olvidalo"
+  },
+  "d64_noconfirma_stock": {
+   "en_pantalla": "una propuesta de una venta lista, esperando que digas que va o que no",
+   "salida": {
+    "campos": {},
+    "confianza": "media",
+    "consulta": "stock",
+    "entendido": "pregunta por stock general",
+    "faltantes": [],
+    "filtro": null,
+    "intencion": "consulta",
+    "otro_hecho": null,
+    "pregunta": null,
+    "respuesta": "dejame ver el stock que tienes."
+   },
+   "texto": "cuanto stock tengo?"
+  },
+  "d67_objetivo_cero": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "monto_objetivo": 0,
+     "productos": []
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cotizacion a 0 pesos, misma proporcion que la anterior",
+    "faltantes": [
+     "cliente"
+    ],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": "¿para que cliente es esta cotizacion?",
+    "respuesta": "no me dijiste para quien es, ¿para que cliente armo esta cotizacion?"
+   },
+   "texto": "ahora una que salga en 0 pesos, con la misma proporcion"
+  },
+  "d67_objetivo_negativo": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {
+     "monto_objetivo": 500,
+     "productos": []
+    },
+    "confianza": "alta",
+    "consulta": null,
+    "entendido": "cotizacion nueva, monto objetivo 500, misma proporcion que la anterior",
+    "faltantes": [
+     "cliente"
+    ],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": "¿para quién es esta cotización?",
+    "respuesta": "va, ¿para quién es esta cotización?"
+   },
+   "texto": "ahora una de menos 500 pesos con la misma proporcion"
+  },
+  "d67_objetivo_sin_numero": {
+   "en_pantalla": null,
+   "salida": {
+    "campos": {},
+    "confianza": "baja",
+    "consulta": null,
+    "entendido": "quiere otra cotizacion en la misma proporcion, sin cliente ni monto",
+    "faltantes": [
+     "cliente",
+     "monto_objetivo"
+    ],
+    "filtro": null,
+    "intencion": "cotizacion",
+    "otro_hecho": null,
+    "pregunta": "¿Para quién es esta cotización?",
+    "respuesta": "¿Para quién es esta cotización?"
+   },
+   "texto": "ahora una por lo que alcance, con la misma proporcion"
+  }
+ },
+ "grabado_en": "2026-09-22 21:08:52",
+ "llamadas": 3,
+ "md5_prompt": "531c6173fbeb106acfefb262bbf51474",
+ "modelo": "claude -p --model sonnet (enrutador._claude)",
+ "segundos": 33.5
+}

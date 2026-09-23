@@ -26,9 +26,11 @@ siendo el flujo de borrador sellado (`/api/bot/*/proponer` -> boton VA ->
 y este archivo se construye ENCIMA de ella, nunca alrededor.
 """
 import json
+import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 
 TIMEOUT = 90
 
@@ -81,6 +83,47 @@ INTENCIONES = (
 CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas")
 CONSULTAS = CONSULTAS_QUE_CONTESTA + ("otra",)
 
+# ---------------------------------------------------------------------------
+# D65 (Fase 7): EL VOCABULARIO QUE CRUZA LA FRONTERA VIVE EN UN SOLO LUGAR
+# ---------------------------------------------------------------------------
+# Todo valor que el PROMPT le pide al modelo que ESCRIBA y que el codigo luego
+# COMPARA es un contrato entre dos lectores: el modelo (lee prosa) y Python (lee
+# esta tupla). Hasta la Fase 6 cada lado tenia su copia, escrita por dos manos,
+# y nada las amarraba: `probar_promesas.py` paso verde toda la Fase 6 con la
+# regla 19 ausente del PROMPT (auditoria §12.4). Ahora el PROMPT se ARMA con
+# estas tuplas (`_armar_prompt`, abajo): cambiar una cambia los dos lados.
+NIVELES_DE_CONFIANZA = ("alta", "media", "baja")
+
+# Regla 19: las formas cortas con que Norman se refiere al cliente anterior. El
+# modelo las copia TAL CUAL en `campos.cliente`, y `bot_gastos._dice_el_mismo`
+# las reconoce. El bot acepta ademas variantes (su expresion regular), pero
+# ESTAS tienen que empatar siempre: `probar_promesas.py` lo comprueba una por una.
+FORMAS_DEL_MISMO = ("el mismo cliente", "el mismo", "al mismo", "el anterior",
+                    "el de antes")
+
+# Regla 20 / D63: lo UNICO que es un "si" explicito. De aqui salen el texto de
+# la regla 20 (lo que se le pide al modelo) y `es_afirmacion_explicita` (lo que
+# el bot comprueba por su cuenta antes de dejar que `confirmar` escriba).
+AFIRMACIONES_EXPLICITAS = ("va", "si", "sii", "dale", "escribelo", "escribela",
+                           "confirmalo", "confirmala", "confirmado", "correcto")
+_SEPARADORES = re.compile(r"[\s,.;:!]+")
+
+
+def es_afirmacion_explicita(texto):
+    """True si el mensaje esta hecho SOLO de `AFIRMACIONES_EXPLICITAS`. **Pura.**
+
+    Sin mayusculas ni acentos ("Sí" es "si"); comas, puntos y "!" separan y no
+    cuentan. **Un "?" o un "¿" lo tumba**: "va?" pregunta, no autoriza. Una
+    palabra de mas tambien ("ahi va", "ps va", "mmm va"): cuesta un toque de
+    mas, y lo contrario cuesta una fila de dinero que nadie decidio.
+    """
+    t = unicodedata.normalize("NFD", str(texto or "").strip().lower())
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    if not t or "?" in t or "\u00bf" in t:
+        return False
+    palabras = [p for p in _SEPARADORES.split(t) if p]
+    return bool(palabras) and all(p in AFIRMACIONES_EXPLICITAS for p in palabras)
+
 # El vocabulario de arranque del extractor de gastos. Vivia en `extraer.py`, que
 # desde el 2026-09-19 ya no lo llama nadie (ver su cabecera). Es el MISMO que
 # `CATALOGO_SEMILLA` de `lib/bot-gastos.ts`, duplicado a proposito porque Python
@@ -107,16 +150,16 @@ confirmaciones y los botones los sigue escribiendo Python, palabra por palabra.
 Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:
 
 {
-  "intencion": una de: gasto | abono | venta | lote | consulta | cotizacion | anular | corregir | alta | convertir | confirmar | cancelar | reporte | charla,
-  "consulta": si intencion es consulta, una de: stock | cartera | ventas | otra. Si no, null,
+  "intencion": una de: <<INTENCIONES>>,
+  "consulta": si intencion es consulta, una de: <<CONSULTAS>>. Si no, null,
   "filtro": SOLO para consulta stock: el nombre propio que menciono (un producto O un punto de venta), tal cual lo dijo. Si no menciona ninguno, o la consulta no es stock, null,
   "entendido": frase MUY corta de lo que si entendiste. **ES TELEMETRIA: va al log, NUNCA a la pantalla.** Nunca vacia,
   "respuesta": QUE DECIRLE A NORMAN, en segunda persona, tuteandolo, UNA LINEA. Nunca hables de el en tercera persona. Nunca vacia,
   "campos": objeto con lo que lograste sacar del mensaje. Solo lo que DE VERDAD dijo,
   "faltantes": lista de los campos obligatorios que NO dijo,
   "pregunta": UNA sola pregunta corta para el faltante mas importante, o null si no falta nada,
-  "otro_hecho": si el mensaje trae UN SEGUNDO hecho economico que NO cabe en la intencion que elegiste, {"tipo": gasto|abono|venta|lote|cotizacion, "monto": el numero si lo dijo o null, "descripcion": DE QUE es, en tres palabras}. Si el mensaje trae un solo hecho, null,
-  "confianza": "alta" | "media" | "baja"
+  "otro_hecho": si el mensaje trae UN SEGUNDO hecho economico que NO cabe en la intencion que elegiste, {"tipo": <<TIPOS_DE_HECHO>>, "monto": el numero si lo dijo o null, "descripcion": DE QUE es, en tres palabras}. Si el mensaje trae un solo hecho, null,
+  "confianza": <<NIVELES>>
 }
 
 QUE ES CADA INTENCION
@@ -219,6 +262,8 @@ REGLAS QUE NO SE ROMPEN
    "no", "nel", "olvidalo", "mejor no", "nada", "ya no" o "dejalo" es intencion
    "cancelar". **No los leas como charla: la propuesta esta enfrente.** Si NO
    viene nada en pantalla, un "si" suelto si es charla: no hay que confirmar.
+   **Que sea "confirmar" no quiere decir que sea "alta"**: eso lo decide la
+   regla 20.
 
 16. **NUNCA PROMETAS NADA QUE VAYAS A HACER DESPUES.** No tienes cola, no
    tienes memoria de pendientes y no hay una sola linea de codigo que encole un
@@ -258,14 +303,33 @@ REGLAS QUE NO SE ROMPEN
    *"cotizame para el mismo cliente 35 grandes"*, *"ahora al mismo 20 grandes"*,
    *"para el mismo distribuidor 5 grandes"*, *"cotizale otra vez al anterior"*.
    En esos casos "cliente" **NO es null**: vale exactamente la forma corta que
-   uso, sin nada mas -- **"el mismo cliente"**, **"el mismo"**, **"al mismo"**,
-   **"el anterior"** o **"el de antes"**. El bot tiene guardado el ultimo cliente
+   uso, sin nada mas -- <<FORMAS_DEL_MISMO>>. El bot tiene guardado el ultimo cliente
    de este chat, lo resuelve el, y lo dice en voz alta; si no lo tiene, pregunta.
    **Tu no adivines el nombre: nunca pongas en "cliente" un nombre que Norman no
    haya dicho.** Esto es lo que fallo delante de el el 2026-09-19: habia cotizado
    a Aeropuerto tres mensajes antes, dijo *"para el mismo cliente"*, y el campo
    se fue en null -- asi que el bot tiro el dato que si tenia y volvio a
    preguntar.
+
+20. **"confianza" DICE CUANTAS LECTURAS CABEN, NO QUE TAN BIEN TE SALIO.**
+   - "alta": el mensaje dice la intencion sin ambiguedad; no cabe otra
+     lectura. Ej.: *"Se vendio una botella grande de 599 pesos"* -> venta.
+   - "media": hay una lectura dominante, pero cabe otra. Ej.: *"y la deuda?"*
+     -> consulta (puede ser la cartera entera o la de un solo cliente).
+   - "baja": no se puede decidir. Ej.: *"sii"* sin nada en pantalla -> charla
+     (dice que si, pero no a que).
+   **Y "confirmar" tiene su propia vara, porque es el unico paso que ESCRIBE
+   dinero:** solo es "alta" si el mensaje esta hecho SOLO de estas palabras,
+   sueltas o juntas ("si, dale"): <<AFIRMACIONES>>. **Todo lo demas que leas
+   como "confirmar" es "media" o menos**: una palabra de mas o una muletilla
+   delante, un signo de interrogacion, las de la regla 15 que no estan en esa
+   lista ("ok", "sale", "andale", "simon", "ya quedo"), una pregunta, un
+   agradecimiento. El bot aplica la misma regla por su cuenta, con la misma
+   lista: un "alta" que no la cumpla no escribe. No es desconfianza de
+   Norman: con "media" el bot
+   le vuelve a ensenar la propuesta y le pide el VA, y eso cuesta un toque. Un
+   "ok pues" leido como si fuera un VA cuesta una fila de dinero que nadie
+   decidio.
 
 CAMPOS QUE YA SE SABEN
 Si abajo viene un borrador a medias, el mensaje nuevo lo COMPLETA: junta los dos
@@ -335,6 +399,37 @@ def _pedazo_contexto(borrador, catalogo, deudores, productos=None, en_pantalla=N
 # Los tipos de hecho economico que el bot sabe capturar. **Lista cerrada**, por
 # la misma razon que `INTENCIONES`: un tipo que no esta aqui no se menciona.
 TIPOS_DE_HECHO = ("gasto", "abono", "venta", "lote", "cotizacion")
+
+
+def _enumera(piezas):
+    """"a", "b" o "c" -- como se enumera en prosa."""
+    piezas = list(piezas)
+    return piezas[0] if len(piezas) == 1 else ", ".join(piezas[:-1]) + " o " + piezas[-1]
+
+
+def _armar_prompt(plantilla):
+    """D65: pone en el PROMPT el vocabulario de las tuplas. **Falla al importar**
+    si una marca no esta exactamente una vez o si queda alguna sin llenar: un
+    PROMPT mal armado no arranca el bot, en vez de arrancar mintiendo."""
+    piezas = (
+        ("<<INTENCIONES>>", " | ".join(INTENCIONES)),
+        ("<<CONSULTAS>>", " | ".join(CONSULTAS)),
+        ("<<TIPOS_DE_HECHO>>", "|".join(TIPOS_DE_HECHO)),
+        ("<<NIVELES>>", " | ".join('"%s"' % n for n in NIVELES_DE_CONFIANZA)),
+        ("<<FORMAS_DEL_MISMO>>", _enumera('**"%s"**' % f for f in FORMAS_DEL_MISMO)),
+        ("<<AFIRMACIONES>>", _enumera('"%s"' % a for a in AFIRMACIONES_EXPLICITAS)),
+    )
+    for marca, texto in piezas:
+        if plantilla.count(marca) != 1:
+            raise RuntimeError("PROMPT mal armado: %s aparece %d veces"
+                               % (marca, plantilla.count(marca)))
+        plantilla = plantilla.replace(marca, texto)
+    if "<<" in plantilla:
+        raise RuntimeError("PROMPT mal armado: queda una marca sin llenar")
+    return plantilla
+
+
+PROMPT = _armar_prompt(PROMPT)
 
 
 def _normaliza_otro_hecho(crudo, intencion):
@@ -495,7 +590,7 @@ def _normaliza(obj):
     # equivocarse hacia "baja" es una pregunta de mas; hacia "media", una fila
     # de dinero que hay que anular.
     confianza = str(obj.get("confianza") or "baja").strip().lower()
-    if confianza not in ("alta", "media", "baja"):
+    if confianza not in NIVELES_DE_CONFIANZA:
         confianza = "baja"
 
     # Una pregunta sin faltantes no tiene a quien contestarle, y unos faltantes

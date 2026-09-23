@@ -49,6 +49,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ["BOT_LOG"] = os.path.join(tempfile.gettempdir(), "probar_confianza.log")
 
 import bot_gastos as B  # noqa: E402
+import grabar_enrutador as G  # noqa: E402
 import enrutador as E  # noqa: E402
 
 CHAT = 555000111
@@ -189,7 +190,9 @@ LAS_QUE_ESCRIBEN = [
     ("convertir", "convierte la cotizacion en venta", {}, None),
     # `confirmar` es la que de verdad aprieta el gatillo, y la que el defecto
     # dejaba pasar: necesita una propuesta sellada en pantalla para despachar.
-    ("confirmar", "sale pues", {}, propuesta_sellada),
+    # D63 (Fase 7): el texto es un "si" EXPLICITO. Con "sale pues" el bot ya
+    # no escribe aunque el modelo diga `alta` -- eso lo mide la seccion D64.
+    ("confirmar", "si escribelo", {}, propuesta_sellada),
 ]
 
 escribieron_dudando = []
@@ -320,6 +323,78 @@ ok, r = enrutar_con(json.dumps(sin_campo))
 caso("VERDE - y ese default es, exactamente, el que la guarda bloquea",
      r.get("confianza") == "baja" and "gasto" in B.INTENCIONES_QUE_ESCRIBEN,
      True, "")
+
+# ═══════════════ D64 (Fase 7): `confirmar` EXIGE `alta` Y UN "SI" EXPLICITO ════
+#
+# Con salidas REALES del modelo (grabaciones_enrutador.json, D66), no dobladas a
+# mano. Con una propuesta sellada en pantalla:
+# - los "si" explicitos SI llegan a la ruta (control negativo: sin esto, un
+#   `return` al principio del despacho pasaria todo lo demas);
+# - los ambiguos NO, y el bot vuelve a pedir el VA.
+
+GRABADAS = G.cargar()["frases"]
+explicitos = sorted(c for c in GRABADAS if c.startswith("d64_explicito_"))
+ambiguos = sorted(c for c in GRABADAS if c.startswith("d64_ambiguo_"))
+caso("VERDE - hay grabaciones de 5 explicitos y de al menos 5 ambiguos",
+     (len(explicitos), len(ambiguos) >= 5), (5, True), "")
+
+no_escribieron = []
+for clave in explicitos:
+    limpiar()
+    _, doble = hablar(GRABADAS[clave]["texto"], G.grabada(clave),
+                      preparar=propuesta_sellada)
+    if not doble.escrituras():
+        no_escribieron.append((clave, G.grabada(clave).get("confianza")))
+caso("ROJO  - D64: un 'si' explicito (salida real) SI llama la ruta",
+     no_escribieron, [], "")
+
+escribieron, sin_pedir_va = [], []
+for clave in ambiguos:
+    limpiar()
+    dichos, doble = hablar(GRABADAS[clave]["texto"], G.grabada(clave),
+                           preparar=propuesta_sellada)
+    if doble.escrituras():
+        escribieron.append((clave, G.grabada(clave).get("confianza")))
+    if G.grabada(clave).get("intencion") == "confirmar" and not any(
+            "No me quedo claro" in d for d in dichos):
+        sin_pedir_va.append((clave, dichos))
+caso("VERDE - D64: ningun ambiguo (salida real) escribe", escribieron, [], "")
+caso("VERDE - D64: el ambiguo leido como confirmar pide el VA explicito",
+     sin_pedir_va, [], "")
+
+# La SEGUNDA llave. El 2026-09-22, con el PROMPT de la regla 20 recien escrita
+# (md5 90dde8f0, `matriz_despues.json` de la Fase 7), el modelo real emitio
+# `confirmar` con `alta` para "va pues?" (2 de 2) y "ps va" (1 de 2). Esa salida
+# EXISTIO; aqui se reproduce tal cual para medir que el codigo la para aunque
+# el modelo se equivoque.
+for texto in ("va pues?", "ps va"):
+    limpiar()
+    dichos, doble = hablar(texto, dict(intencion="confirmar", confianza="alta",
+                                       entendido="confirma la propuesta",
+                                       respuesta="Va.", campos={}),
+                           preparar=propuesta_sellada)
+    caso("VERDE - D63: %r con `alta` (salida real vista) NO escribe" % texto,
+         doble.escrituras(), [], str(dichos))
+
+# Vuelve a ensenar LA propuesta, con sus botones, si es la de ahora...
+limpiar()
+def _con_lo_mostrado():
+    propuesta_sellada()
+    B._memoria[CHAT]["mostrado"] = (UUID, "TOTAL: $599.00 (la que viste)", None)
+dichos, doble = hablar("ok pues", G.grabada("d64_ambiguo_ok_pues"),
+                       preparar=_con_lo_mostrado)
+caso("VERDE - D63: con duda, vuelve a ensenar la propuesta que esta en pantalla",
+     any("TOTAL: $599.00 (la que viste)" in d for d in dichos), True, str(dichos))
+# ...y NUNCA una vieja: si el borrador cambio, no la ensena.
+limpiar()
+def _con_lo_mostrado_viejo():
+    propuesta_sellada()
+    B._memoria[CHAT]["mostrado"] = ("otro-borrador", "TOTAL: $1.00 (vieja)", None)
+dichos, doble = hablar("ok pues", G.grabada("d64_ambiguo_ok_pues"),
+                       preparar=_con_lo_mostrado_viejo)
+caso("ROJO  - D63: una propuesta de OTRO borrador no se vuelve a ensenar",
+     any("(vieja)" in d for d in dichos), False, str(dichos))
+caso("ROJO  - ...y tampoco escribe", doble.escrituras(), [], "")
 
 
 print("")

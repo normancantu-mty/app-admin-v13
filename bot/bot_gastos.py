@@ -51,7 +51,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # primera linea. Mientras estuvieron cableados en paralelo con el enrutador, el
 # mismo mensaje se podia leer de dos maneras distintas segun por donde entrara,
 # y cual mandaba dependia del orden de unos `if`.
-from enrutador import CATEGORIAS_SEMILLA, enrutar  # noqa: E402
+from enrutador import (  # noqa: E402
+    CATEGORIAS_SEMILLA, FORMAS_DEL_MISMO, enrutar, es_afirmacion_explicita)
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -106,17 +107,48 @@ class _TapaSecretos(logging.Filter):
 # variables del bot (`BOT_API_TOKEN`, `BOT_GASTOS_TELEGRAM_TOKEN`, `ERP_API_URL`):
 # prefijo `BOT_`, nombre de lo que apunta. **El default es el de siempre**, asi
 # que ni el arranque ni el vigilante cambian de comportamiento.
+# ─── D60 (Fase 7): EL MODO ENSAYO — un bot que NO PUEDE escribir ────────────
+#
+# **El defecto que cierra.** El bot y las pruebas comparten UNA base, la de
+# produccion. Probarlo punta a punta era escribir dinero de verdad, y en la Fase
+# 6 el auditor tuvo que doblar `/confirmar` a mano en cada arnes: la seguridad
+# vivia en el criterio del que prueba, no en el codigo.
+#
+# `BOT_ENSAYO=1` (prefijo `BOT_`, como `BOT_LOG`). **Apagado por default**: el
+# vigilante arranca el bot con `python bot/bot_gastos.py` y sin esta variable.
+# Toda la decision vive en `decision_de_ensayo` + `_post`, no en cada
+# `_confirmar_*`. Y el servidor pone el segundo candado (`lib/bot-ensayo.ts`).
+VALORES_SI = ("1", "si", "true", "yes", "on")
+
+AVISO_ENSAYO = "[ENSAYO — no escribo nada]"
+
+
+def ensayo_activo(entorno=None):
+    """¿Esta puesto `BOT_ENSAYO`? **Funcion pura.**"""
+    if entorno is None:
+        entorno = os.environ
+    return str(entorno.get("BOT_ENSAYO") or "").strip().lower() in VALORES_SI
+
+
 def ruta_del_log(entorno=None):
     """A que archivo escribe el log. **Funcion pura: no abre nada.**
 
     Se separa de la instalacion del handler para poder comprobar el default sin
     tocar el archivo de produccion -- que es, exactamente, el dano que esto
     existe para evitar.
+
+    D60: un ensayo sin `BOT_LOG` escribe en `bot_gastos_ensayo.log`, no en el de
+    produccion: el `mtime` de ese archivo es el reloj del detector de cuelgue
+    (`decidir_reinicio.py`), y un ensayo no puede darle cuerda.
     """
     if entorno is None:
         entorno = os.environ
     dicho = str(entorno.get("BOT_LOG") or "").strip()
-    return Path(dicho) if dicho else RAIZ / "bot_gastos.log"
+    if dicho:
+        return Path(dicho)
+    if ensayo_activo(entorno):
+        return RAIZ / "bot_gastos_ensayo.log"
+    return RAIZ / "bot_gastos.log"
 
 
 RUTA_LOG = ruta_del_log()
@@ -140,12 +172,88 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("bot_gastos")
 
 
+ENSAYO = ensayo_activo()
+
+# Las UNICAS rutas que el ensayo deja salir tal cual: las que solo leen
+# (verificado el 2026-09-22: cero `insert/update/upsert/delete/rpc` en la ruta y
+# en lo que importa). Es una lista de lo PERMITIDO, no de lo prohibido: una ruta
+# nueva que nadie agrego aqui NO sale. Asi se colaron cuatro intenciones en
+# `INTENCIONES_QUE_ESCRIBEN` en la Fase 6 (D42): por enumerar lo prohibido.
+RUTAS_SOLO_LECTURA = frozenset(("/api/bot/consulta", "/api/bot/catalogo"))
+
+# Las `proponer` salen, MARCADAS: el servidor calcula la propuesta real (precios,
+# catalogo, cartera) y no escribe el borrador (`lib/bot-ensayo.ts`).
+SUFIJO_PROPONER = "/proponer"
+
+
+def decision_de_ensayo(ruta):
+    """Que hace `_post` con `ruta` en modo ensayo. **Funcion pura.**
+
+    - `"no_sale"`: todo lo que termina en `/confirmar` (escribe dinero), sin
+      excepcion y ANTES que cualquier otra regla; `/cancelar`; y cualquier ruta
+      que no este permitida abajo.
+    - `"sale_marcada"`: `*/proponer` y las de solo lectura, con `x-bot-ensayo`.
+    """
+    limpia = str(ruta or "").split("?")[0].rstrip("/")
+    if limpia.endswith("/confirmar"):
+        return "no_sale"
+    if limpia in RUTAS_SOLO_LECTURA or limpia.endswith(SUFIJO_PROPONER):
+        return "sale_marcada"
+    return "no_sale"
+
+
+# Lo que el ensayo NO dejo salir: (ruta, cuerpo). Es la bitacora que se lee para
+# saber que se HABRIA escrito.
+no_salieron = []
+
+
+def _respuesta_de_ensayo(ruta, cuerpo):
+    """La respuesta sintetica de una ruta que no salio.
+
+    `/cancelar` contesta ok: en ensayo el borrador nunca existio, asi que "ya no
+    hay nada pendiente" es verdad. Todo lo demas contesta `ok: false` con el
+    aviso: con `ok: true` el bot diria "Listo. Quedo escrita", que es justo la
+    mentira que el modo ensayo existe para no decir.
+    """
+    no_salieron.append((ruta, cuerpo))
+    log.warning("%s no salio: POST %s %s", AVISO_ENSAYO, ruta,
+                json.dumps(cuerpo, ensure_ascii=False)[:300])
+    if str(ruta).rstrip("/").endswith("/cancelar"):
+        return 200, {"ok": True, "ensayo": True}
+    return 200, {
+        "ok": False,
+        "ensayo": True,
+        "ruta": ruta,
+        "error": AVISO_ENSAYO + " Aqui habria llamado " + ruta
+                 + ". No salio: no se escribio nada.",
+    }
+
+
 def _post(ruta, cuerpo):
-    """Llama a la app. Devuelve (status, objeto)."""
+    """Llama a la app. Devuelve (status, objeto).
+
+    D60: en ensayo, la decision de si la peticion sale se toma AQUI y solo
+    aqui. Las que salen llevan `x-bot-ensayo: 1`, y a su `mensaje` se le
+    antepone el aviso, para que ninguna propuesta de un ensayo se confunda con
+    una del bot real.
+    """
+    if ENSAYO:
+        if decision_de_ensayo(ruta) == "no_sale":
+            return _respuesta_de_ensayo(ruta, cuerpo)
+    estado, r = _post_de_verdad(ruta, cuerpo)
+    if ENSAYO and isinstance(r, dict) and isinstance(r.get("mensaje"), str):
+        r["mensaje"] = AVISO_ENSAYO + "\n" + r["mensaje"]
+    return estado, r
+
+
+def _post_de_verdad(ruta, cuerpo):
+    """El unico lugar que habla HTTP con la app."""
     datos = json.dumps(cuerpo).encode("utf-8")
+    cabeceras = {"Content-Type": "application/json", "x-bot-token": TOKEN_API}
+    if ENSAYO:
+        cabeceras["x-bot-ensayo"] = "1"
     pet = urllib.request.Request(
-        API + ruta, data=datos, method="POST",
-        headers={"Content-Type": "application/json", "x-bot-token": TOKEN_API},
+        API + ruta, data=datos, method="POST", headers=cabeceras,
     )
     try:
         with urllib.request.urlopen(pet, timeout=30) as r:
@@ -582,8 +690,8 @@ async def _proponer_abono(update, chat, propuesta, id_deudor=None, nombre=None):
         # tenga que volver a preguntarle al servidor.
         "opciones": r.get("opciones", list(_deudores)),
     }
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar_abono(r["borrador_id"]))
+    await _ensenar_propuesta(
+        update, chat, r["mensaje"], _teclado_confirmar_abono(r["borrador_id"]))
     return True
 
 
@@ -1072,9 +1180,16 @@ _ultimo_cliente = {}
 
 
 def _dice_el_mismo(dicho):
-    """True si el texto es una referencia al cliente anterior, no un nombre."""
+    """True si el texto es una referencia al cliente anterior, no un nombre.
+
+    D65 (Fase 7): las formas que el PROMPT le pide copiar al modelo
+    (`FORMAS_DEL_MISMO`, regla 19) empatan SIEMPRE, salgan o no de la expresion
+    regular: el productor y el consumidor leen la misma tupla.
+    """
     limpio = str(dicho or "").strip()
-    return bool(limpio) and bool(_DICE_EL_MISMO.match(limpio))
+    if not limpio:
+        return False
+    return limpio.lower() in FORMAS_DEL_MISMO or bool(_DICE_EL_MISMO.match(limpio))
 
 
 def _recordar_cliente(chat, nombre):
@@ -1201,8 +1316,8 @@ async def _proponer_gasto_directo(update, chat, propuesta):
         "propuesta": dict(propuesta),
     }
     _refrescar_catalogo(r)
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar(r["borrador_id"]))
+    await _ensenar_propuesta(
+        update, chat, r["mensaje"], _teclado_confirmar(r["borrador_id"]))
     return True
 
 
@@ -1328,8 +1443,8 @@ async def _proponer_venta(update, chat, peticion):
         # tenga que volver a preguntarle al servidor.
         "compradores": r.get("opciones") or [],
     }
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar_venta(r["borrador_id"]))
+    await _ensenar_propuesta(
+        update, chat, r["mensaje"], _teclado_confirmar_venta(r["borrador_id"]))
     return True
 
 
@@ -1478,8 +1593,8 @@ async def _proponer_lote(update, chat, peticion):
         "peticion": peticion,
         "codigo_lote": r.get("codigo_lote"),
     }
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar_lote(r["borrador_id"]))
+    await _ensenar_propuesta(
+        update, chat, r["mensaje"], _teclado_confirmar_lote(r["borrador_id"]))
     return True
 
 
@@ -1527,6 +1642,19 @@ _ultima_cotizacion = {}
 # cotizacion (`TOPE_VENTA` en `lib/bot-venta.ts`). El servidor lo vuelve a
 # aplicar -- esto solo evita el viaje.
 TOPE_OBJETIVO = 500000
+
+
+def _objetivo_que_no_sirve(campos):
+    """El `monto_objetivo` que SI vino pero no se puede usar, tal cual; o None.
+
+    D67 (Fase 7): `_monto_objetivo` devuelve 0 igual para "no lo pidio" que para
+    "pidio -500", y la cotizacion salia sin escalar sin decir por que. Esto es
+    la otra mitad: lo que vino y se tira, se dice. Ausente o vacio -> None.
+    """
+    crudo = campos.get("monto_objetivo")
+    if crudo is None or (isinstance(crudo, str) and not crudo.strip()):
+        return None
+    return None if _monto_objetivo(campos) else str(crudo).strip()
 
 
 def _monto_objetivo(campos):
@@ -1641,8 +1769,8 @@ async def _proponer_cotizacion(update, chat, peticion):
         # tenga que volver a preguntarle al servidor.
         "clientes": r.get("clientes") or [],
     }
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar_cotizacion(r["borrador_id"]))
+    await _ensenar_propuesta(
+        update, chat, r["mensaje"], _teclado_confirmar_cotizacion(r["borrador_id"]))
     return True
 
 
@@ -1798,8 +1926,8 @@ async def _proponer_alta(update, chat, cuerpo):
                       "borrador_id": r["borrador_id"],
                       "sello": r["sello"],
                       "peticion": dict(cuerpo)}
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar_alta(r["borrador_id"]))
+    await _ensenar_propuesta(
+        update, chat, r["mensaje"], _teclado_confirmar_alta(r["borrador_id"]))
     return True
 
 
@@ -1866,8 +1994,8 @@ async def _proponer_conversion(update, chat, cuerpo):
                       "sello": r["sello"],
                       "folio": r.get("folio"),
                       "peticion": dict(cuerpo)}
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar_conversion(r["borrador_id"]))
+    await _ensenar_propuesta(
+        update, chat, r["mensaje"], _teclado_confirmar_conversion(r["borrador_id"]))
     return True
 
 
@@ -1943,7 +2071,7 @@ async def _proponer_anulacion(update, chat, cuerpo, accion="anular"):
     }
     teclado = (_teclado_confirmar_anulacion(r["borrador_id"]) if accion == "anular"
                else _teclado_confirmar_correccion(r["borrador_id"]))
-    await update.effective_message.reply_text(r["mensaje"], reply_markup=teclado)
+    await _ensenar_propuesta(update, chat, r["mensaje"], teclado)
     return True
 
 
@@ -2082,6 +2210,24 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     # No era un defecto de logica sino de COLOCACION, y por eso ninguna lectura
     # del `if` lo encontraba: el `if` estaba bien escrito y jamas se evaluaba.
     # Ahora nada se despacha antes de que la confianza se haya mirado.
+    #
+    # ── D63 (Fase 7): `confirmar` EXIGE `alta`, Y UN "SI" EXPLICITO ─────────
+    # La guarda de abajo solo bloquea `baja`, y `media` no significaba nada:
+    # medido el 2026-09-22 con el modelo real, 8 de 10 respuestas ambiguas
+    # ("ok pues", "sale", "ahi va", "mmm va") salian `confirmar` con `alta`.
+    # Proponer con `media` cuesta una pantalla; CONFIRMAR con `media` es una
+    # fila de dinero que Norman no decidio. Por eso aqui van DOS llaves: lo que
+    # dice el modelo (`alta`, regla 20) y lo que el bot comprueba solo, con la
+    # MISMA lista (`es_afirmacion_explicita`). Con el PROMPT nuevo el modelo
+    # todavia dio `alta` a "va pues?" y "ps va": la segunda llave es la que los
+    # para. Las otras intenciones que escriben conservan la guarda de `baja`.
+    if intencion == "confirmar" and not (
+            ruta.get("confianza") == "alta" and es_afirmacion_explicita(texto)):
+        log.info("confirmar con confianza %s sobre %r: pido el VA explicito",
+                 ruta.get("confianza"), texto)
+        await _pedir_va_explicito(update, chat)
+        return
+
     if ruta.get("confianza") == "baja" and intencion in INTENCIONES_QUE_ESCRIBEN:
         # Solo las que traen campos dejan borrador. Pisar `_memoria` con un
         # `confirmar` vacio mataria la propuesta sellada que esta en pantalla.
@@ -2219,10 +2365,21 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         # de que cotizacion se esta hablando. El modelo no pone ni un precio ni
         # una cantidad: pone el numero que Norman dijo, y ya.
         objetivo = _monto_objetivo(campos)
-        if objetivo and not peticion["productos"]:
+        # D67 (Fase 7): un objetivo que VINO y no sirve (0, negativo, texto) ya
+        # no se tira callado. Se habla de la cotizacion anterior igual que con
+        # uno bueno, asi que se reusa -- sin escalar -- y se DICE. Y el aviso no
+        # promete lo que no va a pasar (regla 16): si no hay nada que cotizar,
+        # no dice "te cotizo".
+        malo = _objetivo_que_no_sirve(campos)
+        if (objetivo or malo is not None) and not peticion["productos"]:
             anteriores = _ultima_cotizacion.get(chat)
             if anteriores:
                 peticion["productos"] = [dict(p) for p in anteriores]
+        if malo is not None:
+            await update.effective_message.reply_text(
+                "No entendi el monto objetivo (" + malo + ")."
+                + (" Te cotizo sin escalar, o dime el monto." if peticion["productos"]
+                   else " Dime el monto."))
         if objetivo and peticion["productos"]:
             peticion["objetivo"] = objetivo
 
@@ -2494,6 +2651,44 @@ async def _confirmar_abono(update, chat):
         await update.effective_message.reply_text(r.get("error", "No pude escribir el abono."))
 
 
+async def _ensenar_propuesta(update, chat, mensaje, teclado):
+    """Ensena una propuesta sellada y la deja guardada JUNTO A SU BORRADOR.
+
+    D63 (Fase 7): si despues Norman contesta algo que no es un "si" explicito,
+    el bot la vuelve a ensenar tal cual, con sus botones, en vez de escribir.
+    Se guarda con el `borrador_id` para que una propuesta vieja nunca se
+    ensene como si fuera la de ahora.
+    """
+    dato = _memoria.get(chat)
+    if isinstance(dato, dict) and dato.get("borrador_id"):
+        dato["mostrado"] = (dato["borrador_id"], mensaje, teclado)
+    await update.effective_message.reply_text(mensaje, reply_markup=teclado)
+
+
+async def _pedir_va_explicito(update, chat):
+    """D63: `confirmar` sin un "si" explicito NO llama la ruta. Vuelve a ensenar
+    la propuesta y pide el VA. El boton VA no pasa por el modelo: sigue igual."""
+    dato = _memoria.get(chat)
+    if not isinstance(dato, dict):
+        await update.effective_message.reply_text("No tengo nada pendiente que escribir.")
+        return
+    if not dato.get("borrador_id"):
+        await update.effective_message.reply_text(
+            "Todavia no hay nada listo para escribir. Contestame lo que te pregunte.")
+        return
+    mostrado = dato.get("mostrado")
+    if mostrado and mostrado[0] == dato.get("borrador_id"):
+        await update.effective_message.reply_text(
+            "No me quedo claro si es un si, y esto escribe. Te la vuelvo a "
+            "ensenar:\n\n" + mostrado[1] + "\n\nToca VA o escribe va.",
+            reply_markup=mostrado[2])
+        return
+    await update.effective_message.reply_text(
+        "No me quedo claro si es un si, y esto escribe "
+        + _COMO_SE_LLAMA.get(str(dato.get("tipo") or ""), "un movimiento")
+        + ". Toca VA en la propuesta de arriba o escribe va.")
+
+
 async def _confirmar(update, chat):
     dato = _memoria.get(chat)
     if not dato:
@@ -2616,8 +2811,8 @@ async def _reproponer(update, chat, cambios):
         "categorias": r.get("categorias", list(_catalogo)),
     }
     _refrescar_catalogo(r)
-    await update.effective_message.reply_text(
-        r["mensaje"], reply_markup=_teclado_confirmar(r["borrador_id"]))
+    await _ensenar_propuesta(
+        update, chat, r["mensaje"], _teclado_confirmar(r["borrador_id"]))
 
 
 async def manejar_boton(update, context):
@@ -3213,6 +3408,9 @@ def main():
         sys.exit(1)
 
     candado = _candado()  # noqa: F841 - vive hasta que muere el proceso
+    if ENSAYO:
+        log.warning("%s BOT_ENSAYO puesto: ninguna ruta /confirmar sale, los "
+                    "borradores no se guardan. Log: %s", AVISO_ENSAYO, RUTA_LOG)
     log.info("arrancando bot de gastos contra %s | codigo del %s", API,
              dt.datetime.fromtimestamp(VERSION_CARGADA).strftime("%Y-%m-%d %H:%M:%S"))
 

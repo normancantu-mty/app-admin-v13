@@ -68,7 +68,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Peticion invalida.' }, { status: 400 })
     }
 
-    const supabase = clienteDeServicio()
+    const supabase = clienteDeServicio(request)
 
     const identidad = await resolverIdentidad(supabase, telegramId)
     if (!identidad) {

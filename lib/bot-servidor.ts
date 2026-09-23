@@ -20,6 +20,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
+import { clienteDeEnsayo, esPeticionDeEnsayo } from './bot-ensayo'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { CATALOGO_SEMILLA, type CategoriaDelCatalogo } from '@/lib/bot-gastos'
@@ -41,15 +42,18 @@ interface TicketAbiertoRow {
 
 export type ClienteServicio = SupabaseClient<Database>
 
-export function clienteDeServicio(): ClienteServicio {
+export function clienteDeServicio(peticion?: Request): ClienteServicio {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) {
     throw new Error('Falta NEXT_PUBLIC_SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY')
   }
-  return createClient<Database>(url, key, {
+  const cliente = createClient<Database>(url, key, {
     auth: { persistSession: false, autoRefreshToken: false }
   })
+  // Fase 7, D60: con `x-bot-ensayo: 1` el cliente lee de verdad y no escribe
+  // nunca. La decision vive aqui, no en cada ruta. Ver `lib/bot-ensayo.ts`.
+  return esPeticionDeEnsayo(peticion) ? clienteDeEnsayo(cliente) : cliente
 }
 
 /**

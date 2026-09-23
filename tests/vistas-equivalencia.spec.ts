@@ -32,6 +32,14 @@ import {
 } from '../lib/vistas'
 
 import {
+  avisar,
+  avisoPasivoFiscal,
+  centavos,
+  violacionesCarteraSinAbonos,
+  violacionesDiasSinAbonar,
+  violacionesSaldo
+} from './invariantes-vistas'
+import {
   correnLasDeEquivalencia,
   llaveServiceRole,
   motivoDeSalto,
@@ -128,17 +136,9 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
   const AEROPUERTO = 'Aeropuerto'
   const MARTIN_REYES = 'Martin Reyes'
 
-  /** Compara dinero al centavo, sin que un 0.1 + 0.2 de coma flotante lo tumbe. */
-  const centavos = (n: number): number => Math.round(n * 100)
-
-  /** La fecha de un instante en hora de Mexico, que es como Norman cuenta los dias. */
-  const fechaMx = (iso: string): string =>
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Mexico_City',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(new Date(iso))
+  // `centavos` y la aritmetica de fechas en hora de Mexico viven en
+  // `tests/invariantes-vistas.ts` (Fase 7, D58): las usa tambien la prueba pura
+  // de eventos, y una regla escrita dos veces se desincroniza.
 
   let db: SupabaseClient<Database>
   let crudo: LectorSuelto
@@ -324,10 +324,11 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       expect(fila, 'no aparece Delirio 85').toBeTruthy()
 
       const generada = Number(fila!.deuda_generada_tickets)
-      const abonos = Number(fila!.abonos_aprobados)
-      const saldo = Number(fila!.saldo_pendiente_consignacion)
 
-      expect(centavos(saldo), 'generada - abonos = saldo').toBe(centavos(generada - abonos))
+      // Fase 7, D58: era `generada - abonos = saldo`, sin CARGO_DEUDA. Un cargo
+      // (evento normal: `app/actions/abonos.ts:569`) la tumbaba. La resta
+      // completa vive en `violacionesSaldo`.
+      expect(violacionesSaldo([fila!]), 'generada + cargos - abonos = saldo').toEqual([])
       expect(centavos(generada), 'lo generado no puede decrecer').toBeGreaterThanOrEqual(
         centavos(19_476)
       )
@@ -353,10 +354,10 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
 
       const generada = Number(fila!.deuda_generada_tickets)
       const abonos = Number(fila!.abonos_aprobados)
-      const saldo = Number(fila!.saldo_pendiente_consignacion)
 
-      // Lo que NO se pudre: la relacion entre las tres columnas.
-      expect(centavos(saldo), 'generada - abonos = saldo').toBe(centavos(generada - abonos))
+      // Lo que NO se pudre: la relacion entre las columnas — con CARGO_DEUDA
+      // (Fase 7, D58: sin cargos, un cargo a David la tumbaba).
+      expect(violacionesSaldo([fila!]), 'generada + cargos - abonos = saldo').toEqual([])
 
       // Los literales del caso quedan como piso. El 2026-09-07 le entro un
       // ticket de concesion de $3,552.00 (`5dd65509`), y con la igualdad vieja
@@ -379,16 +380,10 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       const fila = vista.find((f) => f.nombre === AEROPUERTO)
       expect(fila, 'no aparece Aeropuerto').toBeTruthy()
 
-      const generada = Number(fila!.deuda_generada_tickets)
-      const abonos = Number(fila!.abonos_aprobados)
-      const saldo = Number(fila!.saldo_pendiente_consignacion)
-
       // La invariante es el NO REDONDEO, no el -6.00 de aquel dia: mientras
-      // haya pagado de mas, el saldo tiene que seguir negativo y cuadrar.
-      expect(centavos(saldo), 'generada - abonos = saldo').toBe(centavos(generada - abonos))
-      if (centavos(abonos) > centavos(generada)) {
-        expect(saldo, 'el redondeo no puede volver positivo un pago de mas').toBeLessThan(0)
-      }
+      // haya pagado de mas, el saldo tiene que seguir negativo y cuadrar. Las
+      // dos reglas (con CARGO_DEUDA, Fase 7 D58) viven en `violacionesSaldo`.
+      expect(violacionesSaldo([fila!]), 'cuadra, y un pago de mas queda negativo').toEqual([])
     })
 
     /**
@@ -404,23 +399,9 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       const vista = await leerSaldosEntidad(db)
       expect(vista.length, 'la vista vino vacia').toBeGreaterThan(0)
 
-      for (const fila of vista) {
-        const donde = fila.nombre
-        const generada = Number(fila.deuda_generada_tickets)
-        const cargos = Number(fila.cargos_deuda)
-        const abonos = Number(fila.abonos_aprobados)
-        // La resta completa de la vista: tickets + CARGO_DEUDA - abonos.
-        expect(
-          centavos(Number(fila.saldo_pendiente_consignacion)),
-          `${donde} · generada + cargos - abonos = saldo`
-        ).toBe(centavos(generada + cargos - abonos))
-        if (centavos(abonos) === 0) {
-          expect(fila.ultimo_abono, `${donde} · sin abonos no hay fecha de abono`).toBeNull()
-          expect(fila.dias_sin_abonar, `${donde} · sin abono no hay dias que contar`).toBeNull()
-        } else {
-          expect(fila.ultimo_abono, `${donde} · con abonos tiene que haber fecha`).toBeTruthy()
-        }
-      }
+      // Fase 7, D59: la misma funcion corre sobre fixtures "despues del evento"
+      // en `tests/invariantes-eventos.spec.ts`.
+      expect(violacionesSaldo(vista), 'invariantes de v_saldo_entidad').toEqual([])
     })
 
     /**
@@ -438,15 +419,13 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       // que el dia que Martin abone, esta prueba tumba el push por una cobranza
       // exitosa. Lo que se comprueba es la CONVERSION, no la fecha: los dias de
       // la vista tienen que salir del abono contado en hora de Mexico.
-      const diaDelAbono = fechaMx(fila!.ultimo_abono!)
-      const hoy = fechaMx(new Date().toISOString())
-      const esperados = Math.round(
-        (Date.parse(`${hoy}T00:00:00Z`) - Date.parse(`${diaDelAbono}T00:00:00Z`)) / 86_400_000
-      )
-
-      expect(Number(fila!.dias_sin_abonar), `dias de calendario desde ${diaDelAbono}`).toBe(
-        esperados
-      )
+      //
+      // Fase 7, D58: "hoy" era `new Date()` —el reloj de NODE— contra el `now()`
+      // de la BASE con que la vista conto. A las 23:59:59 de Mexico salia roja
+      // sin defecto. Ahora "hoy" es `calculado_en` de la misma fila. Y ya no es
+      // solo Martin: toda fila con abono.
+      expect(violacionesDiasSinAbonar([fila!]), 'Martin Reyes · dias en hora de Mexico').toEqual([])
+      expect(violacionesDiasSinAbonar(vista), 'toda fila con abono').toEqual([])
     })
   })
 
@@ -623,8 +602,14 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
    * Esta prueba deja el hecho asentado. El dia que se registre un pasivo vivo
    * fallara, y obligara a mirar de verdad la equivalencia de `v_pasivo_fiscal`
    * en vez de dar por buena una comparacion vacia.
+   *
+   * Fase 7, D58: ESO ERA EL DEFECTO. Una venta FULL_TAX (`lib/venta-servidor.ts:
+   * 758-759`) escribe PASIVO_IVA ACTIVO y tumbaba el push por una venta
+   * legitima. Ahora es un AVISO: sale en la consola de la suite y en las
+   * anotaciones, en los dos sentidos (0 contra 0 = hueco; vivos = mirar la
+   * equivalencia de arriba la primera vez). No bloquea.
    */
-  test('v_pasivo_fiscal: aviso de que hoy la comparacion es 0 contra 0', () => {
+  test('v_pasivo_fiscal: aviso de si la comparacion es 0 contra 0', () => {
     const pasivosVivos = finanzasTodas.filter(
       (f) =>
         (f.tipo_movimiento === 'PASIVO_IVA' || f.tipo_movimiento === 'PASIVO_IEPS') &&
@@ -642,11 +627,7 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
         (esPagoImpuestoIva(comoMov(f)) || esPagoImpuestoIeps(comoMov(f)))
     )
 
-    expect(
-      pasivosVivos.length + pagosVivos.length,
-      'Ya hay pasivos fiscales vivos: la equivalencia de v_pasivo_fiscal deja de ser 0 contra 0 ' +
-        'y hay que comprobarla de verdad, no solo confirmar este aviso.'
-    ).toBe(0)
+    avisar(test.info(), avisoPasivoFiscal(pasivosVivos.length, pagosVivos.length))
   })
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -744,18 +725,21 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
     const vista = await leerCartera(db)
     expect(vista.length, 'la cartera vino vacia').toBeGreaterThan(0)
 
-    const sinAbonos = vista.filter(
-      (f) => centavos(Number(f.abonado)) === 0 && centavos(Number(f.generado)) > 0
-    )
-    for (const fila of sinAbonos) {
-      expect(centavos(Number(fila.deuda)), `${fila.nombre} · sin abonos, deuda = generado`).toBe(
-        centavos(Number(fila.generado))
+    // `porcentaje_pagado` es una FRACCION 0-1 pese al nombre (E-243): lo que se
+    // vigila es que un deudor sin abonos diga 0 y no null (`Number(null)` da 0 y
+    // dejaria pasar justo el null). La regla vive en `violacionesCarteraSinAbonos`.
+    const { violaciones, cubiertas } = violacionesCarteraSinAbonos(vista)
+    expect(violaciones, 'quien no ha abonado debe todo y va en 0%').toEqual([])
+    // Invariante condicional (Fase 7, D58): si ninguna fila la cumple, no afirma
+    // nada, y eso se DICE, no pasa callado.
+    if (cubiertas === 0) {
+      avisar(
+        test.info(),
+        'v_cartera: ninguna fila esta sin abonos con deuda; la regla "sin abonos = 0%" no ' +
+          'cubrio a nadie en produccion (la cubre tests/invariantes-eventos.spec.ts con fixtures).'
       )
-      // `porcentaje_pagado` es una FRACCION 0-1 pese al nombre (E-243): aqui lo
-      // que se vigila es que un deudor sin abonos diga 0 y no null. El `not.toBeNull`
-      // va aparte porque `Number(null)` da 0 y dejaria pasar justo el null.
-      expect(fila.porcentaje_pagado, `${fila.nombre} · % pagado no puede ser null`).not.toBeNull()
-      expect(Number(fila.porcentaje_pagado), `${fila.nombre} · 0% pagado, no "no aplica"`).toBeCloseTo(0, 10)
+    } else {
+      console.log(`[invariantes] v_cartera sin abonos: ${cubiertas} fila(s) cubierta(s)`)
     }
   })
 })
