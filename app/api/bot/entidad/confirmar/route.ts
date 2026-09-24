@@ -31,7 +31,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, marcarConfirmado, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   crearEntidad,
@@ -167,14 +167,8 @@ export async function POST(request: Request) {
 
     const creada = await crearEntidad(supabase, actor, fila, password, puertaAuth)
 
-    await supabase
-      .from('bot_borradores')
-      .update({
-        estado: 'CONFIRMADO',
-        id_registro: creada.id,
-        resuelto_en: new Date().toISOString()
-      })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, creada.id)
 
     // EL RASTRO QUE LA BASE NO GUARDA. Ver el encabezado. Sin token, sin clave.
     console.info(
@@ -189,6 +183,7 @@ export async function POST(request: Request) {
     )
 
     return NextResponse.json({
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
       ok: true,
       id_entidad: creada.id,
       nombre: creada.nombre,

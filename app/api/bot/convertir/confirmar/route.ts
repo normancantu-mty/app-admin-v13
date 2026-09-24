@@ -40,6 +40,8 @@ import {
   abrirPuerta,
   pasarAEspera,
   reclamarAprobacion,
+  liberarReclamo,
+  marcarConfirmado,
   actorDe,
   alcanceDeCaptura,
   redDe
@@ -264,6 +266,8 @@ export async function POST(request: Request) {
     })
 
     if (!resultado.ok || !resultado.ticketId) {
+      // ERP-11: la venta es UNA transaccion; si no entro, no entro nada.
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       // El borrador se queda PENDIENTE: el RPC es atomico, no dejo nada a
       // medias, y la propuesta sigue siendo valida. Tipicamente es inventario
       // insuficiente, que se resuelve produciendo y volviendo a decir "va".
@@ -285,14 +289,8 @@ export async function POST(request: Request) {
 
     const seMarco = !errMarca && (marcada?.length ?? 0) === 1
 
-    await supabase
-      .from('bot_borradores')
-      .update({
-        estado: 'CONFIRMADO',
-        id_registro: resultado.ticketId,
-        resuelto_en: new Date().toISOString()
-      })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, resultado.ticketId)
 
     // El rastro propio. `cotizaciones` no tiene trigger de bitacora, asi que de
     // este UPDATE no queda nada en `auditoria_logs`. Sin token.
@@ -310,6 +308,7 @@ export async function POST(request: Request) {
     if (!seMarco) {
       console.error('[bot][conversion] la venta se escribio pero la cotizacion no se marco:', errMarca)
       return NextResponse.json({
+        ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
         ok: true,
         ticket_id: resultado.ticketId,
         cotizacion_marcada: false,
@@ -321,6 +320,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
       ok: true,
       ticket_id: resultado.ticketId,
       cotizacion_marcada: true,

@@ -193,30 +193,34 @@ export async function aprobadoresDelBot(
  * puerta (los dos leyeron ESPERA_APROBACION) y se escribe dos veces. Un UPDATE
  * condicionado es atomico: solo uno cambia la fila; el otro recibe 409.
  * `resuelto_en` marca el reclamo: un borrador en espera nunca lo tiene.
+ *
+ * FASE 11 (D107): **el reclamo ya no caduca.** Hasta la Fase 10 vencia a los 2
+ * minutos, para liberar al huerfano de una escritura que fallo. Pero un lease
+ * que vence no distingue "el otro fallo sin escribir" de "el otro YA escribio y
+ * no pudo marcar CONFIRMADO" (medido por el auditor: la marca falla, a los 2 min
+ * Kevin aprueba -> 2 cotizaciones). Ahora:
+ *   · si la ruta falla ANTES de escribir, ella misma suelta el reclamo
+ *     (`liberarReclamo`): no hay huerfano que esperar;
+ *   · si la escritura salio, el reclamo se queda puesto aunque la marca falle
+ *     (`marcarConfirmado` revisa el error y lo registra);
+ *   · si el proceso murio a media escritura, el borrador queda TRABADO: el
+ *     siguiente Aprobar recibe 409 `trabado` y lo dice. Norman revisa si se
+ *     escribio y lo cancela con Rechazar. **Nunca se libera solo.**
+ * Preferimos "a lo mas una vez, y si se traba se ve" a "al menos una vez".
  * Devuelve `null` si se puede seguir escribiendo.
  */
-/**
- * Cuanto dura el reclamo. Si el primer aprobador reclamo y su escritura fallo
- * (500), el borrador sigue en ESPERA con `resuelto_en` puesto: sin caducidad,
- * cada Aprobar posterior diria "ya lo resolvio otro" para siempre. Dos minutos
- * cubren de sobra una escritura (las rutas tardan segundos) y liberan el huerfano.
- */
-export const RECLAMO_CADUCA_MS = 2 * 60 * 1000
-
 export async function reclamarAprobacion(
   supabase: ClienteServicio,
   borradorId: string,
   modo: ModoPuerta
 ): Promise<NextResponse | null> {
   if (modo !== 'aprobar') return null
-  const ahora = Date.now()
-  const caduco = new Date(ahora - RECLAMO_CADUCA_MS).toISOString()
   const r = await supabase
     .from('bot_borradores')
-    .update({ resuelto_en: new Date(ahora).toISOString() })
+    .update({ resuelto_en: new Date().toISOString() })
     .eq('id', borradorId)
     .eq('estado', 'ESPERA_APROBACION')
-    .or(`resuelto_en.is.null,resuelto_en.lt."${caduco}"`)
+    .is('resuelto_en', null)
     .select('id')
   // En ensayo la escritura no sale (`lib/bot-ensayo.ts`): no hay reclamo que
   // hacer, y nada se va a escribir despues.
@@ -226,10 +230,74 @@ export async function reclamarAprobacion(
     return NextResponse.json({ error: 'No pude aprobarlo. No escribi nada.' }, { status: 500 })
   }
   if (!r.data || r.data.length !== 1) {
+    // ¿Lo resolvio otro, o quedo trabado? Sigue en espera con reclamo puesto =
+    // alguien empezo a escribirlo y no termino de marcarlo.
+    const { data: actual } = await supabase
+      .from('bot_borradores')
+      .select('estado, resuelto_en')
+      .eq('id', borradorId)
+      .maybeSingle()
+    if (actual?.estado === 'ESPERA_APROBACION' && actual?.resuelto_en) {
+      return NextResponse.json(
+        {
+          error:
+            'Esta aprobacion ya empezo a escribirse y no termino de marcarse. No la repito: ' +
+            'revisa si quedo escrita; si no, Rechazala y que se vuelva a proponer.',
+          trabado: true
+        },
+        { status: 409 }
+      )
+    }
     return NextResponse.json(
       { error: 'Eso ya lo resolvio otro aprobador. No escribi nada.', ya_resuelto: true },
       { status: 409 }
     )
+  }
+  return null
+}
+
+/**
+ * FASE 11 (D107): la ruta fallo ANTES de escribir nada; suelta el reclamo para
+ * que se pueda volver a Aprobar. Solo se llama donde el codigo SABE que no
+ * salio ninguna escritura. Si hay duda, no se llama: queda trabado y se ve.
+ */
+export async function liberarReclamo(
+  supabase: ClienteServicio,
+  borradorId: string,
+  modo: ModoPuerta
+): Promise<void> {
+  if (modo !== 'aprobar') return
+  const { error } = await supabase
+    .from('bot_borradores')
+    .update({ resuelto_en: null })
+    .eq('id', borradorId)
+    .eq('estado', 'ESPERA_APROBACION')
+  if (error && (error as { code?: string }).code !== 'ENSAYO') {
+    console.error('[bot] no pude soltar el reclamo (queda trabado, se ve)', borradorId, error)
+  }
+}
+
+/** Lo que se le dice a quien aprobo si la escritura salio y la marca no. */
+export const AVISO_MARCA_FALLO =
+  'Quedo escrito, pero no pude marcar la propuesta como hecha. No se va a repetir: ' +
+  'si alguien aprieta Aprobar otra vez, le digo que ya empezo.'
+
+/**
+ * FASE 11 (D107): la marca final, con su error REVISADO. Hasta la Fase 10 nadie
+ * lo leia. Devuelve `null` si quedo marcado, o el aviso para la respuesta. Si
+ * falla, el reclamo (si lo hubo) se queda puesto: no se libera.
+ */
+export async function marcarConfirmado(
+  supabase: ClienteServicio,
+  borradorId: string,
+  idRegistro: string | null
+): Promise<string | null> {
+  const campos: Record<string, unknown> = { estado: 'CONFIRMADO', resuelto_en: new Date().toISOString() }
+  if (idRegistro !== null) campos.id_registro = idRegistro
+  const { error } = await supabase.from('bot_borradores').update(campos).eq('id', borradorId)
+  if (error && (error as { code?: string }).code !== 'ENSAYO') {
+    console.error('[bot] ESCRIBI pero no pude marcar CONFIRMADO', borradorId, idRegistro, error)
+    return AVISO_MARCA_FALLO
   }
   return null
 }

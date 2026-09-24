@@ -17,7 +17,7 @@ import {
   type FinanzaSaldoInput,
   type TicketSaldoInput
 } from './distribuidores-saldos'
-import { esAbonoPendienteAprobacion } from './finance-utils'
+import { esAbonoPendienteAprobacion, esEntregaDeEfectivo } from './finance-utils'
 
 /** Roles que pueden tener mercancia en piso y deuda de consignacion. */
 export type RolNodoCartera = Extract<EntidadRolSaldo, 'DST' | 'LOC'>
@@ -183,7 +183,9 @@ export function construirCartera({
       (f) =>
         f.tipo_movimiento === 'ABONO_DEUDA' &&
         f.id_entidad_relacionada === entidad.id &&
-        !esAbonoPendienteAprobacion(f.categoria)
+        !esAbonoPendienteAprobacion(f.categoria) &&
+        // D112: la entrega de efectivo no es abono de concesion (misma linea que `v_cartera`).
+        !esEntregaDeEfectivo(f)
     )
     const abonado = abonos.reduce((sum, f) => sum + (Number(f.monto) || 0), 0)
 

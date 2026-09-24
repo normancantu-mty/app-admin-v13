@@ -32,6 +32,8 @@ import { sellarAgregar, type PayloadAgregar } from '@/lib/bot-envasado'
 import { sellarAnulacion, type PayloadAnulacion } from '@/lib/bot-anulacion'
 import { sellarCotizacion, type PayloadCotizacion } from '@/lib/bot-cotizacion'
 import { CATEGORIA_ABONO_PENDIENTE } from '@/lib/finance-utils'
+import { sellarConversion, type PayloadConversion } from '@/lib/bot-conversion'
+import { sellarAlta, type PayloadAlta } from '@/lib/bot-entidad'
 import * as gastoP from '@/app/api/bot/gasto/proponer/route'
 import * as gastoC from '@/app/api/bot/gasto/confirmar/route'
 import * as ventaP from '@/app/api/bot/venta/proponer/route'
@@ -55,6 +57,9 @@ import * as anuC from '@/app/api/bot/anular/confirmar/route'
 import * as aprL from '@/app/api/bot/aprobacion/route'
 import * as aprC from '@/app/api/bot/aprobacion/confirmar/route'
 import * as cancelar from '@/app/api/bot/cancelar/route'
+import * as entregaP from '@/app/api/bot/entrega/proponer/route'
+import * as entregaC from '@/app/api/bot/entrega/confirmar/route'
+import { sellarEntrega, type PayloadEntrega } from '@/lib/bot-entrega'
 
 type Ruta = { POST: (r: Request) => Promise<Response> }
 const RUTAS: Record<string, Ruta> = {
@@ -69,6 +74,7 @@ const RUTAS: Record<string, Ruta> = {
   'miembro/proponer': miemP, 'miembro/confirmar': miemC,
   'anular/proponer': anuP, 'anular/confirmar': anuC,
   aprobacion: aprL, 'aprobacion/confirmar': aprC,
+  'entrega/proponer': entregaP, 'entrega/confirmar': entregaC,
   cancelar
 }
 
@@ -568,16 +574,75 @@ test.describe('D106 — maker-checker en el handler', () => {
     expect(b.estado).toBe('CONFIRMADO')
   })
 
-  // El reclamo caduca: si la escritura del primero fallo, el borrador no queda
-  // bloqueado para siempre. Mutacion: volver a `.is('resuelto_en', null)`.
-  test('reclamo huerfano (hace 5 min, la escritura fallo) -> el siguiente Aprobar escribe', async () => {
+  // FASE 11 (D107): el reclamo YA NO caduca. Un reclamo puesto en un borrador
+  // que sigue en espera = alguien empezo a escribir y no termino de marcar: no
+  // se sabe si escribio, asi que no se repite. Hasta la Fase 10 esta prueba
+  // decia lo contrario ("a los 5 min el siguiente escribe"): eso es justo la
+  // doble escritura que midio el auditor (AUD10 b-i, abajo).
+  // Mutacion: volver a `.or(resuelto_en.is.null,resuelto_en.lt.<hace 2 min>)`.
+  test('D107: reclamo huerfano de hace 5 min -> 409 trabado, no escribe', async () => {
     estadoInicial({ gilConMarca: true })
     const { b, sello } = cotizacionDeGil()
     await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
     ;(b as Fila).resuelto_en = new Date(Date.now() - 5 * 60 * 1000).toISOString()
     const n = await llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
-    expect(n.status, JSON.stringify(n.j)).toBe(200)
+    expect(n.status, JSON.stringify(n.j)).toBe(409)
+    expect(n.j.trabado).toBe(true)
+    expect(escrituras.filter((e) => e === 'POST cotizaciones')).toHaveLength(0)
+  })
+
+  // Y lo que reemplaza a la caducidad: si la escritura falla ANTES de escribir,
+  // la ruta suelta el reclamo ella misma. Mutacion: quitar `liberarReclamo` de
+  // la rama de error de la cabecera -> el segundo Aprobar da 409 trabado.
+  test('D107: la escritura fallo sin escribir -> la ruta suelta el reclamo y el siguiente Aprobar escribe 1', async () => {
+    estadoInicial({ gilConMarca: true })
+    const { b, sello } = cotizacionDeGil()
+    await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    const f = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input)
+      if ((init?.method ?? 'GET').toUpperCase() === 'POST' && url.includes('/rest/v1/cotizaciones')) {
+        return new Response(JSON.stringify({ message: 'timeout' }), { status: 500, headers: { 'content-type': 'application/json' } })
+      }
+      return f(input, init)
+    }) as typeof fetch
+    let n
+    try {
+      n = await llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+    } finally {
+      globalThis.fetch = f
+    }
+    expect(n.status, JSON.stringify(n.j)).toBe(500)
+    expect((b as Fila).resuelto_en ?? null).toBeNull()
+    const k = await llamar('cotizacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
+    expect(k.status, JSON.stringify(k.j)).toBe(200)
     expect(escrituras.filter((e) => e === 'POST cotizaciones')).toHaveLength(1)
+    expect(b.estado).toBe('CONFIRMADO')
+  })
+
+  // La marca final se REVISA y el reclamo se queda: quien aprobo se entera.
+  test('D107: la marca CONFIRMADO falla -> 200 con aviso_marca y el reclamo sigue puesto', async () => {
+    estadoInicial({ gilConMarca: true })
+    const { b, sello } = cotizacionDeGil()
+    await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    const f = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input)
+      if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.includes('bot_borradores') && String(init?.body).includes('CONFIRMADO')) {
+        return new Response(JSON.stringify({ message: 'timeout' }), { status: 500, headers: { 'content-type': 'application/json' } })
+      }
+      return f(input, init)
+    }) as typeof fetch
+    let n
+    try {
+      n = await llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+    } finally {
+      globalThis.fetch = f
+    }
+    expect(n.status, JSON.stringify(n.j)).toBe(200)
+    expect(String(n.j.aviso_marca ?? '')).toContain('No se va a repetir')
+    expect(b.estado).toBe('ESPERA_APROBACION')
+    expect((b as Fila).resuelto_en).toBeTruthy()
   })
 
   test('CONTROL: reclamo de hace 10 s (otro esta escribiendo) -> 409 y no escribe', async () => {
@@ -644,5 +709,289 @@ test.describe('D106 — un DST convierte solo SUS cotizaciones', () => {
     const r = await llamar('convertir/proponer', { telegram_id: NORMAN })
     const ids = (r.j.opciones as { id: string }[]).map((o) => o.id).sort()
     expect(ids).toEqual(['cot-gil', 'cot-matriz'])
+  })
+})
+
+// ─── 6. FASE 11 (D107/D108) — LAS PRUEBAS DEL AUDITOR DE LA FASE 10 ────────
+// Copiadas de `Fresnillo/ERP_Fresnillo/DESDE_SOCIO_arnes_auditoria_fase9/aud10-extra.spec.ts`
+// (mismo arnes, byte a byte). Vigilan tres guardas que el arnes no vigilaba:
+// `puedeCancelar` (a5: LOC cancela lo de Gil -> 403), el dueno en
+// `convertir/confirmar` (d) y `permitido` en `aprobacion/confirmar` (a1/a2).
+// b-i es la doble escritura de D107: roja con la caducidad de 2 min.
+// ════════════════ AUD10 — pruebas del auditor ════════════════
+
+function abonoPend(dueno: number) {
+  return borrador({
+    telegram_id: dueno, estado: 'CONFIRMADO', sello: 'b'.repeat(64),
+    payload: { tipo: 'abono', meta: { ids_pendientes: ['m-pend'], nombre_deudor: 'Casa Verde' } }
+  })
+}
+function cotGil() {
+  const cot: PayloadCotizacion = {
+    id_vendedor: 'dst-a', id_comprador: 'loc-a1', nombre_prospecto: null, zona: 'LOCAL',
+    vigencia_dias: 15, total: 960, notas: '', usuario_creador: 'telegram:gil',
+    items: [{ id_producto: 'p1', cantidad: 2, precio_unitario: 480 }]
+  }
+  const sello = sellarCotizacion(cot)
+  const b = borrador({ telegram_id: GIL, sello, payload: { tipo: 'cotizacion', cotizacion: cot, meta: {} } })
+  return { b, sello }
+}
+
+test.describe('AUD10 maker-checker', () => {
+  test('AUD10 a1: DST (Gil) aprueba abono pendiente ajeno -> 403, 0 escrituras', async () => {
+    estadoInicial()
+    const b = abonoPend(LOC)
+    const r = await llamar('aprobacion/confirmar', { telegram_id: GIL, borrador_id: b.id, accion: 'aprobar' })
+    expect(r.status).toBe(403)
+    expect(escrituras).toEqual([])
+  })
+  test('AUD10 a2: Kevin aprueba abono pendiente cuyo autor es Kevin -> 403', async () => {
+    estadoInicial()
+    const b = abonoPend(KEVIN)
+    const r = await llamar('aprobacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, accion: 'aprobar' })
+    expect(r.status).toBe(403)
+    expect(escrituras).toEqual([])
+  })
+  test('AUD10 a3: Norman aprueba lo suyo en ESPERA -> 403', async () => {
+    estadoInicial()
+    const AG: PayloadAgregar = { id_lote: 'lote-1', codigo_lote: 'L-1', usuario_creador: 'telegram:norman', entradas: [], tandas: [], envasado: [] }
+    const sello = sellarAgregar(AG)
+    const b = borrador({ telegram_id: NORMAN, estado: 'ESPERA_APROBACION', sello, payload: { tipo: 'lote_agregar', agregar: AG } })
+    const c = await llamar('lote/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(403)
+    const a = await llamar('aprobacion/confirmar', { telegram_id: NORMAN, borrador_id: abonoPend(NORMAN).id, accion: 'aprobar' })
+    expect(a.status).toBe(403)
+    expect(deDinero()).toEqual([])
+  })
+  test('AUD10 a4: Norman aprueba lo de Kevin (lote_agregar) -> escribe 1', async () => {
+    estadoInicial()
+    const AG: PayloadAgregar = { id_lote: 'lote-1', codigo_lote: 'L-1', usuario_creador: 'telegram:kevin', entradas: [], tandas: [], envasado: [] }
+    const sello = sellarAgregar(AG)
+    const b = borrador({ telegram_id: KEVIN, estado: 'ESPERA_APROBACION', sello, payload: { tipo: 'lote_agregar', agregar: AG } })
+    const c = await llamar('lote/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(escrituras.filter((e) => e.includes('registrar_en_lote'))).toHaveLength(1)
+  })
+  test('AUD10 a5: DST y LOC aprueban cotizacion en espera de Gil -> 403; LOC cancela lo de Gil -> 403', async () => {
+    estadoInicial({ gilConMarca: true })
+    const { b, sello } = cotGil()
+    await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    expect(b.estado).toBe('ESPERA_APROBACION')
+    for (const id of [LOC, SOCIO]) {
+      const r = await llamar('cotizacion/confirmar', { telegram_id: id, borrador_id: b.id, sello })
+      expect(r.status, `${id} ${JSON.stringify(r.j)}`).toBe(403)
+    }
+    const c = await llamar('cancelar', { telegram_id: LOC, borrador_id: b.id })
+    expect(c.status, JSON.stringify(c.j)).toBe(403)
+    const l = await llamar('aprobacion', { telegram_id: LOC, borrador_id: b.id })
+    expect(l.status).toBe(403)
+    expect(deDinero()).toEqual([])
+  })
+  test('AUD10 b-i: la escritura de Norman sale pero el CONFIRMADO falla; a los 3 min Kevin aprueba -> ¿doble?', async () => {
+    estadoInicial({ gilConMarca: true })
+    const { b, sello } = cotGil()
+    await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    const f = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input)
+      if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.includes('bot_borradores') && String(init?.body).includes('CONFIRMADO')) {
+        return new Response(JSON.stringify({ message: 'timeout' }), { status: 500, headers: { 'content-type': 'application/json' } })
+      }
+      return f(input, init)
+    }) as typeof fetch
+    let n
+    try {
+      n = await llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+    } finally {
+      globalThis.fetch = f
+    }
+    console.log('AUD10 b-i Norman:', n.status, 'estado', b.estado, 'resuelto_en', (b as Fila).resuelto_en)
+    ;(b as Fila).resuelto_en = new Date(Date.now() - 3 * 60 * 1000).toISOString()
+    const k = await llamar('cotizacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
+    const posts = escrituras.filter((e) => e === 'POST cotizaciones').length
+    console.log('AUD10 b-i Kevin:', k.status, 'POST cotizaciones =', posts)
+    expect(posts).toBe(1)
+  })
+  test('AUD10 b-ii: borrador CONFIRMADO con reclamo viejo -> Aprobar no escribe', async () => {
+    estadoInicial({ gilConMarca: true })
+    const { b, sello } = cotGil()
+    b.estado = 'CONFIRMADO'
+    ;(b as Fila).resuelto_en = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const k = await llamar('cotizacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
+    expect(k.status).toBe(409)
+    expect(deDinero()).toEqual([])
+  })
+  test('AUD10 b-iii: dos aprobaciones del abono (bot + web simulada) concurrentes -> 1 PATCH que toca, 1 POST reservas', async () => {
+    estadoInicial()
+    tablas.cuentas_financieras.find((c) => c.id === 'c-norman')!.tipo_fiscalidad = 'FULL_TAX'
+    const { resolverAprobacionDeAbono } = await import('@/lib/aprobacion-abonos')
+    const { clienteDeServicio } = await import('@/lib/bot-servidor')
+    const b = abonoPend(GIL)
+    const sb = clienteDeServicio(new Request('http://localhost/'))
+    const [x, y] = await Promise.all([
+      llamar('aprobacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, accion: 'aprobar' }),
+      resolverAprobacionDeAbono(sb, 'm-pend', 'APPROVE')
+    ])
+    console.log('AUD10 b-iii', x.status, JSON.stringify(y))
+    expect(escrituras.filter((e) => e === 'POST finanzas_ledger')).toHaveLength(1)
+  })
+})
+
+test.describe('AUD10 convertir y alta', () => {
+  test('AUD10 d: Gil confirma una conversion SELLADA de la cotizacion de la matriz -> 403', async () => {
+    estadoInicial()
+    const hoy = new Date().toISOString().slice(0, 10)
+    tablas.cotizaciones.push({ id: 'cot-matriz', folio: 'COT-9002', fecha: hoy, estado: 'VIGENTE', zona: 'LOCAL', total: 960, id_comprador: 'loc-a1', nombre_prospecto: null, vigente_hasta: '2026-12-31', id_vendedor: 'ent-matriz', id_ticket: null })
+    const fila: PayloadConversion = {
+      id_cotizacion: 'cot-matriz', folio: 'COT-9002', usuario_creador: 'telegram:gil',
+      venta: { id_vendedor: 'dst-a', id_comprador: 'loc-a1', id_cuenta_destino: 'c-gil', condicion_pago: 'CONTADO', items: [{ id_producto: 'p1', cantidad: 2, precio_unitario: 480 }] as never, subtotal_catalogo: 960, total_cobrado_real: 960, usuario_creador: 'telegram:gil' }
+    }
+    const sello = sellarConversion(fila)
+    const b = borrador({ telegram_id: GIL, sello, payload: { tipo: 'conversion', fila } })
+    const r = await llamar('convertir/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    expect(r.status, JSON.stringify(r.j)).toBe(403)
+    expect(deDinero()).toEqual([])
+  })
+  function alta(etq: string): PayloadAlta {
+    void etq
+    return { nombre: 'Bar Nuevo', rol: 'LOC', zona: 'LOCAL', email: null, telefono: null, id_nodo_padre: null, comision_base: 0, comision_base_local: 0, comision_hijo_local: 0 } as unknown as PayloadAlta
+  }
+  test('AUD10 e: Kevin da VA a un alta -> ESPERA, 0 escrituras; DST/LOC confirmar -> 403', async () => {
+    estadoInicial()
+    const fila = alta('kevin')
+    const sello = sellarAlta(fila)
+    const b = borrador({ telegram_id: KEVIN, sello, payload: { tipo: 'alta_entidad', fila, meta: { id_entidad: 'x', nombrePadre: null, avisos: [] } } })
+    const r = await llamar('entidad/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    expect(r.j.espera_aprobacion).toBe(true)
+    expect(deDinero()).toEqual([])
+    for (const id of [GIL, LOC]) {
+      const x = await llamar('entidad/confirmar', { telegram_id: id, borrador_id: b.id, sello })
+      expect(x.status).toBe(403)
+    }
+  })
+  test('AUD10 e2: Norman propone alta -> 200', async () => {
+    estadoInicial()
+    const r = await llamar('entidad/proponer', { telegram_id: NORMAN, propuesta: { nombre: 'Bar Nuevo', rol: 'LOC' } })
+    console.log('AUD10 e2', r.status, JSON.stringify(r.j).slice(0, 160))
+    expect(r.status).not.toBe(403)
+  })
+})
+
+// ─── FASE 11 (D112) — LA ENTREGA DE EFECTIVO, DESDE LA RUTA ─────────────────
+// Un DST solo registra la suya; su VA espera el Aprobar; el Aprobar escribe UNA
+// fila marcada. Celda "No": el DST con la entrega de OTRO (al proponer y al
+// confirmar un borrador sellado), LOC, un rol sin tabla y sin alta.
+// Mutaciones (ver `_avance_fase11_2026-09-23.md`, D112):
+//   · `decidirEntrega` sin "solo la suya" -> rojo (celdas del DST ajeno).
+//   · confirmar sin `siempreEspera` -> rojo (el VA del DST escribiria).
+//   · `filaDeEntrega` sin la marca -> rojo (la fila aprobada).
+test.describe('D112 — entrega de efectivo, desde la ruta', () => {
+  function entrega(opts: Partial<PayloadEntrega> = {}): PayloadEntrega {
+    return {
+      id_entidad: 'dst-a', monto: 1500, id_cuenta_origen: 'c-gil', id_cuenta_destino: 'c-norman',
+      fecha_movimiento: '2026-09-24T18:00:00.000Z', usuario_creador: 'telegram:gil', nota: '', ...opts
+    }
+  }
+  function borradorDeEntrega(autor: number, p: PayloadEntrega) {
+    const sello = sellarEntrega(p)
+    const b = borrador({ telegram_id: autor, sello, payload: { tipo: 'entrega_efectivo', entrega: p, meta: { nombre: 'Gil', rol: 'DST', nombre_cuenta_origen: 'Caja Gil', nombre_cuenta_destino: 'Efectivo' } } })
+    return { b, sello }
+  }
+
+  test('celda No: Gil (DST) propone la entrega de OTRO DST -> 403, 0 escrituras', async () => {
+    estadoInicial()
+    tablas.cuentas_financieras.push({ id: 'c-otro', id_entidad: 'dst-b', nombre: 'Caja Otro', tipo_fiscalidad: 'NO_FISCAL' })
+    for (const cuerpo of [{ id_entidad: 'dst-b' }, { entidad: 'Otro' }]) {
+      const r = await llamar('entrega/proponer', { telegram_id: GIL, monto: 500, ...cuerpo })
+      expect(r.status, JSON.stringify(r.j)).toBe(403)
+    }
+    expect(escrituras).toEqual([])
+  })
+
+  test('celda No: Gil confirma un borrador SELLADO con la entrega de otro -> 403, 0 dinero', async () => {
+    estadoInicial()
+    tablas.cuentas_financieras.push({ id: 'c-otro', id_entidad: 'dst-b', nombre: 'Caja Otro', tipo_fiscalidad: 'NO_FISCAL' })
+    const { b, sello } = borradorDeEntrega(GIL, entrega({ id_entidad: 'dst-b', id_cuenta_origen: 'c-otro' }))
+    const r = await llamar('entrega/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    expect(r.status, JSON.stringify(r.j)).toBe(403)
+    expect(deDinero()).toEqual([])
+    expect(b.estado).toBe('PENDIENTE')
+  })
+
+  test('celda No: LOC, un rol sin tabla y sin alta -> 403 al proponer', async () => {
+    for (const id of [LOC, SOCIO, DESCONOCIDO]) {
+      estadoInicial()
+      const r = await llamar('entrega/proponer', { telegram_id: id, monto: 500 })
+      expect(r.status, `${id} ${JSON.stringify(r.j)}`).toBe(403)
+      expect(escrituras).toEqual([])
+    }
+  })
+
+  test('Gil propone LA SUYA sin nombre -> 200, solo el borrador (nada de dinero)', async () => {
+    estadoInicial()
+    const r = await llamar('entrega/proponer', { telegram_id: GIL, monto: '1,500' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    expect(r.j.id_entidad).toBe('dst-a')
+    expect(deDinero()).toEqual([])
+    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila
+    expect((b.payload as { entrega: PayloadEntrega }).entrega).toMatchObject({ id_entidad: 'dst-a', monto: 1500, id_cuenta_origen: 'c-gil', id_cuenta_destino: 'c-norman' })
+  })
+
+  test('el VA de Gil ESPERA (0 dinero); el Aprobar de Norman escribe UNA fila marcada; el de Kevin despues no escribe', async () => {
+    estadoInicial()
+    const { b, sello } = borradorDeEntrega(GIL, entrega())
+    const va = await llamar('entrega/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    expect(va.status, JSON.stringify(va.j)).toBe(200)
+    expect(va.j.espera_aprobacion).toBe(true)
+    expect(deDinero()).toEqual([])
+    expect(b.estado).toBe('ESPERA_APROBACION')
+
+    const lee = await llamar('aprobacion', { telegram_id: NORMAN, borrador_id: b.id })
+    expect(lee.j.tipo).toBe('entrega_efectivo')
+
+    const ok = await llamar('entrega/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+    expect(ok.status, JSON.stringify(ok.j)).toBe(200)
+    expect(escrituras.filter((e) => e === 'POST finanzas_ledger')).toHaveLength(1)
+    const fila = tablas.finanzas_ledger.at(-1) as Fila
+    expect(fila).toMatchObject({
+      tipo_movimiento: 'ABONO_DEUDA', es_entrega_efectivo: true, categoria: 'ABONO_REAL',
+      id_entidad_relacionada: 'dst-a', id_ticket: null, monto: 1500, usuario_creador: 'telegram:gil'
+    })
+    expect(b.estado).toBe('CONFIRMADO')
+
+    const otra = await llamar('entrega/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
+    expect(otra.status).not.toBe(200)
+    expect(escrituras.filter((e) => e === 'POST finanzas_ledger')).toHaveLength(1)
+  })
+
+  test('Gil NO aprueba su propia entrega -> 403', async () => {
+    estadoInicial()
+    const { b, sello } = borradorDeEntrega(GIL, entrega())
+    await llamar('entrega/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    const r = await llamar('entrega/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    expect(r.status, JSON.stringify(r.j)).not.toBe(200)
+    expect(deDinero()).toEqual([])
+  })
+
+  test('Kevin (con marca) propone la de Gil: su VA espera a Norman', async () => {
+    estadoInicial()
+    const { b, sello } = borradorDeEntrega(KEVIN, entrega({ usuario_creador: 'telegram:kevin' }))
+    const va = await llamar('entrega/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
+    expect(va.j.espera_aprobacion, JSON.stringify(va.j)).toBe(true)
+    expect(va.j.avisar_a).toEqual([NORMAN])
+    expect(deDinero()).toEqual([])
+  })
+
+  test('CONTROL: Norman propone la de Gil por nombre y su VA escribe directo, una fila', async () => {
+    estadoInicial()
+    const p = await llamar('entrega/proponer', { telegram_id: NORMAN, monto: 700, entidad: 'Gil' })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila & { estado: string }
+    b.estado ??= 'PENDIENTE' // el default de la columna; el doble no lo pone
+    const r = await llamar('entrega/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello: p.j.sello })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    expect(escrituras.filter((e) => e === 'POST finanzas_ledger')).toHaveLength(1)
+    expect(tablas.finanzas_ledger.at(-1)).toMatchObject({ es_entrega_efectivo: true, monto: 700, usuario_creador: 'telegram:norman' })
   })
 })

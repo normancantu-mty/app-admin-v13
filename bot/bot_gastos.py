@@ -29,6 +29,7 @@ modelo licencia para cambiar campos que nadie pidio cambiar.
 
 import asyncio
 import datetime as dt
+import functools
 import json
 import logging
 import os
@@ -395,6 +396,22 @@ async def _puerta_de_grupo(update, clave):
     return False
 
 
+
+def _con_puerta(comando):
+    """FASE 11 (D109): los comandos pasan por la MISMA puerta de grupo que el
+    texto, la voz y los botones. Hasta la Fase 10 ningun `comando_*` la llamaba:
+    un desconocido que mandaba /cartera en un grupo llegaba al servidor (que
+    daba 403) y nadie le preguntaba quien era. Defensa en profundidad: el
+    servidor sigue decidiendo; esto hace que ni siquiera llegue. En privado la
+    puerta no mira nada, asi que ahi no cambia nada."""
+    @functools.wraps(comando)
+    async def con_puerta(update, context):
+        if not await _puerta_de_grupo(update, _clave_de(update)):
+            return None
+        return await comando(update, context)
+    con_puerta.con_puerta = True
+    return con_puerta
+
 def _rotulo_de_grupo(clave, texto, teclado=None):
     """D94: en un grupo cada propuesta dice quien la hizo y cada escritura quien
     la confirmo. **Pura.** En privado no cambia nada (las pruebas fijan los
@@ -492,6 +509,9 @@ RUTA_CONFIRMAR_DE = {
     "alta_entidad": "/api/bot/entidad/confirmar",
     "anulacion": "/api/bot/anular/confirmar",
     "alta_miembro": "/api/bot/miembro/confirmar",
+    # FASE 11 (D112): la entrega de efectivo del DST se aprueba por el camino
+    # generico (ESPERA_APROBACION -> Aprobar -> su confirmar con el sello).
+    "entrega_efectivo": "/api/bot/entrega/confirmar",
 }
 
 
@@ -549,7 +569,8 @@ async def _boton_de_aprobacion(update, clave, q, accion, bid):
     if estado != 200 or not r2.get("ok"):
         await decir(r2.get("error", "No pude escribirlo. No se escribio nada."))
         return
-    await decir("Aprobado. Quedo escrito.")
+    # D107: si la marca final fallo, quien aprobo lo sabe (no se repite).
+    await decir("Aprobado. Quedo escrito." + ((NL + str(r2["aviso_marca"])) if r2.get("aviso_marca") else ""))
     await _avisar_en(update, r.get("chat_id"),
                      "Aprobado por " + str(r.get("aprobador") or _nombre_de(_persona(clave)))
                      + ": lo que propuso " + str(r.get("autor") or "")
@@ -1211,6 +1232,8 @@ _COMO_SE_LLAMA = {
     "correccion": "una correccion",
     "alta": "un alta",
     "conversion": "una conversion",
+    "entrega_efectivo": "una entrega de efectivo",
+    "entrega": "una entrega de efectivo",
 }
 
 
@@ -3685,6 +3708,76 @@ async def _confirmar_abono(update, chat):
         await update.effective_message.reply_text(r.get("error", "No pude escribir el abono."))
 
 
+# ─── FASE 11 (D112): LA ENTREGA DE EFECTIVO DEL DISTRIBUIDOR ────────────────
+# El DST cobra de contado y despues entrega ese efectivo a la matriz. NO es un
+# abono de concesion. Quien puede registrar la de quien lo decide el servidor
+# (`lib/bot-entrega.ts` decidirEntrega): aqui solo se enruta, como el abono.
+
+def _teclado_confirmar_entrega(borrador_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, registrala", callback_data="vaet:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _teclado_entregadores(opciones):
+    """Por INDICE, como los deudores: el boton solo apunta a la lista cerrada
+    que el servidor acaba de declarar."""
+    filas = [[InlineKeyboardButton(
+        str(o.get("nombre")) + (" (" + str(o.get("rol")) + ")" if o.get("rol") else ""),
+        callback_data="setet:" + str(i))] for i, o in enumerate(opciones)]
+    filas.append([InlineKeyboardButton("Mejor no", callback_data="no:x")])
+    return InlineKeyboardMarkup(filas)
+
+
+async def _proponer_entrega(update, chat, monto, nombre=None, id_entidad=None):
+    cuerpo = {"telegram_id": chat, "monto": monto}
+    if id_entidad:
+        cuerpo["id_entidad"] = id_entidad
+    elif nombre:
+        cuerpo["entidad"] = nombre
+    estado, r = _post("/api/bot/entrega/proponer", cuerpo)
+    log.info("entrega propuesta: entidad=%s monto=%s -> %s", nombre or id_entidad, monto, estado)
+    if estado == 200 and r.get("hay_que_elegir"):
+        opciones = r.get("opciones") or []
+        _memoria[chat] = {"tipo": "entrega_eligiendo", "monto": monto, "opciones": opciones}
+        await update.effective_message.reply_text(
+            r.get("mensaje") or "De quien es la entrega?",
+            reply_markup=_teclado_entregadores(opciones))
+        return
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponer la entrega."))
+        return
+    _memoria[chat] = {"tipo": "entrega_efectivo", "borrador_id": r["borrador_id"],
+                      "sello": r["sello"], "id_entidad": r.get("id_entidad"), "monto": monto}
+    await _ensenar_propuesta(update, chat, r["mensaje"], _teclado_confirmar_entrega(r["borrador_id"]))
+
+
+async def _confirmar_entrega(update, chat):
+    """El VA de una entrega. Solo viajan `{telegram_id, borrador_id, sello}`.
+    Si es de un DST (o de Kevin), el servidor contesta `espera_aprobacion` y
+    `_post` ya lo anoto para avisarle a quien aprueba."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "entrega_efectivo":
+        await update.effective_message.reply_text("No tengo ninguna entrega pendiente que escribir.")
+        return
+    estado, r = _post("/api/bot/entrega/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("entrega confirmada: borrador=%s -> %s filas=%s",
+             dato["borrador_id"], estado, r.get("filas_escritas"))
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        texto = r.get("mensaje") or "Listo. Quedo registrada la entrega."
+        if r.get("aviso_marca"):
+            texto += NL + str(r["aviso_marca"])
+        await update.effective_message.reply_text(texto)
+    else:
+        await update.effective_message.reply_text(r.get("error", "No pude registrar la entrega."))
+
+
 async def _ensenar_propuesta(update, chat, mensaje, teclado):
     """Ensena una propuesta sellada y la deja guardada JUNTO A SU BORRADOR.
 
@@ -3777,6 +3870,14 @@ async def _confirmar(update, chat, por_boton=False):
     # persona contesta como habla y no tiene por que saber que hay dos caminos.
     if dato.get("tipo") == "abono":
         await _confirmar_abono(update, chat)
+        return
+    # D112: sin esta rama un "va" escrito caia al camino de gasto.
+    if dato.get("tipo") == "entrega_efectivo":
+        await _confirmar_entrega(update, chat)
+        return
+    if dato.get("tipo") == "entrega_eligiendo":
+        await update.effective_message.reply_text(
+            "Primero dime de quien es la entrega, con uno de los botones.")
         return
     if dato.get("tipo") == "anulacion":
         await _confirmar_anulacion(update, chat)
@@ -3898,7 +3999,7 @@ async def _reproponer(update, chat, cambios):
 
 # Los botones que ESCRIBEN. El `borrador_id` que traen es el de la propuesta
 # que Norman vio; si ya no esta viva, NO se confirma lo que haya en el foco.
-ACCIONES_VA = ("va", "vaan", "vaalt", "vacnv", "vaab", "vavt", "valt", "vact", "vaent", "vamb")
+ACCIONES_VA = ("va", "vaan", "vaalt", "vacnv", "vaab", "vavt", "valt", "vact", "vaent", "vamb", "vaet")
 
 
 async def manejar_boton(update, context):
@@ -4183,6 +4284,22 @@ async def _manejar_boton(update, chat, q, partes, accion):
             await update.effective_message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
     elif accion == "vaab":
         await _confirmar_abono(update, chat)
+    elif accion == "vaet":
+        await _confirmar_entrega(update, chat)
+    elif accion == "setet":
+        # D112: el DST de la entrega, por INDICE contra la lista que el
+        # servidor acaba de declarar (misma razon que `setdeu`).
+        dato = _memoria.get(chat) or {}
+        if dato.get("tipo") != "entrega_eligiendo":
+            await update.effective_message.reply_text("Ya no tengo esa entrega. Dictamela otra vez.")
+            return
+        try:
+            elegido = (dato.get("opciones") or [])[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            await update.effective_message.reply_text("Ese ya no esta en la lista. Dictamela otra vez.")
+            return
+        await _proponer_entrega(update, chat, dato.get("monto"),
+                                id_entidad=elegido.get("id_entidad"))
     elif accion == "deu":
         # "Otro deudor": se vuelve a preguntar con la lista COMPLETA que el
         # servidor mando la ultima vez.
@@ -4310,18 +4427,22 @@ async def _consulta_directa(update, consulta, filtro=None):
     await _contestar_texto_de_consulta(update, chat, r)
 
 
+@_con_puerta
 async def comando_stock(update, context):
     await _consulta_directa(update, "stock", " ".join(context.args or []).strip() or None)
 
 
+@_con_puerta
 async def comando_cartera(update, context):
     await _consulta_directa(update, "cartera")
 
 
+@_con_puerta
 async def comando_precios(update, context):
     await _consulta_directa(update, "precios", " ".join(context.args or []).strip() or None)
 
 
+@_con_puerta
 async def comando_registrar(update, context):
     """/registrar <nombre>, contestando al mensaje de la persona (D95)."""
     chat = _clave_de(update)
@@ -4331,10 +4452,12 @@ async def comando_registrar(update, context):
             "Se usa contestando al mensaje de la persona: /registrar Gilberto")
 
 
+@_con_puerta
 async def comando_ventas(update, context):
     await _consulta_directa(update, "ventas")
 
 
+@_con_puerta
 async def comando_abono(update, context):
     """`/abono <nombre> <monto>` — la cobranza SIN pasar por el modelo.
 
@@ -4372,6 +4495,35 @@ async def comando_abono(update, context):
                           nombre=nombre)
 
 
+@_con_puerta
+async def comando_entrega(update, context):
+    """`/entrega <monto> [nombre]` — FASE 11 (D112). El DST entrega a la matriz
+    el efectivo que cobro de contado. Sin modelo, por la misma razon que /abono.
+
+    El monto es el PRIMER token; lo de despues, de quien (solo la matriz lo
+    dice: un DST sin nombre habla de si mismo, y con el nombre de otro el
+    servidor le contesta que no). El servidor decide quien puede y si espera.
+    """
+    chat = _clave_de(update)
+    args = list(context.args or [])
+    if not args:
+        await update.effective_message.reply_text(
+            "Se usa asi: /entrega 3000" + NL
+            + "(Norman o Kevin: /entrega 3000 Gilberto)")
+        return
+    crudo = args[0].replace("$", "").replace(",", "")
+    try:
+        monto = float(crudo)
+    except ValueError:
+        await update.effective_message.reply_text(
+            "No lei \"" + args[0] + "\" como monto. El primer dato tiene que ser el numero.")
+        return
+    nombre = " ".join(args[1:]).strip() or None
+    await update.effective_message.chat.send_action("typing")
+    await _proponer_entrega(update, chat, monto, nombre=nombre)
+
+
+@_con_puerta
 async def comando_anular(update, context):
     """/anular — la lista, sin pasar por el modelo. Igual que /stock.
 
@@ -4389,6 +4541,7 @@ async def comando_anular(update, context):
     await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="anular")
 
 
+@_con_puerta
 async def comando_corregir(update, context):
     """/corregir — la misma lista, y despues se pregunta que campo."""
     chat = _clave_de(update)
@@ -4396,6 +4549,7 @@ async def comando_corregir(update, context):
     await _proponer_anulacion(update, chat, {"telegram_id": chat}, accion="corregir")
 
 
+@_con_puerta
 async def comando_alta(update, context):
     """/alta — el alta sin pasar por el modelo. Misma razon que /anular.
 
@@ -4410,6 +4564,7 @@ async def comando_alta(update, context):
         "Va. Como se llama el distribuidor o el local?")
 
 
+@_con_puerta
 async def comando_convertir(update, context):
     """/convertir — la lista de cotizaciones abiertas, sin modelo."""
     chat = _clave_de(update)
@@ -4417,6 +4572,7 @@ async def comando_convertir(update, context):
     await _proponer_conversion(update, chat, {"telegram_id": chat})
 
 
+@_con_puerta
 async def comando_inicio(update, context):
     await update.message.reply_text(
         "Soy el bot del ERP. Capturo y consulto." + NL + NL
@@ -4432,6 +4588,8 @@ async def comando_inicio(update, context):
         + "PARA REGISTRAR UN PAGO QUE TE HICIERON:" + NL
         + "  /abono Gilberto 5000   o dilo hablando: \"me deposito Gilberto 5 mil\"" + NL
         + "Te enseno a que pedidos se aplica ANTES de escribir nada." + NL
+        + "  /entrega 3000     el efectivo que cobraste de contado y ya le entregaste"
+          " a la matriz (no es abono de concesion)" + NL
         + "Tambien puedes preguntarlo hablando: \"cuanto me debe Delirio\"." + NL + NL
         + "PARA DESHACER O CORREGIR ALGO QUE YA QUEDO ESCRITO:" + NL
         + "  /anular           te enseno los ultimos y escoges con un boton" + NL
@@ -4563,6 +4721,7 @@ def main():
     app.add_handler(CommandHandler("registrar", comando_registrar))
     app.add_handler(CommandHandler("ventas", comando_ventas))
     app.add_handler(CommandHandler("abono", comando_abono))
+    app.add_handler(CommandHandler("entrega", comando_entrega))
     app.add_handler(CommandHandler("anular", comando_anular))
     app.add_handler(CommandHandler("corregir", comando_corregir))
     app.add_handler(CommandHandler("alta", comando_alta))

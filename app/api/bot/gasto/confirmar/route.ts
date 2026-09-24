@@ -21,7 +21,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, liberarReclamo, marcarConfirmado, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   CATEGORIA_SIN_CATEGORIZAR_BOT,
@@ -175,6 +175,7 @@ export async function POST(request: Request) {
     if (esNueva) {
       const juicio = validarCategoriaNueva(fila.categoria, catalogo)
       if (!juicio.ok) {
+        await liberarReclamo(supabase, borradorId, puerta.modo)
         return NextResponse.json(
           { error: `No puedo crear la categoria "${fila.categoria}": ${juicio.motivo}.` },
           { status: 422 }
@@ -192,6 +193,7 @@ export async function POST(request: Request) {
       })
       if (errorCat) {
         console.error('[bot] no pude crear la categoria', juicio.nombre, errorCat)
+        await liberarReclamo(supabase, borradorId, puerta.modo)
         return NextResponse.json(
           { error: 'No pude crear esa categoria. No escribi nada.' },
           { status: 500 }
@@ -208,17 +210,12 @@ export async function POST(request: Request) {
 
     if (error || !creada) {
       console.error('[bot] no se pudo escribir el gasto:', error)
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       return NextResponse.json({ error: 'No pude escribirlo. No quedo nada a medias.' }, { status: 500 })
     }
 
-    await supabase
-      .from('bot_borradores')
-      .update({
-        estado: 'CONFIRMADO',
-        id_registro: creada.id,
-        resuelto_en: new Date().toISOString()
-      })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, creada.id)
 
     // ── Los avisos van DESPUES de que la fila existe, para poder apuntarle ───
     // (mismo orden que `app/api/finanzas/nuevo/route.ts`). Si el aviso fallara,
@@ -260,7 +257,12 @@ export async function POST(request: Request) {
       })
     }
 
-    return NextResponse.json({ ok: true, id: creada.id, categoria_creada: esNueva ? fila.categoria : null })
+    return NextResponse.json({
+      ok: true,
+      id: creada.id,
+      categoria_creada: esNueva ? fila.categoria : null,
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {})
+    })
   } catch (e) {
     console.error('[bot] confirmar reviento:', e)
     return NextResponse.json({ error: 'Error interno.' }, { status: 500 })

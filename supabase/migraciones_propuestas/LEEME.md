@@ -47,6 +47,8 @@ Escrito el 2026-09-17 por el Socio, al dejar tres propuestas nuevas.
 | `erp15_devolucion_fisica_en_el_check_de_tipos.sql` | Agrega 3 tipos al CHECK de `inventario_ledger` | nada |
 | `erp71_el_intento_bloqueado_deja_rastro.sql` | Un intento de escritura BLOQUEADO deja rastro fuera de la transaccion que se aborta | nada. Conviene aplicar `erp57` antes o el contador nace tocable por `anon` |
 | `erp57_las_tablas_nuevas_no_nacen_abiertas_a_anon.sql` | Cierra el *default privilege* de `postgres` en `public` para `anon` | nada. **Va primero** |
+| `erp57b_las_tablas_nuevas_nacen_cerradas.sql` | Event trigger: toda tabla nueva de `public`/`agente` nace con RLS y sin grants a `anon`; RLS a `agente.latido`; RPC `tablas_abiertas()` que lee la prueba ERP-57 de la suite | nada. Independiente de `erp57`: medido el 2026-09-24, el default ACL de `postgres` en `public` YA no concede a `anon` (sin migracion que lo registre); el que sigue abierto es el de `supabase_admin`, y ese no lo cierra ninguna de las dos |
+| `d112_entrega_de_efectivo_del_distribuidor.sql` | Columna `finanzas_ledger.es_entrega_efectivo` (+CHECK); `v_cartera` y `v_saldo_entidad.saldo_pendiente_consignacion` dejan de restar la entrega; vista `v_efectivo_por_entregar` con `desde` | **Se aplica ANTES de desplegar el codigo de la Fase 11 (D112)**: la ruta `/api/bot/entrega/confirmar` y la web con "entrega de efectivo" escriben la columna. Ninguna fila existente cambia |
 | `erp11_venta_atomica_funcion_de_postgres.sql` | La venta del POS en UNA transaccion. **No la llama nadie todavia** | nada para aplicarla; el corte del codigo va despues y esta escrito en el punto 6 del propio archivo |
 
 **Orden recomendado: `erp57` -> `erp71` -> `erp11`.** El motivo del primero esta

@@ -30,7 +30,8 @@ import {
 } from '@/lib/bot-envasado'
 import { mensajeDeRendimiento } from '@/lib/bot-lotes'
 import { fechaLocal } from '@/lib/fechas'
-import { leerCartera, leerStockPorCubeta, leerVentasPorMes } from '@/lib/vistas'
+import { leerCartera, leerEfectivoPorEntregar, leerStockPorCubeta, leerVentasPorMes } from '@/lib/vistas'
+import { textoEfectivoPorEntregar } from '@/lib/bot-entrega'
 import { esGrupo, permisoDeConsulta, type ConsultaBot } from '@/lib/bot-permisos'
 import { actorDe, redDe } from '@/lib/bot-aprobacion'
 import { buscarPorNombre } from '@/lib/bot-nombres'
@@ -178,12 +179,21 @@ export async function POST(request: Request) {
       // El filtro se aplica DESPUES del alcance: un DST no ve a otros por nombre.
       const filas = filtrarCartera(suyas, filtro)
       // D104 (Fase 10): el efectivo por entregar NO se lee de `v_saldo_entidad`:
-      // ahi la entrega y el pago de concesion son el mismo renglon. Ver
-      // `NOTA_EFECTIVO_NO_SEPARABLE`.
+      // ahi la entrega y el pago de concesion son el mismo renglon.
+      // D112 (Fase 11): se lee de `v_efectivo_por_entregar`, con el MISMO alcance
+      // y el MISMO filtro que la deuda. Sin la vista (migracion sin aplicar),
+      // `null` -> queda `NOTA_EFECTIVO_NO_SEPARABLE`.
+      const efectivoTodo = await leerEfectivoPorEntregar(supabase)
+      const efectivo = efectivoTodo
+        ? filtrarCartera(
+            efectivoTodo.filter((f) => (red ? red.has(f.id_entidad) : true)),
+            filtro
+          )
+        : null
       return NextResponse.json({
         ok: true,
         texto:
-          textoQuienDebe(filas, filtro) +
+          textoQuienDebe(filas, filtro, efectivo ? textoEfectivoPorEntregar(efectivo) : null) +
           pieDeConsulta('v_cartera', filas[0]?.calculado_en ?? suyas[0]?.calculado_en ?? null),
         privado
       })

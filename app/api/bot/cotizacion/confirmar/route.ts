@@ -27,7 +27,16 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
+import {
+  abrirPuerta,
+  pasarAEspera,
+  reclamarAprobacion,
+  liberarReclamo,
+  marcarConfirmado,
+  actorDe,
+  alcanceDeCaptura,
+  redDe
+} from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { hoyEnMX } from '@/lib/date-format'
 import { fechaParaPersona } from '@/lib/fechas'
@@ -143,10 +152,6 @@ export async function POST(request: Request) {
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, 'una cotizacion')
     }
-    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
-    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
-    if (reclamo) return reclamo
-
     // FASE 9 (D96): un DST solo a sus locales o a publico, comprobado tambien aqui.
     {
       const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
@@ -157,6 +162,12 @@ export async function POST(request: Request) {
         )
       }
     }
+    // D106: con dos aprobadores, el primero que aprieta gana; el otro no escribe.
+    // D107: el reclamo va JUSTO antes de la primera escritura: todo lo de
+    // arriba puede rechazar sin dejarlo puesto.
+    const reclamo = await reclamarAprobacion(supabase, borradorId, puerta.modo)
+    if (reclamo) return reclamo
+
     // ── 1. LA CABECERA. El folio lo pone la secuencia, no este codigo ───────
     const { data: creada, error: errorCabecera } = await supabase
       .from('cotizaciones')
@@ -180,6 +191,7 @@ export async function POST(request: Request) {
 
     if (errorCabecera || !creada) {
       console.error('[bot] no se pudo crear la cotizacion:', errorCabecera)
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       return NextResponse.json(
         { error: 'No pude escribir la cotizacion. No quedo nada a medias.' },
         { status: 500 }
@@ -205,17 +217,12 @@ export async function POST(request: Request) {
       )
     }
 
-    await supabase
-      .from('bot_borradores')
-      .update({
-        estado: 'CONFIRMADO',
-        id_registro: creada.id,
-        resuelto_en: new Date().toISOString()
-      })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, creada.id)
 
     return NextResponse.json({
       ok: true,
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
       id_cotizacion: creada.id,
       folio: creada.folio,
       vigente_hasta: creada.vigente_hasta,

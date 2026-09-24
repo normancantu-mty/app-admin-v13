@@ -97,6 +97,17 @@ export function esAbonoPendienteAprobacion(categoria: string | null | undefined)
   return categoria === CATEGORIA_ABONO_PENDIENTE
 }
 
+/**
+ * FASE 11 (D112): un `ABONO_DEUDA` marcado `es_entrega_efectivo` es el efectivo
+ * que un DST/LOC cobro de contado y ENTREGA a la matriz. Cuenta como ingreso y
+ * pasa por el desglose fiscal igual que un abono, pero **no paga concesion**:
+ * la deuda de concesion no lo resta (`v_cartera`, `saldo_pendiente_consignacion`).
+ * Mientras la migracion `d112` no este aplicada la columna no viene: `undefined` = no.
+ */
+export function esEntregaDeEfectivo(m: { es_entrega_efectivo?: boolean | null }): boolean {
+  return m.es_entrega_efectivo === true
+}
+
 /** Movimiento que impacta caja, saldos y KPIs (excluye anulados y abonos pendientes). */
 export function movimientoContableEfectivo(
   status: string,

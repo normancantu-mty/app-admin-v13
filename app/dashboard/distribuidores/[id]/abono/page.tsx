@@ -63,6 +63,8 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
   const [fechaPago, setFechaPago] = useState(hoyLocalISO)
   const [metodoPago, setMetodoPago] = useState('')
   const [nota, setNota] = useState('')
+  // FASE 11 (D112): entrega de efectivo cobrado de contado (no es abono de concesion).
+  const [esEntregaEfectivo, setEsEntregaEfectivo] = useState(false)
 
   const [ticketsPendientes, setTicketsPendientes] = useState<PropuestaTicketAbono[]>([])
   const [aplicaciones, setAplicaciones] = useState<Record<string, string>>({})
@@ -133,6 +135,7 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
 
   // Solo un abono (Distribuidor → Admin) paga pedidos. Un cargo de deuda no.
   const esAbonoDeDeuda = Boolean(cuentaOrigen && cuentaDestino && !origenEsAdmin && destinoEsAdmin)
+  const entregaActiva = esAbonoDeDeuda && esEntregaEfectivo
   const montoNum = Number.parseFloat(monto)
   const montoValido = Number.isFinite(montoNum) && montoNum > 0
 
@@ -212,7 +215,7 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
       setFormError('El monto debe ser mayor a cero.')
       return
     }
-    if (excedeMonto) {
+    if (excedeMonto && !entregaActiva) {
       setFormError('La suma aplicada a pedidos excede el monto del abono.')
       return
     }
@@ -228,7 +231,8 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
         metodoPago: metodoPago || null,
         nota,
         referencia,
-        aplicaciones: aplicacionesList
+        aplicaciones: entregaActiva ? [] : aplicacionesList,
+        esEntregaEfectivo: entregaActiva
       })
 
       if (!result.success) {
@@ -238,7 +242,9 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
 
       alert(
         result.requiereAprobacionAdmin
-          ? 'Abono registrado y enviado a la cola de aprobación del Admin.'
+          ? entregaActiva
+            ? 'Entrega de efectivo registrada y enviada a la cola de aprobación del Admin.'
+            : 'Abono registrado y enviado a la cola de aprobación del Admin.'
           : 'Transferencia registrada correctamente.'
       )
       router.push(`/dashboard/distribuidores/${resolvedParams.id}`)
@@ -408,6 +414,22 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
           </div>
 
           {esAbonoDeDeuda && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                id="esEntregaEfectivo"
+                type="checkbox"
+                checked={esEntregaEfectivo}
+                onChange={(e) => setEsEntregaEfectivo(e.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                Es <strong>entrega de efectivo</strong> que el distribuidor cobró de contado (no es pago de
+                concesión: no le baja la deuda de concesión ni se aplica a pedidos).
+              </span>
+            </label>
+          )}
+
+          {esAbonoDeDeuda && !entregaActiva && (
             <div className="border border-gray-200 dark:border-gray-700 rounded-md p-4 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div>

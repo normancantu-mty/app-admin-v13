@@ -30,6 +30,8 @@ export type AccionBot =
   | 'convertir'
   | 'entidad'
   | 'registrar'
+  /** FASE 11 (D112): el DST entrega a la matriz el efectivo que cobro de contado. */
+  | 'entrega_efectivo'
 
 /**
  * - `si`: escribe con su propio VA.
@@ -86,7 +88,8 @@ const DE_LA_MATRIZ: readonly AccionBot[] = [
   'lote',
   'entrada_insumo',
   'convertir',
-  'entidad'
+  'entidad',
+  'entrega_efectivo'
 ]
 
 /**
@@ -96,7 +99,9 @@ const DE_LA_MATRIZ: readonly AccionBot[] = [
  * rutas `convertir/*` (`id_vendedor` = su entidad). Se revierte quitandolo de
  * aqui. `entidad` (alta de clientes) NO: "solo yo" (Norman, 2026-09-23).
  */
-const DEL_DISTRIBUIDOR: readonly AccionBot[] = ['venta', 'abono', 'cotizacion', 'convertir']
+// FASE 11 (D112): `entrega_efectivo` SOLO la suya (lo comprueba `decidirEntrega`,
+// `lib/bot-entrega.ts`) y siempre espera el Aprobar de la matriz.
+const DEL_DISTRIBUIDOR: readonly AccionBot[] = ['venta', 'abono', 'cotizacion', 'convertir', 'entrega_efectivo']
 
 export function permisoDeAccion(actor: ActorBot, accion: AccionBot): Veredicto {
   if (accion === 'registrar') return esNorman(actor) ? 'si' : 'no'
@@ -121,7 +126,8 @@ export const MENSAJE_NO_PERMITIDO: Record<AccionBot, string> = {
   entrada_insumo: 'El inventario de la matriz lo mueven Norman y Kevin; tu alta no alcanza.',
   convertir: 'Convertir una cotizacion en venta por aqui no te toca con tu alta.',
   entidad: 'Dar de alta clientes por aqui no te toca con tu alta.',
-  registrar: 'Registrar quien es quien lo hace solo Norman.'
+  registrar: 'Registrar quien es quien lo hace solo Norman.',
+  entrega_efectivo: 'Registrar entregas de efectivo por aqui no te toca con tu alta.'
 }
 
 // ─── LAS CONSULTAS ──────────────────────────────────────────────────────────

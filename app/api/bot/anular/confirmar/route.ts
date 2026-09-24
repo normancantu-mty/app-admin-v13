@@ -33,7 +33,7 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, marcarConfirmado, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { buscarEnLaLista } from '@/lib/bot-anulables'
 import {
@@ -188,14 +188,8 @@ export async function POST(request: Request) {
           : { ...(await anularFinanzas(supabase, actorAnulacion, fila.id_movimiento)) }
     }
 
-    await supabase
-      .from('bot_borradores')
-      .update({
-        estado: 'CONFIRMADO',
-        id_registro: fila.id_movimiento,
-        resuelto_en: new Date().toISOString()
-      })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, fila.id_movimiento)
 
     // EL RASTRO QUE LA BITACORA NO VA A GUARDAR. Ver el encabezado: en un
     // UPDATE hecho por `service_role`, `auditoria_logs` anota `usuario =
@@ -211,7 +205,7 @@ export async function POST(request: Request) {
       actor.autor
     )
 
-    return NextResponse.json({ ok: true, modo: fila.modo, ...resultado })
+    return NextResponse.json({ ok: true, modo: fila.modo, ...resultado, ...(avisoMarca ? { aviso_marca: avisoMarca } : {}) })
   } catch (e) {
     const mensaje = e instanceof Error ? e.message : 'Error interno.'
     console.error('[bot] anular/confirmar reviento:', e)

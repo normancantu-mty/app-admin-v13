@@ -33,6 +33,8 @@ import {
   abrirPuerta,
   pasarAEspera,
   reclamarAprobacion,
+  liberarReclamo,
+  marcarConfirmado,
   actorDe,
   alcanceDeCaptura,
   aprobadoresDelBot,
@@ -231,20 +233,15 @@ export async function POST(request: Request) {
 
     if (error || !creadas || creadas.length === 0) {
       console.error('[bot] no se pudo escribir el abono:', error)
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       return NextResponse.json(
         { error: 'No pude escribirlo. No quedo nada a medias.' },
         { status: 500 }
       )
     }
 
-    await supabase
-      .from('bot_borradores')
-      .update({
-        estado: 'CONFIRMADO',
-        id_registro: creadas[0].id,
-        resuelto_en: new Date().toISOString()
-      })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, creadas[0].id)
 
     // ── Los avisos van DESPUES de que las filas existen, para poder apuntarles ─
     // El texto original, completo, cuando hubo que desactivarlo fiscalmente. Sin
@@ -305,6 +302,7 @@ export async function POST(request: Request) {
       const autorNombre = nombreDeEtiqueta(identidad.etiqueta)
       return NextResponse.json({
         ok: true,
+        ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
         pendiente_de_aprobacion: true,
         borrador_id: borradorId,
         ids: creadas.map((f) => f.id),
@@ -319,6 +317,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
       ids: creadas.map((f) => f.id),
       filas_escritas: creadas.length,
       pedidos_cubiertos: abono.aplicaciones.length,

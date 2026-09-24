@@ -40,7 +40,16 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe, alcanceDeCaptura, redDe } from '@/lib/bot-aprobacion'
+import {
+  abrirPuerta,
+  pasarAEspera,
+  reclamarAprobacion,
+  liberarReclamo,
+  marcarConfirmado,
+  actorDe,
+  alcanceDeCaptura,
+  redDe
+} from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   selloVentaCoincide,
@@ -223,6 +232,8 @@ export async function POST(request: Request) {
     })
 
     if (!resultado.ok || !resultado.ticketId) {
+      // D107: la venta es UNA transaccion (ERP-11); si no entro, no entro nada.
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       // El borrador se queda PENDIENTE a proposito: el motor no dejo nada a
       // medias (el RPC es atomico), asi que la propuesta sigue siendo valida y
       // la persona puede volver a decir "va" cuando se arregle lo que fallo
@@ -233,17 +244,12 @@ export async function POST(request: Request) {
       )
     }
 
-    await supabase
-      .from('bot_borradores')
-      .update({
-        estado: 'CONFIRMADO',
-        id_registro: resultado.ticketId,
-        resuelto_en: new Date().toISOString()
-      })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, resultado.ticketId)
 
     return NextResponse.json({
       ok: true,
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
       ticket_id: resultado.ticketId,
       total: venta.total_cobrado_real,
       condicion_pago: venta.condicion_pago,

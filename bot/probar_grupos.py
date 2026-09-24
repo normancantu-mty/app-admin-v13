@@ -523,6 +523,9 @@ limpiar()
 # "/registrar Norman". `/registrar` se salta la pregunta de identidad, asi que
 # lo unico que lo para en el bot es `miembro.id == quien habla`.
 # Mutacion: quitar esa guarda en `_quiza_registro` -> rojo.
+# FASE 11 (D109): por la ENTRADA REAL, `comando_registrar` (el CommandHandler de
+# /registrar), no por `manejar_texto`: en produccion un /registrar nunca llega
+# a `manejar_texto` (el filtro de texto excluye comandos).
 S = Servidor()
 S.respuestas["/api/bot/miembro/proponer"] = [(200, {"ok": True, "borrador_id": "b-mb", "sello": "s-mb",
                                                     "mensaje": "REGISTRO: Gilberto -> Casa Verde (DST)"})]
@@ -530,11 +533,11 @@ S.respuestas["/api/bot/miembro/proponer"] = [(200, {"ok": True, "borrador_id": "
 
 async def autorregistro():
     uk = Update(GRUPO, KEVIN, "/registrar Norman", contesta_a=Mensaje(GRUPO, "gaste 300", KEVIN))
-    await B.manejar_texto(uk, Contexto())
+    await B.comando_registrar(uk, Contexto(["Norman"]))
     caso("D105: nadie se registra a si mismo (Kevin contesta a lo suyo con /registrar)",
          len(S.a("/api/bot/miembro/proponer")), 0)
     un = Update(GRUPO, NORMAN, "/registrar Gilberto", contesta_a=Mensaje(GRUPO, "hola", DESCONOCIDO))
-    await B.manejar_texto(un, Contexto())
+    await B.comando_registrar(un, Contexto(["Gilberto"]))
     caso("D105 CONTROL: el /registrar de Norman sobre OTRO si propone el alta",
          [(c["telegram_id"], c["miembro_telegram_id"]) for c in S.a("/api/bot/miembro/proponer")],
          [(NORMAN, DESCONOCIDO)])
@@ -625,6 +628,163 @@ async def segundo_aprobador():
          ("Eso ya lo resolvio otro aprobador. No escribi nada.", []))
 
 correr(S, segundo_aprobador())
+limpiar()
+
+# ═══ 8. FASE 11 (D109): los comandos pasan por la puerta de grupo ══════════
+# Un desconocido que manda CUALQUIER comando en un grupo recibe el "¿quien es?"
+# y el comando no llega al servidor (ni una llamada mas que la identidad).
+# Mutacion: quitar `@_con_puerta` de un comando -> rojo en su caso.
+NLP = chr(10)
+PREGUNTA = ("No te tengo registrado. Norman, ¿quien es?" + NLP
+            + '(Norman: contesta a su mensaje con "este es <nombre>".)')
+COMANDOS = sorted(n for n in dir(B) if n.startswith("comando_"))
+S = Servidor()
+
+
+async def comandos_desconocido():
+    for nombre in COMANDOS:
+        limpiar()
+        del S.llamadas[:]
+        ux = Update(GRUPO, DESCONOCIDO, "/" + nombre[8:] + " Gilberto 500",
+                    contesta_a=Mensaje(GRUPO, "hola", GILBERTO))
+        # Cada comando por separado: una excepcion en uno no esconde a los demas.
+        try:
+            await getattr(B, nombre)(ux, Contexto(["Gilberto", "500"]))
+        except Exception as e:
+            ux.message.dichos.append("EXCEPCION " + repr(e)[:80])
+        caso("D109: desconocido en grupo manda /" + nombre[8:] + " -> se le pregunta quien es",
+             ux.message.dichos, [PREGUNTA])
+        caso("D109: ... y /" + nombre[8:] + " no llega al servidor",
+             [r for r, _ in S.llamadas if r != "/api/bot/identidad"], [])
+
+correr(S, comandos_desconocido())
+limpiar()
+# FASE 11 (D112): 12 con /entrega.
+caso("D109: son los 12 comandos que registra main()", len(COMANDOS), 12)
+S = Servidor()
+S.respuestas["/api/bot/consulta"] = [(200, {"ok": True, "texto": "Nadie debe."})]
+
+
+async def comandos_control():
+    ug = Update(GRUPO, GILBERTO, "/cartera")
+    await B.comando_cartera(ug, Contexto())
+    caso("D109 CONTROL: Gilberto (registrado) en grupo -> /cartera SI llega al servidor",
+         len(S.a("/api/bot/consulta")), 1)
+    up = Update(DESCONOCIDO, DESCONOCIDO, "/cartera")
+    await B.comando_cartera(up, Contexto())
+    caso("D109 CONTROL: en privado la puerta no mira nada (el servidor decide)",
+         (len(S.a("/api/bot/consulta")), len(S.a("/api/bot/identidad"))), (2, 1))
+
+correr(S, comandos_control())
+limpiar()
+
+# ═══ 9. FASE 11 (D112): la entrega de efectivo del DST ════════════════════
+# /entrega <monto> [nombre]. Quien puede lo decide el servidor; aqui se mide lo
+# que sale hacia el: el DST propone la suya (sin nombre), su VA espera el
+# Aprobar, y el Aprobar de Norman llega al confirmar de ENTREGA (no al de gasto).
+# Mutaciones: quitar "entrega_efectivo" de RUTA_CONFIRMAR_DE -> rojo;
+# quitar la rama "entrega_efectivo" del "va" escrito -> rojo.
+S = Servidor()
+S.respuestas["/api/bot/entrega/proponer"] = [(200, {
+    "ok": True, "borrador_id": "b-ent", "sello": "s-ent", "id_entidad": "e-gil", "nombre": "Gilberto",
+    "mensaje": "ENTREGA DE EFECTIVO — Gilberto" + NLP + "Monto: $1,500.00"})]
+S.respuestas["/api/bot/entrega/confirmar"] = [
+    (200, {"ok": False, "espera_aprobacion": True, "borrador_id": "b-ent", "avisar_a": [NORMAN],
+           "mensaje": "Listo, Gilberto. No lo escribo todavia: se lo mande a Norman y a Kevin para que lo aprueben.",
+           "mensaje_aprobador": "Gilberto propone una entrega de efectivo y espera tu Aprobar."}),
+    (200, {"ok": True, "ids": ["f-1"], "filas_escritas": 1,
+           "mensaje": "Listo: registre la entrega de efectivo de $1500.00 de Gilberto."})]
+S.respuestas["/api/bot/aprobacion"] = [(200, {"ok": True, "borrador_id": "b-ent", "tipo": "entrega_efectivo",
+                                              "sello": "s-ent", "estado": "ESPERA_APROBACION", "chat_id": GRUPO,
+                                              "autor_telegram_id": GILBERTO, "autor": "Gilberto",
+                                              "aprobador": "Norman"})]
+
+
+def _sin_conservar(c):
+    return {k: v for k, v in c.items() if k != "conservar_pendientes"}
+
+
+async def d112_dst():
+    ug = Update(GRUPO, GILBERTO, "/entrega 1500")
+    await B.comando_entrega(ug, Contexto(["1500"]))
+    caso("D112: el DST propone SU entrega: sale el monto, sin nombre, con la persona y el grupo",
+         [_sin_conservar(c) for c in S.a("/api/bot/entrega/proponer")],
+         [{"telegram_id": GILBERTO, "chat_id": GRUPO, "monto": 1500.0}])
+    caso("D112: la propuesta trae VA de entrega y Cancelar", botones(ug.message.teclados[-1]),
+         ["vaet:b-ent", "no:b-ent"])
+    ub = UpdateBoton(GRUPO, GILBERTO, "vaet:b-ent")
+    await B.manejar_boton(ub, Contexto())
+    caso("D112: el VA del DST va al confirmar de ENTREGA con su sello",
+         [(r, c["telegram_id"], c["sello"]) for r, c in S.confirmar()],
+         [("/api/bot/entrega/confirmar", GILBERTO, "s-ent")])
+    caso("D112: al DST se le dice que espera (no 'Listo: registre')",
+         ub.callback_query.message.dichos[-1],
+         "Listo, Gilberto. No lo escribo todavia: se lo mande a Norman y a Kevin para que lo aprueben.")
+    aviso = [(t, m) for c, t, m in BOT.enviados if c == NORMAN]
+    caso("D112: a Norman le llega por privado con Aprobar/Rechazar",
+         [(t.split(NLP)[0], botones(m)) for t, m in aviso],
+         [("Gilberto propone una entrega de efectivo y espera tu Aprobar.", ["apr:b-ent", "rch:b-ent"])])
+    ua = UpdateBoton(NORMAN, NORMAN, "apr:b-ent")
+    await B.manejar_boton(ua, Contexto())
+    caso("D112: el Aprobar de Norman llega al confirmar de ENTREGA (RUTA_CONFIRMAR_DE)",
+         [(r, c["telegram_id"], c["sello"]) for r, c in S.confirmar()][-1:],
+         [("/api/bot/entrega/confirmar", NORMAN, "s-ent")])
+    caso("D112: Norman ve 'Aprobado'", ua.callback_query.message.dichos[-1], "Aprobado. Quedo escrito.")
+
+correr(S, d112_dst())
+limpiar()
+
+S = Servidor()
+S.respuestas["/api/bot/entrega/proponer"] = [
+    (200, {"ok": False, "hay_que_elegir": True, "mensaje": "No se a quien te refieres con Gil. Es alguno de estos?",
+           "opciones": [{"id_entidad": "e-gil", "nombre": "Gilberto", "rol": "DST"},
+                        {"id_entidad": "e-gilda", "nombre": "Gilda", "rol": "LOC"}]}),
+    (200, {"ok": True, "borrador_id": "b-ent2", "sello": "s-ent2", "id_entidad": "e-gilda",
+           "mensaje": "ENTREGA DE EFECTIVO — Gilda"})]
+S.respuestas["/api/bot/entrega/confirmar"] = [(200, {"ok": True, "filas_escritas": 1,
+                                                    "mensaje": "Listo: registre la entrega de efectivo de $2000.00 de Gilda."})]
+
+
+async def d112_matriz():
+    un = Update(NORMAN, NORMAN, "/entrega 2,000 Gil")
+    await B.comando_entrega(un, Contexto(["2,000", "Gil"]))
+    caso("D112: la matriz dice el nombre; con duda, botones por indice",
+         (S.a("/api/bot/entrega/proponer")[0].get("entidad"), botones(un.message.teclados[-1])),
+         ("Gil", ["setet:0", "setet:1", "no:x"]))
+    ue = UpdateBoton(NORMAN, NORMAN, "setet:1")
+    await B.manejar_boton(ue, Contexto())
+    segunda = S.a("/api/bot/entrega/proponer")[-1]
+    caso("D112: el boton re-propone por uuid de la lista, con el mismo monto",
+         (segunda.get("id_entidad"), segunda.get("entidad"), segunda.get("monto")), ("e-gilda", None, 2000.0))
+    # El "va" ESCRITO tambien llega al confirmar de entrega (no al de gasto).
+    uv = Update(NORMAN, NORMAN, "va")
+    await B._confirmar(uv, NORMAN, por_boton=True)
+    caso("D112: el 'va' escrito de una entrega va a SU confirmar",
+         [r for r, _ in S.confirmar()], ["/api/bot/entrega/confirmar"])
+    caso("D112: ... y dice lo que escribio el servidor", uv.message.dichos[-1:],
+         ["Listo: registre la entrega de efectivo de $2000.00 de Gilda."])
+    ux = Update(NORMAN, NORMAN, "/entrega mil")
+    antes = len(S.llamadas)
+    await B.comando_entrega(ux, Contexto(["mil"]))
+    caso("D112: monto ilegible -> no sale nada al servidor", len(S.llamadas) - antes, 0)
+
+correr(S, d112_matriz())
+limpiar()
+
+S = Servidor()
+S.respuestas["/api/bot/entrega/proponer"] = [
+    (403, {"error": "Solo registras tu propia entrega de efectivo, no la de otro distribuidor."})]
+
+
+async def d112_ajeno():
+    ug = Update(GILBERTO, GILBERTO, "/entrega 500 Martin")
+    await B.comando_entrega(ug, Contexto(["500", "Martin"]))
+    caso("D112 celda No: DST con la entrega de OTRO -> se le dice el 403 y no hay VA",
+         (ug.message.dichos, [t for t in ug.message.teclados if t is not None]),
+         (["Solo registras tu propia entrega de efectivo, no la de otro distribuidor."], []))
+    caso("D112 celda No: ... y nada llega a un confirmar", S.confirmar(), [])
+
+correr(S, d112_ajeno())
 limpiar()
 
 # ─── Resultado ───────────────────────────────────────────────────────────────

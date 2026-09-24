@@ -89,6 +89,8 @@ interface MovimientoCrudo {
   id_cuenta_destino: string | null
   id_entidad_relacionada: string | null
   fecha_movimiento: string | null
+  /** D112: solo existe despues de aplicar la migracion `d112`. */
+  es_entrega_efectivo?: boolean | null
 }
 
 /**
@@ -186,11 +188,11 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       'id, condicion_pago, id_comprador, monto_base_ingreso, total_cobrado_real, status'
     )
 
-    finanzasTodas = await traerTodo(
-      'finanzas_ledger',
-      'id, tipo_movimiento, monto, categoria, categoria_gasto, descripcion, status, ' +
-        'id_cuenta_origen, id_cuenta_destino, id_entidad_relacionada, fecha_movimiento'
-    )
+    // FASE 11 (D112): `*` y no una lista, a proposito. `es_entrega_efectivo`
+    // decide si un ABONO_DEUDA paga concesion; con la lista vieja, el dia que
+    // entre la primera entrega la vista la excluiria y `construirCartera` no la
+    // veria -> divergencia. Con `*` la columna llega cuando exista y antes no rompe.
+    finanzasTodas = await traerTodo('finanzas_ledger', '*')
 
     inventarioTodo = await traerTodo(
       'inventario_ledger',

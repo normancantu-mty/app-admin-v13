@@ -31,6 +31,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { fetchTodasLasFilas } from './paginacion'
+import type { FilaEfectivo } from './bot-entrega'
 
 // ─── Tipos de fila ──────────────────────────────────────────────────────────
 
@@ -271,6 +272,31 @@ export async function leerCartera(
     'v_cartera'
   )
   return ordenarCartera(filas)
+}
+
+/**
+ * FASE 11 (D112): `v_efectivo_por_entregar`. **Tolerante a proposito:** la
+ * vista nace con la migracion `d112`, que no esta aplicada cuando este codigo
+ * se escribe. Si no existe, devuelve `null` y quien llama deja la nota de
+ * siempre (`NOTA_EFECTIVO_NO_SEPARABLE`) en vez de reventar la consulta entera.
+ * Cualquier OTRO error si revienta: no se esconde.
+ */
+export async function leerEfectivoPorEntregar(
+  client: SupabaseClient<Database>
+): Promise<FilaEfectivo[] | null> {
+  const c = comoClienteConVistas(client)
+  try {
+    return await leerTodo<FilaEfectivo>(() => c.from('v_efectivo_por_entregar').select('*'), 'v_efectivo_por_entregar')
+  } catch (e) {
+    const texto = e instanceof Error ? e.message : String(e)
+    if (esVistaQueNoExiste(texto)) return null
+    throw e
+  }
+}
+
+/** PostgREST dice que la vista no esta en su cache, o Postgres que no existe. */
+export function esVistaQueNoExiste(texto: string): boolean {
+  return /does not exist|Could not find the table|schema cache|42P01|PGRST205/i.test(texto)
 }
 
 /** Mismo criterio de orden que `construirCartera`: prioridad, deuda, nombre. */

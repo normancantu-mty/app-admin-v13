@@ -45,7 +45,15 @@
 import { NextResponse } from 'next/server'
 import type { Json } from '@/types/database'
 import { clienteDeServicio, resolverIdentidad, tokenValido, type IdentidadBot } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe, type ModoPuerta } from '@/lib/bot-aprobacion'
+import {
+  abrirPuerta,
+  pasarAEspera,
+  reclamarAprobacion,
+  liberarReclamo,
+  marcarConfirmado,
+  actorDe,
+  type ModoPuerta
+} from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   mensajeDeRendimiento,
@@ -230,6 +238,7 @@ export async function POST(request: Request) {
       .eq('codigo_lote', lote.codigo_lote)
       .maybeSingle()
     if (yaExiste) {
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       return NextResponse.json(
         { error: `El lote ${lote.codigo_lote} ya existe. Dame otro codigo.` },
         { status: 409 }
@@ -252,6 +261,7 @@ export async function POST(request: Request) {
 
     if (errorLote || !creado) {
       console.error('[bot] no se pudo crear el lote:', errorLote)
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       return NextResponse.json(
         { error: 'No pude escribir el lote. No quedo nada a medias.' },
         { status: 500 }
@@ -272,6 +282,9 @@ export async function POST(request: Request) {
       const { data: hechos, error } = await registrarEnLote(supabase, idLote, lote)
       if (error) {
         await deshacer('los hijos', error)
+        // Si el DELETE fallara, el codigo del lote ya existe y el siguiente
+        // Aprobar choca con "ya existe": soltar el reclamo no duplica nada.
+        await liberarReclamo(supabase, borradorId, puerta.modo)
         return NextResponse.json(
           { error: 'No pude escribir el lote. Deshice el lote entero; el inventario no se movio.' },
           { status: 500 }
@@ -280,14 +293,8 @@ export async function POST(request: Request) {
       filasInventario = Number((hechos as { filas_inventario?: unknown } | null)?.filas_inventario ?? 0)
     }
 
-    await supabase
-      .from('bot_borradores')
-      .update({
-        estado: 'CONFIRMADO',
-        id_registro: idLote,
-        resuelto_en: new Date().toISOString()
-      })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, idLote)
 
     // ── EL RENDIMIENTO, LEIDO DE LA VISTA (D-198) ───────────────────────────
     // Si la lectura falla no se deshace nada: el lote quedo bien escrito y lo
@@ -296,6 +303,7 @@ export async function POST(request: Request) {
     const resumen = await leerRendimiento(supabase, idLote)
 
     return NextResponse.json({
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
       ok: true,
       id_lote: idLote,
       codigo_lote: lote.codigo_lote,
@@ -364,16 +372,15 @@ async function confirmarAgregar(
   const { data: hechos, error } = await registrarEnLote(supabase, agregar.id_lote, agregar)
   if (error) {
     console.error('[bot] no se pudo agregar al lote', agregar.codigo_lote, error)
+    await liberarReclamo(supabase, borradorId, modo)
     return NextResponse.json(
       { error: 'No pude escribirlo. No quedo nada a medias: ni envasado ni inventario.' },
       { status: 500 }
     )
   }
 
-  await supabase
-    .from('bot_borradores')
-    .update({ estado: 'CONFIRMADO', id_registro: agregar.id_lote, resuelto_en: new Date().toISOString() })
-    .eq('id', borradorId)
+  // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+  const avisoMarca = await marcarConfirmado(supabase, borradorId, agregar.id_lote)
 
   const resumen = await leerRendimiento(supabase, agregar.id_lote)
   const filasInventario = Number((hechos as { filas_inventario?: unknown } | null)?.filas_inventario ?? 0)
@@ -389,6 +396,7 @@ async function confirmarAgregar(
   if (rendimiento) lineas.push(rendimiento)
 
   return NextResponse.json({
+    ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
     ok: true,
     id_lote: agregar.id_lote,
     codigo_lote: agregar.codigo_lote,

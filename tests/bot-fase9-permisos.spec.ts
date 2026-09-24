@@ -50,22 +50,27 @@ test.describe('D96 — la tabla de acciones', () => {
   const ESPERADO: Record<string, Record<AccionBot, string>> = {
     Norman: {
       venta: 'si', abono: 'si', cotizacion: 'si', gasto: 'si', lote: 'si',
-      entrada_insumo: 'si', convertir: 'si', entidad: 'si', registrar: 'si'
+      entrada_insumo: 'si', convertir: 'si', entidad: 'si', registrar: 'si',
+      entrega_efectivo: 'si'
     },
     Kevin: {
       venta: 'aprobacion', abono: 'aprobacion', cotizacion: 'aprobacion', gasto: 'aprobacion',
       lote: 'aprobacion', entrada_insumo: 'aprobacion', convertir: 'aprobacion',
-      entidad: 'aprobacion', registrar: 'no'
+      entidad: 'aprobacion', registrar: 'no', entrega_efectivo: 'aprobacion'
     },
     DST: {
       // FASE 10 (D106): convertir SOLO SUS cotizaciones (la propiedad, en la ruta:
       // `tests/bot-rutas-permisos.spec.ts`); alta de clientes, solo Norman.
       venta: 'si', abono: 'si', cotizacion: 'si', gasto: 'no', lote: 'no',
-      entrada_insumo: 'no', convertir: 'si', entidad: 'no', registrar: 'no'
+      entrada_insumo: 'no', convertir: 'si', entidad: 'no', registrar: 'no',
+      // FASE 11 (D112): SOLO la suya y siempre espera (`decidirEntrega`,
+      // `tests/entrega-efectivo.spec.ts`).
+      entrega_efectivo: 'si'
     },
     LOC: {
       venta: 'no', abono: 'no', cotizacion: 'no', gasto: 'no', lote: 'no',
-      entrada_insumo: 'no', convertir: 'no', entidad: 'no', registrar: 'no'
+      entrada_insumo: 'no', convertir: 'no', entidad: 'no', registrar: 'no',
+      entrega_efectivo: 'no'
     }
   }
   const ACTORES: Record<string, ActorBot> = { Norman: NORMAN, Kevin: KEVIN, DST, LOC }
@@ -304,16 +309,24 @@ test.describe('D99 — quien debe, completo', () => {
     expect(t).not.toContain('Sin nada')
   })
 
-  test('D104: la suma del bot = la columna de concesion de la tabla a mano', () => {
-    // Las cifras de v_saldo_entidad.saldo_pendiente_consignacion del 2026-09-23.
-    const mano: Array<[string, number]> = [
-      ['Martin Reyes', 11327], ['Al son del Mezcal', 11852.01], ['Aeropuerto', 10170],
-      ['David Flores', 9012.93], ['Gilberto Franco', 8496], ['Delirio 85', 7992],
-      ['Nuevo Ideal', 4416], ['Dulceria ruiz', 3118], ['Casa Verde', 0]
-    ]
-    const f = mano.map(([nombre, deuda], k) => ({ ...base, id_entidad: `e${k}`, nombre, deuda })) as FilaCarteraVista[]
-    const total = mano.reduce((s, [, d]) => s + d, 0)
-    expect(textoQuienDebe(f)).toContain(`QUIEN DEBE — $${total.toLocaleString('en-US', { minimumFractionDigits: 2 })} de concesion`)
+  // FASE 11 (D110): hasta la Fase 10 esta prueba sumaba una lista escrita a
+  // mano (que ademas omitia a Ale Ortega, $2,040) y comparaba contra la suma de
+  // ESA MISMA lista: pasaba con cualquier lista. Ahora el total esperado es un
+  // literal calculado aparte (centavos y miles incluidos), y la cifra real se
+  // mide donde vive: `v_cartera` contra `construirCartera` en
+  // `tests/vistas-equivalencia.spec.ts` (sobre la base, al centavo).
+  test('D110: el total del bot es la suma de las filas, con centavos y miles', () => {
+    const f = [
+      { ...base, id_entidad: 'x1', nombre: 'Uno', deuda: 11852.01 },
+      { ...base, id_entidad: 'x2', nombre: 'Dos', deuda: 9012.93 },
+      { ...base, id_entidad: 'x3', nombre: 'Tres', deuda: 2040 },
+      { ...base, id_entidad: 'x4', nombre: 'Cero', deuda: 0 }
+    ] as FilaCarteraVista[]
+    // 11852.01 + 9012.93 + 2040 = 22904.94, sumado a mano, no con reduce.
+    const t = textoQuienDebe(f)
+    expect(t).toContain('QUIEN DEBE — $22,904.94 de concesion')
+    expect(t).toContain('Tres (DST) — debe $2,040.00 de concesion')
+    expect(t).not.toContain('Cero')
   })
 
   test('CONTROL D104: un filtro sin concesion no afirma que no tenga efectivo', () => {

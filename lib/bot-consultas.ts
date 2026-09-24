@@ -255,7 +255,17 @@ export const NOTA_EFECTIVO_NO_SEPARABLE =
  * ya tiene el"*. Por deudor, la deuda de concesion (`v_cartera`); el efectivo
  * por entregar, ver `NOTA_EFECTIVO_NO_SEPARABLE`. **Pura.**
  */
-export function textoQuienDebe(filas: readonly FilaCarteraVista[], filtro?: string | null): string {
+export function textoQuienDebe(
+  filas: readonly FilaCarteraVista[],
+  filtro?: string | null,
+  /**
+   * FASE 11 (D112): el bloque de `v_efectivo_por_entregar` ya armado
+   * (`textoEfectivoPorEntregar`). Si viene, sustituye a la nota; si no (la
+   * migracion `d112` no esta aplicada), la nota sigue diciendo la verdad.
+   */
+  efectivo?: string | null
+): string {
+  const cierre = efectivo && efectivo.trim() ? efectivo : NOTA_EFECTIVO_NO_SEPARABLE
   const renglones = filas
     .map((f) => ({ f, deuda: Math.max(0, Number(f.deuda) || 0) }))
     .filter((r) => r.deuda > 0.005)
@@ -264,8 +274,8 @@ export function textoQuienDebe(filas: readonly FilaCarteraVista[], filtro?: stri
   }
   if (renglones.length === 0) {
     return filtro
-      ? `${filas.map((f) => f.nombre).join(', ')}: no te debe nada de concesion hoy.\n${NOTA_EFECTIVO_NO_SEPARABLE}`
-      : sinDatos('cartera con deuda')
+      ? `${filas.map((f) => f.nombre).join(', ')}: no te debe nada de concesion hoy.\n${cierre}`
+      : sinDatos('cartera con deuda') + (cierre === NOTA_EFECTIVO_NO_SEPARABLE ? '' : '\n\n' + cierre)
   }
   const totalDeuda = renglones.reduce((s, r) => s + r.deuda, 0)
   const lineas: string[] = [`QUIEN DEBE — ${pesos(totalDeuda)} de concesion`, '']
@@ -274,7 +284,7 @@ export function textoQuienDebe(filas: readonly FilaCarteraVista[], filtro?: stri
     lineas.push(`${r.f.nombre} (${r.f.rol}) — debe ${pesos(r.deuda)} de concesion`)
   }
   if (ordenadas.length > TOPE_RENGLONES) lineas.push(`... y ${ordenadas.length - TOPE_RENGLONES} mas.`)
-  lineas.push('', NOTA_EFECTIVO_NO_SEPARABLE)
+  lineas.push('', cierre)
   return lineas.join('\n')
 }
 

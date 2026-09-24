@@ -818,6 +818,7 @@ export type Database = {
           categoria: string | null
           categoria_gasto: string | null
           descripcion: string | null
+          es_entrega_efectivo: boolean
           es_recurrente: boolean | null
           fecha_movimiento: string | null
           id: string
@@ -836,6 +837,7 @@ export type Database = {
           categoria?: string | null
           categoria_gasto?: string | null
           descripcion?: string | null
+          es_entrega_efectivo?: boolean
           es_recurrente?: boolean | null
           fecha_movimiento?: string | null
           id?: string
@@ -854,6 +856,7 @@ export type Database = {
           categoria?: string | null
           categoria_gasto?: string | null
           descripcion?: string | null
+          es_entrega_efectivo?: boolean
           es_recurrente?: boolean | null
           fecha_movimiento?: string | null
           id?: string

@@ -15,7 +15,7 @@
 import { NextResponse } from 'next/server'
 import type { TablesInsert } from '@/types/database'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { abrirPuerta, pasarAEspera, reclamarAprobacion, actorDe } from '@/lib/bot-aprobacion'
+import { abrirPuerta, pasarAEspera, reclamarAprobacion, liberarReclamo, marcarConfirmado, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { selloEntradaCoincide, type PayloadEntradaInsumo } from '@/lib/bot-entrada-insumo'
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
@@ -112,6 +112,7 @@ export async function POST(request: Request) {
       notas: r.nota
     }))
     if (filas.length === 0 || filas.some((f) => !(Number(f.cantidad) > 0))) {
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       return NextResponse.json({ error: 'No hay nada que escribir.' }, { status: 422 })
     }
     exigirEntidadDelMovimiento(filas, 'bot.inventario.confirmar')
@@ -119,16 +120,16 @@ export async function POST(request: Request) {
     const { data: escritas, error } = await supabase.from('inventario_ledger').insert(filas).select('id')
     if (error || !escritas || escritas.length !== filas.length) {
       console.error('[bot] no se pudo escribir la entrada de insumo', borradorId, error)
+      await liberarReclamo(supabase, borradorId, puerta.modo)
       return NextResponse.json({ error: 'No pude escribirlo. No entro nada.' }, { status: 500 })
     }
 
-    await supabase
-      .from('bot_borradores')
-      .update({ estado: 'CONFIRMADO', id_registro: escritas[0].id, resuelto_en: new Date().toISOString() })
-      .eq('id', borradorId)
+    // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
+    const avisoMarca = await marcarConfirmado(supabase, borradorId, escritas[0].id)
 
     return NextResponse.json({
       ok: true,
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
       filas_inventario: escritas.length,
       mensaje: `Entraron ${escritas.length} insumo${escritas.length === 1 ? '' : 's'} al inventario de la matriz.`
     })

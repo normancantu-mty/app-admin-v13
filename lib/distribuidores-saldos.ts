@@ -3,7 +3,7 @@
  * Debe coincidir con la semántica de `calcularSaldos` / KPIs en la vista de detalle.
  */
 
-import { esAbonoPendienteAprobacion } from './finance-utils'
+import { esAbonoPendienteAprobacion, esEntregaDeEfectivo } from './finance-utils'
 
 export type EntidadRolSaldo = 'DST' | 'LOC' | 'SOCIO'
 
@@ -19,6 +19,8 @@ export interface FinanzaSaldoInput {
   monto: number
   id_entidad_relacionada: string | null
   categoria?: string | null
+  /** D112: la entrega de efectivo no paga concesion. */
+  es_entrega_efectivo?: boolean | null
 }
 
 export function calcularSaldoPendienteInventarioConsignacion(
@@ -60,7 +62,9 @@ export function calcularSaldoPendienteInventarioConsignacion(
       (m) =>
         m.tipo_movimiento === 'ABONO_DEUDA' &&
         m.id_entidad_relacionada === entidad.id &&
-        !esAbonoPendienteAprobacion(m.categoria)
+        !esAbonoPendienteAprobacion(m.categoria) &&
+        // D112: la entrega de efectivo no paga concesion (si resta abajo, en efectivo).
+        !esEntregaDeEfectivo(m)
     )
     .reduce((sum, m) => sum + (m.monto || 0), 0)
 

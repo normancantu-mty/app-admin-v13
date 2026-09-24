@@ -36,6 +36,7 @@ import {
 import { registrarAviso } from '@/lib/avisos-server'
 import { resolverCuentaOrigenPorDefecto, type CuentaCandidata } from '@/lib/avisos'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
+import { REFERENCIA_ENTREGA, reglaDeEntregaWeb } from '@/lib/bot-entrega'
 import {
   aCentavos,
   aPesos,
@@ -110,6 +111,12 @@ export interface RegistrarAbonoPayload {
   /** Etiqueta corta -> columna `categoria_gasto` (comportamiento historico). */
   referencia: string
   aplicaciones: AplicacionAbonoInput[]
+  /**
+   * FASE 11 (D112): es el efectivo que el DST cobro de contado y entrega a la
+   * matriz, NO un abono de concesion. Una sola fila, sin pedidos, con
+   * `es_entrega_efectivo = true`. Un DST solo la suya (`reglaDeEntregaWeb`).
+   */
+  esEntregaEfectivo?: boolean
 }
 
 export interface RegistrarAbonoResult {
@@ -569,6 +576,17 @@ export async function registrarAbonoAction(
     const tipoMovimiento: 'CARGO_DEUDA' | 'ABONO_DEUDA' =
       origenEsAdmin && !destinoEsAdmin ? 'CARGO_DEUDA' : 'ABONO_DEUDA'
 
+    // FASE 11 (D112): la entrega de efectivo. Misma regla que el bot.
+    const esEntrega = payload?.esEntregaEfectivo === true
+    if (esEntrega) {
+      const regla = reglaDeEntregaWeb(
+        { rol: sesion.rol, entidadId: sesion.entidadId },
+        { id: idEntidad, rol: cuentaNoAdmin.rol },
+        tipoMovimiento
+      )
+      if (!regla.ok) return { success: false, error: regla.error }
+    }
+
     const requiereAprobacionAdmin =
       sesion.rol !== 'ADMIN' &&
       tipoMovimiento === 'ABONO_DEUDA' &&
@@ -585,12 +603,15 @@ export async function registrarAbonoAction(
       tipoMovimiento === 'CARGO_DEUDA'
         ? 'Cargo de Deuda (Admin -> Distribuidor)'
         : 'Abono de Deuda (Distribuidor -> Admin)'
-    const referencia = String(payload?.referencia || '').trim() || conceptoAutomatico
+    const referencia =
+      String(payload?.referencia || '').trim() || (esEntrega ? REFERENCIA_ENTREGA : conceptoAutomatico)
     const nota = String(payload?.nota || '').trim() || null
 
     // --- Aplicacion a pedidos. Un CARGO_DEUDA no paga pedidos: nunca se reparte.
+    // Una entrega de efectivo tampoco (D112: no es pago de concesion; el CHECK
+    // de la base exige `id_ticket` nulo): una sola fila.
     const aplicacionesInput =
-      tipoMovimiento === 'ABONO_DEUDA' && Array.isArray(payload?.aplicaciones)
+      tipoMovimiento === 'ABONO_DEUDA' && !esEntrega && Array.isArray(payload?.aplicaciones)
         ? payload.aplicaciones
         : []
 
@@ -653,7 +674,10 @@ export async function registrarAbonoAction(
       metodo_pago: metodoPago,
       fecha_movimiento: fecha.valor,
       usuario_creador: sesion.email, // de la sesion, NUNCA del cliente
-      status: 'ACTIVO'
+      status: 'ACTIVO',
+      // D112: la columna SOLO viaja en una entrega. Un abono normal sale igual
+      // que antes (y sigue escribiendo aunque la migracion no este aplicada).
+      ...(esEntrega ? { es_entrega_efectivo: true } : {})
     }
 
     const filas: FinanzaInsert[] = aplicacionesCentavos.map((aplicacion) => ({

@@ -207,3 +207,39 @@ test.describe('ERP-59 · control positivo de la cola de avisos', () => {
     }
   })
 })
+
+// ════════════════════════════════════════════════════════════════════════════
+// 3. NINGUNA TABLA NACE ABIERTA (ERP-57, Fase 11 · D111)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// El trigger `tablas_nacen_cerradas` (propuesta
+// `supabase/migraciones_propuestas/erp57b_las_tablas_nuevas_nacen_cerradas.sql`)
+// cierra al nacer toda tabla de `public`/`agente`. Esta prueba es la defensa que
+// NO depende del trigger: si una tabla la creo un rol para el que el trigger no
+// se dispara (p. ej. `supabase_admin`), o alguien lo deshabilito, aqui sale roja.
+// Mientras la migracion no este aplicada, la RPC no existe y la prueba se SALTA
+// diciendolo (no pasa en verde).
+
+test.describe('ERP-57 · ninguna tabla nace abierta a anon', () => {
+  test.skip(SALTO, motivoDeSalto())
+
+  test('toda tabla de public y agente tiene RLS y anon no escribe en ninguna', async () => {
+    const { data, error } = await cliente().rpc('tablas_abiertas')
+    if (error && (error.code === 'PGRST202' || /Could not find the function/i.test(error.message))) {
+      const motivo =
+        'SALTADA — `public.tablas_abiertas()` no existe: la migracion propuesta erp57b no esta ' +
+        'aplicada. Mientras tanto NADIE comprueba que las tablas nuevas nazcan cerradas.'
+      console.warn('[ERP-57] ' + motivo)
+      test.skip(true, motivo)
+      return
+    }
+    expect(error, 'la RPC de ERP-57 respondio con error').toBeNull()
+    const abiertas = ((data ?? []) as { esquema: string; tabla: string; rls: boolean; anon_escribe: boolean }[]).map(
+      (f) => `${f.esquema}.${f.tabla} (rls=${f.rls}, anon_escribe=${f.anon_escribe})`
+    )
+    expect(
+      abiertas,
+      'tablas abiertas: cada una necesita `enable row level security` y `revoke all ... from anon`'
+    ).toEqual([])
+  })
+})
