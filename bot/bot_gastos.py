@@ -373,6 +373,18 @@ def _nombre_de(persona):
 
 # D95: al desconocido se le pregunta UNA vez por grupo.
 _ya_pregunte = set()
+# D118/D119: cada "¿quien es?" que manda el bot, por (grupo, id del mensaje del
+# bot) -> el miembro por quien pregunta. Asi Norman puede contestar A LA
+# PREGUNTA del bot, y se registra al miembro del pendiente, no al autor del
+# mensaje contestado (que es el bot). En RAM: si el bot se reinicia, se pierde
+# y queda la ruta vieja (contestar al mensaje de la persona).
+_preguntas_de_alta = {}
+
+
+def _anotar_pregunta(enviado, chat_id, miembro):
+    mensaje_id = getattr(enviado, "message_id", None)
+    if mensaje_id is not None:
+        _preguntas_de_alta[(int(chat_id), int(mensaje_id))] = int(miembro)
 
 
 async def _puerta_de_grupo(update, clave):
@@ -388,12 +400,58 @@ async def _puerta_de_grupo(update, clave):
     if ident.get("registrado"):
         return True
     log.info("grupo %s: persona %s sin alta, no se procesa", _chat_de(clave), _persona(clave))
+    # D119: esto corre ANTES del enrutador y del filtro de charla, asi que un
+    # "hola" de un desconocido tambien dispara la pregunta (una vez).
     if clave not in _ya_pregunte:
         _ya_pregunte.add(clave)
-        await update.effective_message.reply_text(
+        enviado = await update.effective_message.reply_text(
             "No te tengo registrado. Norman, ¿quien es?" + NL
-            + "(Norman: contesta a su mensaje con \"este es <nombre>\".)")
+            + "(Norman: contesta a su mensaje, o a este, con \"este es <nombre>\".)")
+        _anotar_pregunta(enviado, _chat_de(clave), _persona(clave))
     return False
+
+
+def _nombre_visible(usuario):
+    """Como se ve alguien en Telegram: "Nombre Apellido (@usuario)". **Pura.**"""
+    nombre = " ".join(p for p in (getattr(usuario, "first_name", None),
+                                  getattr(usuario, "last_name", None)) if p)
+    arroba = getattr(usuario, "username", None)
+    if arroba:
+        nombre = (nombre + " (@" + arroba + ")") if nombre else "@" + arroba
+    return nombre or "esta persona"
+
+
+async def manejar_entrada(update, context):
+    """D118: alguien entra al grupo. Si no esta dado de alta, se pregunta YA
+    quien es (sin esperar a que escriba), y la pregunta queda anotada para que
+    Norman la conteste. Al que ya esta dado de alta no se le dice nada (lo mas
+    simple: el grupo no se llena de saludos). Los bots, incluido este, se
+    ignoran. Si el ERP no contesta, no se dice nada y no se marca: la puerta
+    preguntara cuando escriba."""
+    mensaje = update.effective_message
+    chat = update.effective_chat
+    if mensaje is None or chat is None:
+        return
+    for miembro in getattr(mensaje, "new_chat_members", None) or ():
+        if getattr(miembro, "is_bot", False):
+            continue
+        clave = _clave(chat.id, miembro.id)
+        if not _en_grupo(clave) or clave in _ya_pregunte:
+            continue
+        ident = await asyncio.to_thread(_identidad_de, int(miembro.id))
+        if ident is None:
+            log.warning("grupo %s: entro %s y el ERP no contesto la identidad",
+                        chat.id, miembro.id)
+            continue
+        if ident.get("registrado"):
+            continue
+        _ya_pregunte.add(clave)
+        log.info("grupo %s: entro %s sin alta, pregunto quien es", chat.id, miembro.id)
+        nombre = _nombre_visible(miembro)
+        enviado = await update.get_bot().send_message(
+            chat.id, "Norman, ¿quien es " + nombre + "? Contestame a este mensaje con "
+            "\"es <nombre>\".")
+        _anotar_pregunta(enviado, chat.id, miembro.id)
 
 
 
@@ -595,18 +653,27 @@ _PATRON_REGISTRO = re.compile(r"^\s*(/registrar(@\w+)?|est[ea]\s+es|es)\b", re.I
 async def _quiza_registro(update, clave, texto):
     m = getattr(update, "message", None)
     respondido = getattr(m, "reply_to_message", None) if m is not None else None
-    miembro = getattr(respondido, "from_user", None)
-    if miembro is None or getattr(miembro, "is_bot", False):
+    autor = getattr(respondido, "from_user", None)
+    if autor is None:
         return False
-    if int(miembro.id) == int(_persona(clave)):
+    if getattr(autor, "is_bot", False):
+        # D118/D119: se contesto a un "¿quien es?" del bot. El miembro es el
+        # del pendiente; cualquier otro mensaje del bot no es un registro.
+        miembro = _preguntas_de_alta.get(
+            (int(_chat_de(clave)), getattr(respondido, "message_id", None)))
+        if miembro is None:
+            return False
+    else:
+        miembro = int(autor.id)
+    if int(miembro) == int(_persona(clave)):
         return False
     if not _PATRON_REGISTRO.match(texto or ""):
         return False
     if not str(texto).lstrip().lower().startswith("/registrar"):
-        ident = await asyncio.to_thread(_identidad_de, int(miembro.id))
+        ident = await asyncio.to_thread(_identidad_de, int(miembro))
         if ident is None or ident.get("registrado"):
             return False
-    await _proponer_miembro(update, clave, int(miembro.id), texto)
+    await _proponer_miembro(update, clave, int(miembro), texto)
     return True
 
 
@@ -653,6 +720,8 @@ async def _confirmar_miembro(update, clave):
     _identidades.pop(miembro, None)
     for k in [k for k in _ya_pregunte if _persona(k) == miembro]:
         _ya_pregunte.discard(k)
+    for k in [k for k, v in _preguntas_de_alta.items() if v == miembro]:
+        _preguntas_de_alta.pop(k, None)
     await update.effective_message.reply_text(r.get("mensaje") or "Listo. Quedo registrado.")
 
 
@@ -4729,6 +4798,7 @@ def main():
     app.add_handler(CallbackQueryHandler(manejar_boton))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, manejar_entrada))
     app.add_error_handler(manejar_error)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

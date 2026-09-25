@@ -27,6 +27,10 @@ Lo que se prueba, cada cosa con su control:
      CONTROL: la misma sin `privado`, y la misma en chat privado, se contestan ahi.
   6. D100: el modelo recibe `hablante` en grupo y no en privado; el historial
      del grupo va rotulado por nombre. La charla entre personas no se contesta.
+  10. D118/D119 (alta natural): al entrar un desconocido el bot pregunta quien
+     es; Norman contesta A LA PREGUNTA y se registra al que entro. El primer
+     "hola" de un desconocido tambien pregunta, una vez. CONTROL: la charla de
+     un registrado sigue sin contestarse; la ruta vieja sigue.
 
 MUTACIONES (corridas, ver `_avance_fase9`):
   · `_clave` devuelve el chat (la identidad vuelve a ser el grupo) -> rojo.
@@ -104,6 +108,7 @@ class Bot(object):
 
     async def send_message(self, chat_id, texto, reply_markup=None, **k):
         self.enviados.append((chat_id, texto, reply_markup))
+        return Mensaje(chat_id, texto, BOT_ID, bot=True)
 
     async def send_photo(self, chat_id, **k):
         self.enviados.append((chat_id, "[foto]", None))
@@ -116,9 +121,16 @@ BOT = Bot()
 
 
 class Usuario(object):
-    def __init__(self, uid, is_bot=False):
+    def __init__(self, uid, is_bot=False, first_name=None, last_name=None, username=None):
         self.id = uid
         self.is_bot = is_bot
+        self.first_name = first_name
+        self.last_name = last_name
+        self.username = username
+
+
+BOT_ID = 999
+_ids = [1000]
 
 
 class Chat(object):
@@ -130,10 +142,12 @@ class Chat(object):
 
 
 class Mensaje(object):
-    def __init__(self, chat, texto="", de=None, contesta_a=None):
+    def __init__(self, chat, texto="", de=None, contesta_a=None, bot=False):
+        _ids[0] += 1
+        self.message_id = _ids[0]
         self.chat = Chat(chat)
         self.text = texto
-        self.from_user = Usuario(de) if de else None
+        self.from_user = Usuario(de, is_bot=bot) if de else None
         self.reply_to_message = contesta_a
         self.dichos = []
         self.teclados = []
@@ -141,6 +155,8 @@ class Mensaje(object):
     async def reply_text(self, texto, **kw):
         self.dichos.append(texto)
         self.teclados.append(kw.get("reply_markup"))
+        # Como Telegram: devuelve el mensaje que mando el bot (con su id).
+        return Mensaje(self.chat.id, texto, BOT_ID, bot=True)
 
     async def send_action(self, _a):
         return None
@@ -228,6 +244,7 @@ def limpiar():
         dict.clear(d)
     B._rehidratado.clear()
     B._ya_pregunte.clear()
+    B._preguntas_de_alta.clear()
     del B._por_aprobar[:]
     del BOT.enviados[:]
     del al_modelo[:]
@@ -341,7 +358,7 @@ async def d95():
     await B.manejar_texto(ux2, Contexto())
     caso("D95: al desconocido se le pregunta, una vez",
          ux1.message.dichos[:1] + ux2.message.dichos,
-         ["No te tengo registrado. Norman, ¿quien es?\n(Norman: contesta a su mensaje con \"este es <nombre>\".)"])
+         ["No te tengo registrado. Norman, ¿quien es?\n(Norman: contesta a su mensaje, o a este, con \"este es <nombre>\".)"])
     # Fase 10 (D105): una COPIA. `caso` guarda la referencia y `limpiar()`
     # vacia la lista antes de evaluarla: con `al_modelo` a secas pasaba siempre.
     caso("D95: lo que dijo el desconocido no llega al modelo", list(al_modelo), [])
@@ -636,7 +653,7 @@ limpiar()
 # Mutacion: quitar `@_con_puerta` de un comando -> rojo en su caso.
 NLP = chr(10)
 PREGUNTA = ("No te tengo registrado. Norman, ¿quien es?" + NLP
-            + '(Norman: contesta a su mensaje con "este es <nombre>".)')
+            + '(Norman: contesta a su mensaje, o a este, con "este es <nombre>".)')
 COMANDOS = sorted(n for n in dir(B) if n.startswith("comando_"))
 S = Servidor()
 
@@ -785,6 +802,240 @@ async def d112_ajeno():
     caso("D112 celda No: ... y nada llega a un confirmar", S.confirmar(), [])
 
 correr(S, d112_ajeno())
+limpiar()
+
+# ═══ 10. D118/D119: el alta natural ═════════════════════════════════════════
+# D118: al ENTRAR alguien al grupo, si no esta dado de alta, el bot pregunta
+# quien es; Norman contesta A ESA PREGUNTA ("es Gilberto") y se registra al
+# miembro del pendiente (no al bot, autor del mensaje contestado).
+# D119: el primer mensaje de un desconocido, aunque sea "hola", dispara la
+# pregunta una sola vez; la charla de los registrados sigue sin contestarse.
+# Mutaciones: quitar el handler de main() -> rojo; registrar al autor del
+# mensaje contestado en vez del pendiente -> rojo; quitar la guarda de una vez
+# (en la entrada o en la puerta) -> rojo.
+
+
+class UpdateEntrada(object):
+    """El update de servicio de Telegram: `message.new_chat_members`."""
+
+    def __init__(self, chat, quien_agrega, miembros):
+        self.message = Mensaje(chat, "", quien_agrega)
+        self.message.text = None
+        self.message.new_chat_members = miembros
+        self.effective_user = Usuario(quien_agrega)
+        self.callback_query = None
+
+    @property
+    def effective_message(self):
+        return self.message
+
+    @property
+    def effective_chat(self):
+        return self.message.chat
+
+    def get_bot(self):
+        return BOT
+
+
+NUEVO = Usuario(DESCONOCIDO, first_name="Gil", last_name="Ramos", username="gilr")
+PREGUNTA_ENTRADA = 'Norman, ¿quien es Gil Ramos (@gilr)? Contestame a este mensaje con "es <nombre>".'
+PROPUESTA_MB = (200, {"ok": True, "borrador_id": "b-mb2", "sello": "s-mb2",
+                      "mensaje": "REGISTRO: Gilberto -> Casa Verde (DST)"})
+
+caso("D118: nombre visible con nombre, apellido y @", B._nombre_visible(NUEVO), "Gil Ramos (@gilr)")
+caso("D118: nombre visible solo con @", B._nombre_visible(Usuario(1, username="x")), "@x")
+caso("D118: nombre visible sin nada", B._nombre_visible(Usuario(1)), "esta persona")
+
+S = Servidor()
+S.respuestas["/api/bot/miembro/proponer"] = [PROPUESTA_MB]
+S.respuestas["/api/bot/miembro/confirmar"] = [(200, {"ok": True, "mensaje": "Listo: Gilberto queda registrado."})]
+
+
+async def d118_entrada():
+    await B.manejar_entrada(UpdateEntrada(GRUPO, NORMAN, [NUEVO]), Contexto())
+    caso("D118: entra un desconocido -> el bot pregunta quien es, en el grupo",
+         [(c, t) for c, t, _ in BOT.enviados], [(GRUPO, PREGUNTA_ENTRADA)])
+    caso("D118: ... y la pregunta queda anotada con el miembro que entro",
+         sorted(B._preguntas_de_alta.values()), [DESCONOCIDO])
+    # Sale y vuelve a entrar: no se vuelve a preguntar (una vez por grupo-persona).
+    await B.manejar_entrada(UpdateEntrada(GRUPO, NORMAN, [NUEVO]), Contexto())
+    caso("D118: si vuelve a entrar, no se pregunta dos veces", len(BOT.enviados), 1)
+    # Su primer "hola" despues de entrar tampoco dispara otra pregunta.
+    uh = Update(GRUPO, DESCONOCIDO, "hola")
+    await B.manejar_texto(uh, Contexto())
+    caso("D118: su 'hola' despues de entrar no repite la pregunta", uh.message.dichos, [])
+    caso("D118: ... y no llega al modelo", list(al_modelo), [])
+    # Norman contesta A LA PREGUNTA DEL BOT.
+    (chat_id, mid), = list(B._preguntas_de_alta.keys())
+    pregunta = Mensaje(GRUPO, PREGUNTA_ENTRADA, BOT_ID, bot=True)
+    pregunta.message_id = mid
+    un = Update(GRUPO, NORMAN, "es Gilberto", contesta_a=pregunta)
+    await B.manejar_texto(un, Contexto())
+    caso("D118: Norman contesta al bot -> se propone el alta DEL QUE ENTRO (no del bot)",
+         [(c["telegram_id"], c.get("chat_id"), c["miembro_telegram_id"], c["texto"])
+          for c in S.a("/api/bot/miembro/proponer")],
+         [(NORMAN, GRUPO, DESCONOCIDO, "es Gilberto")])
+    caso("D118: ... con el mismo boton VA de siempre", boton(un.message.teclados[-1], "vamb"), "vamb:b-mb2")
+    caso("D118: ... y 'es Gilberto' no llega al modelo", list(al_modelo), [])
+    await B.manejar_boton(UpdateBoton(GRUPO, NORMAN, "vamb:b-mb2"), Contexto())
+    caso("D118: el VA de Norman escribe el alta",
+         [(c["telegram_id"], c["borrador_id"]) for c in S.a("/api/bot/miembro/confirmar")],
+         [(NORMAN, "b-mb2")])
+    caso("D118: registrado, su pregunta pendiente se borra", dict(B._preguntas_de_alta), {})
+
+correr(S, d118_entrada())
+limpiar()
+
+S = Servidor()
+
+
+async def d118_registrado_y_bot():
+    gil = Usuario(GILBERTO, first_name="Gilberto")
+    await B.manejar_entrada(UpdateEntrada(GRUPO, NORMAN, [gil]), Contexto())
+    caso("D118: entra alguien ya dado de alta -> el bot no dice nada", list(BOT.enviados), [])
+    otro_bot = Usuario(555, is_bot=True, first_name="OtroBot")
+    este_bot = Usuario(BOT_ID, is_bot=True, first_name="Fresnillo", username="fresnillo_bot")
+    await B.manejar_entrada(UpdateEntrada(GRUPO, NORMAN, [otro_bot, este_bot]), Contexto())
+    caso("D118: entra un bot (otro, o este mismo) -> nada, ni se pregunta al ERP",
+         (list(BOT.enviados), [c["telegram_id"] for c in S.a("/api/bot/identidad")]), ([], [GILBERTO]))
+    caso("D118: sin pregunta anotada", dict(B._preguntas_de_alta), {})
+
+correr(S, d118_registrado_y_bot())
+limpiar()
+
+# Kevin (dado de alta, no es Norman) contesta a la pregunta del bot: el
+# servidor lo niega (`permisoDeAccion(..., 'registrar')`); el bot lo dice y no
+# revienta ni confirma nada.
+S = Servidor()
+S.respuestas["/api/bot/miembro/proponer"] = [(403, {"error": "Solo Norman registra miembros."})]
+
+
+async def d118_no_norman():
+    await B.manejar_entrada(UpdateEntrada(GRUPO, KEVIN, [NUEVO]), Contexto())
+    (chat_id, mid), = list(B._preguntas_de_alta.keys())
+    pregunta = Mensaje(GRUPO, PREGUNTA_ENTRADA, BOT_ID, bot=True)
+    pregunta.message_id = mid
+    uk = Update(GRUPO, KEVIN, "es Gilberto", contesta_a=pregunta)
+    await B.manejar_texto(uk, Contexto())
+    caso("D118: Kevin contesta a la pregunta -> sale al servidor con SU telegram_id (el decide)",
+         [(c["telegram_id"], c["miembro_telegram_id"]) for c in S.a("/api/bot/miembro/proponer")],
+         [(KEVIN, DESCONOCIDO)])
+    caso("D118: ... el servidor lo niega y Kevin lo ve, sin boton VA",
+         (uk.message.dichos, [botones(t) for t in uk.message.teclados]),
+         (["Solo Norman registra miembros."], [[]]))
+    caso("D118: ... y no se confirma nada", S.confirmar(), [])
+    caso("D118: ... y la pregunta sigue viva para Norman", sorted(B._preguntas_de_alta.values()), [DESCONOCIDO])
+    # CONTROL: "es Gilberto" contestado a OTRO mensaje del bot (no una pregunta)
+    # no es registro: va al modelo como siempre.
+    otro = Mensaje(GRUPO, "Aqui ando.", BOT_ID, bot=True)
+    un = Update(GRUPO, NORMAN, "es Gilberto", contesta_a=otro)
+    await B.manejar_texto(un, Contexto())
+    caso("D118 CONTROL: contestar a un mensaje del bot que no es pregunta NO propone alta",
+         (len(S.a("/api/bot/miembro/proponer")), [t for t, _ in al_modelo]), (1, ["es Gilberto"]))
+
+correr(S, d118_no_norman())
+limpiar()
+
+
+# main() registra el handler de entrada, y el filtro REAL de python-telegram-bot
+# lo acepta con un Update real de Telegram (de_json) que trae new_chat_members.
+class _AppFalsa(object):
+    def __init__(self):
+        self.handlers = []
+
+    def builder(self):
+        return self
+
+    def token(self, *_a):
+        return self
+
+    def post_init(self, *_a):
+        return self
+
+    def build(self):
+        return self
+
+    def add_handler(self, h):
+        self.handlers.append(h)
+
+    def add_error_handler(self, *_a):
+        pass
+
+    def run_polling(self, **_k):
+        pass
+
+
+def _handlers_de_main():
+    from telegram import Update as UpdateTG
+    app = _AppFalsa()
+    guardados = (B.Application, B.TOKEN_TG, B.TOKEN_API, B._candado)
+    B.Application, B.TOKEN_TG, B.TOKEN_API, B._candado = app, "x", "y" * 30, (lambda: None)
+    try:
+        B.main()
+    finally:
+        B.Application, B.TOKEN_TG, B.TOKEN_API, B._candado = guardados
+    real = UpdateTG.de_json({"update_id": 1, "message": {
+        "message_id": 7, "date": 0, "chat": {"id": GRUPO, "type": "supergroup", "title": "g"},
+        "from": {"id": NORMAN, "is_bot": False, "first_name": "Norman"},
+        "new_chat_members": [{"id": DESCONOCIDO, "is_bot": False, "first_name": "Gil"}]}}, None)
+    return [getattr(h.callback, "__name__", "?") for h in app.handlers if h.check_update(real)]
+
+
+try:
+    caso("D118: main() registra un handler que atiende la entrada al grupo (filtro real de PTB)",
+         _handlers_de_main(), ["manejar_entrada"])
+except Exception as e:
+    caso("D118: main() registra el handler de entrada (sin excepcion)", repr(e), None)
+limpiar()
+
+# D119: el "hola" del desconocido (sin haber entrado con el bot presente).
+S = Servidor()
+S.respuestas["/api/bot/miembro/proponer"] = [PROPUESTA_MB]
+
+
+async def d119_hola():
+    u1 = Update(GRUPO, DESCONOCIDO, "hola")
+    await B.manejar_texto(u1, Contexto())
+    u2 = Update(GRUPO, DESCONOCIDO, "hola, buenas")
+    await B.manejar_texto(u2, Contexto())
+    caso("D119: el primer 'hola' de un desconocido dispara la pregunta, una sola vez",
+         (u1.message.dichos, u2.message.dichos), ([PREGUNTA], []))
+    caso("D119: ... y ninguno de sus 'hola' llega al modelo", list(al_modelo), [])
+    caso("D119: la pregunta de la puerta queda anotada con el desconocido",
+         sorted(B._preguntas_de_alta.values()), [DESCONOCIDO])
+    # Norman contesta A LA PREGUNTA DEL BOT (no al mensaje de la persona).
+    (chat_id, mid), = list(B._preguntas_de_alta.keys())
+    pregunta = Mensaje(GRUPO, PREGUNTA, BOT_ID, bot=True)
+    pregunta.message_id = mid
+    un = Update(GRUPO, NORMAN, "este es Gilberto", contesta_a=pregunta)
+    await B.manejar_texto(un, Contexto())
+    caso("D119: Norman contesta a la pregunta del bot -> se propone al desconocido",
+         [(c["telegram_id"], c["miembro_telegram_id"]) for c in S.a("/api/bot/miembro/proponer")],
+         [(NORMAN, DESCONOCIDO)])
+    # La ruta vieja sigue: contestar al mensaje de la persona.
+    un2 = Update(GRUPO, NORMAN, "este es Gilberto", contesta_a=u1.message)
+    await B.manejar_texto(un2, Contexto())
+    caso("D119: la ruta vieja (contestar al 'hola' de la persona) sigue proponiendo al mismo",
+         [c["miembro_telegram_id"] for c in S.a("/api/bot/miembro/proponer")], [DESCONOCIDO, DESCONOCIDO])
+
+correr(S, d119_hola())
+limpiar()
+
+S = Servidor()
+
+
+async def d119_registrado():
+    g1 = Update(GRUPO, GILBERTO, "hola")
+    await B.manejar_texto(g1, Contexto())
+    g2 = Update(GRUPO, GILBERTO, "que onda")
+    await B.manejar_texto(g2, Contexto())
+    caso("D119 CONTROL: la charla de un registrado sigue sin contestarse",
+         (g1.message.dichos, g2.message.dichos), ([], []))
+    caso("D119 CONTROL: ... ni se le pregunta quien es", dict(B._preguntas_de_alta), {})
+    caso("D119 costo: dos charlas de un registrado = 1 identidad (cache) y 1 modelo por mensaje",
+         (len(S.a("/api/bot/identidad")), [t for t, _ in al_modelo]), (1, ["hola", "que onda"]))
+
+correr(S, d119_registrado())
 limpiar()
 
 # ─── Resultado ───────────────────────────────────────────────────────────────
