@@ -1,12 +1,17 @@
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import {
+  CATEGORIA_ENVIO_COBRADO,
   CUENTA_EFECTIVO_AGENTE,
+  MAX_ENVIO_COBRADO,
   MAX_GASTO_ENVIO,
   PRODUCTO_POR_SKU,
   VENDEDOR_AGENTE,
   autorDelPedido,
   cuentaDestinoAgente,
   filaDeGastoEnvio,
+  filasDeEnvioCobrado,
   payloadDeVentaAgente,
   tokenAgenteValido,
   validarGastoEnvio,
@@ -127,6 +132,73 @@ test.describe('gasto de envio', () => {
     expect(fila.categoria).toBe('Logistica_Envios')
     expect(fila.usuario_creador).toBe(autorDelPedido(42))
     expect(fila.descripcion).toBe('Envio #E42 Monterrey')
+  })
+})
+
+test.describe('envio cobrado', () => {
+  const TICKET = '99999999-8888-7777-6666-555555555555'
+  const PERSONAL = '2e2d25d1-84ed-4a66-bd1a-5cc7072f346b'
+  const AHORA = new Date('2026-09-25T18:00:00.000Z')
+
+  test('sin envio_cobrado (cerebro 1.14.0) la venta entra igual, con 0', () => {
+    const r = validarVenta(VENTA_BASE)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.valor.envioCobrado).toBe(0)
+    expect(validarVenta({ ...VENTA_BASE, envio_cobrado: null }).ok).toBe(true)
+  })
+
+  test('el envio no se mezcla con el total del producto ni con el ticket', () => {
+    const r = validarVenta({ ...VENTA_BASE, total: 350, envio_cobrado: 99 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.valor.envioCobrado).toBe(99)
+    const p = payloadDeVentaAgente(r.valor, CUENTA_EFECTIVO_AGENTE)
+    // El ticket sigue siendo SOLO mercancia: v_ventas_por_mes y v_resumen_del_dia no ven el envio.
+    expect(p.totalCobradoReal).toBe(350)
+    expect(p.subtotalCatalogo).toBe(350)
+  })
+
+  test('envio negativo, no numerico o excesivo se rechaza', () => {
+    expect(validarVenta({ ...VENTA_BASE, envio_cobrado: -1 }).ok).toBe(false)
+    expect(validarVenta({ ...VENTA_BASE, envio_cobrado: 'mucho' }).ok).toBe(false)
+    expect(validarVenta({ ...VENTA_BASE, envio_cobrado: MAX_ENVIO_COBRADO + 1 }).ok).toBe(false)
+  })
+
+  test('envio 0 no escribe nada', () => {
+    expect(filasDeEnvioCobrado({ pedidoId: 42, envioCobrado: 0, idTicket: TICKET, idCuenta: CUENTA_EFECTIVO_AGENTE, tipoFiscalidad: 'LIBRE' }, AHORA)).toEqual([])
+  })
+
+  test('efectivo (LIBRE): una fila de ingreso, ligada al ticket y a la misma cuenta, sin impuesto', () => {
+    const filas = filasDeEnvioCobrado({ pedidoId: 42, envioCobrado: 40, idTicket: TICKET, idCuenta: CUENTA_EFECTIVO_AGENTE, tipoFiscalidad: 'LIBRE' }, AHORA)
+    expect(filas).toHaveLength(1)
+    expect(filas[0]).toMatchObject({
+      tipo_movimiento: 'INGRESO_VENTA',
+      categoria: CATEGORIA_ENVIO_COBRADO,
+      monto: 40,
+      id_ticket: TICKET,
+      id_cuenta_destino: CUENTA_EFECTIVO_AGENTE,
+      status: 'ACTIVO',
+      usuario_creador: autorDelPedido(42)
+    })
+  })
+
+  test('transferencia a Cuenta personal (IVA_ONLY): ingreso + PASIVO_IVA del envio, todo con id_ticket', () => {
+    const filas = filasDeEnvioCobrado({ pedidoId: 42, envioCobrado: 99, idTicket: TICKET, idCuenta: PERSONAL, tipoFiscalidad: 'IVA_ONLY' }, AHORA)
+    expect(filas.map((f) => [f.tipo_movimiento, f.monto])).toEqual([
+      ['INGRESO_VENTA', 99],
+      ['PASIVO_IVA', 13.66]
+    ])
+    for (const f of filas) {
+      expect(f.id_ticket).toBe(TICKET)
+      expect(f.id_cuenta_destino).toBe(PERSONAL)
+      expect(f.categoria).toBe(CATEGORIA_ENVIO_COBRADO)
+    }
+  })
+
+  test('la ruta completa el envio en los DOS caminos: venta nueva y venta que ya existia', () => {
+    const fuente = readFileSync(path.join(__dirname, '..', 'app', 'api', 'agente', 'venta', 'route.ts'), 'utf8')
+    expect(fuente.match(/await asegurarEnvioCobrado\(/g) ?? []).toHaveLength(2)
   })
 })
 
