@@ -27,7 +27,14 @@
 import { NextResponse } from 'next/server'
 import type { ClienteServicio, IdentidadBot } from '@/lib/bot-servidor'
 import { resolverIdentidad } from '@/lib/bot-servidor'
-import { esAprobador, puedeAprobar, entidadesAlcanzables, type ActorBot, type Alcance } from '@/lib/bot-permisos'
+import {
+  esAprobador,
+  puedeAprobar,
+  entidadesAlcanzables,
+  ROL_TRABAJADOR,
+  type ActorBot,
+  type Alcance
+} from '@/lib/bot-permisos'
 
 export type ModoPuerta = 'directo' | 'esperar' | 'aprobar'
 
@@ -166,7 +173,9 @@ export async function aprobadoresDelBot(
 ): Promise<number[]> {
   const { data } = await supabase
     .from('bot_identidades')
-    .select('telegram_id, requiere_aprobacion, entidades!inner(rol)')
+    // `*`: con o sin `rol_bot` (WP-6). Un TRABAJADOR apunta a una entidad ADMIN;
+    // sin leer `rol_bot` contaria como aprobador.
+    .select('*, entidades!inner(rol)')
     .eq('activo', true)
   const personaAutor = {
     telegramId: autor.telegramId,
@@ -178,7 +187,10 @@ export async function aprobadoresDelBot(
       puedeAprobar(
         {
           telegramId: Number(f.telegram_id),
-          rol: (f as unknown as { entidades: { rol: string | null } }).entidades?.rol ?? '',
+          rol:
+            (f as unknown as { rol_bot?: string | null }).rol_bot === ROL_TRABAJADOR
+              ? ROL_TRABAJADOR
+              : (f as unknown as { entidades: { rol: string | null } }).entidades?.rol ?? '',
           requiereAprobacion: Boolean(f.requiere_aprobacion)
         },
         personaAutor
@@ -362,6 +374,9 @@ export async function redDe(
 /** El alcance de lo que un actor puede tocar al proponer: ADMIN todo, DST su red, resto lo propio. */
 export function alcanceDeCaptura(identidad: IdentidadBot): Alcance {
   if (identidad.rolEntidad === 'ADMIN') return 'todo'
+  // WP-6: el trabajador captura para la Matriz (a cualquier cliente) y todo lo
+  // suyo espera el Aprobar. Ver la lista de clientes no es una cifra agregada.
+  if (identidad.rolEntidad === ROL_TRABAJADOR) return 'todo'
   return identidad.rolEntidad === 'DST' ? 'red' : 'propio'
 }
 

@@ -182,11 +182,17 @@ export function faltantesDelEnvasado(
  */
 export function mensajeFaltaEmpaque(
   envasado: readonly { nombre: string; botellas: number }[],
-  faltantes: readonly FaltanteEmpaque[]
+  faltantes: readonly FaltanteEmpaque[],
+  /** Cazador F0 (WP-6): para un TRABAJADOR, sin el stock (`tengo N`). */
+  sinCifras = false
 ): string {
   const que = envasado.map((e) => `${e.botellas} de ${e.nombre}`).join(' y ')
   const lineas = [`Para envasar ${que} me falta empaque registrado:`]
   for (const f of faltantes) {
+    if (sinCifras) {
+      lineas.push(`   ${f.nombre}: ocupo ${numeroCorto(f.ocupa)}; no alcanza lo registrado.`)
+      continue
+    }
     lineas.push(
       `   ${f.nombre}: ocupo ${numeroCorto(f.ocupa)}, tengo ${numeroCorto(f.hay)} ` +
         `-> faltan ${numeroCorto(f.falta)}`

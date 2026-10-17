@@ -40,7 +40,7 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
-import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO, ROL_TRABAJADOR } from '@/lib/bot-permisos'
 import { actorDe } from '@/lib/bot-aprobacion'
 import {
   buscarFormato,
@@ -101,16 +101,18 @@ function opcionesDeInsumo(lista: readonly InsumoDelCatalogo[]) {
 function respuestaFaltaEmpaque(
   envasado: readonly { nombre: string; botellas: number }[],
   faltantes: FaltanteEmpaque[],
-  resuelto: readonly { id_producto: string; botellas: number }[]
+  resuelto: readonly { id_producto: string; botellas: number }[],
+  /** WP-6: a un TRABAJADOR no se le ensena el stock (ni en el texto ni en el JSON). */
+  sinCifras = false
 ) {
   return NextResponse.json({
     ok: false,
     falta_empaque: true,
-    faltantes,
+    faltantes: sinCifras ? faltantes.map((f) => ({ id_insumo: f.id_insumo, nombre: f.nombre, ocupa: f.ocupa })) : faltantes,
     // Lo que el bot manda a `/api/bot/inventario/proponer`: el envasado ya
     // resuelto (ids), para que la entrada ofrezca justo esos insumos.
     envasado: resuelto.map((e) => ({ id_producto: e.id_producto, botellas: e.botellas })),
-    mensaje: mensajeFaltaEmpaque(envasado, faltantes)
+    mensaje: mensajeFaltaEmpaque(envasado, faltantes, sinCifras)
   })
 }
 
@@ -319,7 +321,12 @@ export async function POST(request: Request) {
       }
       const inv = await inventarioDelEnvasado(supabase, payloadAgregar.envasado)
       if (inv.faltantes.length > 0) {
-        return respuestaFaltaEmpaque(validado.desglose.envasado, inv.faltantes, payloadAgregar.envasado)
+        return respuestaFaltaEmpaque(
+          validado.desglose.envasado,
+          inv.faltantes,
+          payloadAgregar.envasado,
+          identidad.rolEntidad === ROL_TRABAJADOR
+        )
       }
       const avisos = [...validado.avisos]
 
@@ -396,7 +403,8 @@ export async function POST(request: Request) {
       return respuestaFaltaEmpaque(
         normalizado.desglose.envasado,
         invNuevo.faltantes,
-        normalizado.payload.envasado
+        normalizado.payload.envasado,
+        identidad.rolEntidad === ROL_TRABAJADOR
       )
     }
     if (invNuevo.movimientos.length > 0) {
