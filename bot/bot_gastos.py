@@ -2982,6 +2982,31 @@ INTENCIONES_QUE_ESCRIBEN = (
 INTENCIONES_CON_BORRADOR = ("gasto", "abono", "venta", "lote", "cotizacion", "alta")
 
 
+ETIQUETAS_DE_NOTA = ("lote", "persona", "cliente", "tema")
+
+
+async def _guardar_nota(update, chat, campos):
+    """Cazador F0 (WP-9a): "el lote 7 salio mas picoso" -> bitacora, y nada mas.
+
+    El mensaje YA esta en la bitacora (lo anoto `bitacora.anotar_update` antes
+    de llegar aqui); la nota solo le pone etiquetas a ESA fila, para poder
+    buscarla despues por lote, persona o cliente. **Cero movimientos:** no hay
+    `_post` a ninguna ruta del ERP, ni borrador, ni VA. Respuesta corta.
+    """
+    etiquetas = {"tipo": "nota"}
+    for k in ETIQUETAS_DE_NOTA:
+        v = campos.get(k)
+        if v not in (None, "", [], {}):
+            etiquetas[k] = str(v).strip()[:80]
+    clave = bitacora.clave_de_update(update)
+    guardada = bool(clave) and await asyncio.to_thread(bitacora.etiquetar, clave, etiquetas)
+    log.info("nota: clave=%s etiquetas=%s -> %s", clave, etiquetas, guardada)
+    sobre = ", ".join(str(etiquetas[k]) for k in ("lote", "persona", "cliente") if k in etiquetas)
+    await update.effective_message.reply_text(
+        ("Anotado" + (" (" + sobre + ")" if sobre else "") + ".") if guardada
+        else "Lo tengo en el registro, pero no pude etiquetarlo; queda para revisarse.")
+
+
 async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     """UNA llamada al modelo decide que quiso decir Norman, y se despacha.
 
@@ -3128,6 +3153,10 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
 
     if intencion == "ajustar":
         await _ajustar(update, chat, ruta)
+        return
+
+    if intencion == "nota":
+        await _guardar_nota(update, chat, campos)
         return
 
     if hechos:

@@ -177,6 +177,14 @@ FRASES = [
     ("d100_grupo_kevin_gasto", "gaste 300 de gasolina", None, {"hablante": "Kevin"}),
     ("d100_grupo_historial_kevin", "y la deuda?", None,
      {"hablante": "Kevin", "historial": [[3.0, "cuanto me debe aeropuerto", "Aeropuerto debe $1,000.00", "Kevin"]]}),
+    # Cazador F0 (WP-9a): la NOTA. Textos del conjunto de oro (bot/oro/casos.jsonl).
+    ("f0_nota_lote_7", "el 7 salió más picoso", None),
+    ("f0_nota_grupo_trabajador", "el lote de ayer quedo mas clarito que los otros", None, {"hablante": "Trabajador"}),
+    ("f0_nota_cliente", "a Casa Verde le gusto mucho la chica, quieren probar la mini", None),
+    # CONTROLES: un hecho que escribe con una observacion es ESE hecho, no nota.
+    ("f0_control_nota_con_gasto", "pague 300 de gasolina, por cierto el tambo 2 huele raro", None),
+    ("f0_control_nota_con_lote", "revise el lote L-1012, dia 9, grado 3.2, huele bien", None),
+    ("f0_control_nota_gracias", "gracias", None),
 ]
 
 
