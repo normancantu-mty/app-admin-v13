@@ -308,6 +308,56 @@ caso("4. la nota de voz queda con su file_id", (base.fila(cv) or {}).get("adjunt
 caso("4. la transcripcion queda en SU fila",
      (base.fila(cv + ":transcripcion") or {}).get("transcripcion"), "compre 20 kilos de chile")
 
+# ─── 4b. R1 (auditoria F0): si el handler REVIENTA, la fila queda procesado=false ──
+# Antes `marcar_procesado` vivia en el `finally`: un mensaje cuyo procesamiento
+# lanzaba excepcion quedaba procesado=true y salia de la cola sin haberse hecho.
+
+
+def _revienta(*a, **k):
+    raise RuntimeError("falla inyectada en el despacho")
+
+
+def _correr_que_revienta(coro):
+    try:
+        correr(coro)
+        return "no reviento"
+    except RuntimeError as e:
+        return str(e)
+
+
+enrutar_bien = B.enrutar
+B.enrutar = _revienta
+try:
+    mr = Mensaje(PRIVADO, "private", "pague 300 de gasolina", Usuario(PRIVADO, "Norman"))
+    ur = Update(mr)
+    correr(bitacora.anotar_update(ur))
+    cr = bitacora.clave_de(PRIVADO, mr.message_id, "privado")
+    caso("4b. el texto cuyo despacho revienta: la excepcion sale",
+         _correr_que_revienta(B.manejar_texto(ur, None)), "falla inyectada en el despacho")
+    caso("4b. ... y su fila se queda procesado=false", (base.fila(cr) or {}).get("procesado"), False)
+
+    async def _comando_que_revienta(update, context):
+        raise RuntimeError("falla inyectada en el despacho")
+
+    mc = Mensaje(PRIVADO, "private", "/stock", Usuario(PRIVADO, "Norman"))
+    uc = Update(mc)
+    correr(bitacora.anotar_update(uc))
+    cc = bitacora.clave_de(PRIVADO, mc.message_id, "privado")
+    _correr_que_revienta(B._con_puerta(_comando_que_revienta)(uc, None))
+    caso("4b. un comando que revienta tambien queda procesado=false", (base.fila(cc) or {}).get("procesado"), False)
+finally:
+    B.enrutar = enrutar_bien
+
+async def _comando_bien(update, context):
+    return "ok"
+
+mk = Mensaje(PRIVADO, "private", "/cartera", Usuario(PRIVADO, "Norman"))
+uk = Update(mk)
+correr(bitacora.anotar_update(uk))
+ck = bitacora.clave_de(PRIVADO, mk.message_id, "privado")
+caso("4b. CONTROL un comando que termina SI queda procesado=true",
+     (correr(B._con_puerta(_comando_bien)(uk, None)), (base.fila(ck) or {}).get("procesado")), ("ok", True))
+
 # ─── 5. lo que dice el bot ──────────────────────────────────────────────────
 from telegram.ext import ExtBot  # noqa: E402
 from telegram.request import HTTPXRequest  # noqa: E402

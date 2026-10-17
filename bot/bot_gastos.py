@@ -473,10 +473,11 @@ def _con_puerta(comando):
     async def con_puerta(update, context):
         if not await _puerta_de_grupo(update, _clave_de(update)):
             return None
-        try:
-            return await comando(update, context)
-        finally:
-            await bitacora.marcar_procesado(update)
+        # R1 (auditoria F0): procesado=true SOLO si el comando termino; si revienta,
+        # la fila de la bitacora se queda procesado=false.
+        r = await comando(update, context)
+        await bitacora.marcar_procesado(update)
+        return r
     con_puerta.con_puerta = True
     return con_puerta
 
@@ -3708,11 +3709,13 @@ async def manejar_texto(update, context):
     try:
         if not await _quiza_registro(update, chat, texto):
             await _manejar_texto(update, chat, texto)
+        # R1 (auditoria F0): procesado=true SOLO si el handler termino. Si revienta,
+        # la fila se queda procesado=false (en la cola), no en el finally.
+        await bitacora.marcar_procesado(update)
         await _seguir_cola(update, chat)
         await _avisar_aprobaciones(update)
     finally:
         _cerrar_turno(chat, texto)
-        await bitacora.marcar_procesado(update)
 
 
 async def _manejar_texto(update, chat, texto):
@@ -3886,10 +3889,12 @@ async def manejar_voz(update, context):
     # 4 agregaron existia solo para quien escribiera, y Norman dicta.
     try:
         await _enrutar_y_despachar(update, chat, texto)
+        # R1 (auditoria F0): procesado=true SOLO si el handler termino. Si revienta,
+        # la fila se queda procesado=false (en la cola), no en el finally.
+        await bitacora.marcar_procesado(update)
         await _seguir_cola(update, chat)
     finally:
         _cerrar_turno(chat, texto)
-        await bitacora.marcar_procesado(update)
 
 
 # ===========================================================================
@@ -4235,11 +4240,13 @@ async def manejar_boton(update, context):
     await asyncio.to_thread(_rehidratar, chat)
     try:
         await _manejar_boton(update, chat, q, partes, accion)
+        # R1 (auditoria F0): procesado=true SOLO si el handler termino. Si revienta,
+        # la fila se queda procesado=false (en la cola), no en el finally.
+        await bitacora.marcar_procesado(update)
         await _seguir_cola(update, chat)
         await _avisar_aprobaciones(update)
     finally:
         _cerrar_turno(chat, "[toco el boton " + accion + "]")
-        await bitacora.marcar_procesado(update)
 
 
 async def _manejar_boton(update, chat, q, partes, accion):
