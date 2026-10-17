@@ -59,6 +59,7 @@ from enrutador import (  # noqa: E402
 # Cazador F0 (2026-10-17): el codigo nuevo vive en modulos nuevos; aqui solo se
 # enchufan. `bitacora` esta APAGADA hasta que `main()` la prende.
 import bitacora  # noqa: E402
+import lote_plantilla  # noqa: E402  Cazador F0 (WP-7a)
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -2343,6 +2344,19 @@ async def _proponer_lote(update, chat, peticion):
             r.get("mensaje", "Me falta empaque registrado. Que paso?"))
         return True
 
+    if estado == 200 and r.get("ofrecer_abrir_lote"):
+        # Cazador F0 (WP-7a): un envasado sin lote abierto ya no es un 422. Se
+        # ofrece abrir el lote; el boton repite ESTA peticion con
+        # `abrir_lote_nuevo` y sale la propuesta de siempre, con su VA.
+        _memoria[chat] = {"tipo": "lote_ofrecer_abrir", "peticion": peticion}
+        await update.effective_message.reply_text(
+            r.get("mensaje", "No tengo lote abierto. Abro uno nuevo?"),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Abrir lote nuevo", callback_data="abrlt:x")],
+                [InlineKeyboardButton("Mejor no", callback_data="no:x")],
+            ]))
+        return True
+
     if estado != 200 or not r.get("ok"):
         # El 403 de "esto es de la matriz" y el 422 de un grado imposible SI se
         # dicen: llegamos aqui porque el enrutador lo leyo como lote, y callarse
@@ -2991,6 +3005,11 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     que ya se sabian y el bot nunca se los mandaba, asi que una captura a medias
     volvia a empezar de cero en cada vuelta.
     """
+    # Cazador F0 (WP-7a): "hoy empezamos lote" y las respuestas a la plantilla
+    # se leen SIN modelo (`bot/plantillas/lote.yaml`). Si el mensaje no es de
+    # la plantilla, `atender` devuelve False y sigue el camino de siempre.
+    if not esperando and await lote_plantilla.atender(update, chat, texto, _proponer_lote, _peticion_de_lote):
+        return
     a_medias = _tomar_borrador_a_medias(chat)
     productos = await asyncio.to_thread(_catalogo_de_productos, chat)
     # D73 (Fase 8): el historial corto del chat viaja marcado como pasado.
@@ -3099,6 +3118,7 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         # **`cancelar` a proposito NO esta en `INTENCIONES_QUE_ESCRIBEN`**: no
         # escribe ninguna fila, apaga un borrador. Bloquearlo por dudar dejaria
         # vivo justo lo que Norman acaba de rechazar.
+        lote_plantilla.olvidar(chat)  # WP-7a
         if len(_pendientes_de(chat)) >= 2:
             await update.effective_message.reply_text(_cancelar_todo(chat))
             return
@@ -3373,11 +3393,24 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
         # FASE 3.3. Lo indispensable de un lote es que algo haya entrado o
         # salido; el codigo lo propone el servidor y la fecha es hoy, asi que
         # por ninguno de los dos se pregunta.
+        # Cazador F0 (WP-7a): si habia una plantilla a medias, lo que ya se
+        # sabia se junta con lo que dijo el modelo (el modelo manda).
+        notas_plantilla = ""
+        viva = lote_plantilla.sesion(chat)
+        if viva:
+            campos = dict(lote_plantilla.campos_para_peticion(viva), **{
+                k: v for k, v in campos.items() if v not in (None, "", [], {})})
+            notas_plantilla = lote_plantilla.notas_de(viva)
+            lote_plantilla.olvidar(chat)
         peticion = _peticion_de_lote(campos)
+        if notas_plantilla:
+            peticion["propuesta"]["notas"] = notas_plantilla
         if not peticion["insumos"] and not peticion["propuesta"]["tandas"] and not peticion["envasado"]:
+            # Antes: "Cuanto chile entro?" y nada mas. Ahora la plantilla
+            # completa, numerada; lo que ya se sabia queda anotado.
             _recordar_a_medias(chat, "lote", campos)
-            await update.effective_message.reply_text(
-                pregunta or "Cuanto chile entro?")
+            await lote_plantilla.atender(update, chat, "", _proponer_lote, _peticion_de_lote,
+                                         desde_enrutador=dict(campos))
             return
         if await _proponer_lote(update, chat, peticion):
             return
@@ -4129,6 +4162,13 @@ async def _manejar_boton(update, chat, q, partes, accion):
             await update.effective_message.reply_text("Esa opcion ya no esta. Vuelve a contestarle con \"este es ...\".")
             return
         await _proponer_miembro(update, chat, dato.get("miembro"), dato.get("texto") or "", elegida.get("id"))
+        return
+    if accion == "abrlt":
+        dato = _memoria.get(chat) or {}
+        if dato.get("tipo") != "lote_ofrecer_abrir":
+            await update.effective_message.reply_text("Ya no tengo ese envasado. Dictamelo otra vez.")
+            return
+        await _proponer_lote(update, chat, dict(dato.get("peticion") or {}, abrir_lote_nuevo=True))
         return
     if accion == "valt":
         await _confirmar_lote(update, chat)

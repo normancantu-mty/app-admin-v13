@@ -61,7 +61,8 @@ import {
   sellarAgregar,
   type FaltanteEmpaque,
   type LoteExistente,
-  type PayloadAgregar
+  type PayloadAgregar,
+  VENTANA_LOTE_ABIERTO_DIAS
 } from '@/lib/bot-envasado'
 import { fechaLocal } from '@/lib/fechas'
 import type { ClienteServicio } from '@/lib/bot-servidor'
@@ -145,6 +146,8 @@ export async function POST(request: Request) {
       propuesta?: Record<string, unknown>
       insumos?: InsumoPedido[]
       envasado?: EnvasadoPedido[]
+      /** Cazador F0 (WP-7a): la persona apreto "Abrir lote nuevo" tras un envasado sin lote abierto. */
+      abrir_lote_nuevo?: unknown
     }
 
     const telegramId = Number(cuerpo.telegram_id)
@@ -277,7 +280,7 @@ export async function POST(request: Request) {
     const lleno = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== ''
     const codigoDictado = lleno(propuesta.codigo_lote) ? String(propuesta.codigo_lote).trim() : null
     const tandasPedidas = Array.isArray(propuesta.tandas) ? propuesta.tandas : []
-    const agregar = esAgregarALote({
+    let agregar = esAgregarALote({
       codigoDictado,
       codigosTomados,
       hayInsumos: insumos.length > 0,
@@ -288,12 +291,33 @@ export async function POST(request: Request) {
       )
     })
 
-    if (agregar) {
-      const ahora = new Date()
-      const destino = elegirLoteDestino(codigoDictado, await leerLotes(supabase), fechaLocal(ahora))
-      if (!destino.ok) {
-        return NextResponse.json({ error: destino.error }, { status: 422 })
+    // Cazador F0 (WP-7a): el destino se decide ANTES del camino de agregar,
+    // para poder caer al del lote nuevo cuando no hay ninguno abierto.
+    const ahoraDestino = new Date()
+    const destino = agregar
+      ? elegirLoteDestino(codigoDictado, await leerLotes(supabase), fechaLocal(ahoraDestino))
+      : null
+    if (destino && !destino.ok && destino.motivo === 'sin_abiertos') {
+      // Antes era un 422 y el envasado se perdia. Ahora se OFRECE abrir el
+      // lote; con el boton, el bot repite la peticion con `abrir_lote_nuevo`
+      // y cae al camino del lote nuevo (que valida y revisa el empaque igual
+      // que siempre). Nada se escribe sin el VA.
+      if (cuerpo.abrir_lote_nuevo !== true) {
+        return NextResponse.json({
+          ok: false,
+          ofrecer_abrir_lote: true,
+          mensaje:
+            `No tengo ningun lote abierto (de los ultimos ${VENTANA_LOTE_ABIERTO_DIAS} dias). ` +
+            'Abro un lote nuevo con este envasado? Si es de un lote viejo, dime el codigo.'
+        })
       }
+      agregar = false
+    } else if (destino && !destino.ok) {
+      return NextResponse.json({ error: destino.error }, { status: 422 })
+    }
+
+    if (agregar && destino && destino.ok) {
+      const ahora = ahoraDestino
       // Se valida con la MISMA puerta que el lote nuevo (cantidades, grados,
       // topes). El codigo va como dictado y sin "tomados": aqui el lote existe
       // a proposito. Del resultado solo se usan los hijos.

@@ -227,7 +227,14 @@ export interface LoteExistente {
 
 export type LoteDestino =
   | { ok: true; lote: LoteExistente; porDefault: boolean }
-  | { ok: false; error: string }
+  | { ok: false; error: string; motivo: MotivoSinDestino }
+
+/**
+ * Cazador F0 (WP-7a): POR QUE no hay destino. `sin_abiertos` es el caso
+ * "envasamos 40 chicas y no hay lote abierto": la ruta ya no contesta 422,
+ * ofrece abrir el lote. `no_existe` (una errata) y `varios` siguen siendo error.
+ */
+export type MotivoSinDestino = 'no_existe' | 'sin_abiertos' | 'varios'
 
 /**
  * - Dijo el codigo -> ese lote, o error si no existe (no se crea uno nuevo
@@ -245,7 +252,7 @@ export function elegirLoteDestino(
     const lote = lotes.find((l) => l.codigo_lote.trim().toUpperCase() === codigo.toUpperCase())
     return lote
       ? { ok: true, lote, porDefault: false }
-      : { ok: false, error: `No tengo el lote ${codigo}. Dime el codigo como esta escrito.` }
+      : { ok: false, motivo: 'no_existe', error: `No tengo el lote ${codigo}. Dime el codigo como esta escrito.` }
   }
   const desde = sumarDias(hoy, -VENTANA_LOTE_ABIERTO_DIAS)
   const abiertos = lotes
@@ -255,6 +262,7 @@ export function elegirLoteDestino(
   if (abiertos.length === 0) {
     return {
       ok: false,
+      motivo: 'sin_abiertos',
       error:
         `No tengo ningun lote abierto (de los ultimos ${VENTANA_LOTE_ABIERTO_DIAS} dias). ` +
         'Dime de que lote es, o dictame el lote nuevo.'
@@ -262,6 +270,7 @@ export function elegirLoteDestino(
   }
   return {
     ok: false,
+    motivo: 'varios',
     error:
       `Tengo ${abiertos.length} lotes abiertos: ` +
       abiertos.map((l) => l.codigo_lote).join(', ') +
