@@ -40,7 +40,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, TypeHandler, filters)
 from telegram.request import HTTPXRequest
@@ -60,6 +60,7 @@ from enrutador import (  # noqa: E402
 # enchufan. `bitacora` esta APAGADA hasta que `main()` la prende.
 import bitacora  # noqa: E402
 import lote_plantilla  # noqa: E402  Cazador F0 (WP-7a)
+import voz_salida  # noqa: E402  Cazador F0 (WP-V)
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -1731,37 +1732,77 @@ def historial_para_el_modelo(chat, ahora=None):
 
 
 class _MensajeQueAnota:
-    """El mensaje de Telegram, pero cada `reply_text` queda en el historial."""
+    """El mensaje de Telegram, pero cada `reply_text` queda en el historial.
 
-    def __init__(self, mensaje, chat):
+    Cazador F0 (WP-V): y si toca (`voz_salida.debe_hablar`: le hablaron en audio,
+    o es una ronda del cazador; un "Listo." nunca), sale tambien en AUDIO con el
+    mismo texto, y en el grupo la primera linea es la mencion real de quien
+    hablo. Si el audio falla, el texto ya salio: se registra y se sigue.
+    """
+
+    def __init__(self, mensaje, chat, por_voz=False, usuario=None):
         self._mensaje = mensaje
         self._chat = chat
+        self._por_voz = por_voz
+        self._usuario = usuario
 
     async def reply_text(self, texto, *a, **k):
         texto = _rotulo_de_grupo(self._chat, texto, k.get("reply_markup"))
+        habla = isinstance(texto, str) and voz_salida.debe_hablar(self._por_voz, texto)
+        dicho = texto
+        if habla and _en_grupo(self._chat) and "parse_mode" not in k and "entities" not in k:
+            m = voz_salida.mencion(self._usuario)
+            if m:
+                linea, entidad = m
+                texto = linea + NL + texto
+                if entidad:
+                    k["entities"] = [MessageEntity(type=MessageEntity.TEXT_MENTION, offset=0,
+                                                   length=entidad["length"], user=self._usuario)]
         _anotar(self._chat, texto)
-        return await self._mensaje.reply_text(texto, *a, **k)
+        enviado = await self._mensaje.reply_text(texto, *a, **k)
+        if habla:
+            await _hablar(self._mensaje, self._chat, dicho)
+        return enviado
 
     def __getattr__(self, nombre):
         return getattr(self._mensaje, nombre)
 
 
+async def _hablar(mensaje, chat, texto):
+    """WP-V: el mismo texto, en nota de voz (edge-tts Dalia -> OGG/OPUS)."""
+    try:
+        destino = Path(os.environ.get("BOT_VOZ_DIR") or (Path(__file__).resolve().parent / "_audios" / "_salida"))
+        destino = destino / ("r_%s_%d.ogg" % (str(chat).replace(":", "_").replace("-", "m"), int(time.time() * 1000)))
+        ogg = await asyncio.to_thread(voz_salida.texto_a_voz, texto, destino)
+        with open(str(ogg), "rb") as f:
+            await mensaje.reply_voice(voice=f)
+        log.info("voz de salida: %s (%d bytes)", ogg.name, ogg.stat().st_size)
+    except Exception as e:  # el texto ya salio; el audio es extra
+        log.warning("voz de salida: no pude mandar el audio (%s): %s", type(e).__name__, e)
+
+
 class _UpdateQueAnota:
     """`update` envuelto: lo que se contesta por `effective_message` o
-    `message` se anota. Todo lo demas pasa tal cual."""
+    `message` se anota. Todo lo demas pasa tal cual.
+    WP-V: `por_voz` -- la persona hablo en audio, asi que se le contesta en audio."""
 
-    def __init__(self, update, chat):
+    def __init__(self, update, chat, por_voz=False):
         self._update = update
         self._chat = chat
+        self._por_voz = por_voz
+
+    def _usuario(self):
+        q = getattr(self._update, "callback_query", None)
+        return getattr(q, "from_user", None) if q is not None else getattr(self._update, "effective_user", None)
 
     @property
     def effective_message(self):
-        return _MensajeQueAnota(self._update.effective_message, self._chat)
+        return _MensajeQueAnota(self._update.effective_message, self._chat, self._por_voz, self._usuario())
 
     @property
     def message(self):
         m = self._update.message
-        return _MensajeQueAnota(m, self._chat) if m is not None else None
+        return _MensajeQueAnota(m, self._chat, self._por_voz, self._usuario()) if m is not None else None
 
     def __getattr__(self, nombre):
         return getattr(self._update, nombre)
@@ -3796,7 +3837,7 @@ async def manejar_voz(update, context):
     # Cazador F0 (WP-2a): la transcripcion, a la bitacora ANTES de procesarla.
     await asyncio.to_thread(bitacora.anotar, bitacora.fila_de_transcripcion(update.message, texto))
     await update.message.reply_text('Te entendi: "' + texto + '"')
-    update = _UpdateQueAnota(update, chat)
+    update = _UpdateQueAnota(update, chat, por_voz=True)  # WP-V: hablo en audio
     await asyncio.to_thread(_rehidratar, chat)
 
     # 1.b. **La voz entra por el mismo sitio que el texto.** Hasta el
