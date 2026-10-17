@@ -42,7 +42,8 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
-                          ContextTypes, MessageHandler, filters)
+                          ContextTypes, MessageHandler, TypeHandler, filters)
+from telegram.request import HTTPXRequest
 from telegram.error import NetworkError, TimedOut  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -55,6 +56,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from enrutador import (  # noqa: E402
     CATEGORIAS_SEMILLA, FORMAS_DEL_MISMO, MAX_HECHOS, TIPOS_DE_HECHO, enrutar,
     es_afirmacion_explicita)
+# Cazador F0 (2026-10-17): el codigo nuevo vive en modulos nuevos; aqui solo se
+# enchufan. `bitacora` esta APAGADA hasta que `main()` la prende.
+import bitacora  # noqa: E402
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -466,7 +470,10 @@ def _con_puerta(comando):
     async def con_puerta(update, context):
         if not await _puerta_de_grupo(update, _clave_de(update)):
             return None
-        return await comando(update, context)
+        try:
+            return await comando(update, context)
+        finally:
+            await bitacora.marcar_procesado(update)
     con_puerta.con_puerta = True
     return con_puerta
 
@@ -3564,6 +3571,7 @@ async def manejar_texto(update, context):
         await _avisar_aprobaciones(update)
     finally:
         _cerrar_turno(chat, texto)
+        await bitacora.marcar_procesado(update)
 
 
 async def _manejar_texto(update, chat, texto):
@@ -3723,6 +3731,8 @@ async def manejar_voz(update, context):
     if not ok:
         await update.message.reply_text(str(texto))
         return
+    # Cazador F0 (WP-2a): la transcripcion, a la bitacora ANTES de procesarla.
+    await asyncio.to_thread(bitacora.anotar, bitacora.fila_de_transcripcion(update.message, texto))
     await update.message.reply_text('Te entendi: "' + texto + '"')
     update = _UpdateQueAnota(update, chat)
     await asyncio.to_thread(_rehidratar, chat)
@@ -3738,6 +3748,7 @@ async def manejar_voz(update, context):
         await _seguir_cola(update, chat)
     finally:
         _cerrar_turno(chat, texto)
+        await bitacora.marcar_procesado(update)
 
 
 # ===========================================================================
@@ -4087,6 +4098,7 @@ async def manejar_boton(update, context):
         await _avisar_aprobaciones(update)
     finally:
         _cerrar_turno(chat, "[toco el boton " + accion + "]")
+        await bitacora.marcar_procesado(update)
 
 
 async def _manejar_boton(update, chat, q, partes, accion):
@@ -4727,6 +4739,11 @@ async def _latir(app):
 
 async def _al_arrancar(app):
     app.create_task(_latir(app))
+    # Cazador F0 (WP-2a): vaciar la cola local, avisar si hubo apagon > 12 h, y
+    # reintentar cada minuto lo que no se pudo escribir.
+    bitacora.configurar(api=API, token=TOKEN_API, ensayo=ENSAYO)
+    await bitacora.al_arrancar(app)
+    app.create_task(bitacora.reintentar_cada_tanto())
 
 
 def _candado():
@@ -4782,7 +4799,20 @@ def main():
     log.info("arrancando bot de gastos contra %s | codigo del %s", API,
              dt.datetime.fromtimestamp(VERSION_CARGADA).strftime("%Y-%m-%d %H:%M:%S"))
 
-    app = Application.builder().token(TOKEN_TG).post_init(_al_arrancar).build()
+    # Cazador F0 (WP-2a): el bot que anota en la bitacora todo lo que dice. Los
+    # dos `HTTPXRequest` son los MISMOS defaults del builder (256 conexiones para
+    # mandar, 1 para getUpdates): pasar un bot propio no debe cambiar la red.
+    # La bitacora se ENCIENDE en `_al_arrancar` (post_init), que solo corre con
+    # el polling de verdad: una prueba que llama a main() con una app falsa la
+    # deja apagada y no escribe a ninguna API.
+    bot = bitacora.clase_bot()(
+        TOKEN_TG,
+        request=HTTPXRequest(connection_pool_size=256),
+        get_updates_request=HTTPXRequest(connection_pool_size=1))
+    app = Application.builder().bot(bot).post_init(_al_arrancar).build()
+    # Grupo -1: corre ANTES que cualquier otro handler y no corta la cadena.
+    # Todo mensaje (texto, voz, boton, edicion) queda escrito antes de procesarse.
+    app.add_handler(TypeHandler(Update, bitacora.anotar_update), group=-1)
     app.add_handler(CommandHandler("start", comando_inicio))
     app.add_handler(CommandHandler("stock", comando_stock))
     app.add_handler(CommandHandler("cartera", comando_cartera))
@@ -4800,7 +4830,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, manejar_entrada))
     app.add_error_handler(manejar_error)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # drop_pending_updates=False (el default, ahora explicito): lo que Telegram
+    # guardo mientras el bot estaba apagado se procesa al arrancar (WP-2a).
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)
 
 
 if __name__ == "__main__":

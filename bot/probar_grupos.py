@@ -952,11 +952,17 @@ class _AppFalsa(object):
     def post_init(self, *_a):
         return self
 
+    def bot(self, *_a):  # Cazador F0: main() pasa su propio bot (bitacora)
+        return self
+
     def build(self):
         return self
 
-    def add_handler(self, h):
-        self.handlers.append(h)
+    def add_handler(self, h, group=0):
+        # Cazador F0: el grupo -1 es la bitacora (TypeHandler, acepta todo);
+        # D118 pregunta por los handlers que ATIENDEN, los del grupo 0.
+        if group == 0:
+            self.handlers.append(h)
 
     def add_error_handler(self, *_a):
         pass
