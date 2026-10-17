@@ -61,6 +61,7 @@ from enrutador import (  # noqa: E402
 import bitacora  # noqa: E402
 import lote_plantilla  # noqa: E402  Cazador F0 (WP-7a)
 import voz_salida  # noqa: E402  Cazador F0 (WP-V)
+import tope  # noqa: E402  Cazador F0 (item 6)
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -3048,6 +3049,38 @@ async def _guardar_nota(update, chat, campos):
         else "Lo tengo en el registro, pero no pude etiquetarlo; queda para revisarse.")
 
 
+# ─── Cazador F0 (item 6): EL TOPE DE LA SUSCRIPCION ──────────────────────────
+# Mientras `_pausa_hasta` este en el futuro, el modelo NO se llama: se contesta
+# la hora y el mensaje se queda en la bitacora con `procesado=false`
+# (`bitacora.EN_PAUSA`). Al volver, el primer mensaje avisa cuantos quedaron.
+# En RAM: si el bot se reinicia en pausa, el primer mensaje vuelve a probar.
+_pausa = {"hasta": None, "guardados": 0}
+
+
+async def _en_pausa(update, hasta=None):
+    """True si el bot esta en pausa (o acaba de entrar): contesta y encola."""
+    if hasta is not None:
+        _pausa["hasta"] = hasta
+        log.warning("tope de la suscripcion: en pausa hasta %s", hasta)
+    h = _pausa["hasta"]
+    if h is None:
+        return False
+    if dt.datetime.now() >= h:
+        _pausa["hasta"] = None
+        if _pausa["guardados"]:
+            n, _pausa["guardados"] = _pausa["guardados"], 0
+            await update.effective_message.reply_text(
+                "Ya regrese. %d mensaje%s de la pausa quedaron guardados sin procesar; "
+                "repitemelos si siguen vigentes." % (n, "" if n == 1 else "s"))
+        return False
+    clave = bitacora.clave_de_update(update)
+    if clave:
+        bitacora.EN_PAUSA.add(clave)
+    _pausa["guardados"] += 1
+    await update.effective_message.reply_text(tope.texto_pausa(h))
+    return True
+
+
 async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     """UNA llamada al modelo decide que quiso decir Norman, y se despacha.
 
@@ -3076,6 +3109,8 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     # la plantilla, `atender` devuelve False y sigue el camino de siempre.
     if not esperando and await lote_plantilla.atender(update, chat, texto, _proponer_lote, _peticion_de_lote):
         return
+    if await _en_pausa(update):
+        return
     a_medias = _tomar_borrador_a_medias(chat)
     productos = await asyncio.to_thread(_catalogo_de_productos, chat)
     # D73 (Fase 8): el historial corto del chat viaja marcado como pasado.
@@ -3086,6 +3121,9 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
         _nombres_deudores(), productos, _en_pantalla(chat, esperando),
         historial_para_el_modelo(chat), **extra)
 
+    if not ok and isinstance(ruta, tope.Tope):
+        await _en_pausa(update, ruta.hasta)
+        return
     if not ok:
         log.warning("el enrutador fallo: %s", ruta)
         await update.effective_message.reply_text(

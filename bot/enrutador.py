@@ -32,6 +32,8 @@ import subprocess
 import sys
 import unicodedata
 
+import tope  # Cazador F0 (item 6): el limite de la suscripcion
+
 TIMEOUT = 90
 
 # Las intenciones que el bot sabe atender. "charla" es el cajon honesto: un
@@ -853,11 +855,16 @@ def enrutar(texto, borrador=None, catalogo=None, deudores=None,
     except Exception as e:
         return False, "no pude llamar al modelo: " + str(e)
 
-    if salida.returncode != 0:
-        return False, "el modelo devolvio error: " + (salida.stderr or "")[-200:]
-
     crudo = (salida.stdout or "").strip()
     ini, fin = crudo.find("{"), crudo.rfind("}")
+    # Cazador F0 (item 6): el tope de la suscripcion no es "se cayo el modelo".
+    # Solo se busca cuando NO hubo objeto: un JSON bueno que diga "limit" no es tope.
+    if salida.returncode != 0 or ini == -1 or fin == -1:
+        t = tope.detectar(salida.stdout, salida.stderr)
+        if t is not None:
+            return False, t
+    if salida.returncode != 0:
+        return False, "el modelo devolvio error: " + (salida.stderr or "")[-200:]
     if ini == -1 or fin == -1:
         return False, "el modelo no devolvio un objeto"
     try:
