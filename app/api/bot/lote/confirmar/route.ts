@@ -254,7 +254,10 @@ export async function POST(request: Request) {
         fecha_fin_fermentacion: lote.fecha_fin_fermentacion,
         horas_fermentacion: lote.horas_fermentacion,
         notas: lote.notas || null,
-        usuario_creador: lote.usuario_creador
+        usuario_creador: lote.usuario_creador,
+        // Lote v2: el Brix, solo si se dicto (columnas de la migracion 20261019150000).
+        ...(lote.brix_chile !== undefined ? { brix_chile: lote.brix_chile } : {}),
+        ...(lote.brix_final !== undefined ? { brix_final: lote.brix_final } : {})
       })
       .select('id')
       .single()
