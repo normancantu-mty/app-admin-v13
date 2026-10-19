@@ -158,12 +158,19 @@ temperatura:
   fuente: 'open-meteo exterior'
   url: 'https://api.open-meteo.com/v1/forecast'
   timeout_segundos: 20
+  # Ronda 2: la temperatura DICTADA del cuarto -> fuente 'manual'. Grupo `t`.
+  # Exigen la palabra del cuarto/temperatura: "a 24 grados" suelto NO casa
+  # (puede ser alcohol; en la plantilla va a notas, regla grados_ambiguos).
+  manual_patrones:
+    - '\b(?:cuarto|ambiente|temperatura|termometro)\b[^0-9]{0,30}?(?P<t>-?\d+(?:[.,]\d+)?)\s*(?:grados?|c)\b'
+    - '(?P<t>-?\d+(?:[.,]\d+)?)\s*grados?\s+(?:en\s+el\s+|de\s+)?(?:cuarto|ambiente)\b'
 
 ciclo:
   aditivo_2_dia: 3          # D+3 despues de la produccion: recordar el aditivo 2
   reposo_dias: 3            # dias despues del aditivo 2: "ya toca destilar"
   muestra_horas: 24         # sin "Ya la guarde" en este tiempo: UN segundo aviso y ya
   hora_recordatorios: 8     # no se recuerda antes de esta hora local
+  intentos_recordatorio: 3  # reclamos de un recordatorio que no salio a nadie (ronda 2)
   ventana_dias: 45          # lotes mas viejos que esto ya no se revisan
 
 # Rangos que AVISAN (no bloquean) en las etapas.
@@ -174,10 +181,15 @@ etapas:
   aditivo_2:
     disparadores:
       - '^\W*(registra\w*\s+|ya\s+|hoy\s+)?(el\s+)?aditivo\s*(2|dos)\b'
+    # En cualquier parte del mensaje, SOLO si el mismo mensaje trae un codigo L-.
+    disparadores_con_codigo:
+      - '\baditivo\s*(2|dos)\b'
     rango_kg: [0.01, 200]
   destilacion:
     disparadores:
       - '^\W*(registra\w*\s+(la\s+)?|ya\s+|hoy\s+)?destil(amos|e|o|ando|acion)\b'
+    disparadores_con_codigo:
+      - '\bdestil(amos|e|o|ando|acion|aron|aste)\b'
     rango_peso_kg: [0.1, 60]
     rango_alcohol: [0, 80]
     tope_garrafas: 50

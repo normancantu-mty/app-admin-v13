@@ -91,6 +91,9 @@ class PostDoble(object):
         self.llamadas.append((ruta, cuerpo))
         if ruta == "/api/bot/catalogo":
             return 200, {"ok": True, "productos": []}
+        if ruta == "/api/bot/lote/ciclo" and cuerpo.get("accion") == "temperatura":
+            self.temperaturas = getattr(self, "temperaturas", 0) + 1
+            return 200, {"ok": True}
         if ruta == "/api/bot/lote/ciclo" and cuerpo.get("accion") == "leer":
             return 200, {"ok": True, "lotes": [], "admins": [], "temperaturas": [], "codigos": list(self.codigos)}
         if ruta == PROPONER:
@@ -215,6 +218,21 @@ caso("1. ... el tipo de chile a notas", "guajillo" in ((pet.get("propuesta") or 
 caso("1. ... y se confirma sin pedir otro VA", doble.confirmados, 1)
 caso("1. ... y lo dice", dichos[-1].startswith("Listo. Quedo el lote"), True)
 caso("1. ... la sesion se cerro", P.activa(CHAT), False)
+
+# --- 1b. RONDA 2: el aviso de guajillo y "a 24 grados" a notas (recuperada) --
+caso("1b. guajillo: SIN el aviso de catalogo", any("unico en catalogo" in d for d in dichos), False)
+dichos, doble, modelo = conversar(["empecemos", "40 kilos de chile jalapeno, brix chile 12, 3 kilos de aditivo, brix final 18",
+                                   "lo dejamos a 24 grados"])
+caso("1b. jalapeno: el resumen dice que los kilos se cargan a chile-guajillo",
+     "los kilos se cargan a chile-guajillo (unico en catalogo)" in dichos[-1], True)
+caso("1b. 'a 24 grados' NO se adivina: a notas, visible en el resumen",
+     "24 grados (no dijeron si es temperatura o alcohol)" in dichos[-1], True)
+caso("1b. ... y NO se guarda como temperatura del cuarto", getattr(doble, "temperaturas", 0), 0)
+boton("ltok", doble, dichos)
+pet = (doble.lotes() or [{}])[-1]
+caso("1b. ... y viaja en las notas del lote", "24 grados" in (pet.get("propuesta", {}).get("notas") or ""), True)
+caso("1b. ... los kilos van a chile-guajillo", [i.get("insumo") for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))],
+     ["chile-guajillo"])
 
 # ─── 2. numeradas en un mensaje; "confirmar" dicho ──────────────────────────
 dichos, doble, modelo = conversar(["dame la plantilla del lote", "1. 35 jalapeno 2. 11.5 3. 2.5 4. 17", "confirmar"])

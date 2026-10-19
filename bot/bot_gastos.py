@@ -2370,6 +2370,23 @@ def _peticion_de_lote(campos):
     return {"insumos": insumos, "envasado": envasado, "propuesta": propuesta}
 
 
+def _lote_es_de_otro_camino(campos):
+    """Lote v2, ronda 2 (H1). True si lo que leyo el modelo NO es abrir un lote
+    nuevo: trae `codigo_lote` dictado ("agregale 5 kilos de ing-az al lote
+    L-12-10.1") o algun insumo que no es de la plantilla (chile o aditivo 1).
+    Entonces va al camino F0/D81 de `_proponer_lote`, que agrega al existente."""
+    if campos.get("codigo_lote") not in (None, ""):
+        return True
+    propios = (str(lote_plantilla.plantilla().get("aditivo_1_sku") or "ing-az").lower(),)
+    for c in (campos.get("insumos") or []):
+        if not isinstance(c, dict):
+            continue
+        nombre = str(c.get("insumo") or c.get("nombre") or "").strip().lower()
+        if nombre and "chile" not in nombre and nombre not in propios:
+            return True
+    return False
+
+
 async def _proponer_lote(update, chat, peticion, auto=False):
     """Manda la peticion a `/api/bot/lote/proponer` y ensena lo que salga.
 
@@ -3169,7 +3186,7 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     # Cazador F0 (WP-7a): "hoy empezamos lote" y las respuestas a la plantilla
     # se leen SIN modelo (`bot/plantillas/lote.yaml`). Si el mensaje no es de
     # la plantilla, `atender` devuelve False y sigue el camino de siempre.
-    if not esperando and await lote_ciclo.atender(update, chat, texto, _confirmar_etapa_lote):
+    if not esperando and await lote_ciclo.atender(update, chat, texto, _confirmar_etapa_lote, post=_post):
         return
     if not esperando and await lote_plantilla.atender(update, chat, texto, _proponer_lote, _peticion_de_lote,
                                                       codigo_nuevo=_codigo_nuevo_lote,
@@ -3579,10 +3596,14 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
         peticion = _peticion_de_lote(campos)
         if notas_plantilla:
             peticion["propuesta"]["notas"] = notas_plantilla
-        if not peticion["propuesta"]["tandas"] and not peticion["envasado"]:
-            # Lote v2: abrir un lote (produccion) pasa SIEMPRE por la plantilla:
-            # lo que el modelo leyo la llena, se pregunta lo que falte y sale el
+        if (viva or not _lote_es_de_otro_camino(campos)) \
+                and not peticion["propuesta"]["tandas"] and not peticion["envasado"]:
+            # Lote v2: ABRIR un lote (produccion) pasa por la plantilla: lo que
+            # el modelo leyo la llena, se pregunta lo que falte y sale el
             # resumen con la fecha y Confirmar / Corregir. Nada se propone antes.
+            # Ronda 2 (H1): con codigo de lote dictado o con insumos que no son
+            # los de la plantilla, NO es un lote nuevo: va al camino F0/D81
+            # (`_proponer_lote`: agregar a un lote existente), como en 24d1cbd.
             _recordar_a_medias(chat, "lote", campos)
             de_plantilla = {k: v for k, v in campos.items()
                             if k in lote_plantilla.NOMBRES_DE_CAMPO and v not in (None, "", [], {})}

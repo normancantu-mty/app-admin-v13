@@ -58,6 +58,7 @@ def _ciclo():
     c.setdefault("muestra_horas", 24)
     c.setdefault("hora_recordatorios", 8)
     c.setdefault("ventana_dias", 45)
+    c.setdefault("intentos_recordatorio", 3)
     return c
 
 
@@ -127,6 +128,26 @@ def _recordatorio(lote, tipo):
     return None
 
 
+def _cerrado(lote, tipo, tope):
+    """El recordatorio ya no toca: salio a alguien (`entregado_en`) o se agoto
+    el tope de reclamos. Una fila sin `entregado_en` en la respuesta (ruta
+    vieja) cuenta como entregada: no se adivina un reintento."""
+    r = _recordatorio(lote, tipo)
+    if r is None:
+        return False
+    if "entregado_en" not in r or r.get("entregado_en"):
+        return True
+    return int(r.get("intentos") or 1) >= int(tope)
+
+
+def _reintento(lote, tipo):
+    """{'intentos': n} si hay un reclamo sin entregar (para el compare-and-swap)."""
+    r = _recordatorio(lote, tipo)
+    if r is None:
+        return {}
+    return {"intentos": int(r.get("intentos") or 1)}
+
+
 def recordatorios_debidos(lotes, ahora, ciclo=None):
     """Que recordatorios tocan YA. **Pura**: `ahora` se inyecta.
 
@@ -137,9 +158,13 @@ def recordatorios_debidos(lotes, ahora, ciclo=None):
       - muestra:   hay destilacion y nadie dijo "Ya la guarde" (normalmente se
                    reclama al confirmar la destilacion; esto es la red).
       - muestra_2: muestra_horas despues del primero, sin "Ya la guarde". UNA vez.
-    Ninguno antes de `hora_recordatorios` (hora local), salvo la muestra.
+    Ninguno antes de `hora_recordatorios` (hora local), salvo la primera
+    muestra (red de la que sale al confirmar la destilacion). Ronda 2: el
+    muestra_2 tambien espera la hora. Un reclamo que no salio a nadie vuelve a
+    tocar hasta `intentos_recordatorio` (extra['intentos'] = el n del reclamo).
     """
     c = ciclo or _ciclo()
+    tope = int(c.get("intentos_recordatorio") or 3)
     local = ahora_local(ahora)
     hoy = local.date()
     temprano = local.hour < int(c["hora_recordatorios"])
@@ -149,20 +174,20 @@ def recordatorios_debidos(lotes, ahora, ciclo=None):
             continue
         inicio = _fecha(lote["fecha_inicio"])
         ad2, des, mue = _etapa(lote, "aditivo_2"), _etapa(lote, "destilacion"), _etapa(lote, "muestra")
-        if (not temprano and ad2 is None and des is None and not _recordatorio(lote, "aditivo_2")
+        if (not temprano and ad2 is None and des is None and not _cerrado(lote, "aditivo_2", tope)
                 and (hoy - inicio).days >= int(c["aditivo_2_dia"])):
-            salida.append((lote, "aditivo_2", {"dia": (hoy - inicio).days}))
-        if (not temprano and ad2 is not None and des is None and not _recordatorio(lote, "destilar")
+            salida.append((lote, "aditivo_2", dict(_reintento(lote, "aditivo_2"), dia=(hoy - inicio).days)))
+        if (not temprano and ad2 is not None and des is None and not _cerrado(lote, "destilar", tope)
                 and ad2.get("fecha") and (hoy - _fecha(ad2["fecha"])).days >= int(c["reposo_dias"])):
-            salida.append((lote, "destilar", {"dias": (hoy - _fecha(ad2["fecha"])).days}))
+            salida.append((lote, "destilar", dict(_reintento(lote, "destilar"), dias=(hoy - _fecha(ad2["fecha"])).days)))
         if des is not None and mue is None:
             primero = _recordatorio(lote, "muestra")
-            if not primero:
-                salida.append((lote, "muestra", {}))
-            elif not _recordatorio(lote, "muestra_2"):
+            if not _cerrado(lote, "muestra", tope):
+                salida.append((lote, "muestra", _reintento(lote, "muestra")))
+            elif primero and not temprano and not _cerrado(lote, "muestra_2", tope):
                 enviado = _instante(primero.get("enviado_en"))
                 if enviado and (ahora_local(ahora) - enviado) >= dt.timedelta(hours=float(c["muestra_horas"])):
-                    salida.append((lote, "muestra_2", {}))
+                    salida.append((lote, "muestra_2", _reintento(lote, "muestra_2")))
     return salida
 
 
@@ -299,9 +324,23 @@ def completar_temperatura(post, lotes, existentes, hoy, abrir=None):
 
 # ── el latido ───────────────────────────────────────────────────────────────
 
-def reclamar(post, id_lote, tipo):
-    estado, r = post(RUTA_CICLO, {"accion": "reclamar", "id_lote": id_lote, "tipo": tipo})
+def reclamar(post, id_lote, tipo, intentos=None):
+    """Sin `intentos`: el primer reclamo (INSERT ON CONFLICT DO NOTHING). Con
+    `intentos`: el reintento de uno que no salio (compare-and-swap)."""
+    if intentos:
+        cuerpo = {"accion": "reintentar", "id_lote": id_lote, "tipo": tipo, "intentos": int(intentos)}
+    else:
+        cuerpo = {"accion": "reclamar", "id_lote": id_lote, "tipo": tipo}
+    estado, r = post(RUTA_CICLO, cuerpo)
     return estado == 200 and isinstance(r, dict) and r.get("reclamado") is True
+
+
+def entregado(post, id_lote, tipo):
+    estado, r = post(RUTA_CICLO, {"accion": "entregado", "id_lote": id_lote, "tipo": tipo})
+    if not (estado == 200 and isinstance(r, dict) and r.get("ok")):
+        log.warning("ciclo: no pude marcar entregado %s del lote %s (%s)", tipo, id_lote, estado)
+        return False
+    return True
 
 
 async def tick(bot, post, ahora=None, abrir=None):
@@ -318,17 +357,30 @@ async def tick(bot, post, ahora=None, abrir=None):
     local = ahora_local(ahora)
     hecho["temperatura"] = await asyncio.to_thread(
         completar_temperatura, post, lotes, r.get("temperaturas") or [], local.date(), abrir)
+    tope = int(_ciclo().get("intentos_recordatorio") or 3)
+    hecho["sin_entregar"] = []
     for lote, tipo, extra in recordatorios_debidos(lotes, ahora):
-        if not await asyncio.to_thread(reclamar, post, lote["id"], tipo):
-            continue  # otro latido (u otro proceso) ya lo mando
+        if not await asyncio.to_thread(reclamar, post, lote["id"], tipo, extra.get("intentos")):
+            continue  # otro latido (u otro proceso) ya lo mando o lo reintenta
         texto = mensaje_de(lote, tipo, extra)
         etiqueta, data = boton_de(lote, tipo)
+        salio = 0
         for tid in destinatarios(lote, admins, tipo):
             try:
                 await bot.send_message(int(tid), texto, reply_markup=_teclado(etiqueta, data))
                 hecho["enviados"].append((lote.get("codigo_lote"), tipo, int(tid)))
+                salio += 1
             except Exception as e:
                 log.warning("ciclo: no pude mandar %s del lote %s a %s: %s", tipo, lote.get("codigo_lote"), tid, e)
+        if salio:
+            await asyncio.to_thread(entregado, post, lote["id"], tipo)
+        else:
+            # Ronda 2: reclamado pero no salio a nadie. Queda entregado_en NULL
+            # en la base y el siguiente latido lo reintenta, hasta el tope.
+            n = int(extra.get("intentos") or 0) + 1
+            hecho["sin_entregar"].append((lote.get("codigo_lote"), tipo, n))
+            log.warning("ciclo: %s del lote %s no salio a nadie (intento %d de %d)%s", tipo,
+                        lote.get("codigo_lote"), n, tope, "; se reintenta en el siguiente latido" if n < tope else "; NO se reintenta mas")
     if hecho["enviados"]:
         log.info("ciclo: recordatorios enviados: %s", hecho["enviados"])
     return hecho
@@ -456,19 +508,84 @@ async def _ensenar(update, s):
 def _disparo(texto):
     """'aditivo 2 del lote L-19-10.1' / 'destilamos el L-19-10.1' -> (etapa, codigo|None)."""
     t = _plano(texto)
+    m = _CODIGO.search(t)
+    cod = m.group(1).upper() if m else None
+    if cod and not cod.startswith("L-"):
+        cod = "L-" + cod[1:]
     for etapa in ("aditivo_2", "destilacion"):
-        for patron in ((cfg().get("etapas") or {}).get(etapa) or {}).get("disparadores") or []:
+        e = (cfg().get("etapas") or {}).get(etapa) or {}
+        for patron in e.get("disparadores") or []:
             if re.search(patron, t):
-                m = _CODIGO.search(t)
-                cod = m.group(1).upper() if m else None
-                if cod and not cod.startswith("L-"):
-                    cod = "L-" + cod[1:]
                 return etapa, cod
+        # Ronda 2 (H1): en CUALQUIER parte del mensaje, pero solo con un
+        # codigo L- en el mismo mensaje ("le pusimos 4 kilos de aditivo 2 al
+        # L-12-10.1"). Sin codigo no: "aditivo 2" suelto puede ser otra cosa.
+        if cod:
+            for patron in e.get("disparadores_con_codigo") or []:
+                if re.search(patron, t):
+                    return etapa, cod
     return None, None
 
 
-async def atender(update, chat, texto, confirmar=None):
-    """El texto de una etapa en captura. True si lo atendio."""
+def leer_temperatura_manual(texto):
+    """'en el cuarto hay 22 grados' -> 22.0. **Pura.** Solo con la palabra del
+    cuarto/temperatura (YAML `temperatura.manual_patrones`, grupo `t`): "a 24
+    grados" suelto NO es temperatura (puede ser alcohol; va a notas en la
+    plantilla)."""
+    t = _plano(texto)
+    for patron in (cfg().get("temperatura") or {}).get("manual_patrones") or []:
+        m = re.search(patron, t)
+        if m:
+            return _num(m.group("t"))
+    return None
+
+
+def combinar_manual(existente, lectura, fecha):
+    """El dia 'manual' con una lectura mas: min y max de todas las lecturas;
+    t_prom = punto medio (min+max)/2, porque la tabla no guarda cuantas
+    lecturas hubo. **Pura.**"""
+    lo, hi = float(lectura), float(lectura)
+    if existente:
+        lo = min(lo, float(existente["t_min"]))
+        hi = max(hi, float(existente["t_max"]))
+    return {"fecha": fecha, "fuente": "manual", "t_min": lo, "t_max": hi, "t_prom": round((lo + hi) / 2.0, 2),
+            "latitud": None, "longitud": None}
+
+
+async def temperatura_manual(update, post, texto, ahora=None):
+    """Lote v2, ronda 2: la temperatura DICTADA del cuarto, fuente='manual'.
+    Solo si hay un lote en fermentacion (sin destilacion). True si lo atendio."""
+    lectura = leer_temperatura_manual(texto)
+    if lectura is None or post is None:
+        return False
+    decir = update.effective_message.reply_text
+    estado, r = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "leer", "ventana_dias": _ciclo()["ventana_dias"]})
+    if estado != 200 or not (isinstance(r, dict) and r.get("ok")):
+        await decir("No pude leer los lotes; la temperatura NO quedo guardada. Dimela otra vez en un rato.")
+        return True
+    fermentando = [l for l in (r.get("lotes") or []) if _etapa(l, "destilacion") is None]
+    if not fermentando:
+        await decir("No hay ningun lote en fermentacion; no guardo la temperatura.")
+        return True
+    hoy = ahora_local(ahora).date().isoformat()
+    previo = next((d for d in (r.get("temperaturas") or [])
+                   if d.get("fuente") == "manual" and str(d.get("fecha")) == hoy), None)
+    dia = combinar_manual(previo, lectura, hoy)
+    estado, r2 = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "temperatura", "dias": [dia]})
+    if estado != 200 or not (isinstance(r2, dict) and r2.get("ok")):
+        await decir((r2 or {}).get("error") or "No pude guardar la temperatura.")
+        return True
+    codigos = ", ".join(str(l.get("codigo_lote")) for l in fermentando[:5])
+    await decir("Anotado: %s C en el cuarto, hoy %s (fuente manual). Hoy va: min %s, max %s. Lote(s) en fermentacion: %s."
+                % (lectura, lote_plantilla.fecha_para_persona(ahora_local(ahora).date()), dia["t_min"], dia["t_max"], codigos))
+    return True
+
+
+async def atender(update, chat, texto, confirmar=None, post=None):
+    """El texto de una etapa en captura. True si lo atendio. Con `post` (la del
+    bot), primero la temperatura dictada del cuarto (ronda 2)."""
+    if await temperatura_manual(update, post, texto):
+        return True
     s = sesion(chat)
     t = _plano(texto)
     if s is None:
@@ -579,6 +696,7 @@ async def pedir_muestra(update, post, id_lote, codigo):
     lote = {"id": id_lote, "codigo_lote": codigo}
     etiqueta, data = boton_de(lote, "muestra")
     await update.effective_message.reply_text(mensaje_de(lote, "muestra", {}), reply_markup=_teclado(etiqueta, data))
+    await asyncio.to_thread(entregado, post, id_lote, "muestra")
     return True
 
 

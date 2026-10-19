@@ -78,6 +78,7 @@ class Ciclo(object):
         self.lotes = {}         # id -> lote
         self.etapas = {}        # (id, etapa) -> fila
         self.recordatorios = {}  # (id, tipo) -> enviado_en (iso)
+        self.estado = {}         # (id, tipo) -> {intentos, entregado_en}; sin fila = sembrado y entregado
         self.temperaturas = []
         self.ahora = dt.datetime(2026, 10, 19, 15, 0, tzinfo=UTC)
         self.llamadas = []
@@ -95,7 +96,9 @@ class Ciclo(object):
             lotes = []
             for lid, l in self.lotes.items():
                 lotes.append(dict(l, etapas=[dict(v, etapa=k[1]) for k, v in self.etapas.items() if k[0] == lid],
-                                  recordatorios=[{"id_lote": lid, "tipo": k[1], "enviado_en": v}
+                                  recordatorios=[{"id_lote": lid, "tipo": k[1], "enviado_en": v,
+                                                  "intentos": self.estado.get(k, {}).get("intentos", 1),
+                                                  "entregado_en": self.estado.get(k, {}).get("entregado_en", v)}
                                                  for k, v in self.recordatorios.items() if k[0] == lid]))
             return 200, {"ok": True, "lotes": lotes, "admins": [111, 555], "temperaturas": list(self.temperaturas),
                          "codigos": [l["codigo_lote"] for l in self.lotes.values()]}
@@ -104,7 +107,20 @@ class Ciclo(object):
             if k in self.recordatorios:
                 return 200, {"ok": True, "reclamado": False}
             self.recordatorios[k] = self.ahora.isoformat()
+            self.estado[k] = {"intentos": 1, "entregado_en": None}
             return 200, {"ok": True, "reclamado": True}
+        if ruta == C.RUTA_CICLO and a == "reintentar":
+            # UPDATE ... SET intentos = n+1 WHERE intentos = n AND entregado_en IS NULL
+            k = (cuerpo["id_lote"], cuerpo["tipo"])
+            e = self.estado.get(k)
+            if not e or e["entregado_en"] or e["intentos"] != cuerpo["intentos"]:
+                return 200, {"ok": True, "reclamado": False}
+            e["intentos"] += 1
+            return 200, {"ok": True, "reclamado": True}
+        if ruta == C.RUTA_CICLO and a == "entregado":
+            e = self.estado.setdefault((cuerpo["id_lote"], cuerpo["tipo"]), {"intentos": 1, "entregado_en": None})
+            e["entregado_en"] = e["entregado_en"] or self.ahora.isoformat()
+            return 200, {"ok": True}
         if ruta == C.RUTA_CICLO and a == "temperatura":
             self.temperaturas += cuerpo["dias"]
             return 200, {"ok": True}
@@ -130,14 +146,22 @@ class Ciclo(object):
             self.etapas[(b["id_lote"], b["etapa"])] = {"fecha": self.ahora.date().isoformat(), "telegram_id": b["telegram_id"]}
             return 200, {"ok": True, "etapa": b["etapa"], "id_lote": b["id_lote"], "codigo_lote": b["codigo_lote"],
                          "mensaje": "Listo. Quedo la etapa %s del lote %s." % (b["etapa"], b["codigo_lote"])}
+        if ruta == "/api/bot/lote/proponer":
+            # El camino F0/D81 (agregar a un lote existente): propuesta con VA.
+            return 200, {"ok": True, "borrador_id": "d81-1", "sello": "t" * 64,
+                         "codigo_lote": (cuerpo.get("propuesta") or {}).get("codigo_lote"),
+                         "mensaje": "Agrego al lote %s." % (cuerpo.get("propuesta") or {}).get("codigo_lote")}
         return 200, {"ok": True}
 
 
 class BotTg(object):
-    def __init__(self):
+    def __init__(self, fallan=()):
         self.enviados = []
+        self.fallan = set(fallan)   # chat_ids a los que Telegram no entrega
 
     async def send_message(self, chat_id, texto, reply_markup=None, **k):
+        if chat_id in self.fallan or "todos" in self.fallan:
+            raise RuntimeError("Telegram no entrego (inyectado)")
         datos = [b.callback_data for fila in (reply_markup.inline_keyboard if reply_markup else ()) for b in fila]
         self.enviados.append((chat_id, texto, datos))
 
@@ -376,6 +400,163 @@ caso("6. 'confirmar' dicho: propone y confirma", (rutas().count(C.RUTA_ETAPA_PRO
 u = Update(CHAT)
 texto(u, "destilamos hoy")
 caso("6. sin codigo: pregunta de cual lote", "De cual lote?" in u.message.dichos[-1], True)
+
+# --- 7. RONDA 2 (H1): NO-REGRESION del camino F0/D81 y frases naturales ------
+# El auditor: "le pusimos 4 kilos de aditivo 2 al L-12-10.1" y "agregale 5
+# kilos de ing-az al lote L-12-10.1" abrian la plantilla de lote NUEVO.
+base.etapas.pop(("lote-a", "aditivo_2"), None)
+B._olvidar_chat(CHAT)
+P.olvidar(CHAT)
+C.olvidar(CHAT)
+u = Update(CHAT)
+texto(u, "le pusimos 4 kilos de aditivo 2 al L-12-10.1")
+caso("7. 'le pusimos 4 kilos de aditivo 2 al L-12-10.1' (sin modelo): resumen de la etapa del L-12-10.1",
+     ("LOTE L-12-10.1 - ADITIVO 2" in u.message.dichos[-1], "Kilos de aditivo 2: 4" in u.message.dichos[-1]),
+     (True, True))
+caso("7. ... NO abre la plantilla de lote nuevo", any("Me falta" in d for d in u.message.dichos), False)
+C.olvidar(CHAT)
+u = Update(CHAT)
+texto(u, "oye, ya destilamos el L-12-10.1: 2 garrafas, 18 kg 50% y 10 kg 30%")
+caso("7. frase natural de destilacion con codigo en medio: resumen con 2 garrafas",
+     ("DESTILACION" in u.message.dichos[-1], "Garrafa 2: 10.0 kg a 30.0%" in u.message.dichos[-1]), (True, True))
+C.olvidar(CHAT)
+caso("7. CONTROL 'aditivo 2' en medio SIN codigo no dispara la etapa", C._disparo("cuanto aditivo 2 queda en bodega"),
+     (None, None))
+
+MODELO = []
+
+
+def modelo_dice(campos):
+    def enrutar(*a, **k):
+        MODELO.append(a[0])
+        return True, {"intencion": "lote", "confianza": "alta", "campos": dict(campos), "entendido": "lote"}
+    return enrutar
+
+
+B.enrutar = modelo_dice({"codigo_lote": "L-12-10.1", "insumos": [{"insumo": "ing-az", "cantidad": 5}]})
+n = len(base.llamadas)
+u = Update(CHAT)
+texto(u, "agregale 5 kilos de ing-az al lote L-12-10.1")
+props = [c for r, c in base.llamadas[n:] if r == "/api/bot/lote/proponer"]
+caso("7. 'agregale 5 kilos de ing-az al lote L-12-10.1' pasa por el modelo", MODELO[-1:],
+     ["agregale 5 kilos de ing-az al lote L-12-10.1"])
+caso("7. ... y va al camino D81: /lote/proponer con el codigo y el insumo",
+     [(c["propuesta"].get("codigo_lote"), c["insumos"]) for c in props],
+     [("L-12-10.1", [{"insumo": "ing-az", "cantidad": 5}])])
+caso("7. ... con el VA del lote", u.message.teclados[-1][:1] != [], True)
+caso("7. ... NO la plantilla de lote nuevo", any("Me falta" in d for d in u.message.dichos), False)
+B._olvidar_chat(CHAT)
+
+# El modelo leyo la frase del aditivo 2 (si el regex no la hubiera tomado):
+# insumo ajeno a la plantilla y codigo -> tambien D81.
+B.enrutar = modelo_dice({"codigo_lote": "L-12-10.1", "insumos": [{"insumo": "aditivo 2", "cantidad": 4}]})
+n = len(base.llamadas)
+u = Update(CHAT)
+asyncio.run(B._despachar_hecho(u, CHAT, {"intencion": "lote", "campos": {
+    "codigo_lote": "L-12-10.1", "insumos": [{"insumo": "aditivo 2", "cantidad": 4}]}}))
+caso("7. por el modelo, 'aditivo 2' + codigo -> D81 (no plantilla)",
+     ([r for r, _c in base.llamadas[n:]].count("/api/bot/lote/proponer"), any("Me falta" in d for d in u.message.dichos)),
+     (1, False))
+B._olvidar_chat(CHAT)
+# Insumo ajeno SIN codigo: tambien F0 (como 24d1cbd: lo resuelve el servidor).
+n = len(base.llamadas)
+u = Update(CHAT)
+asyncio.run(B._despachar_hecho(u, CHAT, {"intencion": "lote", "campos": {
+    "insumos": [{"insumo": "levadura", "cantidad": 1}]}}))
+caso("7. insumo ajeno sin codigo -> F0 (/lote/proponer)",
+     [r for r, _c in base.llamadas[n:]].count("/api/bot/lote/proponer"), 1)
+B._olvidar_chat(CHAT)
+# CONTROL: abrir un lote nuevo (solo chile) SIGUE yendo a la plantilla.
+n = len(base.llamadas)
+u = Update(CHAT)
+asyncio.run(B._despachar_hecho(u, CHAT, {"intencion": "lote", "campos": {"kg_chile": 80}}))
+caso("7. CONTROL solo kg_chile -> la plantilla (pregunta lo que falta, sin proponer)",
+     ([r for r, _c in base.llamadas[n:]].count("/api/bot/lote/proponer"), any("Me falta" in d for d in u.message.dichos)),
+     (0, True))
+caso("7. CONTROL chile + aditivo 1 (ing-az) sin codigo -> la plantilla",
+     B._lote_es_de_otro_camino({"insumos": [{"insumo": "chile-guajillo", "cantidad": 80},
+                                            {"insumo": "ing-az", "cantidad": 2}]}), False)
+P.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+
+# --- 8. RONDA 2: a lo mas una vez, pero ENTREGADO (reintento con tope) -------
+caso("8. el tope sale del YAML", C._ciclo()["intentos_recordatorio"], 3)
+base8 = Ciclo()
+base8.nuevo_lote("lote-r", "L-12-10.3", "2026-10-12", abrio=555)
+h = latir(base8, BotTg(fallan=["todos"]), local(2026, 10, 15, 9))
+caso("8. fallan TODOS los envios: nada salio", (h["enviados"], h["sin_entregar"]), ([], [("L-12-10.3", "aditivo_2", 1)]))
+caso("8. ... en la base queda reclamado SIN entregar", dict(base8.estado[("lote-r", "aditivo_2")]), {"intentos": 1, "entregado_en": None})
+reiniciar()
+bot8 = BotTg()
+h = latir(base8, bot8, local(2026, 10, 15, 9, 15))
+caso("8. siguiente latido (y tras REINICIO): se reintenta y sale", tipos(h), ["aditivo_2"])
+caso("8. ... por el compare-and-swap (reintentar con intentos=1)",
+     [c.get("intentos") for r, c in base8.llamadas if c.get("accion") == "reintentar"], [1])
+caso("8. ... y queda entregado", (base8.estado[("lote-r", "aditivo_2")]["intentos"],
+                                  bool(base8.estado[("lote-r", "aditivo_2")]["entregado_en"])), (2, True))
+caso("8. otro latido: nada (ya entregado)", tipos(latir(base8, bot8, local(2026, 10, 15, 9, 30))), [])
+# el tope: Telegram nunca entrega
+base8b = Ciclo()
+base8b.nuevo_lote("lote-t", "L-12-10.4", "2026-10-12")
+caido = BotTg(fallan=["todos"])
+intentos = []
+for i in range(5):
+    intentos.append([n for _c, _t, n in latir(base8b, caido, local(2026, 10, 15, 9 + i, 0))["sin_entregar"]])
+caso("8. TOPE: intenta 1, 2, 3 y despues ya no", intentos, [[1], [2], [3], [], []])
+# entrega parcial: uno falla, otro recibe -> entregado, sin reintento
+base8c = Ciclo()
+base8c.nuevo_lote("lote-p", "L-12-10.5", "2026-10-12", abrio=555)
+h = latir(base8c, BotTg(fallan=[111]), local(2026, 10, 15, 9))
+caso("8. parcial (111 falla, 555 recibe): entregado, sin reintento",
+     ([c for _l, _t, c in h["enviados"]], h["sin_entregar"], bool(base8c.estado[("lote-p", "aditivo_2")]["entregado_en"])),
+     ([555], [], True))
+caso("8. ... el siguiente latido no lo repite", tipos(latir(base8c, BotTg(), local(2026, 10, 15, 9, 15))), [])
+caso("8. CONTROL: dos latidos con el mismo intentos -> gana UNO",
+     (C.reclamar(base8b, "lote-t", "aditivo_2", 3), C.reclamar(base8b, "lote-t", "aditivo_2", 3)), (True, False))
+
+# --- 9. RONDA 2: muestra_2 respeta hora_recordatorios ------------------------
+base9 = Ciclo()
+base9.nuevo_lote("lote-m", "L-13-10.2", "2026-10-13")
+base9.etapas[("lote-m", "destilacion")] = {"fecha": "2026-10-19", "telegram_id": 777}
+base9.recordatorios[("lote-m", "muestra")] = local(2026, 10, 19, 2).isoformat()   # destilaron de madrugada
+caso("9. muestra_2 a las 3 de la manana (25 h despues): NO", tipos(latir(base9, BotTg(), local(2026, 10, 20, 3))), [])
+caso("9. ... a las 7: NO (antes de la hora del YAML)", tipos(latir(base9, BotTg(), local(2026, 10, 20, 7, 59))), [])
+caso("9. ... a las 8: SI", tipos(latir(base9, BotTg(), local(2026, 10, 20, 8))), ["muestra_2"])
+
+# --- 10. RONDA 2: la temperatura DICTADA del cuarto (fuente manual) ----------
+caso("10. 'en el cuarto hay 22 grados' -> 22", C.leer_temperatura_manual("en el cuarto hay 22 grados"), 22)
+caso("10. '19.5 grados en el cuarto' -> 19.5", C.leer_temperatura_manual("ahorita 19.5 grados en el cuarto"), 19.5)
+caso("10. 'la temperatura esta en 21 C' -> 21", C.leer_temperatura_manual("la temperatura esta en 21 c"), 21)
+caso("10. CONTROL 'a 24 grados' suelto NO es temperatura", C.leer_temperatura_manual("dos tambos de 200 litros a 24 grados"), None)
+caso("10. CONTROL '18 kg 52 grados' NO es temperatura", C.leer_temperatura_manual("garrafa de 18 kg a 52 grados"), None)
+base10 = Ciclo()
+base10.nuevo_lote("lote-f", "L-19-10.1", "2026-10-19")
+B._post_de_verdad = base10
+B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
+B._olvidar_chat(CHAT)
+C.olvidar(CHAT)
+P.olvidar(CHAT)
+u = Update(CHAT)
+texto(u, "en el cuarto hay 22 grados")
+caso("10. con un lote fermentando: se guarda fuente=manual, min=max=prom=22",
+     [(d["fuente"], d["t_min"], d["t_max"], d["t_prom"]) for d in base10.temperaturas], [("manual", 22.0, 22.0, 22.0)])
+caso("10. ... y lo dice, con el lote", ("Anotado: 22" in u.message.dichos[-1], "L-19-10.1" in u.message.dichos[-1]), (True, True))
+texto(u, "ya bajo, hay 18 grados en el cuarto")
+caso("10. segunda lectura del dia: min 18, max 22, prom (punto medio) 20",
+     [(d["t_min"], d["t_max"], d["t_prom"]) for d in base10.temperaturas[-1:]], [(18.0, 22.0, 20.0)])
+caso("10. ... el modelo no se llamo y no se abrio etapa ni plantilla", (C.sesion(CHAT), P.activa(CHAT)), (None, False))
+# en medio de una destilacion: la temperatura NO se lee como garrafa
+C.empezar(CHAT, "destilacion", "L-19-10.1")
+texto(u, "en el cuarto hay 23 grados")
+caso("10. en captura de destilacion: va a temperatura, no a garrafa",
+     (base10.temperaturas[-1]["t_max"], C.sesion(CHAT)["garrafas"]), (23.0, []))
+C.olvidar(CHAT)
+base10.etapas[("lote-f", "destilacion")] = {"fecha": "2026-10-19", "telegram_id": 555}
+n = len(base10.temperaturas)
+u = Update(CHAT)
+texto(u, "en el cuarto hay 22 grados")
+caso("10. CONTROL sin lote en fermentacion: NO se guarda y lo dice",
+     (len(base10.temperaturas) - n, "No hay ningun lote en fermentacion" in u.message.dichos[-1]), (0, True))
 
 fallos = [(n_, o, e) for n_, o, e in casos if o != e]
 for n_, o, e in casos:

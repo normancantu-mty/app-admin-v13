@@ -398,6 +398,11 @@ def resumen(s, hoy=None):
             lineas.append("%s: pendiente" % c["etiqueta"])
         elif v not in (None, ""):
             lineas.append("%s: %s%s" % (c["etiqueta"], v, (" " + c["unidad"]) if c.get("unidad") and c["unidad"] != "Brix" else ""))
+    tipo = str(s["campos"].get("tipo_chile") or "").strip()
+    if tipo and "guajillo" not in _plano(tipo):
+        # Ronda 2: el catalogo solo tiene chile-guajillo; que se vea ANTES de
+        # confirmar a que insumo van los kilos (el tipo dictado va a notas).
+        lineas.append("   (los kilos se cargan a chile-guajillo (unico en catalogo); el tipo '%s' va a notas)" % tipo)
     notas = [n for n in s["notas"]]
     if notas:
         lineas.append("Notas: " + "; ".join(notas)[:300])
