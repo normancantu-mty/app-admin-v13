@@ -25,8 +25,9 @@ vida_minutos: 30
 formato_codigo: 'L-{dd}-{mm}.{n}'
 
 # Los aditivos van por SKU OPACO (ERP-84): nunca por su nombre real.
-aditivo_1_sku: 'ing-az'  # CONFIRMAR CON NORMAN
-aditivo_2_sku: 'ing-al'  # CONFIRMAR CON NORMAN
+# Decidido por Norman el 2026-10-19 (plan v3 §8): aditivo 1 = ing-az, aditivo 2 = ing-al.
+aditivo_1_sku: 'ing-az'
+aditivo_2_sku: 'ing-al'
 
 # Frases que ABREN la plantilla sin pasar por el modelo. Se buscan al inicio
 # del mensaje (o "plantilla" en cualquier parte).
@@ -245,7 +246,8 @@ etapas:
     disparadores:
       - '^\W*(registra\w*\s+(la\s+)?|ya\s+|hoy\s+)?destil(amos|e|o|ando|acion)\b'
     disparadores_con_codigo:
-      - '\bdestil(amos|e|o|ando|acion|aron|aste)\b'
+      # Ronda 6: tambien 'terminamos/acabamos de destilar el L-..', 'ya quedo destilado el L-..'.
+      - '\bdestil(amos|e|o|ando|acion|aron|aste|ar|ado|ada)\b'
     rango_peso_kg: [0.1, 60]
     rango_alcohol: [0, 80]
     tope_garrafas: 50

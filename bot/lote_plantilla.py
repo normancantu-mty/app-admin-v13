@@ -257,6 +257,21 @@ def leer(texto, preguntadas=()):
         for a, b in mezcla["tramos"]:
             tramos.append((a, b))
         campos.update(mezcla["campos"])
+    else:
+        # Ronda 6 (auditoria r5): dos chiles SIN kilos por tipo ("40 kilos de
+        # guajillo y guajon", "mitad guajillo mitad guajon") no se cargan enteros
+        # a guajillo: `reparto_chile` = 'mitad' (50/50) o 'falta' (se pregunta).
+        dichos = sorted(set(m.group(1) for m in re.finditer(
+            r"\b(%s)\b" % "|".join(re.escape(k) for k in chiles_conocidos()), t)))
+        if len(dichos) >= 2:
+            for m in re.finditer(r"\b(%s)\b" % "|".join(re.escape(k) for k in dichos), t):
+                tomar(m)
+            campos["tipo_chile"] = " y ".join(dichos)
+            campos["reparto_chile"] = "mitad" if _MITAD.search(t) else "falta"
+    if _MITAD.search(t) and "reparto_chile" not in campos and any("tipo_chile" in it for it in items):
+        for m in _MITAD.finditer(t):
+            tomar(m)
+        campos["reparto_chile"] = "mitad"
 
     orden = sorted(p["campos"], key=lambda c: 0 if c["nombre"] != "kg_chile" else 1)
     for c in orden:
@@ -310,6 +325,37 @@ def tipo_conocido(tipo):
     de los chiles conocidos. **Pura.**"""
     palabras = [w for w in re.findall(r"[a-z]+", _plano(tipo or "")) if w not in ("y", "e", "chile", "de", "mezcla")]
     return bool(palabras) and all(w in chiles_conocidos() for w in palabras)
+
+
+_MITAD = re.compile(r"\bmitad\b|\b50\s*(?:/|y|-)\s*50\b|\bpartes?\s+iguales\b")
+
+
+def repartir_chiles(s):
+    """Ronda 6: una mezcla sin kilos por tipo. 'mitad' + kilos -> 50/50 en
+    `chiles` (y una nota, visible en el resumen); 'falta' -> 'preguntar'. None
+    si no hay nada que repartir. Muta la sesion."""
+    c = s["campos"]
+    rep = c.pop("reparto_chile", None)
+    tipos = [w for w in re.findall(r"[a-z]+", _plano(c.get("tipo_chile") or "")) if w in chiles_conocidos()]
+    if isinstance(c.get("chiles"), dict) and c["chiles"]:
+        s.pop("reparto_pendiente", None)
+        return None
+    rep = rep or s.get("reparto_pendiente")
+    if not rep or len(tipos) < 2:
+        s.pop("reparto_pendiente", None)
+        return None
+    kg = c.get("kg_chile")
+    if rep == "mitad" and kg not in (None, "", 0):
+        parte = float(kg) / len(tipos)
+        parte = int(parte) if parte.is_integer() else round(parte, 3)
+        c["chiles"] = {t: parte for t in tipos}
+        nota = "reparto de chile: mitad y mitad (%s kg de cada uno)" % parte
+        if nota not in s["notas"]:
+            s["notas"].append(nota)
+        s.pop("reparto_pendiente", None)
+        return None
+    s["reparto_pendiente"] = rep
+    return "preguntar" if rep == "falta" else None
 
 
 def leer_chiles(texto):
@@ -635,6 +681,14 @@ async def atender(update, chat, texto, proponer_lote=None, peticion_de=None, des
         await update.effective_message.reply_text("\n".join(avisos + [
             "Dijiste chile '%s'. Solo uso guajillo, guajon o una mezcla de los dos. Cual es? "
             "Por ejemplo: 'guajon', o '30 kg guajillo y 10 kg guajon'." % tipo]))
+        return True
+    if repartir_chiles(s) == "preguntar":
+        s["preguntadas"] = [["kg_chile", "tipo_chile"]]
+        s["modo"] = "mezcla"
+        s["nacido_en"] = time.time()
+        await update.effective_message.reply_text("\n".join(avisos + [
+            "Dijiste %s. Cuantos kilos de cada uno? Por ejemplo: '30 kg guajillo y 10 kg guajon', "
+            "o 'mitad y mitad'." % s["campos"].get("tipo_chile")]))
         return True
     if s.get("modo") in ("corregir", "resumen"):
         await ensenar_resumen(update, s, avisos)

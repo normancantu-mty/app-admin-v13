@@ -514,8 +514,13 @@ def resumen(s, hoy=None):
             lineas.append("   Garrafa %d: %s kg a %s%%" % (i, peso, grado))
     if s.get("notas"):
         lineas.append("Notas: " + "; ".join(s["notas"])[:300])
+    if s.get("aviso_envasado"):
+        lineas += ["", AVISO_ENVASADO]
     lineas += ["", "Nada se guarda hasta que confirmes."]
     return "\n".join(lineas)
+
+
+AVISO_ENVASADO = "El envasado dimelo aparte (no lo anote): es diario y no se liga al lote."
 
 
 def _teclado_resumen():
@@ -651,9 +656,15 @@ async def atender(update, chat, texto, confirmar=None, post=None):
         s = empezar(chat, etapa, codigo)
         if nota:
             s["notas"].append(nota)
+        # Ronda 6 (auditoria r5): un envasado en el mismo mensaje ("ya destilamos
+        # el L-.. y envasamos 40 de 750") no se pierde callado: no se anota en la
+        # etapa (es diario, va aparte) y se AVISA en la pregunta y en el resumen.
+        if es_envasado(texto):
+            s["aviso_envasado"] = True
         # Si el mismo mensaje ya trae los datos, se usan; si no, se pregunta.
         if not await _capturar(update, s, sin, primera=True):
-            await update.effective_message.reply_text(pregunta_de(etapa, codigo))
+            await update.effective_message.reply_text(
+                pregunta_de(etapa, codigo) + ("\n\n" + AVISO_ENVASADO if s.get("aviso_envasado") else ""))
         return True
     if nota:
         s["notas"].append(nota)

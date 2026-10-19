@@ -276,7 +276,8 @@ test.describe('envasado diario (ronda 5, B): nunca abre ni pide un lote', () => 
     expect(rpcs.map((x) => x.nombre)).toEqual(['registrar_envasado_diario'])
     expect(rpcs[0].args.p_envasado).toEqual([{ id_producto: 'bot-750', botellas: 40 }])
     expect(String(rpcs[0].args.p_nota)).toContain('L-12-10.1')
-    expect(String(c.j.mensaje)).toContain('Envasado del dia: 40 botellas, sin lote')
+    // Ronda 6 (auditoria r5, 2): dice el dia y el formato, no 'Quedo el lote'.
+    expect(String(c.j.mensaje)).toMatch(/^Listo\. Envasado del \d{2}\/\d{2}\/\d{4}: 40 de 750 ml \(sin lote\)/)
     const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
     expect(b.estado).toBe('CONFIRMADO')
   })

@@ -25,7 +25,8 @@ export const ETAPAS_CON_VA = ['aditivo_2', 'destilacion'] as const
 export type EtapaConVa = (typeof ETAPAS_CON_VA)[number]
 export const TIPOS_RECORDATORIO = ['aditivo_2', 'destilar', 'muestra', 'muestra_2'] as const
 export type TipoRecordatorio = (typeof TIPOS_RECORDATORIO)[number]
-export const FUENTES_TEMPERATURA = ['open-meteo exterior', 'manual'] as const
+// Ronda 6: solo Open-Meteo (Norman 2026-10-19: la gente no dicta temperatura).
+export const FUENTES_TEMPERATURA = ['open-meteo exterior'] as const
 
 /** Topes DUROS del servidor ("esto no se dicta por chat"). Los rangos que solo AVISAN viven en el YAML del bot. */
 export const TOPE_GARRAFAS = 50

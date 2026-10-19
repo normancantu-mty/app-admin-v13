@@ -105,11 +105,14 @@ test.describe('temperatura de la fermentacion', () => {
     expect(diasEntre('2026-10-19', '2026-10-25')).toBe(6)
   })
 
-  test('validador de dias: orden min<=prom<=max y solo dos fuentes', () => {
-    expect(diaDeTemperatura({ fecha: '2026-10-19', fuente: 'manual', t_min: 1, t_max: 3, t_prom: 2 })).not.toBeNull()
-    expect(diaDeTemperatura({ fecha: '2026-10-19', fuente: 'manual', t_min: 3, t_max: 1, t_prom: 2 })).toBeNull()
+  test('validador de dias: orden min<=prom<=max y SOLO Open-Meteo (ronda 6: manual ya no)', () => {
+    const OM = 'open-meteo exterior'
+    expect(diaDeTemperatura({ fecha: '2026-10-19', fuente: OM, t_min: 1, t_max: 3, t_prom: 2 })).not.toBeNull()
+    expect(diaDeTemperatura({ fecha: '2026-10-19', fuente: OM, t_min: 3, t_max: 1, t_prom: 2 })).toBeNull()
     expect(diaDeTemperatura({ fecha: '2026-10-19', fuente: 'termometro', t_min: 1, t_max: 3, t_prom: 2 })).toBeNull()
-    expect(diaDeTemperatura({ fecha: '19/10/2026', fuente: 'manual', t_min: 1, t_max: 3, t_prom: 2 })).toBeNull()
+    expect(diaDeTemperatura({ fecha: '19/10/2026', fuente: OM, t_min: 1, t_max: 3, t_prom: 2 })).toBeNull()
+    // Norman 2026-10-19: la gente no dicta temperatura; el servidor tampoco la acepta.
+    expect(diaDeTemperatura({ fecha: '2026-10-19', fuente: 'manual', t_min: 1, t_max: 3, t_prom: 2 })).toBeNull()
   })
 })
 

@@ -818,6 +818,46 @@ P.olvidar(CHAT)
 B._olvidar_chat(CHAT)
 
 
+
+# --- 16. RONDA 6 (auditoria r5, 1): envasado DENTRO de una destilacion -------
+# Ningun mensaje compuesto suelta callado la mitad de otro camino: la etapa se
+# abre, las garrafas se conservan y el resumen avisa que el envasado va aparte.
+B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
+B._post_de_verdad = base10
+for frase in ("ya destilamos el L-19-10.1 y envasamos 40 de 750",
+              "ya destilamos el L-19-10.1, salieron 40 botellas de 750"):
+    C.olvidar(CHAT)
+    B._olvidar_chat(CHAT)
+    base10.etapas.pop(("lote-f", "destilacion"), None)
+    u = Update(CHAT)
+    texto(u, frase)
+    caso("16. %r: abre la destilacion" % frase, (C.sesion(CHAT) or {}).get("etapa"), "destilacion")
+    caso("16. ... y AVISA que el envasado va aparte (no lo anoto)",
+         "El envasado dimelo aparte (no lo anote)" in u.message.dichos[-1], True)
+    texto(u, "2 garrafas: 18 kg 50% y 10 kg 30%")
+    caso("16. ... el aviso sigue en el resumen", "El envasado dimelo aparte (no lo anote)" in u.message.dichos[-1], True)
+C.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+u = Update(CHAT)
+texto(u, "ya destilamos el L-19-10.1, 2 garrafas: 18 kg 50% y 10 kg 30%, y envasamos 40 de 750")
+caso("16. garrafas + envasado en un mensaje: las 2 garrafas se conservan",
+     list((C.sesion(CHAT) or {}).get("garrafas") or []), [(18.0, 50.0), (10.0, 30.0)])
+caso("16. ... y el resumen avisa del envasado", "El envasado dimelo aparte (no lo anote)" in u.message.dichos[-1], True)
+C.olvidar(CHAT)
+u = Update(CHAT)
+texto(u, "ya destilamos el L-19-10.1, 2 garrafas: 18 kg 50% y 10 kg 30%")
+caso("16. CONTROL sin envasado: sin el aviso", "El envasado dimelo aparte" in u.message.dichos[-1], False)
+C.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+
+# --- 17. RONDA 6 (auditoria r5, 3): destilar / destilado abren la destilacion -
+for frase in ("terminamos de destilar el L-12-10.1, 2 garrafas", "acabamos de destilar el L-12-10.1",
+              "Ya quedo destilado el L-12-10.1", "Ya quedó destilado el L-12-10.1"):
+    caso("17. ABRE %r" % frase, C._disparo(frase), ("destilacion", "L-12-10.1"))
+for frase in NO_ABREN + ["cuando vamos a destilar el L-12-10.1?", "envasamos 40 de 750 del L-12-10.1 ya destilado"]:
+    caso("17. CONTROL sigue sin abrir %r" % frase, C._disparo(frase), (None, None))
+
+
 fallos = [(n_, o, e) for n_, o, e in casos if o != e]
 for n_, o, e in casos:
     print(("ok   " if o == e else "FALLA") + "  " + n_ + ("" if o == e else "  -> obtuve %r, esperaba %r" % (o, e)))

@@ -2515,6 +2515,12 @@ async def _confirmar_lote(update, chat):
         return
 
     _memoria.pop(chat, None)
+    if r.get("envasado_diario"):
+        # Ronda 6 (auditoria r5): un envasado diario no es "el lote ." vacio;
+        # el servidor ya dice "Listo. Envasado del dd/mm/aaaa: N de NNN ml".
+        await update.effective_message.reply_text(
+            r.get("mensaje") or "Listo. Quedo el envasado del dia, sin lote.")
+        return
     aviso = "Listo. Quedo el lote " + str(r.get("codigo_lote") or "") + "."
     resumen = r.get("mensaje")
     if resumen:

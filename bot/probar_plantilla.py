@@ -405,6 +405,54 @@ finally:
 caso("10c. boton viejo abrlt: no re-propone", len(doble.lotes()), 0)
 caso("10c. ... y lo dice", any("Ya no abro lotes desde un envasado" in d for d in dichos), True)
 
+
+# --- 11. RONDA 6 (auditoria r5, 5): mezcla SIN kilos por tipo ---------------
+# No se carga entera a guajillo en silencio: se pregunta cuantos de cada uno;
+# "mitad" reparte 50/50 y se ensena en el resumen antes de Confirmar.
+dichos, doble, modelo = conversar(["empecemos", "40 kilos de guajillo y guajon, brix chile 12, 3 kilos de aditivo, brix final 18"])
+caso("11. '40 kilos de guajillo y guajon': pregunta cuantos de cada uno",
+     "Cuantos kilos de cada uno" in dichos[-1], True)
+caso("11. ... sin resumen ni propuesta todavia", (any("Revisa el lote" in d for d in dichos), len(doble.lotes())), (False, 0))
+seguir("30 kg guajillo y 10 kg guajon", doble, dichos)
+caso("11. ... contestan los kilos: el resumen con los dos chiles",
+     ("chile guajillo: 30 kg" in dichos[-1], "chile guajon: 10 kg" in dichos[-1]), (True, True))
+boton("ltok", doble, dichos)
+pet = (doble.lotes() or [{}])[-1]
+caso("11. ... dos renglones por SKU",
+     sorted((i.get("insumo"), i.get("cantidad")) for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))),
+     [("chile-guajillo", 30), ("chile-guajon", 10)])
+dichos, doble, modelo = conversar(["empecemos", "40 kilos de guajillo y guajon, brix chile 12, 3 kilos de aditivo, brix final 18",
+                                   "mitad y mitad"])
+caso("11. contestan 'mitad y mitad': 20 y 20 en el resumen, visible antes de Confirmar",
+     ("chile guajillo: 20 kg" in dichos[-1], "chile guajon: 20 kg" in dichos[-1], "mitad" in dichos[-1].lower()),
+     (True, True, True))
+dichos, doble, modelo = conversar(["empecemos", "mitad guajillo mitad guajon, 40 kilos, brix chile 12, 3 kilos de aditivo, brix final 18"])
+caso("11. 'mitad guajillo mitad guajon, 40 kilos': reparte 50/50 sin preguntar",
+     ("chile guajillo: 20 kg" in dichos[-1], "chile guajon: 20 kg" in dichos[-1], "Cuantos kilos de cada uno" in "".join(dichos)),
+     (True, True, False))
+boton("ltok", doble, dichos)
+pet = (doble.lotes() or [{}])[-1]
+caso("11. ... y confirma dos renglones de 20",
+     sorted((i.get("insumo"), i.get("cantidad")) for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))),
+     [("chile-guajillo", 20), ("chile-guajon", 20)])
+dichos, doble, modelo = conversar(["empecemos", "40 kilos de chile guajillo, brix chile 12, 3 kilos de aditivo, brix final 18"])
+caso("11. CONTROL un solo chile: no pregunta reparto", "Cuantos kilos de cada uno" in "".join(dichos), False)
+
+# --- 12. RONDA 6 (auditoria r5, 2): confirmar un envasado diario -------------
+limpiar()
+dichos = []
+u = UpdateDeTexto(CHAT, "", dichos)
+B._memoria[CHAT] = {"tipo": "lote", "borrador_id": UUID, "sello": "s" * 64}
+orig = B._post
+B._post = lambda ruta, cuerpo: (200, {"ok": True, "envasado_diario": True, "filas_inventario": 2,
+                                      "mensaje": "Listo. Envasado del 19/10/2026: 40 de 750 ml (sin lote); 2 movimientos de inventario."})
+try:
+    asyncio.run(B._confirmar_lote(u, CHAT))
+finally:
+    B._post = orig
+caso("12. confirmar envasado diario: NO dice 'Quedo el lote'", any("Quedo el lote" in d for d in dichos), False)
+caso("12. ... dice el envasado del dia", any(d.startswith("Listo. Envasado del 19/10/2026: 40 de 750 ml") for d in dichos), True)
+
 # ─── RESULTADO ──────────────────────────────────────────────────────────────
 limpiar()
 fallos = [(n, o, e) for n, o, e in casos if o != e]

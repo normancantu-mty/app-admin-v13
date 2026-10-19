@@ -65,6 +65,7 @@ import {
 import { selloAgregarCoincide, type PayloadAgregar } from '@/lib/bot-envasado'
 import { selloEnvasadoDiarioCoincide, type PayloadEnvasadoDiario } from '@/lib/bot-envasado-diario'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { fechaParaPersona } from '@/lib/fechas'
 
 export const dynamic = 'force-dynamic'
 
@@ -488,14 +489,22 @@ async function confirmarEnvasadoDiario(
   }
   const avisoMarca = await marcarConfirmado(supabase, borradorId, null)
   const filasInventario = Number((hechos as { filas_inventario?: unknown } | null)?.filas_inventario ?? 0)
-  const botellas = diario.envasado.reduce((a, e) => a + e.botellas, 0)
+  // Ronda 6 (auditoria r5): "Listo. Envasado del dd/mm/aaaa: 40 de 750 ml".
+  const { data: formatos } = await supabase
+    .from('catalogo_productos')
+    .select('id, nombre, ml_por_unidad')
+    .in('id', diario.envasado.map((e) => e.id_producto))
+  const partes = diario.envasado.map((e) => {
+    const f = (formatos ?? []).find((x) => x.id === e.id_producto)
+    return f?.ml_por_unidad ? `${e.botellas} de ${f.ml_por_unidad} ml` : `${e.botellas} de ${f?.nombre ?? 'botella'}`
+  })
   return NextResponse.json({
     ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
     ok: true,
     envasado_diario: true,
     filas_inventario: filasInventario,
     mensaje:
-      `Envasado del dia: ${botellas} botella${botellas === 1 ? '' : 's'}, sin lote; ` +
+      `Listo. Envasado del ${fechaParaPersona(diario.fecha)}: ${partes.join(', ')} (sin lote); ` +
       `${filasInventario} movimiento${filasInventario === 1 ? '' : 's'} de inventario.`
   })
 }
