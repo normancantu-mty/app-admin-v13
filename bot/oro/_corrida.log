@@ -1,0 +1,23 @@
+por correr: 148 de 148 casos (ya hechos: 0)
+  10/148  (70s)
+  20/148  (119s)
+  30/148  (162s)
+  40/148  (197s)
+  50/148  (224s)
+  60/148  (270s)
+  70/148  (308s)
+  80/148  (345s)
+  90/148  (377s)
+  100/148  (423s)
+  110/148  (465s)
+  120/148  (491s)
+  130/148  (522s)
+  140/148  (552s)
+
+LINEA BASE (2026-10-17)
+  precision estricta     : 0.6854
+  exhaustividad estricta : 0.3961
+  falsos positivos charla: 0.0 (0 de 37)
+  [completo] precision/exhaustividad: 0.4157 0.2403
+  errores sin resolver: 0 | sin correr: 0
+  -> C:\Users\norma\Documents\Cursor\app-admin\bot\oro\resultados_2026-10-17.json

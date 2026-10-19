@@ -1,0 +1,841 @@
+{
+  "fecha": "2026-10-17",
+  "capa_medida": "enrutador.enrutar() (claude -p --model sonnet), BOT_ENSAYO=1; no manejar_texto",
+  "md5_prompt": "983e952b1d4263bd1fcad8f004973828",
+  "casos_total": 148,
+  "casos_sin_correr": 0,
+  "total": {
+    "casos": 148,
+    "evaluados": 148,
+    "errores_sin_resolver": 0,
+    "hechos_esperados": 134,
+    "pendientes_esperados": 20,
+    "hechos_predichos": 89,
+    "estricto": {
+      "precision": 0.6854,
+      "exhaustividad": 0.3961,
+      "aciertos": 61
+    },
+    "completo": {
+      "precision": 0.4157,
+      "exhaustividad": 0.2403,
+      "aciertos": 37
+    },
+    "falsos_positivos_charla": {
+      "casos": 37,
+      "con_falso_positivo": 0,
+      "tasa": 0.0
+    },
+    "falsos_positivos_sin_hechos": {
+      "casos": 39,
+      "con_falso_positivo": 0,
+      "tasa": 0.0
+    },
+    "destinatario": {
+      "casos": 8,
+      "aciertos": 0
+    }
+  },
+  "por_categoria": {
+    "aditivo": {
+      "casos": 5,
+      "evaluados": 5,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 5,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 0,
+      "estricto": {
+        "precision": null,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": null,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "categoria": {
+      "casos": 6,
+      "evaluados": 6,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 6,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 6,
+      "estricto": {
+        "precision": 1.0,
+        "exhaustividad": 1.0,
+        "aciertos": 6
+      },
+      "completo": {
+        "precision": 0.8333,
+        "exhaustividad": 0.8333,
+        "aciertos": 5
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "charla": {
+      "casos": 37,
+      "evaluados": 37,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 0,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 0,
+      "estricto": {
+        "precision": null,
+        "exhaustividad": null,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": null,
+        "exhaustividad": null,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 37,
+        "con_falso_positivo": 0,
+        "tasa": 0.0
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 37,
+        "con_falso_positivo": 0,
+        "tasa": 0.0
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "cobro_prometido": {
+      "casos": 3,
+      "evaluados": 3,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 3,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 0,
+      "estricto": {
+        "precision": null,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": null,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "consulta": {
+      "casos": 2,
+      "evaluados": 2,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 0,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 0,
+      "estricto": {
+        "precision": null,
+        "exhaustividad": null,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": null,
+        "exhaustividad": null,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 2,
+        "con_falso_positivo": 0,
+        "tasa": 0.0
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "correccion": {
+      "casos": 4,
+      "evaluados": 4,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 4,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 4,
+      "estricto": {
+        "precision": 0.75,
+        "exhaustividad": 0.75,
+        "aciertos": 3
+      },
+      "completo": {
+        "precision": 0.75,
+        "exhaustividad": 0.75,
+        "aciertos": 3
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "dinero": {
+      "casos": 3,
+      "evaluados": 3,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 3,
+      "pendientes_esperados": 2,
+      "hechos_predichos": 3,
+      "estricto": {
+        "precision": 1.0,
+        "exhaustividad": 0.6,
+        "aciertos": 3
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "dirigido": {
+      "casos": 4,
+      "evaluados": 4,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 3,
+      "pendientes_esperados": 1,
+      "hechos_predichos": 2,
+      "estricto": {
+        "precision": 1.0,
+        "exhaustividad": 0.5,
+        "aciertos": 2
+      },
+      "completo": {
+        "precision": 1.0,
+        "exhaustividad": 0.5,
+        "aciertos": 2
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 4,
+        "aciertos": 0
+      }
+    },
+    "efectivo": {
+      "casos": 2,
+      "evaluados": 2,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 2,
+      "pendientes_esperados": 1,
+      "hechos_predichos": 1,
+      "estricto": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "envasado": {
+      "casos": 5,
+      "evaluados": 5,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 5,
+      "pendientes_esperados": 1,
+      "hechos_predichos": 6,
+      "estricto": {
+        "precision": 0.8333,
+        "exhaustividad": 0.8333,
+        "aciertos": 5
+      },
+      "completo": {
+        "precision": 0.8333,
+        "exhaustividad": 0.8333,
+        "aciertos": 5
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "evento_balance": {
+      "casos": 3,
+      "evaluados": 3,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 12,
+      "pendientes_esperados": 3,
+      "hechos_predichos": 1,
+      "estricto": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "evento_compra": {
+      "casos": 3,
+      "evaluados": 3,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 3,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 3,
+      "estricto": {
+        "precision": 0.6667,
+        "exhaustividad": 0.6667,
+        "aciertos": 2
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "evento_gasto": {
+      "casos": 3,
+      "evaluados": 3,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 3,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 3,
+      "estricto": {
+        "precision": 1.0,
+        "exhaustividad": 1.0,
+        "aciertos": 3
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "evento_salidas": {
+      "casos": 6,
+      "evaluados": 6,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 9,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 3,
+      "estricto": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "fermentacion": {
+      "casos": 5,
+      "evaluados": 5,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 7,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 5,
+      "estricto": {
+        "precision": 1.0,
+        "exhaustividad": 0.7143,
+        "aciertos": 5
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "kevin_completo": {
+      "casos": 4,
+      "evaluados": 4,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 12,
+      "pendientes_esperados": 1,
+      "hechos_predichos": 4,
+      "estricto": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 1,
+        "aciertos": 0
+      }
+    },
+    "kevin_variantes": {
+      "casos": 4,
+      "evaluados": 4,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 8,
+      "pendientes_esperados": 1,
+      "hechos_predichos": 3,
+      "estricto": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "lote_a_medias": {
+      "casos": 6,
+      "evaluados": 6,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 6,
+      "pendientes_esperados": 2,
+      "hechos_predichos": 12,
+      "estricto": {
+        "precision": 0.4167,
+        "exhaustividad": 0.625,
+        "aciertos": 5
+      },
+      "completo": {
+        "precision": 0.3333,
+        "exhaustividad": 0.5,
+        "aciertos": 4
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "multi_hecho": {
+      "casos": 4,
+      "evaluados": 4,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 9,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 8,
+      "estricto": {
+        "precision": 0.875,
+        "exhaustividad": 0.7778,
+        "aciertos": 7
+      },
+      "completo": {
+        "precision": 0.875,
+        "exhaustividad": 0.7778,
+        "aciertos": 7
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "nota": {
+      "casos": 6,
+      "evaluados": 6,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 6,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 1,
+      "estricto": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "pendiente": {
+      "casos": 5,
+      "evaluados": 5,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 0,
+      "pendientes_esperados": 5,
+      "hechos_predichos": 0,
+      "estricto": {
+        "precision": null,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": null,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "prestamo": {
+      "casos": 5,
+      "evaluados": 5,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 5,
+      "pendientes_esperados": 3,
+      "hechos_predichos": 3,
+      "estricto": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 3,
+        "aciertos": 0
+      }
+    },
+    "real": {
+      "casos": 11,
+      "evaluados": 11,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 11,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 11,
+      "estricto": {
+        "precision": 1.0,
+        "exhaustividad": 1.0,
+        "aciertos": 11
+      },
+      "completo": {
+        "precision": 1.0,
+        "exhaustividad": 1.0,
+        "aciertos": 11
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "variable_nueva": {
+      "casos": 3,
+      "evaluados": 3,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 3,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 1,
+      "estricto": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    },
+    "viaje": {
+      "casos": 9,
+      "evaluados": 9,
+      "errores_sin_resolver": 0,
+      "hechos_esperados": 9,
+      "pendientes_esperados": 0,
+      "hechos_predichos": 9,
+      "estricto": {
+        "precision": 1.0,
+        "exhaustividad": 1.0,
+        "aciertos": 9
+      },
+      "completo": {
+        "precision": 0.0,
+        "exhaustividad": 0.0,
+        "aciertos": 0
+      },
+      "falsos_positivos_charla": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "falsos_positivos_sin_hechos": {
+        "casos": 0,
+        "con_falso_positivo": 0,
+        "tasa": null
+      },
+      "destinatario": {
+        "casos": 0,
+        "aciertos": 0
+      }
+    }
+  }
+}
