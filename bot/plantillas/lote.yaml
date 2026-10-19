@@ -1,30 +1,56 @@
 # Plantilla del LOTE (Cazador F0, WP-7a). Escrito el 2026-10-17 por el ejecutor B del Socio.
+# Lote v2 (2026-10-19, ejecutor del Socio): codigo L-DD-MM.N, Brix, aditivo 1,
+# confirmacion con fecha, y el CICLO (aditivo 2, reposo, destilacion, muestra).
 #
-# Esto es DATOS, no codigo: `bot/lote_plantilla.py` la lee al arrancar. Para
-# agregar una pregunta, cambiar un rango o una forma de decirlo, se edita aqui
-# y se reinicia el bot. Las expresiones son regex de Python, sobre el texto en
-# minusculas y SIN acentos.
+# Esto es DATOS, no codigo: `bot/lote_plantilla.py` y `bot/lote_ciclo.py` la
+# leen al arrancar. Para agregar una pregunta, cambiar un rango, un dia del
+# ciclo o una forma de decirlo, se edita aqui y se reinicia el bot. Las
+# expresiones son regex de Python, sobre el texto en minusculas y SIN acentos.
 #
 # Reglas que la plantilla respeta (D de Norman 2026-10-17):
 #   - preguntas en tandas de <=4, numeradas;
 #   - se aceptan varias respuestas en un mensaje (sueltas o "1. 40  2. 8");
 #   - un rango fuera de lo normal AVISA, nunca bloquea;
-#   - lo que no tiene campo (aditivo, observacion) va a `notas` del lote.
+#   - lo que no tiene campo (tipo de chile, observacion) va a `notas` del lote;
+#   - al final de CADA etapa, un mensaje con todo + la fecha de hoy y botones
+#     Confirmar / Corregir. Nada se guarda antes de Confirmar.
 
 nombre: lote
 vida_minutos: 30
 
+# El codigo del lote. {dd} dia, {mm} mes, {aaaa} anio, {aa} anio corto, {n} el
+# consecutivo del dia (1 + el mayor N que ya exista con el mismo prefijo).
+# OJO: sin anio, L-19-10.1 se repite el 19 de octubre del anio que entra y
+# `lotes.codigo_lote` es UNIQUE: ese dia saldria L-19-10.2 (o el que siga).
+formato_codigo: 'L-{dd}-{mm}.{n}'
+
+# Los aditivos van por SKU OPACO (ERP-84): nunca por su nombre real.
+aditivo_1_sku: 'ing-az'  # CONFIRMAR CON NORMAN
+aditivo_2_sku: 'ing-al'  # CONFIRMAR CON NORMAN
+
 # Frases que ABREN la plantilla sin pasar por el modelo. Se buscan al inicio
 # del mensaje (o "plantilla" en cualquier parte).
 disparadores:
-  - '^\W*(hoy\s+|ya\s+)?(empezamos|empezamos\s+un|arrancamos|arranque|arranco|iniciamos|abrimos|abro)\s+(un\s+|el\s+|otro\s+)?lote'
+  - '^\W*(hoy\s+|ya\s+)?(empezamos|empecemos|empezemos|iniciemos|arranquemos|arrancamos|arranque|arranco|iniciamos|abrimos|abro)\s+(un\s+|el\s+|otro\s+|con\s+(un\s+|el\s+|otro\s+)?)?lote'
+  - '^\W*(hoy\s+|ya\s+)?(empecemos|empezemos|iniciemos|arranquemos)\W*$'
   - '^\W*(hoy\s+)?lote\s+nuevo'
   - 'plantilla\s+(del?\s+)?lote'
 
 intro: 'Lote nuevo. Contestame lo que sepas, todo en un mensaje si quieres:'
-cierre: 'El codigo lo pongo yo si no me lo dices. Lo demas (aditivos, observaciones) lo anoto en notas del lote.'
+cierre: 'El codigo lo pongo yo si no me lo dices. Las observaciones las anoto en notas del lote.'
 
-# Orden = orden de la plantilla completa (maximo 4 numeradas).
+# Cada pregunta numerada de la plantilla (maximo 4). Una pregunta puede pedir
+# mas de un campo ("Kilos de chile y tipo de chile").
+preguntas:
+  - etiqueta: 'Kilos de chile y tipo de chile'
+    campos: [kg_chile, tipo_chile]
+  - etiqueta: 'Brix chile'
+    campos: [brix_chile]
+  - etiqueta: 'Kilos aditivo 1'
+    campos: [kg_aditivo_1]
+  - etiqueta: 'Brix final'
+    campos: [brix_final]
+
 campos:
   - nombre: kg_chile
     etiqueta: 'Kilos de chile'
@@ -34,24 +60,8 @@ campos:
     unidad: kg
     rango: [1, 1000]
     patrones:
-      - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\b'
-  - nombre: dias_fermentacion
-    etiqueta: 'Dias de fermentacion'
-    pregunta: 'Cuantos dias va a fermentar?'
-    obligatorio: true
-    tipo: numero
-    unidad: dias
-    rango: [1, 31]
-    patrones:
-      - '(\d+)\s*dias?\b'
-  - nombre: tandas
-    etiqueta: 'Tandas: cuantos tambos y de cuantos litros'
-    pregunta: 'Cuantos tambos y de cuantos litros?'
-    obligatorio: false
-    tipo: tandas
-    rango: [1, 5000]
-    patrones:
-      - '(\d+|un|uno|una|dos|tres|cuatro|cinco|seis)\s+(?:tambos?|tanques?|tandas?|garrafones?)\s+de\s+(\d+(?:[.,]\d+)?)\s*(?:litros?|lts?|l)\b'
+      - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\s+de\s+chile'
+      - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\b(?!\s+(?:de\s+)?aditivo)'
   - nombre: tipo_chile
     etiqueta: 'Tipo de chile'
     pregunta: 'Que chile es?'
@@ -59,25 +69,50 @@ campos:
     tipo: texto
     a_notas: 'tipo de chile'
     patrones:
-      - 'chile\s+(jalapeno|guajillo|habanero|serrano|chipotle|piquin|morita|ancho|pasilla|de arbol|arbol|poblano|manzano)'
+      - '\b(jalapeno|guajillo|habanero|serrano|chipotle|piquin|morita|ancho|pasilla|de arbol|poblano|manzano)\b'
+  - nombre: brix_chile
+    etiqueta: 'Brix chile'
+    pregunta: 'Cuanto Brix dio el chile?'
+    obligatorio: true
+    tipo: numero
+    unidad: Brix
+    rango: [0, 40]
+    patrones:
+      - 'brix\s+(?:del?\s+)?chile\s*(?:de|en|a|:)?\s*(\d+(?:[.,]\d+)?)'
+      - 'chile\s+(?:en|a|con|de)\s+(\d+(?:[.,]\d+)?)\s*(?:de\s+)?brix'
+  - nombre: kg_aditivo_1
+    etiqueta: 'Kilos aditivo 1'
+    pregunta: 'Cuantos kilos de aditivo 1?'
+    obligatorio: true
+    tipo: numero
+    unidad: kg
+    rango: [0.01, 200]
+    patrones:
+      - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\s+(?:de\s+)?aditivo(?:\s*1\b|\s+uno\b)?'
+      - 'aditivo(?:\s*1\b|\s+uno\b)?\s*(?:de|:)?\s*(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\b'
+  - nombre: brix_final
+    etiqueta: 'Brix final'
+    pregunta: 'Cuanto Brix final (despues del aditivo 1)?'
+    obligatorio: true
+    tipo: numero
+    unidad: Brix
+    rango: [0, 40]
+    patrones:
+      - 'brix\s+final\s*(?:de|en|a|:)?\s*(\d+(?:[.,]\d+)?)'
+      - 'final\s+(?:en|a|de)\s+(\d+(?:[.,]\d+)?)\s*(?:de\s+)?brix'
 
 # Fuera de la plantilla numerada, pero se reconocen si vienen dichos.
 extras:
   - nombre: codigo_lote
     tipo: codigo
     patrones:
-      - '\b(l-?\d{3,5})\b'
+      - '\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b'
   - nombre: grados_ambiguos
     tipo: a_notas
     # "a 24 grados" puede ser temperatura o alcohol: NO se adivina, va a notas.
     patrones:
       - '\ba\s+(\d+(?:[.,]\d+)?)\s*grados?\b'
     nota: '{0} grados (no dijeron si es temperatura o alcohol)'
-  - nombre: aditivo
-    tipo: a_notas
-    patrones:
-      - '(\d+(?:[.,]\d+)?\s*(?:gramos?|g|ml|mililitros?|cucharadas?)\s+de\s+[a-z ]{3,30})'
-    nota: 'aditivo: {0}'
 
 # "No se", "luego": el campo preguntado se deja vacio y queda anotado.
 omitir:
@@ -95,7 +130,62 @@ relleno: >-
   ya hoy ahora ahorita van va ser fue fueron va a ser le entraron entraron entro
   metimos meti metio echamos eche le pusimos pusimos ponle lote nuevo otro
   empezamos arrancamos arranque arranco iniciamos abrimos abro chile chiles
+  empecemos empezemos iniciemos arranquemos
   fermentacion fermenta fermentar fermentando queda quedan se queda dura durar
   tambos tambo tanques tanque litros grados kilos kg dias dia como unos unas
   mas menos pues bueno ok oye mira si no tambien plantilla dame manda pasame
-  cuantos cuantas cuanto
+  cuantos cuantas cuanto brix final aditivo tipo dio en
+
+# ════════════════════════════════════════════════════════════════════════════
+# EL CICLO DEL LOTE (bot/lote_ciclo.py). Corre colgado del latido de 15 min.
+# Cada recordatorio sale UNA vez: el reclamo vive en la base
+# (`lote_recordatorios`), asi que un reinicio del bot no lo repite.
+# ════════════════════════════════════════════════════════════════════════════
+
+# Fresnillo, Zac. (geocoding de Open-Meteo, 2026-10-19: 23.1749, -102.86785,
+# 2192 m). La temperatura es la del AIRE DE FUERA: proxy SIN ANCLAR de la
+# temperatura del mosto. No se ha comparado nunca contra un termometro en el
+# cuarto de fermentacion.
+ubicacion:
+  nombre: 'Fresnillo, Zac.'
+  latitud: 23.1749
+  longitud: -102.86785
+  zona: 'America/Mexico_City'
+  # Mexico no cambia de horario desde 2022: UTC-6 fijo (sin depender de tzdata).
+  utc_offset_horas: -6
+
+temperatura:
+  fuente: 'open-meteo exterior'
+  url: 'https://api.open-meteo.com/v1/forecast'
+  timeout_segundos: 20
+
+ciclo:
+  aditivo_2_dia: 3          # D+3 despues de la produccion: recordar el aditivo 2
+  reposo_dias: 3            # dias despues del aditivo 2: "ya toca destilar"
+  muestra_horas: 24         # sin "Ya la guarde" en este tiempo: UN segundo aviso y ya
+  hora_recordatorios: 8     # no se recuerda antes de esta hora local
+  ventana_dias: 45          # lotes mas viejos que esto ya no se revisan
+
+# Rangos que AVISAN (no bloquean) en las etapas.
+# `disparadores`: frases que abren la captura de la etapa sin modelo (al inicio
+# del mensaje). Sin codigo de lote, el bot pregunta "De cual lote?". Lo normal
+# es entrar por el boton del recordatorio.
+etapas:
+  aditivo_2:
+    disparadores:
+      - '^\W*(registra\w*\s+|ya\s+|hoy\s+)?(el\s+)?aditivo\s*(2|dos)\b'
+    rango_kg: [0.01, 200]
+  destilacion:
+    disparadores:
+      - '^\W*(registra\w*\s+(la\s+)?|ya\s+|hoy\s+)?destil(amos|e|o|ando|acion)\b'
+    rango_peso_kg: [0.1, 60]
+    rango_alcohol: [0, 80]
+    tope_garrafas: 50
+
+textos:
+  aditivo_2_recordatorio: 'Lote {codigo}: hoy toca el aditivo 2 (dia {dia} desde la produccion). Cuantos kilos le pusieron?'
+  aditivo_2_pregunta: 'Lote {codigo} - aditivo 2. Cuantos kilos de aditivo 2?'
+  destilar_recordatorio: 'Lote {codigo}: ya paso el reposo ({dias} dias desde el aditivo 2). Ya toca destilar.'
+  destilacion_pregunta: "Lote {codigo} - destilacion. Cuantas garrafas salieron, y de cada una el peso (kg) y el % de alcohol?\nEjemplo: 3 garrafas: 18.5 kg 52%, 17 kg 48%, 10 kg 30%"
+  muestra: 'Guarda una muestra del lote {codigo}.'
+  muestra_2: 'Recordatorio (ultimo): guarda una muestra del lote {codigo}.'

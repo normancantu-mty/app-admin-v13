@@ -308,6 +308,52 @@ caso("4. la nota de voz queda con su file_id", (base.fila(cv) or {}).get("adjunt
 caso("4. la transcripcion queda en SU fila",
      (base.fila(cv + ":transcripcion") or {}).get("transcripcion"), "compre 20 kilos de chile")
 
+# ─── 4c. Lote v2 (arreglo c): `manejar_voz` REAL marca procesado la nota Y su
+# transcripcion. Antes la fila `:transcripcion` (bitacora id 3 en produccion,
+# 2026-10-19) se quedaba procesado=false para siempre. Transcriptor y descarga
+# doblados; el resto es el handler de verdad.
+import types as _types  # noqa: E402
+
+
+class _ArchivoTg(object):
+    async def download_to_drive(self, ruta):
+        with open(ruta, "wb") as f:
+            f.write(b"OggS")
+
+
+class _BotTg(object):
+    async def get_file(self, _fid):
+        return _ArchivoTg()
+
+
+sys.modules["transcribir_nota"] = _types.SimpleNamespace(
+    transcribir=lambda ruta, vocab=None: (True, "hola, como vas"))
+_audios_antes = B.AUDIOS
+B.AUDIOS = __import__("pathlib").Path(tempfile.mkdtemp(prefix="bitacora_voz_"))
+_hablar_antes = B._hablar
+
+
+async def _sin_audio(*a, **k):
+    return None
+
+
+B._hablar = _sin_audio
+try:
+    mv2 = Mensaje(PRIVADO, "private", None, Usuario(PRIVADO, "Norman"), voz=True)
+    correr(bitacora.anotar_update(Update(mv2)))
+    correr(B.manejar_voz(Update(mv2), _types.SimpleNamespace(bot=_BotTg())))
+    cv2 = bitacora.clave_de(PRIVADO, mv2.message_id, "voz")
+    caso("4c. manejar_voz real contesto", any("Te entendi" in str(d) for d in mv2.dichos), True)
+    caso("4c. la nota de voz queda procesado=true", (base.fila(cv2) or {}).get("procesado"), True)
+    caso("4c. ... y SU transcripcion tambien (antes se quedaba en false)",
+         (base.fila(cv2 + ":transcripcion") or {}).get("procesado"), True)
+    caso("4c. CONTROL la transcripcion es otra fila (no se marco la misma dos veces)",
+         (cv2 + ":transcripcion") in base.filas and cv2 in base.filas, True)
+finally:
+    B.AUDIOS = _audios_antes
+    B._hablar = _hablar_antes
+    sys.modules.pop("transcribir_nota", None)
+
 # ─── 4b. R1 (auditoria F0): si el handler REVIENTA, la fila queda procesado=false ──
 # Antes `marcar_procesado` vivia en el `finally`: un mensaje cuyo procesamiento
 # lanzaba excepcion quedaba procesado=true y salia de la cola sin haberse hecho.

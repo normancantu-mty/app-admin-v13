@@ -1,0 +1,589 @@
+# -*- coding: utf-8 -*-
+"""Lote v2 - EL CICLO DEL LOTE: aditivo 2, reposo, destilacion, muestra y la
+temperatura de la fermentacion.
+
+Escrito el 2026-10-19 por el ejecutor del Socio (lote v2).
+
+Todo lo que se puede configurar vive en `bot/plantillas/lote.yaml` (dias del
+ciclo, rangos, textos, ubicacion). Aqui solo la mecanica:
+
+  * `tick(...)` cuelga del latido de 15 min del bot. Lee el ciclo del servidor
+    (`/api/bot/lote/ciclo`, accion `leer`), completa la temperatura que falte
+    (Open-Meteo) y manda los recordatorios que ya tocan.
+  * Cada recordatorio sale UNA vez: antes de mandarlo se RECLAMA en la base
+    (`lote_recordatorios`, INSERT ... ON CONFLICT DO NOTHING). El estado no
+    vive en la RAM del bot: un reinicio no lo repite. (Y si el envio falla
+    despues del reclamo, ese recordatorio se pierde: "a lo mas una vez".)
+  * Las ETAPAS (aditivo 2, destilacion) se capturan en el chat, se ensenan con
+    TODO + la fecha de hoy y botones Confirmar / Corregir, y solo con
+    Confirmar salen al servidor (proponer + confirmar, con la puerta de
+    aprobacion: lo del TRABAJADOR espera el Aprobar).
+  * La temperatura es la del AIRE DE FUERA en Fresnillo (Open-Meteo, gratis,
+    sin llave): un PROXY SIN ANCLAR de la temperatura del mosto. Si la API
+    falla, el lote no se entera: el dia queda sin fila y se reintenta en el
+    siguiente latido.
+
+El reloj (`ahora`) y la red (`post`, `abrir`) se inyectan: asi se prueba.
+"""
+import asyncio
+import datetime as dt
+import json
+import logging
+import re
+import time
+import urllib.parse
+import urllib.request
+
+import lote_plantilla
+
+log = logging.getLogger("bot_gastos")
+
+RUTA_CICLO = "/api/bot/lote/ciclo"
+RUTA_ETAPA_PROPONER = "/api/bot/lote/etapa/proponer"
+RUTA_ETAPA_CONFIRMAR = "/api/bot/lote/etapa/confirmar"
+
+_etapas = {}  # chat -> sesion de captura de una etapa (solo la captura; el estado del ciclo esta en la base)
+
+
+# ── configuracion ───────────────────────────────────────────────────────────
+
+def cfg():
+    return lote_plantilla.plantilla()
+
+
+def _ciclo():
+    c = dict(cfg().get("ciclo") or {})
+    c.setdefault("aditivo_2_dia", 3)
+    c.setdefault("reposo_dias", 3)
+    c.setdefault("muestra_horas", 24)
+    c.setdefault("hora_recordatorios", 8)
+    c.setdefault("ventana_dias", 45)
+    return c
+
+
+def zona():
+    horas = float(((cfg().get("ubicacion") or {}).get("utc_offset_horas")) or -6)
+    return dt.timezone(dt.timedelta(hours=horas))
+
+
+def ahora_local(ahora=None):
+    ahora = ahora or dt.datetime.now(dt.timezone.utc)
+    if ahora.tzinfo is None:
+        ahora = ahora.replace(tzinfo=dt.timezone.utc)
+    return ahora.astimezone(zona())
+
+
+def _fecha(s):
+    return dt.date(int(s[0:4]), int(s[5:7]), int(s[8:10]))
+
+
+def _instante(s):
+    """Un timestamptz de PostgREST ('2026-10-19T15:00:00.123+00:00' o 'Z')."""
+    s = str(s or "").strip().replace("Z", "+00:00")
+    if not s:
+        return None
+    m = re.match(r"^(.*?)(\.\d+)?([+-]\d\d:\d\d)?$", s)
+    base = m.group(1) if m else s
+    tz = (m.group(3) if m else None) or "+00:00"
+    try:
+        return dt.datetime.fromisoformat(base + tz)
+    except ValueError:
+        return None
+
+
+def _texto(clave, **k):
+    plantillas = cfg().get("textos") or {}
+    return str(plantillas.get(clave, clave)).format(**k)
+
+
+# ── el codigo del lote ──────────────────────────────────────────────────────
+
+def codigo_nuevo(post, ahora=None):
+    """El codigo que le toca HOY al siguiente lote, contra los codigos que ya
+    existen en la base (formato del YAML). Sin red: el N sale 1."""
+    codigos = []
+    try:
+        estado, r = post(RUTA_CICLO, {"accion": "leer", "ventana_dias": 1})
+        if estado == 200 and isinstance(r, dict) and r.get("ok"):
+            codigos = list(r.get("codigos") or [])
+    except Exception as e:
+        log.warning("ciclo: no pude leer los codigos de lote: %s", e)
+    return lote_plantilla.codigo_siguiente(codigos, ahora_local(ahora).date())
+
+
+# ── los recordatorios (PURO) ────────────────────────────────────────────────
+
+def _etapa(lote, nombre):
+    for e in lote.get("etapas") or []:
+        if e.get("etapa") == nombre:
+            return e
+    return None
+
+
+def _recordatorio(lote, tipo):
+    for r in lote.get("recordatorios") or []:
+        if r.get("tipo") == tipo:
+            return r
+    return None
+
+
+def recordatorios_debidos(lotes, ahora, ciclo=None):
+    """Que recordatorios tocan YA. **Pura**: `ahora` se inyecta.
+
+    Devuelve [(lote, tipo, extra)] con tipo en aditivo_2 | destilar | muestra |
+    muestra_2. Lo ya reclamado en la base (`recordatorios`) no vuelve a salir.
+      - aditivo_2: D + aditivo_2_dia desde la produccion, sin aditivo 2 aun.
+      - destilar:  reposo_dias despues del aditivo 2, sin destilacion aun.
+      - muestra:   hay destilacion y nadie dijo "Ya la guarde" (normalmente se
+                   reclama al confirmar la destilacion; esto es la red).
+      - muestra_2: muestra_horas despues del primero, sin "Ya la guarde". UNA vez.
+    Ninguno antes de `hora_recordatorios` (hora local), salvo la muestra.
+    """
+    c = ciclo or _ciclo()
+    local = ahora_local(ahora)
+    hoy = local.date()
+    temprano = local.hour < int(c["hora_recordatorios"])
+    salida = []
+    for lote in lotes or []:
+        if not lote.get("fecha_inicio"):
+            continue
+        inicio = _fecha(lote["fecha_inicio"])
+        ad2, des, mue = _etapa(lote, "aditivo_2"), _etapa(lote, "destilacion"), _etapa(lote, "muestra")
+        if (not temprano and ad2 is None and des is None and not _recordatorio(lote, "aditivo_2")
+                and (hoy - inicio).days >= int(c["aditivo_2_dia"])):
+            salida.append((lote, "aditivo_2", {"dia": (hoy - inicio).days}))
+        if (not temprano and ad2 is not None and des is None and not _recordatorio(lote, "destilar")
+                and ad2.get("fecha") and (hoy - _fecha(ad2["fecha"])).days >= int(c["reposo_dias"])):
+            salida.append((lote, "destilar", {"dias": (hoy - _fecha(ad2["fecha"])).days}))
+        if des is not None and mue is None:
+            primero = _recordatorio(lote, "muestra")
+            if not primero:
+                salida.append((lote, "muestra", {}))
+            elif not _recordatorio(lote, "muestra_2"):
+                enviado = _instante(primero.get("enviado_en"))
+                if enviado and (ahora_local(ahora) - enviado) >= dt.timedelta(hours=float(c["muestra_horas"])):
+                    salida.append((lote, "muestra_2", {}))
+    return salida
+
+
+def destinatarios(lote, admins, tipo=None):
+    """A quien: quien ABRIO el lote + los ADMIN (y, para la muestra, quien
+    registro la destilacion). Sin repetidos, en ese orden."""
+    ids = []
+    for t in [lote.get("abrio_telegram_id")] + list(admins or []):
+        if t not in (None, "") and int(t) not in ids:
+            ids.append(int(t))
+    if tipo in ("muestra", "muestra_2"):
+        des = _etapa(lote, "destilacion") or {}
+        t = des.get("telegram_id")
+        if t not in (None, "") and int(t) not in ids:
+            ids.append(int(t))
+    return ids
+
+
+def mensaje_de(lote, tipo, extra):
+    codigo = lote.get("codigo_lote")
+    if tipo == "aditivo_2":
+        return _texto("aditivo_2_recordatorio", codigo=codigo, dia=extra.get("dia", ""))
+    if tipo == "destilar":
+        return _texto("destilar_recordatorio", codigo=codigo, dias=extra.get("dias", ""))
+    if tipo == "muestra":
+        return _texto("muestra", codigo=codigo)
+    return _texto("muestra_2", codigo=codigo)
+
+
+def boton_de(lote, tipo):
+    """(etiqueta, callback_data). El codigo viaja en el boton: cabe en 64 bytes."""
+    if tipo == "aditivo_2":
+        return "Registrar aditivo 2", "ltad2:" + str(lote.get("codigo_lote"))
+    if tipo == "destilar":
+        return "Registrar destilacion", "ltdes:" + str(lote.get("codigo_lote"))
+    return "Ya la guarde", "ltmu:" + str(lote.get("id"))
+
+
+def _teclado(etiqueta, data):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    return InlineKeyboardMarkup([[InlineKeyboardButton(etiqueta, callback_data=data)]])
+
+
+# ── la temperatura ──────────────────────────────────────────────────────────
+
+def de_open_meteo(respuesta, fuente=None, latitud=None, longitud=None):
+    """La respuesta de Open-Meteo -> dias {fecha, fuente, t_min, t_max, t_prom}.
+    **Pura.** Un dia con algun valor nulo no se devuelve (no se inventa)."""
+    fuente = fuente or (cfg().get("temperatura") or {}).get("fuente") or "open-meteo exterior"
+    d = (respuesta or {}).get("daily") or {}
+    dias = []
+    for i, fecha in enumerate(d.get("time") or []):
+        try:
+            tmin = d["temperature_2m_min"][i]
+            tmax = d["temperature_2m_max"][i]
+            tprom = d["temperature_2m_mean"][i]
+        except (KeyError, IndexError):
+            continue
+        if None in (tmin, tmax, tprom):
+            continue
+        dias.append({"fecha": fecha, "fuente": fuente, "t_min": float(tmin), "t_max": float(tmax),
+                     "t_prom": float(tprom), "latitud": latitud, "longitud": longitud})
+    return dias
+
+
+def _abrir_de_verdad(url, timeout):
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def temperaturas(desde, hasta, latitud=None, longitud=None, abrir=None):
+    """Min / max / promedio POR DIA, de `desde` a `hasta` (date o 'AAAA-MM-DD'),
+    en Fresnillo (YAML). Una llamada a Open-Meteo. Lanza si la red falla."""
+    u = cfg().get("ubicacion") or {}
+    t = cfg().get("temperatura") or {}
+    lat = float(latitud if latitud is not None else u.get("latitud"))
+    lon = float(longitud if longitud is not None else u.get("longitud"))
+    params = {
+        "latitude": lat, "longitude": lon,
+        "daily": "temperature_2m_max,temperature_2m_min,temperature_2m_mean",
+        "timezone": u.get("zona") or "America/Mexico_City",
+        "start_date": str(desde), "end_date": str(hasta),
+    }
+    url = (t.get("url") or "https://api.open-meteo.com/v1/forecast") + "?" + urllib.parse.urlencode(params)
+    datos = (abrir or _abrir_de_verdad)(url, float(t.get("timeout_segundos") or 20))
+    return de_open_meteo(datos, latitud=lat, longitud=lon)
+
+
+def dias_que_faltan(lotes, existentes, hoy, fuente=None):
+    """Los dias de fermentacion sin fila de temperatura de `fuente`. **Pura.**
+    Por lote: de la produccion al dia de la destilacion (o a AYER, si sigue
+    fermentando: solo dias completos)."""
+    fuente = fuente or (cfg().get("temperatura") or {}).get("fuente") or "open-meteo exterior"
+    tengo = {e.get("fecha") for e in existentes or [] if e.get("fuente") == fuente}
+    faltan = set()
+    ayer = hoy - dt.timedelta(days=1)
+    for lote in lotes or []:
+        if not lote.get("fecha_inicio"):
+            continue
+        inicio = _fecha(lote["fecha_inicio"])
+        des = _etapa(lote, "destilacion")
+        fin = min(_fecha(des["fecha"]), ayer) if des and des.get("fecha") else ayer
+        d = inicio
+        while d <= fin:
+            if d.isoformat() not in tengo:
+                faltan.add(d.isoformat())
+            d += dt.timedelta(days=1)
+    return sorted(faltan)
+
+
+def completar_temperatura(post, lotes, existentes, hoy, abrir=None):
+    """Pide a Open-Meteo lo que falta y lo guarda. Devuelve (guardados, pendientes).
+    Si la API o el guardado fallan: (0, len(faltan)); se reintenta solo en el
+    siguiente latido porque el dia sigue sin fila."""
+    faltan = dias_que_faltan(lotes, existentes, hoy)
+    if not faltan:
+        return 0, 0
+    try:
+        dias = temperaturas(faltan[0], faltan[-1], abrir=abrir)
+    except Exception as e:
+        log.warning("ciclo: Open-Meteo fallo (%s): %s. Quedan %d dia(s) pendientes; reintento en el siguiente latido.",
+                    type(e).__name__, e, len(faltan))
+        return 0, len(faltan)
+    dias = [d for d in dias if d["fecha"] in set(faltan)]
+    if not dias:
+        return 0, len(faltan)
+    estado, r = post(RUTA_CICLO, {"accion": "temperatura", "dias": dias})
+    if estado != 200 or not (isinstance(r, dict) and r.get("ok")):
+        log.warning("ciclo: no pude guardar la temperatura (%s): %s", estado, (r or {}).get("error"))
+        return 0, len(faltan)
+    log.info("ciclo: temperatura guardada (%d dia(s), proxy exterior sin anclar)", len(dias))
+    return len(dias), len(faltan) - len(dias)
+
+
+# ── el latido ───────────────────────────────────────────────────────────────
+
+def reclamar(post, id_lote, tipo):
+    estado, r = post(RUTA_CICLO, {"accion": "reclamar", "id_lote": id_lote, "tipo": tipo})
+    return estado == 200 and isinstance(r, dict) and r.get("reclamado") is True
+
+
+async def tick(bot, post, ahora=None, abrir=None):
+    """Una vuelta del ciclo. `post(ruta, cuerpo)` es SINCRONA (la del bot); se
+    corre en un hilo. Devuelve lo que hizo, para el log y las pruebas."""
+    hecho = {"leidos": 0, "enviados": [], "temperatura": (0, 0), "error": None}
+    estado, r = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "leer", "ventana_dias": _ciclo()["ventana_dias"]})
+    if estado != 200 or not (isinstance(r, dict) and r.get("ok")):
+        hecho["error"] = "no pude leer el ciclo (%s)" % estado
+        log.warning("ciclo: %s", hecho["error"])
+        return hecho
+    lotes, admins = list(r.get("lotes") or []), list(r.get("admins") or [])
+    hecho["leidos"] = len(lotes)
+    local = ahora_local(ahora)
+    hecho["temperatura"] = await asyncio.to_thread(
+        completar_temperatura, post, lotes, r.get("temperaturas") or [], local.date(), abrir)
+    for lote, tipo, extra in recordatorios_debidos(lotes, ahora):
+        if not await asyncio.to_thread(reclamar, post, lote["id"], tipo):
+            continue  # otro latido (u otro proceso) ya lo mando
+        texto = mensaje_de(lote, tipo, extra)
+        etiqueta, data = boton_de(lote, tipo)
+        for tid in destinatarios(lote, admins, tipo):
+            try:
+                await bot.send_message(int(tid), texto, reply_markup=_teclado(etiqueta, data))
+                hecho["enviados"].append((lote.get("codigo_lote"), tipo, int(tid)))
+            except Exception as e:
+                log.warning("ciclo: no pude mandar %s del lote %s a %s: %s", tipo, lote.get("codigo_lote"), tid, e)
+    if hecho["enviados"]:
+        log.info("ciclo: recordatorios enviados: %s", hecho["enviados"])
+    return hecho
+
+
+# ── la captura de una etapa ─────────────────────────────────────────────────
+
+def _plano(t):
+    return lote_plantilla._plano(t)
+
+
+def _num(s):
+    return lote_plantilla._num(s)
+
+
+def sesion(chat):
+    s = _etapas.get(chat)
+    if not s:
+        return None
+    if time.time() - s["nacido_en"] > 60 * float(cfg().get("vida_minutos", 30)):
+        _etapas.pop(chat, None)
+        return None
+    return s
+
+
+def olvidar(chat):
+    _etapas.pop(chat, None)
+
+
+def pregunta_de(etapa, codigo):
+    return _texto("aditivo_2_pregunta" if etapa == "aditivo_2" else "destilacion_pregunta", codigo=codigo)
+
+
+def empezar(chat, etapa, codigo):
+    _etapas[chat] = {"etapa": etapa, "codigo": codigo, "kg": None, "n": None, "garrafas": [],
+                     "modo": "captura", "nacido_en": time.time()}
+    return _etapas[chat]
+
+
+_PAR = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilogramos?)\s*(?:a|al|con|de|,|y|/|-)?\s*(?:un\s+)?"
+    r"(\d+(?:[.,]\d+)?)\s*(?:%|por\s*ciento|grados?|de\s+alcohol)")
+_PAR_BARRA = re.compile(r"(\d+(?:[.,]\d+)?)\s*/\s*(\d+(?:[.,]\d+)?)")
+_CUANTAS = re.compile(r"(\d+)\s*garraf")
+
+
+def leer_garrafas(texto):
+    """'3 garrafas: 18.5 kg 52%, 17 kg 48%' -> (3, [(18.5, 52), (17, 48)]). **Pura.**"""
+    t = sin_codigo(texto)
+    n = _CUANTAS.search(t)
+    pares = [(_num(a), _num(b)) for a, b in _PAR.findall(t)]
+    if not pares:
+        pares = [(_num(a), _num(b)) for a, b in _PAR_BARRA.findall(t)]
+    return (int(n.group(1)) if n else None), pares
+
+
+_CODIGO = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
+_KG_CON_UNIDAD = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilogramos?)\b")
+
+
+def sin_codigo(texto):
+    """El texto sin el codigo de lote (sus digitos no son kilos)."""
+    return _CODIGO.sub(" ", _plano(texto))
+
+
+def leer_kg(texto, con_unidad=False):
+    t = sin_codigo(texto)
+    m = _KG_CON_UNIDAD.search(t) or (None if con_unidad else re.search(r"(\d+(?:[.,]\d+)?)", t))
+    return _num(m.group(1)) if m else None
+
+
+def avisos(s):
+    e = (cfg().get("etapas") or {}).get(s["etapa"]) or {}
+    out = []
+    if s["etapa"] == "aditivo_2" and s["kg"] is not None:
+        a, b = e.get("rango_kg") or [0.01, 200]
+        if not (a <= s["kg"] <= b):
+            out.append("Ojo: %s kg de aditivo 2 se sale de lo normal (%s a %s). Lo dejo asi; si es error, corrigelo." % (s["kg"], a, b))
+    if s["etapa"] == "destilacion":
+        pa, pb = e.get("rango_peso_kg") or [0.1, 60]
+        aa, ab = e.get("rango_alcohol") or [0, 80]
+        for i, (peso, grado) in enumerate(s["garrafas"], 1):
+            if not (pa <= peso <= pb):
+                out.append("Ojo: la garrafa %d pesa %s kg (lo normal: %s a %s). Lo dejo asi." % (i, peso, pa, pb))
+            if not (aa <= grado <= ab):
+                out.append("Ojo: la garrafa %d tiene %s%% (lo normal: %s a %s). Lo dejo asi." % (i, grado, aa, ab))
+    return out
+
+
+def resumen(s, hoy=None):
+    """EL mensaje de confirmacion de la etapa: todo + la fecha de hoy."""
+    hoy = hoy or ahora_local().date()
+    nombre = "ADITIVO 2" if s["etapa"] == "aditivo_2" else "DESTILACION"
+    lineas = ["Revisa antes de guardarlo:", "", "LOTE %s - %s" % (s["codigo"], nombre),
+              "Fecha: %s (hoy)" % lote_plantilla.fecha_para_persona(hoy)]
+    if s["etapa"] == "aditivo_2":
+        lineas.append("Kilos de aditivo 2: %s" % s["kg"])
+    else:
+        lineas.append("Garrafas: %d" % len(s["garrafas"]))
+        for i, (peso, grado) in enumerate(s["garrafas"], 1):
+            lineas.append("   Garrafa %d: %s kg a %s%%" % (i, peso, grado))
+    lineas += ["", "Nada se guarda hasta que confirmes."]
+    return "\n".join(lineas)
+
+
+def _teclado_resumen():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("Confirmar", callback_data="ltec:x"),
+        InlineKeyboardButton("Corregir", callback_data="ltecc:x"),
+    ]])
+
+
+async def abrir_etapa(update, chat, etapa, codigo):
+    empezar(chat, etapa, codigo)
+    await update.effective_message.reply_text(pregunta_de(etapa, codigo))
+
+
+async def _ensenar(update, s):
+    s["modo"] = "resumen"
+    s["nacido_en"] = time.time()
+    await update.effective_message.reply_text("\n".join(avisos(s) + [resumen(s)]), reply_markup=_teclado_resumen())
+
+
+def _disparo(texto):
+    """'aditivo 2 del lote L-19-10.1' / 'destilamos el L-19-10.1' -> (etapa, codigo|None)."""
+    t = _plano(texto)
+    for etapa in ("aditivo_2", "destilacion"):
+        for patron in ((cfg().get("etapas") or {}).get(etapa) or {}).get("disparadores") or []:
+            if re.search(patron, t):
+                m = _CODIGO.search(t)
+                cod = m.group(1).upper() if m else None
+                if cod and not cod.startswith("L-"):
+                    cod = "L-" + cod[1:]
+                return etapa, cod
+    return None, None
+
+
+async def atender(update, chat, texto, confirmar=None):
+    """El texto de una etapa en captura. True si lo atendio."""
+    s = sesion(chat)
+    t = _plano(texto)
+    if s is None:
+        etapa, codigo = _disparo(texto)
+        if not etapa:
+            return False
+        if not codigo:
+            await update.effective_message.reply_text(
+                "De cual lote? Dimelo con el codigo, por ejemplo: %s L-19-10.1"
+                % ("aditivo 2" if etapa == "aditivo_2" else "destilacion"))
+            return True
+        s = empezar(chat, etapa, codigo)
+        # Si el mismo mensaje ya trae los datos, se usan; si no, se pregunta.
+        if not await _capturar(update, s, texto, primera=True):
+            await update.effective_message.reply_text(pregunta_de(etapa, codigo))
+        return True
+    if s["modo"] == "resumen":
+        if lote_plantilla._SI.match(t) and confirmar is not None:
+            await confirmar(update, chat)
+            return True
+        if lote_plantilla._CORREGIR.match(t):
+            await abrir_etapa(update, chat, s["etapa"], s["codigo"])
+            return True
+    return await _capturar(update, s, texto)
+
+
+async def _capturar(update, s, texto, primera=False):
+    """Mete el texto en la etapa. False si no traia nada de la etapa."""
+    if s["etapa"] == "aditivo_2":
+        kg = leer_kg(texto, con_unidad=primera)
+        if kg is None:
+            return False
+        s["kg"] = kg
+        await _ensenar(update, s)
+        return True
+    n, pares = leer_garrafas(texto)
+    if n is None and not pares:
+        return False
+    if n is not None:
+        s["n"] = n
+    s["garrafas"].extend((float(p), float(g)) for p, g in pares if p is not None and g is not None)
+    tope = int(((cfg().get("etapas") or {}).get("destilacion") or {}).get("tope_garrafas") or 50)
+    s["garrafas"] = s["garrafas"][:tope]
+    falta = (s["n"] or 0) - len(s["garrafas"])
+    if not s["garrafas"] or falta > 0:
+        s["modo"] = "captura"
+        desde = len(s["garrafas"]) + 1
+        hasta = s["n"] or desde
+        await update.effective_message.reply_text(
+            "Me falta%s: el peso (kg) y el %% de alcohol de la garrafa %s%s. Todo en un mensaje, por ejemplo: 17 kg 48%%"
+            % ("n" if hasta > desde else "", desde, ("" if hasta == desde else " a la %d" % hasta)))
+        return True
+    if s["n"] is not None and len(s["garrafas"]) > s["n"]:
+        s["n"] = len(s["garrafas"])
+    await _ensenar(update, s)
+    return True
+
+
+def cuerpo_de_propuesta(s, chat):
+    cuerpo = {"telegram_id": chat, "codigo_lote": s["codigo"], "etapa": s["etapa"]}
+    if s["etapa"] == "aditivo_2":
+        cuerpo["kg"] = s["kg"]
+        cuerpo["insumo_sku"] = cfg().get("aditivo_2_sku") or "ing-al"
+    else:
+        cuerpo["garrafas"] = [{"peso_kg": p, "grado_alcohol": g} for p, g in s["garrafas"]]
+    return cuerpo
+
+
+async def confirmar_etapa(update, chat, post, memoria=None):
+    """Confirmar: proponer + confirmar en el servidor. Devuelve la respuesta del
+    confirmar (o None). `post` es SINCRONA. `memoria` (el `_memoria` del bot)
+    recibe la propuesta para que el aviso al aprobador la lleve."""
+    s = sesion(chat)
+    decir = update.effective_message.reply_text
+    if not s or s.get("modo") != "resumen":
+        await decir("No tengo ninguna etapa de lote por confirmar.")
+        return None
+    texto_resumen = resumen(s)
+    estado, r = await asyncio.to_thread(post, RUTA_ETAPA_PROPONER, cuerpo_de_propuesta(s, chat))
+    if estado != 200 or not r.get("ok"):
+        olvidar(chat)
+        await decir(r.get("error", "No pude proponerlo. No se escribio nada."))
+        return None
+    olvidar(chat)
+    if memoria is not None:
+        memoria[chat] = {"tipo": "lote_etapa", "borrador_id": r["borrador_id"], "sello": r["sello"],
+                         "mostrado": (r["borrador_id"], texto_resumen, None)}
+    estado, r2 = await asyncio.to_thread(post, RUTA_ETAPA_CONFIRMAR, {
+        "telegram_id": chat, "borrador_id": r["borrador_id"], "sello": r["sello"]})
+    if estado != 200 or not r2.get("ok"):
+        if memoria is not None and not r2.get("espera_aprobacion"):
+            memoria.pop(chat, None)
+        await decir(r2.get("error", "No pude escribirlo. No se escribio nada."))
+        return r2
+    if memoria is not None:
+        memoria.pop(chat, None)
+    await decir(r2.get("mensaje") or "Listo.")
+    if r2.get("etapa") == "destilacion" and r2.get("id_lote"):
+        await pedir_muestra(update, post, r2["id_lote"], r2.get("codigo_lote") or s["codigo"])
+    return r2
+
+
+async def pedir_muestra(update, post, id_lote, codigo):
+    """Al confirmar la destilacion: "guarda una muestra" con su boton. Se
+    reclama en la base: si el latido ya la mando, no sale dos veces."""
+    if not await asyncio.to_thread(reclamar, post, id_lote, "muestra"):
+        return False
+    lote = {"id": id_lote, "codigo_lote": codigo}
+    etiqueta, data = boton_de(lote, "muestra")
+    await update.effective_message.reply_text(mensaje_de(lote, "muestra", {}), reply_markup=_teclado(etiqueta, data))
+    return True
+
+
+async def muestra_guardada(update, chat, post, id_lote):
+    estado, r = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "muestra", "telegram_id": chat, "id_lote": id_lote})
+    await update.effective_message.reply_text(
+        (r or {}).get("mensaje") if estado == 200 and (r or {}).get("ok") else (r or {}).get("error", "No pude anotarlo."))
+    return estado == 200 and bool((r or {}).get("ok"))
