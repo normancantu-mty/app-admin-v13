@@ -3174,10 +3174,14 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
             return
     # Compuesto con contexto de cuarto: la otra mitad sigue SIN el tramo de la
     # temperatura (que se ofrece aparte); sin contexto, el texto va entero.
-    otra = temp["sin"] if (temp and not temp["solo"] and temp["cuarto"] and temp["sin"]) else texto
+    # Ronda 4: tambien sin contexto de cuarto ("temperatura 24 grados" en un
+    # compuesto): el tramo sale del texto y se OFRECE preguntando de que es;
+    # antes el 24 se perdia callado en la plantilla.
+    otra = temp["sin"] if (temp and not temp["solo"] and temp["sin"]) else texto
     await _enrutar_y_despachar_mensaje(update, chat, otra, esperando)
-    if temp and not temp["solo"] and temp["cuarto"]:
-        await lote_ciclo.ofrecer_temperatura(update, chat, _post, temp["valor"], compuesto=True)
+    if temp and not temp["solo"]:
+        await lote_ciclo.ofrecer_temperatura(update, chat, _post, temp["valor"], compuesto=True,
+                                             cuarto=temp["cuarto"])
 
 
 async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):

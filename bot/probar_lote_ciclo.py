@@ -623,7 +623,7 @@ caso("11a. ... 'brix 12' sin decir cual NO se pierde: va a notas",
      any("Brix 12" in x for x in (s11 or {}).get("notas", [])), True)
 caso("11a. ... el 24 NO se leyo como dato de la plantilla", 24 in ((s11 or {}).get("campos") or {}).values(), False)
 caso("11a. ... pregunta lo que falta", any("Me falta" in d for d in u.message.dichos), True)
-caso("11a. ... y DESPUES ofrece la temperatura con Confirmar", (u.message.dichos[-1].startswith("Tambien dijiste"),
+caso("11a. ... y DESPUES ofrece la temperatura con Confirmar", (u.message.dichos[-1].startswith("Aparte de lo de arriba: dijiste la temperatura del cuarto"),
                                                                 u.message.teclados[-1]), (True, ["lttc:x", "lttn:x"]))
 caso("11a. ... sin guardar ninguna temperatura", len(temps(base10)) - n, 0)
 P.olvidar(CHAT)
@@ -652,7 +652,7 @@ caso("11c. garrafas + temperatura: el resumen trae las 2 garrafas",
      (True, True, True))
 caso("11c. ... la etapa queda en resumen con 2 garrafas", (C.sesion(CHAT) or {}).get("garrafas"), [(18.0, 50.0), (10.0, 30.0)])
 caso("11c. ... la temperatura se ofrece DESPUES, sin guardarse",
-     (u.message.dichos[-1].startswith("Tambien dijiste"), len(temps(base10)) - n), (True, 0))
+     (u.message.dichos[-1].startswith("Aparte de lo de arriba: dijiste la temperatura del cuarto"), len(temps(base10)) - n), (True, 0))
 caso("11c. ... y 'si' escrito NO confirma la temperatura de un compuesto (solo su boton)",
      (asyncio.run(C.atender(u, CHAT, "si", None, post=base10)), len(temps(base10)) - n), (False, 0))
 boton(u, "lttc")
@@ -690,7 +690,7 @@ for frase, campos in [
 B._olvidar_chat(CHAT)
 # (f) pregunta con codigo L-: no abre la etapa
 B.enrutar = modelo11({"intencion": "otro", "confianza": "baja", "campos": {}})
-for frase in ("cuanto aditivo 2 lleva el L-12-10.1?", "cuantas garrafas salieron del L-12-10.1 que destilamos"):
+for frase in ("cuanto aditivo 2 lleva el L-12-10.1?", "cuando destilamos el L-12-10.1"):
     C.olvidar(CHAT)
     n = len(base10.llamadas)
     u = Update(CHAT)
@@ -770,6 +770,80 @@ base13b.nuevo_lote("lote-i", "L-13-10.5", "2026-10-13")
 base13b.etapas[("lote-i", "destilacion")] = {"fecha": "2026-10-19", "telegram_id": 777}
 caso("13. CONTROL la PRIMERA (red, sin reclamo) sale a cualquier hora",
      tipos(latir(base13b, BotTg(), local(2026, 10, 19, 3))), ["muestra"])
+
+# --- 14. RONDA 4: no_abren_etapa NO tumba frases legitimas de etapa ---------
+# El auditor (ronda 3): 10/10 frases que abrian etapa en 17fad8b dejaron de
+# abrir. La lista solo mira los disparadores con codigo EN MEDIO, nunca los
+# anclados al inicio, ni un mensaje con datos de etapa (garrafas, kg, %).
+ABREN = [
+    ("ya destilamos el L-12-10.1, salieron 2 garrafas, ¿lo anotas?", "destilacion"),
+    ("Ya destilamos el L-12-10.1. ¿Sabes qué? Salieron 2 garrafas.", "destilacion"),
+    ("que crees, ya destilamos el L-12-10.1", "destilacion"),
+    ("como quedamos, hoy destilamos el L-12-10.1", "destilacion"),
+    ("ya destilamos el L-12-10.1, salieron 2 garrafas que vamos a embotellar el lunes", "destilacion"),
+    ("ya destilamos el L-12-10.1, salieron 2 botellones", "destilacion"),
+    ("ya destilamos el L-12-10.1: garrafa 1 de 50 por ciento, 18 kilos", "destilacion"),
+    ("ya destilamos el L-12-10.1, la 1 de 50 de alcohol, 18 kilos", "destilacion"),
+    ("le pusimos 4 kilos de aditivo 2 al L-12-10.1, cuando toca destilar?", "aditivo_2"),
+    ("dime si quedo: le pusimos 4 kilos de aditivo 2 al L-12-10.1", "aditivo_2"),
+    # variantes con ¿? al inicio y al final (como las puede poner la transcripcion)
+    ("¿ya destilamos el L-12-10.1, salieron 2 garrafas?", "destilacion"),
+    ("¿Que crees? Ya destilamos el L-12-10.1.", "destilacion"),
+    ("¿Como quedamos? Hoy destilamos el L-12-10.1", "destilacion"),
+    ("¿le pusimos 4 kilos de aditivo 2 al L-12-10.1?", "aditivo_2"),
+    ("¿Dime si quedo, le pusimos 4 kilos de aditivo 2 al L-12-10.1?", "aditivo_2"),
+    ("¿Ya destilamos el L-12-10.1? Salieron 2 garrafas, 18 kg 50% y 10 kg 30%.", "destilacion"),
+]
+NO_ABREN = [
+    "envasamos 40 de 750 del L-12-10.1 que destilamos el viernes",
+    "del L-12-10.1 salieron 40 de 250, lo destilaron el lunes",
+    "cuanto aditivo 2 lleva el L-12-10.1?",
+    "¿Envasamos 40 de 750 del L-12-10.1 que destilamos el viernes?",
+    "¿Del L-12-10.1 salieron 40 de 250? Lo destilaron el lunes",
+    "¿Cuanto aditivo 2 lleva el L-12-10.1?",
+    "cuanto aditivo 2 lleva el L-12-10.1",           # voz sin signos
+    "cuando destilamos el L-12-10.1",
+]
+for frase, etapa in ABREN:
+    caso("14. ABRE '%s'" % frase, C._disparo(frase), (etapa, "L-12-10.1"))
+for frase in NO_ABREN:
+    caso("14. NO abre '%s'" % frase, C._disparo(frase), (None, None))
+# de punta a punta, por el bot, sin modelo: dos de las legitimas abren la etapa
+B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
+B._post_de_verdad = base10
+for frase, esperado in [("ya destilamos el L-19-10.1, salieron 2 garrafas, ¿lo anotas?", "destilacion"),
+                        ("¿le pusimos 4 kilos de aditivo 2 al L-19-10.1?", "aditivo_2")]:
+    C.olvidar(CHAT)
+    B._olvidar_chat(CHAT)
+    u = Update(CHAT)
+    texto(u, frase)
+    caso("14. bot: '%s' abre la etapa sin modelo" % frase, ((C.sesion(CHAT) or {}).get("etapa"),
+                                                          (C.sesion(CHAT) or {}).get("codigo")), (esperado, "L-19-10.1"))
+C.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+
+# --- 15. RONDA 4: "temperatura 24 grados" SIN cuarto en un compuesto ---------
+# Antes: el 24 se perdia callado en la plantilla. Ahora: sale del texto y se
+# OFRECE preguntando de que es (lttc/lttn); nada se guarda sin el boton.
+P.olvidar(CHAT)
+C._temperaturas.clear()
+n = len(temps(base10))
+u = Update(CHAT)
+texto(u, "hoy empezamos lote, 40 kilos de chile guajillo, brix 12, temperatura 24 grados")
+s15 = P.sesion(CHAT) or {}
+caso("15. sin cuarto: la plantilla abre con 40 kg y el 24 NO entra a la plantilla",
+     ((s15.get("campos") or {}).get("kg_chile"), 24 in (s15.get("campos") or {}).values()), (40, False))
+caso("15. ... el 24 se ofrece aparte, diciendo que no dijeron de que, con su boton",
+     ("sin decir de que" in u.message.dichos[-1], "24" in u.message.dichos[-1], u.message.teclados[-1]),
+     (True, True, ["lttc:x", "lttn:x"]))
+caso("15. ... y no se guardo", len(temps(base10)) - n, 0)
+caso("15. el segundo teclado se distingue: 'Aparte de lo de arriba' y boton 'Guardar temperatura'",
+     (u.message.dichos[-1].startswith("Aparte de lo de arriba"),
+      [b.text for fila in C._teclado_temperatura().inline_keyboard for b in fila][0]), (True, "Guardar temperatura"))
+P.olvidar(CHAT)
+C._temperaturas.clear()
+B._olvidar_chat(CHAT)
+
 
 fallos = [(n_, o, e) for n_, o, e in casos if o != e]
 for n_, o, e in casos:

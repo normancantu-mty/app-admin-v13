@@ -535,26 +535,43 @@ async def _ensenar(update, s):
     await update.effective_message.reply_text("\n".join(avisos(s) + [resumen(s)]), reply_markup=_teclado_resumen())
 
 
+def sin_muletillas(texto):
+    """El texto (plano) sin las muletillas del YAML (`etapas.muletillas`:
+    "que crees", "sabes que", "como quedamos", "oye"), que no son pregunta ni
+    dato: "¿Que crees? Ya destilamos el L-.." se lee como "Ya destilamos el L-..".
+    **Pura.**"""
+    t = _plano(texto)
+    for p in ((cfg().get("etapas") or {}).get("muletillas") or []):
+        t = re.sub(p, " ", t)
+    return t
+
+
 def no_abre_etapa(texto):
     """True si el mensaje es un envasado o una pregunta (YAML
-    `etapas.no_abren_etapa`): ningun disparador de etapa lo toma. **Pura.**"""
-    t = _plano(texto)
-    return any(re.search(p, t) for p in ((cfg().get("etapas") or {}).get("no_abren_etapa") or []))
+    `etapas.no_abren_etapa`) Y no trae datos de etapa (YAML
+    `etapas.datos_de_etapa`: garrafas, kg, %). Ronda 4: solo se consulta para
+    los `disparadores_con_codigo`; los anclados al inicio no la miran. **Pura.**"""
+    t = sin_muletillas(texto)
+    e = cfg().get("etapas") or {}
+    datos = e.get("datos_de_etapa")
+    if datos and re.search(datos, t):
+        return False
+    return any(re.search(p, t) for p in (e.get("no_abren_etapa") or []))
 
 
 def _disparo(texto):
     """'aditivo 2 del lote L-19-10.1' / 'destilamos el L-19-10.1' -> (etapa, codigo|None)."""
-    t = _plano(texto)
+    t = sin_muletillas(texto)
     m = _CODIGO.search(t)
     cod = m.group(1).upper() if m else None
     if cod and not cod.startswith("L-"):
         cod = "L-" + cod[1:]
-    # Ronda 3 (R2-B): un envasado F0 ("envasamos 40 de 750 del L-.. que
-    # destilamos el viernes") o una PREGUNTA ("cuanto aditivo 2 lleva el L-..?")
-    # no abren la captura de una etapa: siguen al camino de siempre (modelo ->
-    # F0/D81). Patrones en el YAML (`etapas.no_abren_etapa`).
-    if no_abre_etapa(texto):
-        return None, None
+    # Ronda 3 (R2-B) / ronda 4: un envasado F0 ("envasamos 40 de 750 del L-..
+    # que destilamos el viernes") o una PREGUNTA ("cuanto aditivo 2 lleva el
+    # L-..?") no abren la etapa POR CODIGO EN MEDIO; los disparadores anclados
+    # al inicio ("ya destilamos el L-..., salieron 2 garrafas, lo anotas?") y
+    # los mensajes con datos de etapa si la abren. YAML `etapas.no_abren_etapa`.
+    excluido = no_abre_etapa(texto)
     for etapa in ("aditivo_2", "destilacion"):
         e = (cfg().get("etapas") or {}).get(etapa) or {}
         for patron in e.get("disparadores") or []:
@@ -563,7 +580,7 @@ def _disparo(texto):
         # Ronda 2 (H1): en CUALQUIER parte del mensaje, pero solo con un
         # codigo L- en el mismo mensaje ("le pusimos 4 kilos de aditivo 2 al
         # L-12-10.1"). Sin codigo no: "aditivo 2" suelto puede ser otra cosa.
-        if cod:
+        if cod and not excluido:
             for patron in e.get("disparadores_con_codigo") or []:
                 if re.search(patron, t):
                     return etapa, cod
@@ -631,7 +648,7 @@ _temperaturas = {}  # chat -> la temperatura del cuarto ENSENADA y sin confirmar
 def _teclado_temperatura():
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("Confirmar", callback_data="lttc:x"),
+        InlineKeyboardButton("Guardar temperatura", callback_data="lttc:x"),
         InlineKeyboardButton("No la guardes", callback_data="lttn:x"),
     ]])
 
@@ -655,7 +672,7 @@ def _fermentando(r):
     return [l for l in (r.get("lotes") or []) if _etapa(l, "destilacion") is None]
 
 
-async def ofrecer_temperatura(update, chat, post, valor, compuesto=False, ahora=None):
+async def ofrecer_temperatura(update, chat, post, valor, compuesto=False, ahora=None, cuarto=True):
     """Ronda 3 (R2-A): la temperatura DICTADA del cuarto se ENSENA con
     Confirmar / No la guardes; aqui no se guarda nada. Solo si hay un lote en
     fermentacion (sin destilacion). `compuesto`: el mensaje traia otra cosa
@@ -679,7 +696,9 @@ async def ofrecer_temperatura(update, chat, post, valor, compuesto=False, ahora=
     codigos = ", ".join([str(l.get("codigo_lote")) for l in fermentando[:5]] + (["el que estas abriendo"] if abriendo else []))
     await decir("%sTemperatura del cuarto: %s C, hoy %s (fuente manual). Lote(s) en fermentacion: %s.\n"
                 "Nada se guarda hasta que confirmes."
-                % ("Tambien dijiste la temperatura del cuarto. " if compuesto else "", valor,
+                % ((("Aparte de lo de arriba: dijiste la temperatura del cuarto. " if cuarto else
+                     "Aparte de lo de arriba: dijiste 'temperatura %s grados' sin decir de que. Solo si es la "
+                     "del cuarto, guardala. " % valor) if compuesto else ""), valor,
                    lote_plantilla.fecha_para_persona(ahora_local(ahora).date()), codigos),
                 reply_markup=_teclado_temperatura())
     return True
