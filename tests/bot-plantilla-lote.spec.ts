@@ -51,9 +51,15 @@ test('la ruta ofrece abrir el lote en vez del 422 cuando no hay abiertos', () =>
   expect(tramo).toContain('agregar = false')
 })
 
-test('la plantilla del lote es DATOS: el YAML trae los 4 campos numerados y sus rangos', () => {
+// Lote v2 (2026-10-19, ejecutor del Socio): la plantilla cambio por decision de
+// Norman (kilos+tipo de chile, Brix chile, kilos aditivo 1, Brix final; sin dias
+// de fermentacion ni tandas). El comportamiento lo mide bot/probar_plantilla.py.
+test('la plantilla del lote es DATOS: el YAML trae los campos nuevos, sus rangos y el formato del codigo', () => {
   const y = readFileSync(join(__dirname, '..', 'bot', 'plantillas', 'lote.yaml'), 'utf8')
-  for (const c of ['kg_chile', 'dias_fermentacion', 'tandas', 'tipo_chile']) expect(y).toContain('nombre: ' + c)
+  for (const c of ['kg_chile', 'tipo_chile', 'brix_chile', 'kg_aditivo_1', 'brix_final']) expect(y).toContain('nombre: ' + c)
+  for (const c of ['dias_fermentacion', 'tandas']) expect(y).not.toContain('nombre: ' + c)
   expect(y).toContain('rango: [1, 1000]')
-  expect(y).toContain('rango: [1, 31]')
+  expect(y).toContain("formato_codigo: 'L-{dd}-{mm}.{n}'")
+  expect(y).toMatch(/aditivo_1_sku: 'ing-az'\s+# CONFIRMAR CON NORMAN/)
+  expect(y).toMatch(/aditivo_2_sku: 'ing-al'\s+# CONFIRMAR CON NORMAN/)
 })
