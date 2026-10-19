@@ -178,6 +178,15 @@ ciclo:
 # del mensaje). Sin codigo de lote, el bot pregunta "De cual lote?". Lo normal
 # es entrar por el boton del recordatorio.
 etapas:
+  # Ronda 3 (R2-B): si el mensaje casa con alguno de estos, NINGUN disparador
+  # de etapa lo toma (ni los del inicio ni los `disparadores_con_codigo`): es
+  # un envasado F0 o una pregunta, y sigue al modelo (camino F0/D81).
+  no_abren_etapa:
+    - '\?'
+    - '^\W*(oye\W+)?(cuant[oa]s?|que|cual(es)?|cuando|como|donde|quien(es)?|sabes|dime|me\s+dices)\b'
+    - '\b(envas|embotell|botell)\w*'
+    - '\bsalieron\s+\d+\s+(botellas?\s+)?de\s+\d{2,4}\b'
+    - '\b\d+\s+(botellas?\s+)?de\s+(50|200|250|375|500|700|750|1000)\b(?!\s*(kg|kilos?|%|grados?))'
   aditivo_2:
     disparadores:
       - '^\W*(registra\w*\s+|ya\s+|hoy\s+)?(el\s+)?aditivo\s*(2|dos)\b'

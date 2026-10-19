@@ -535,6 +535,13 @@ async def _ensenar(update, s):
     await update.effective_message.reply_text("\n".join(avisos(s) + [resumen(s)]), reply_markup=_teclado_resumen())
 
 
+def no_abre_etapa(texto):
+    """True si el mensaje es un envasado o una pregunta (YAML
+    `etapas.no_abren_etapa`): ningun disparador de etapa lo toma. **Pura.**"""
+    t = _plano(texto)
+    return any(re.search(p, t) for p in ((cfg().get("etapas") or {}).get("no_abren_etapa") or []))
+
+
 def _disparo(texto):
     """'aditivo 2 del lote L-19-10.1' / 'destilamos el L-19-10.1' -> (etapa, codigo|None)."""
     t = _plano(texto)
@@ -542,6 +549,12 @@ def _disparo(texto):
     cod = m.group(1).upper() if m else None
     if cod and not cod.startswith("L-"):
         cod = "L-" + cod[1:]
+    # Ronda 3 (R2-B): un envasado F0 ("envasamos 40 de 750 del L-.. que
+    # destilamos el viernes") o una PREGUNTA ("cuanto aditivo 2 lleva el L-..?")
+    # no abren la captura de una etapa: siguen al camino de siempre (modelo ->
+    # F0/D81). Patrones en el YAML (`etapas.no_abren_etapa`).
+    if no_abre_etapa(texto):
+        return None, None
     for etapa in ("aditivo_2", "destilacion"):
         e = (cfg().get("etapas") or {}).get(etapa) or {}
         for patron in e.get("disparadores") or []:
