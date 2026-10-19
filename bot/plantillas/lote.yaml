@@ -1,0 +1,101 @@
+# Plantilla del LOTE (Cazador F0, WP-7a). Escrito el 2026-10-17 por el ejecutor B del Socio.
+#
+# Esto es DATOS, no codigo: `bot/lote_plantilla.py` la lee al arrancar. Para
+# agregar una pregunta, cambiar un rango o una forma de decirlo, se edita aqui
+# y se reinicia el bot. Las expresiones son regex de Python, sobre el texto en
+# minusculas y SIN acentos.
+#
+# Reglas que la plantilla respeta (D de Norman 2026-10-17):
+#   - preguntas en tandas de <=4, numeradas;
+#   - se aceptan varias respuestas en un mensaje (sueltas o "1. 40  2. 8");
+#   - un rango fuera de lo normal AVISA, nunca bloquea;
+#   - lo que no tiene campo (aditivo, observacion) va a `notas` del lote.
+
+nombre: lote
+vida_minutos: 30
+
+# Frases que ABREN la plantilla sin pasar por el modelo. Se buscan al inicio
+# del mensaje (o "plantilla" en cualquier parte).
+disparadores:
+  - '^\W*(hoy\s+|ya\s+)?(empezamos|empezamos\s+un|arrancamos|arranque|arranco|iniciamos|abrimos|abro)\s+(un\s+|el\s+|otro\s+)?lote'
+  - '^\W*(hoy\s+)?lote\s+nuevo'
+  - 'plantilla\s+(del?\s+)?lote'
+
+intro: 'Lote nuevo. Contestame lo que sepas, todo en un mensaje si quieres:'
+cierre: 'El codigo lo pongo yo si no me lo dices. Lo demas (aditivos, observaciones) lo anoto en notas del lote.'
+
+# Orden = orden de la plantilla completa (maximo 4 numeradas).
+campos:
+  - nombre: kg_chile
+    etiqueta: 'Kilos de chile'
+    pregunta: 'Cuantos kilos de chile entraron?'
+    obligatorio: true
+    tipo: numero
+    unidad: kg
+    rango: [1, 1000]
+    patrones:
+      - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\b'
+  - nombre: dias_fermentacion
+    etiqueta: 'Dias de fermentacion'
+    pregunta: 'Cuantos dias va a fermentar?'
+    obligatorio: true
+    tipo: numero
+    unidad: dias
+    rango: [1, 31]
+    patrones:
+      - '(\d+)\s*dias?\b'
+  - nombre: tandas
+    etiqueta: 'Tandas: cuantos tambos y de cuantos litros'
+    pregunta: 'Cuantos tambos y de cuantos litros?'
+    obligatorio: false
+    tipo: tandas
+    rango: [1, 5000]
+    patrones:
+      - '(\d+|un|uno|una|dos|tres|cuatro|cinco|seis)\s+(?:tambos?|tanques?|tandas?|garrafones?)\s+de\s+(\d+(?:[.,]\d+)?)\s*(?:litros?|lts?|l)\b'
+  - nombre: tipo_chile
+    etiqueta: 'Tipo de chile'
+    pregunta: 'Que chile es?'
+    obligatorio: false
+    tipo: texto
+    a_notas: 'tipo de chile'
+    patrones:
+      - 'chile\s+(jalapeno|guajillo|habanero|serrano|chipotle|piquin|morita|ancho|pasilla|de arbol|arbol|poblano|manzano)'
+
+# Fuera de la plantilla numerada, pero se reconocen si vienen dichos.
+extras:
+  - nombre: codigo_lote
+    tipo: codigo
+    patrones:
+      - '\b(l-?\d{3,5})\b'
+  - nombre: grados_ambiguos
+    tipo: a_notas
+    # "a 24 grados" puede ser temperatura o alcohol: NO se adivina, va a notas.
+    patrones:
+      - '\ba\s+(\d+(?:[.,]\d+)?)\s*grados?\b'
+    nota: '{0} grados (no dijeron si es temperatura o alcohol)'
+  - nombre: aditivo
+    tipo: a_notas
+    patrones:
+      - '(\d+(?:[.,]\d+)?\s*(?:gramos?|g|ml|mililitros?|cucharadas?)\s+de\s+[a-z ]{3,30})'
+    nota: 'aditivo: {0}'
+
+# "No se", "luego": el campo preguntado se deja vacio y queda anotado.
+omitir:
+  - '\bno\s+se\b'
+  - '\b(te\s+digo\s+)?luego\b'
+  - '\bdespues\b'
+  - '\bahorita\s+no\b'
+  - '\bal\s+rato\b'
+  - '\bno\s+tengo\s+el\s+dato\b'
+
+# Palabras que no cuentan como "algo mas que anotar". Lo que sobra del mensaje,
+# quitando lo reconocido y esto, si son 2 o mas palabras, va a notas.
+relleno: >-
+  y e o a al de del la el los las le lo un una uno con por para que se es son
+  ya hoy ahora ahorita van va ser fue fueron va a ser le entraron entraron entro
+  metimos meti metio echamos eche le pusimos pusimos ponle lote nuevo otro
+  empezamos arrancamos arranque arranco iniciamos abrimos abro chile chiles
+  fermentacion fermenta fermentar fermentando queda quedan se queda dura durar
+  tambos tambo tanques tanque litros grados kilos kg dias dia como unos unas
+  mas menos pues bueno ok oye mira si no tambien plantilla dame manda pasame
+  cuantos cuantas cuanto

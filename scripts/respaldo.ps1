@@ -4,7 +4,8 @@
 #
 # Deja dos archivos con fecha en supabase/_respaldos/ :
 #   AAAA-MM-DD_schema.sql  esquema + RLS + politicas + funciones + vistas
-#   AAAA-MM-DD_datos.sql   datos de las 9 tablas de public + el esquema auth
+#   AAAA-MM-DD_datos.sql   datos de toda la base (se comprueban las 9 tablas de
+#                          negocio + la bitacora del bot) + el esquema auth
 #
 # NO lleva contrasenas. El CLI de Supabase se autentica con la sesion que dejo
 # "supabase login" (token en %USERPROFILE%\.supabase). Si algun dia pide la
@@ -47,7 +48,13 @@ $tablas = @(
     'transacciones_tickets', 'ticket_detalles', 'catalogo_productos',
     'listas_precios', 'recetas_produccion'
 )
-$politicasEsperadas = 49
+# Cazador F0 (2026-10-17): la bitacora del bot (todo lo dicho, solo-agregar).
+# Se exige que el esquema la defina; sus FILAS no, porque recien desplegada
+# puede estar vacia y eso no es un respaldo malo.
+$tablasSinFilasObligatorias = @('bitacora')
+# 2026-10-17: el volcado real del 2026-10-11 trae 93 (el 49 de antes llevaba
+# semanas dando FALLA en respaldo.log) + 1 de la bitacora (bitacora_sel_admin).
+$politicasEsperadas = 94
 
 # --- como se invoca el CLI --------------------------------------------------
 # Ojo: desde PowerShell, "npx" resuelve al shim npx.ps1 y falla con
@@ -113,8 +120,15 @@ try {
                 $fallas += "los datos no traen filas de la tabla $t"
             }
         }
+        foreach ($t in $tablasSinFilasObligatorias) {
+            if ($schema -notmatch [regex]::Escape('"public"."' + $t + '"')) {
+                $fallas += "el esquema no define la tabla $t"
+            } elseif ($datos -notmatch [regex]::Escape('INSERT INTO "public"."' + $t + '"')) {
+                Escribir "AVISO  la tabla $t esta en el esquema pero sin filas en los datos" 'Yellow'
+            }
+        }
         if ($fallas.Count -eq 0) {
-            Escribir "OK  las $($tablas.Count) tablas de negocio estan en el respaldo" 'Green'
+            Escribir "OK  las $($tablas.Count) tablas de negocio y la bitacora estan en el respaldo" 'Green'
         }
 
         $kbS = [math]::Round((Get-Item $fSchema).Length / 1KB, 1)

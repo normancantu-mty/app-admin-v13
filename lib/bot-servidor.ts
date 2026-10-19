@@ -19,6 +19,7 @@
  * **Por eso el bot SI puede marcar `telegram:<quien>` y que sobreviva.**
  */
 
+import { ROL_TRABAJADOR } from '@/lib/bot-permisos'
 import { createClient } from '@supabase/supabase-js'
 import { clienteDeEnsayo, esPeticionDeEnsayo } from './bot-ensayo'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -165,7 +166,9 @@ export async function resolverIdentidad(
 ): Promise<IdentidadBot | null> {
   const { data, error } = await supabase
     .from('bot_identidades')
-    .select('etiqueta, id_entidad, id_cuenta_destino, activo, requiere_aprobacion')
+    // `*` y no la lista: asi la ruta sigue viva con o sin la columna `rol_bot`
+    // (Cazador F0, WP-6), en cualquier orden de despliegue.
+    .select('*')
     .eq('telegram_id', telegramId)
     .eq('activo', true)
     .maybeSingle()
@@ -181,6 +184,11 @@ export async function resolverIdentidad(
   ])
 
   const usables = (cuentas.data ?? []).filter(cuentaUsableporElBot)
+  // Cazador F0 (WP-6): el TRABAJADOR apunta a la Matriz como Kevin, pero su rol
+  // en el bot es otro. Se pisa `rolEntidad` A PROPOSITO: toda comprobacion
+  // `=== 'ADMIN'` de las rutas queda cerrada para el sin tocarlas, y su VA
+  // siempre espera el Aprobar de Norman o Kevin (`requiereAprobacion`).
+  const esTrabajador = (data as { rol_bot?: string | null }).rol_bot === ROL_TRABAJADOR
   const nombreCuenta = usables.find((c) => c.id === data.id_cuenta_destino)?.nombre ?? '(cuenta)'
 
   return {
@@ -190,8 +198,8 @@ export async function resolverIdentidad(
     nombreEntidad: entidad.data?.nombre ?? '(entidad)',
     // Si la lectura fallo, el rol por defecto es el MAS restrictivo. Un
     // default permisivo convierte un error de red en una fuga de datos.
-    rolEntidad: entidad.data?.rol ?? 'DESCONOCIDO',
-    requiereAprobacion: data.requiere_aprobacion === true,
+    rolEntidad: esTrabajador ? ROL_TRABAJADOR : entidad.data?.rol ?? 'DESCONOCIDO',
+    requiereAprobacion: esTrabajador || data.requiere_aprobacion === true,
     telegramId,
     nombreCuenta,
     cuentas: usables.map((c) => ({ id: c.id, nombre: c.nombre ?? '(cuenta)' }))

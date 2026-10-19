@@ -103,8 +103,21 @@ const DE_LA_MATRIZ: readonly AccionBot[] = [
 // `lib/bot-entrega.ts`) y siempre espera el Aprobar de la matriz.
 const DEL_DISTRIBUIDOR: readonly AccionBot[] = ['venta', 'abono', 'cotizacion', 'convertir', 'entrega_efectivo']
 
+/**
+ * Cazador F0 (WP-6) — EL TRABAJADOR (`bot_identidades.rol_bot = 'TRABAJADOR'`).
+ * Captura todo lo que pasa en la planta y **todo** espera el Aprobar de Norman
+ * o Kevin (`ESPERA_APROBACION`): nunca `si`. No ve cifras agregadas (stock
+ * total, cartera, ventas, rendimiento): de las consultas solo `precios`.
+ * Lo que la tabla no dice queda CERRADO (regla de la Fase 9): abono, cotizacion,
+ * convertir, alta de cliente, entrega de efectivo. Se abre agregandolo aqui.
+ */
+export const ROL_TRABAJADOR = 'TRABAJADOR'
+
+const DEL_TRABAJADOR: readonly AccionBot[] = ['venta', 'gasto', 'lote', 'entrada_insumo']
+
 export function permisoDeAccion(actor: ActorBot, accion: AccionBot): Veredicto {
   if (accion === 'registrar') return esNorman(actor) ? 'si' : 'no'
+  if (actor.rol === ROL_TRABAJADOR) return DEL_TRABAJADOR.includes(accion) ? 'aprobacion' : 'no'
   if (actor.rol === 'ADMIN') {
     if (!DE_LA_MATRIZ.includes(accion)) return 'no'
     return actor.requiereAprobacion ? 'aprobacion' : 'si'
@@ -154,6 +167,10 @@ export function permisoDeConsulta(actor: ActorBot, consulta: ConsultaBot): Permi
     // Norman y Kevin igual: Kevin "consulta todo lo que consulta Norman".
     const privado = consulta === 'deuda' || consulta === 'ventas' || consulta === 'produccion'
     return { ok: true, alcance: 'todo', privado }
+  }
+  // WP-6: el trabajador pregunta precios; ninguna cifra agregada.
+  if (actor.rol === ROL_TRABAJADOR) {
+    return consulta === 'precios' ? { ok: true, alcance: 'propio', privado: false } : { ok: false }
   }
   if (consulta === 'ventas' || consulta === 'produccion') return { ok: false }
   if (actor.rol === 'DST') return { ok: true, alcance: 'red', privado: false }

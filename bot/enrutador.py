@@ -32,6 +32,8 @@ import subprocess
 import sys
 import unicodedata
 
+import tope  # Cazador F0 (item 6): el limite de la suscripcion
+
 TIMEOUT = 90
 
 # Las intenciones que el bot sabe atender. "charla" es el cajon honesto: un
@@ -68,6 +70,10 @@ INTENCIONES = (
     # tuvo que re-pegar todo (log 2026-09-22 09:33-09:39).
     "ajustar",
     "reporte",
+    # --- Cazador F0 (WP-9a), 2026-10-17. Una OBSERVACION que se guarda y no
+    # mueve nada: va a la bitacora con etiquetas (lote, persona, cliente).
+    # No esta en TIPOS_DE_HECHO a proposito: no escribe ninguna fila del ERP.
+    "nota",
     "charla",
 )
 
@@ -238,6 +244,14 @@ QUE ES CADA INTENCION
   escribir. "fue venta a concesion", "eran 3, no 2", "el monto es 450".
   **Solo existe si hay una propuesta en pantalla.** Ver la regla 22.
 - reporte: quiere el resumen del dia o del periodo.
+- nota: una OBSERVACION que hay que guardar y que NO mueve dinero ni
+  inventario: "el lote 7 salio mas picoso", "el de ayer quedo mas clarito",
+  "a Casa Verde le gusto la chica", "Kevin dice que el tambo 2 huele raro".
+  Campos: lote (el codigo o numero tal cual lo dijo), persona (de quien habla o
+  quien lo dijo, si lo nombra), cliente (si habla de uno), tema (3 a 6 palabras).
+  Pon solo los que de verdad dijo. **Una nota no escribe nada**: si el mensaje
+  trae ademas un gasto, venta, abono o lote, es ESE hecho (va en "hechos"). Un
+  "gracias" es charla, no nota.
 - charla: saludo, agradecimiento, o algo que no cae en ninguna de las anteriores.
 
 REGLAS QUE NO SE ROMPEN
@@ -841,11 +855,16 @@ def enrutar(texto, borrador=None, catalogo=None, deudores=None,
     except Exception as e:
         return False, "no pude llamar al modelo: " + str(e)
 
-    if salida.returncode != 0:
-        return False, "el modelo devolvio error: " + (salida.stderr or "")[-200:]
-
     crudo = (salida.stdout or "").strip()
     ini, fin = crudo.find("{"), crudo.rfind("}")
+    # Cazador F0 (item 6): el tope de la suscripcion no es "se cayo el modelo".
+    # Solo se busca cuando NO hubo objeto: un JSON bueno que diga "limit" no es tope.
+    if salida.returncode != 0 or ini == -1 or fin == -1:
+        t = tope.detectar(salida.stdout, salida.stderr)
+        if t is not None:
+            return False, t
+    if salida.returncode != 0:
+        return False, "el modelo devolvio error: " + (salida.stderr or "")[-200:]
     if ini == -1 or fin == -1:
         return False, "el modelo no devolvio un objeto"
     try:

@@ -54,7 +54,7 @@ import {
   actorDe,
   type ModoPuerta
 } from '@/lib/bot-aprobacion'
-import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import { permisoDeAccion, MENSAJE_NO_PERMITIDO, ROL_TRABAJADOR } from '@/lib/bot-permisos'
 import {
   mensajeDeRendimiento,
   selloLoteCoincide,
@@ -300,7 +300,9 @@ export async function POST(request: Request) {
     // Si la lectura falla no se deshace nada: el lote quedo bien escrito y lo
     // unico que se pierde es el resumen. Un rollback aqui destruiria una
     // captura buena por no poder ensenar un numero.
-    const resumen = await leerRendimiento(supabase, idLote)
+    // WP-6: lo que capturo un TRABAJADOR no regresa con rendimiento (es cifra
+    // agregada), aunque lo apruebe Norman: la respuesta puede caer en el grupo.
+    const resumen = identidad.rolEntidad === ROL_TRABAJADOR ? null : await leerRendimiento(supabase, idLote)
 
     return NextResponse.json({
       ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
@@ -311,7 +313,10 @@ export async function POST(request: Request) {
         1 + lote.entradas.length + lote.tandas.length + lote.envasado.length,
       filas_inventario: filasInventario,
       rendimiento: resumen,
-      mensaje: mensajeDeRendimiento(resumen)
+      mensaje:
+        identidad.rolEntidad === ROL_TRABAJADOR
+          ? 'Quedo escrito el lote ' + lote.codigo_lote + '.'
+          : mensajeDeRendimiento(resumen)
     })
   } catch (e) {
     console.error('[bot] confirmar lote reviento:', e)
@@ -382,7 +387,8 @@ async function confirmarAgregar(
   // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
   const avisoMarca = await marcarConfirmado(supabase, borradorId, agregar.id_lote)
 
-  const resumen = await leerRendimiento(supabase, agregar.id_lote)
+  // WP-6: igual que arriba, sin rendimiento para lo que capturo un trabajador.
+  const resumen = identidad.rolEntidad === ROL_TRABAJADOR ? null : await leerRendimiento(supabase, agregar.id_lote)
   const filasInventario = Number((hechos as { filas_inventario?: unknown } | null)?.filas_inventario ?? 0)
   const botellas = agregar.envasado.reduce((a, e) => a + e.botellas, 0)
   const lineas = []
