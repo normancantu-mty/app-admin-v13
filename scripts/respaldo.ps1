@@ -54,7 +54,9 @@ $tablas = @(
 $tablasSinFilasObligatorias = @('bitacora')
 # 2026-10-17: el volcado real del 2026-10-11 trae 93 (el 49 de antes llevaba
 # semanas dando FALLA en respaldo.log) + 1 de la bitacora (bitacora_sel_admin).
-$politicasEsperadas = 94
+# 2026-10-19 (lote v2): +3 de lote_etapas, lote_recordatorios y temperatura_diaria
+# (medido en el Postgres efimero con el volcado del 2026-10-19: 94 -> 97).
+$politicasEsperadas = 97
 
 # --- como se invoca el CLI --------------------------------------------------
 # Ojo: desde PowerShell, "npx" resuelve al shim npx.ps1 y falla con

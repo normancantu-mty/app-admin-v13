@@ -192,7 +192,7 @@ try:
     caso("3. ... contesta lo mismo y tampoco se marca", (u2.message.dichos, c2 in base.marcadas), ([esperado], False))
 
     u3, c3 = decir("empezamos lote nuevo")
-    caso("3. la plantilla del lote (sin modelo) sigue en pausa", u3.message.dichos[-1].startswith("Lote nuevo."), True)
+    caso("3. la plantilla del lote (sin modelo) sigue en pausa", "Lote nuevo." in u3.message.dichos[-1], True)  # Lote v2: la 1a linea es el codigo
     B.lote_plantilla.olvidar(CHAT)
 
     B._pausa["hasta"] = dt.datetime.now() - dt.timedelta(minutes=1)   # paso la hora

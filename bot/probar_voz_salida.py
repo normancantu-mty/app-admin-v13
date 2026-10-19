@@ -117,7 +117,10 @@ class Mensaje(object):
         self.kwargs.append(k)
 
     async def reply_voice(self, voice=None, **k):
-        self.voces.append(voice.read()[:4])
+        # Lote v2: el bot manda los BYTES (para poder reintentar); antes, el archivo.
+        datos = voice if isinstance(voice, (bytes, bytearray)) else voice.read()
+        self.voces.append(bytes(datos[:4]))
+        self.kwargs_voz = getattr(self, "kwargs_voz", []) + [k]
 
 
 class Update(object):

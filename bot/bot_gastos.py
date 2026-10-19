@@ -44,7 +44,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, 
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, TypeHandler, filters)
 from telegram.request import HTTPXRequest
-from telegram.error import NetworkError, TimedOut  # noqa: E402
+from telegram.error import BadRequest, NetworkError, TimedOut  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # UNA sola llamada al modelo por mensaje, y sale de aqui. `extraer.py`,
@@ -60,6 +60,7 @@ from enrutador import (  # noqa: E402
 # enchufan. `bitacora` esta APAGADA hasta que `main()` la prende.
 import bitacora  # noqa: E402
 import lote_plantilla  # noqa: E402  Cazador F0 (WP-7a)
+import lote_ciclo  # noqa: E402  Lote v2: aditivo 2, destilacion, muestra, temperatura
 import voz_salida  # noqa: E402  Cazador F0 (WP-V)
 import tope  # noqa: E402  Cazador F0 (item 6)
 
@@ -573,6 +574,10 @@ RUTA_CONFIRMAR_DE = {
     "cotizacion": "/api/bot/cotizacion/confirmar",
     "lote": "/api/bot/lote/confirmar",
     "lote_agregar": "/api/bot/lote/confirmar",
+    # Ronda 5 (B): el envasado diario (sin lote) se confirma por la misma ruta.
+    "envasado_diario": "/api/bot/lote/confirmar",
+    # Lote v2: aditivo 2 y destilacion (borrador `lote_etapa`, puerta de aprobacion).
+    "lote_etapa": "/api/bot/lote/etapa/confirmar",
     "entrada_insumo": "/api/bot/inventario/confirmar",
     "conversion": "/api/bot/convertir/confirmar",
     "alta_entidad": "/api/bot/entidad/confirmar",
@@ -1777,10 +1782,33 @@ async def _hablar(mensaje, chat, texto):
         destino = destino / ("r_%s_%d.ogg" % (str(chat).replace(":", "_").replace("-", "m"), int(time.time() * 1000)))
         ogg = await asyncio.to_thread(voz_salida.texto_a_voz, texto, destino)
         with open(str(ogg), "rb") as f:
-            await mensaje.reply_voice(voice=f)
-        log.info("voz de salida: %s (%d bytes)", ogg.name, ogg.stat().st_size)
+            datos = f.read()
+        await _mandar_voz(mensaje, datos)
+        log.info("voz de salida: %s (%d bytes)", ogg.name, len(datos))
     except Exception as e:  # el texto ya salio; el audio es extra
         log.warning("voz de salida: no pude mandar el audio (%s): %s", type(e).__name__, e)
+
+
+# Lote v2 (arreglo a): la voz de salida moria con TimedOut a los ~8.8 s porque
+# `reply_voice` usaba el read_timeout por defecto de PTB (5 s): Telegram tarda
+# en CONTESTAR despues de recibir el archivo. Timeouts explicitos y UN
+# reintento. OJO: si el primer intento si llego y solo se perdio la respuesta,
+# el reintento manda el audio dos veces (preferible a no mandarlo).
+TIMEOUTS_VOZ = {"read_timeout": 60, "write_timeout": 60, "connect_timeout": 15, "pool_timeout": 15}
+REINTENTOS_VOZ = 1
+MEDIA_WRITE_TIMEOUT = 60  # el default de PTB 22.8 es 20 s
+
+
+async def _mandar_voz(mensaje, datos):
+    for intento in range(REINTENTOS_VOZ + 1):
+        try:
+            return await mensaje.reply_voice(voice=datos, **TIMEOUTS_VOZ)
+        except (TimedOut, NetworkError) as e:
+            # En PTB, BadRequest ES un NetworkError: ese no se arregla reintentando.
+            if intento >= REINTENTOS_VOZ or isinstance(e, BadRequest):
+                raise
+            log.warning("voz de salida: intento %d fallo (%s); reintento", intento + 1, type(e).__name__)
+            await asyncio.sleep(1)
 
 
 class _UpdateQueAnota:
@@ -2336,14 +2364,32 @@ def _peticion_de_lote(campos):
         envasado.append(linea)
 
     propuesta = {"tandas": tandas}
-    for campo in ("codigo_lote", "dias_fermentacion", "horas_fermentacion", "fecha_inicio"):
+    for campo in ("codigo_lote", "dias_fermentacion", "horas_fermentacion", "fecha_inicio",
+                  "brix_chile", "brix_final"):
         if campos.get(campo) not in (None, ""):
             propuesta[campo] = campos.get(campo)
 
     return {"insumos": insumos, "envasado": envasado, "propuesta": propuesta}
 
 
-async def _proponer_lote(update, chat, peticion):
+def _lote_es_de_otro_camino(campos):
+    """Lote v2, ronda 2 (H1). True si lo que leyo el modelo NO es abrir un lote
+    nuevo: trae `codigo_lote` dictado ("agregale 5 kilos de ing-az al lote
+    L-12-10.1") o algun insumo que no es de la plantilla (chile o aditivo 1).
+    Entonces va al camino F0/D81 de `_proponer_lote`, que agrega al existente."""
+    if campos.get("codigo_lote") not in (None, ""):
+        return True
+    propios = (str(lote_plantilla.plantilla().get("aditivo_1_sku") or "ing-az").lower(),)
+    for c in (campos.get("insumos") or []):
+        if not isinstance(c, dict):
+            continue
+        nombre = str(c.get("insumo") or c.get("nombre") or "").strip().lower()
+        if nombre and "chile" not in nombre and nombre not in propios:
+            return True
+    return False
+
+
+async def _proponer_lote(update, chat, peticion, auto=False):
     """Manda la peticion a `/api/bot/lote/proponer` y ensena lo que salga.
 
     Devuelve True si atendio el lote (haya propuesto o haya preguntado).
@@ -2387,18 +2433,8 @@ async def _proponer_lote(update, chat, peticion):
             r.get("mensaje", "Me falta empaque registrado. Que paso?"))
         return True
 
-    if estado == 200 and r.get("ofrecer_abrir_lote"):
-        # Cazador F0 (WP-7a): un envasado sin lote abierto ya no es un 422. Se
-        # ofrece abrir el lote; el boton repite ESTA peticion con
-        # `abrir_lote_nuevo` y sale la propuesta de siempre, con su VA.
-        _memoria[chat] = {"tipo": "lote_ofrecer_abrir", "peticion": peticion}
-        await update.effective_message.reply_text(
-            r.get("mensaje", "No tengo lote abierto. Abro uno nuevo?"),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Abrir lote nuevo", callback_data="abrlt:x")],
-                [InlineKeyboardButton("Mejor no", callback_data="no:x")],
-            ]))
-        return True
+    # Ronda 5 (B, Norman 2026-10-19): se RETIRO "envasado sin lote ofrece
+    # abrirlo" (WP-7a). El envasado es diario y se registra sin lote.
 
     if estado != 200 or not r.get("ok"):
         # El 403 de "esto es de la matriz" y el 422 de un grado imposible SI se
@@ -2414,9 +2450,43 @@ async def _proponer_lote(update, chat, peticion):
         "peticion": peticion,
         "codigo_lote": r.get("codigo_lote"),
     }
+    if auto:
+        # Lote v2: la persona YA confirmo el resumen de la plantilla (todo + la
+        # fecha de hoy). No se le pide otro VA: se confirma de una vez. La
+        # puerta de aprobacion del servidor sigue igual (TRABAJADOR espera).
+        _memoria[chat]["mostrado"] = (r["borrador_id"], r["mensaje"], None)
+        await _confirmar_lote(update, chat)
+        return True
     await _ensenar_propuesta(
         update, chat, r["mensaje"], _teclado_confirmar_lote(r["borrador_id"]))
     return True
+
+
+def _codigo_nuevo_lote():
+    """Lote v2: el codigo L-DD-MM.N que le toca hoy (sincrona: va en un hilo)."""
+    return lote_ciclo.codigo_nuevo(_post)
+
+
+async def _confirmar_plantilla_lote(update, chat):
+    """Lote v2: el Confirmar del resumen de la plantilla. Nada salio antes."""
+    codigo = await asyncio.to_thread(_codigo_nuevo_lote)
+    estado, campos, notas = lote_plantilla.preparar_confirmacion(chat, codigo)
+    if estado is None:
+        await update.effective_message.reply_text(campos)
+        return
+    if estado == "reconfirmar":
+        await update.effective_message.reply_text(
+            "Otro lote de hoy ya tomo ese codigo. Le toca " + str(codigo) + ". Revisalo otra vez:")
+        await lote_plantilla.ensenar_resumen(update, campos)
+        return
+    peticion = _peticion_de_lote(campos)
+    if notas:
+        peticion["propuesta"]["notas"] = notas
+    await _proponer_lote(update, chat, peticion, auto=True)
+
+
+async def _confirmar_etapa_lote(update, chat):
+    await lote_ciclo.confirmar_etapa(update, chat, _post, _memoria)
 
 
 async def _confirmar_lote(update, chat):
@@ -2445,6 +2515,12 @@ async def _confirmar_lote(update, chat):
         return
 
     _memoria.pop(chat, None)
+    if r.get("envasado_diario"):
+        # Ronda 6 (auditoria r5): un envasado diario no es "el lote ." vacio;
+        # el servidor ya dice "Listo. Envasado del dd/mm/aaaa: N de NNN ml".
+        await update.effective_message.reply_text(
+            r.get("mensaje") or "Listo. Quedo el envasado del dia, sin lote.")
+        return
     aviso = "Listo. Quedo el lote " + str(r.get("codigo_lote") or "") + "."
     resumen = r.get("mensaje")
     if resumen:
@@ -3083,6 +3159,15 @@ async def _en_pausa(update, hasta=None):
 
 
 async def _enrutar_y_despachar(update, chat, texto, esperando=""):
+    """Ronda 5 (decision de Norman, 2026-10-19): la gente NO dicta temperatura;
+    sale SOLO de Open-Meteo. Ya no hay interceptor de temperatura antes del
+    modelo: si la mencionan con una plantilla o una etapa abierta, va a sus
+    notas (`lote_plantilla` / `lote_ciclo`); si no, el mensaje sigue entero su
+    camino normal."""
+    await _enrutar_y_despachar_mensaje(update, chat, texto, esperando)
+
+
+async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     """UNA llamada al modelo decide que quiso decir Norman, y se despacha.
 
     Antes esto era una cascada de tres intentos EN FILA -- gasto, abono,
@@ -3108,7 +3193,11 @@ async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     # Cazador F0 (WP-7a): "hoy empezamos lote" y las respuestas a la plantilla
     # se leen SIN modelo (`bot/plantillas/lote.yaml`). Si el mensaje no es de
     # la plantilla, `atender` devuelve False y sigue el camino de siempre.
-    if not esperando and await lote_plantilla.atender(update, chat, texto, _proponer_lote, _peticion_de_lote):
+    if not esperando and await lote_ciclo.atender(update, chat, texto, _confirmar_etapa_lote, post=_post):
+        return
+    if not esperando and await lote_plantilla.atender(update, chat, texto, _proponer_lote, _peticion_de_lote,
+                                                      codigo_nuevo=_codigo_nuevo_lote,
+                                                      confirmar=_confirmar_plantilla_lote):
         return
     if await _en_pausa(update):
         return
@@ -3505,7 +3594,11 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
         # Cazador F0 (WP-7a): si habia una plantilla a medias, lo que ya se
         # sabia se junta con lo que dijo el modelo (el modelo manda).
         notas_plantilla = ""
-        viva = lote_plantilla.sesion(chat)
+        # Ronda 5 (B): un ENVASADO es diario y no se liga al lote: no se junta
+        # con una plantilla a medias (que sigue viva) ni abre una. Va solo al
+        # servidor, que lo registra sin lote (el codigo dicho va a la nota).
+        envasa = campos.get("botellas") not in (None, "", 0)
+        viva = None if envasa else lote_plantilla.sesion(chat)
         if viva:
             campos = dict(lote_plantilla.campos_para_peticion(viva), **{
                 k: v for k, v in campos.items() if v not in (None, "", [], {})})
@@ -3514,12 +3607,21 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
         peticion = _peticion_de_lote(campos)
         if notas_plantilla:
             peticion["propuesta"]["notas"] = notas_plantilla
-        if not peticion["insumos"] and not peticion["propuesta"]["tandas"] and not peticion["envasado"]:
-            # Antes: "Cuanto chile entro?" y nada mas. Ahora la plantilla
-            # completa, numerada; lo que ya se sabia queda anotado.
+        if (viva or not _lote_es_de_otro_camino(campos)) \
+                and not peticion["propuesta"]["tandas"] and not peticion["envasado"]:
+            # Lote v2: ABRIR un lote (produccion) pasa por la plantilla: lo que
+            # el modelo leyo la llena, se pregunta lo que falte y sale el
+            # resumen con la fecha y Confirmar / Corregir. Nada se propone antes.
+            # Ronda 2 (H1): con codigo de lote dictado o con insumos que no son
+            # los de la plantilla, NO es un lote nuevo: va al camino F0/D81
+            # (`_proponer_lote`: agregar a un lote existente), como en 24d1cbd.
             _recordar_a_medias(chat, "lote", campos)
+            de_plantilla = {k: v for k, v in campos.items()
+                            if k in lote_plantilla.NOMBRES_DE_CAMPO and v not in (None, "", [], {})}
             await lote_plantilla.atender(update, chat, "", _proponer_lote, _peticion_de_lote,
-                                         desde_enrutador=dict(campos))
+                                         desde_enrutador=de_plantilla,
+                                         codigo_nuevo=_codigo_nuevo_lote,
+                                         confirmar=_confirmar_plantilla_lote)
             return
         if await _proponer_lote(update, chat, peticion):
             return
@@ -3876,7 +3978,8 @@ async def manejar_voz(update, context):
         await update.message.reply_text(str(texto))
         return
     # Cazador F0 (WP-2a): la transcripcion, a la bitacora ANTES de procesarla.
-    await asyncio.to_thread(bitacora.anotar, bitacora.fila_de_transcripcion(update.message, texto))
+    fila_tx = bitacora.fila_de_transcripcion(update.message, texto)
+    await asyncio.to_thread(bitacora.anotar, fila_tx)
     await update.message.reply_text('Te entendi: "' + texto + '"')
     update = _UpdateQueAnota(update, chat, por_voz=True)  # WP-V: hablo en audio
     await asyncio.to_thread(_rehidratar, chat)
@@ -3891,8 +3994,11 @@ async def manejar_voz(update, context):
         await _enrutar_y_despachar(update, chat, texto)
         # R1 (auditoria F0): procesado=true SOLO si el handler termino. Si revienta,
         # la fila se queda procesado=false (en la cola), no en el finally.
-        await bitacora.marcar_procesado(update)
+        # Lote v2 (c): tambien la fila `:transcripcion`, que se quedaba en false.
+        await bitacora.marcar_procesado(update, extra=[fila_tx.get("clave")])
         await _seguir_cola(update, chat)
+        # Lote v2: un "confirmar" dictado de un TRABAJADOR tambien avisa al aprobador.
+        await _avisar_aprobaciones(update)
     finally:
         _cerrar_turno(chat, texto)
 
@@ -4249,12 +4355,41 @@ async def manejar_boton(update, context):
         _cerrar_turno(chat, "[toco el boton " + accion + "]")
 
 
+async def _boton_de_lote_v2(update, chat, partes, accion):
+    """Lote v2. Los botones del ciclo: no traen borrador (el lote o la sesion
+    viven en la plantilla / en la base), asi que van ANTES del foco."""
+    arg = partes[1] if len(partes) > 1 else ""
+    if accion == "ltok":
+        await _confirmar_plantilla_lote(update, chat)
+    elif accion == "ltcor":
+        await lote_plantilla.corregir(update, chat)
+    elif accion == "ltec":
+        await _confirmar_etapa_lote(update, chat)
+    elif accion == "ltecc":
+        s = lote_ciclo.sesion(chat)
+        if not s:
+            await update.effective_message.reply_text("Ya no tengo esa etapa a medias. Dictamela otra vez.")
+        else:
+            await lote_ciclo.abrir_etapa(update, chat, s["etapa"], s["codigo"])
+    elif accion == "ltad2":
+        await lote_ciclo.abrir_etapa(update, chat, "aditivo_2", arg)
+    elif accion == "ltdes":
+        await lote_ciclo.abrir_etapa(update, chat, "destilacion", arg)
+    elif accion == "ltmu":
+        await lote_ciclo.muestra_guardada(update, chat, _post, arg)
+    else:
+        return False
+    return True
+
+
 async def _manejar_boton(update, chat, q, partes, accion):
     # D79: el boton trae el `borrador_id` de SU propuesta. Si esta viva, pasa
     # al foco (y lo que hubiera a medias se aparta); si es un VA de una que ya
     # no esta viva, no se escribe nada: el foco es OTRA propuesta.
     if accion in ("apr", "rch", "apa", "rca"):
         await _boton_de_aprobacion(update, chat, q, accion, partes[1] if len(partes) > 1 else "")
+        return
+    if await _boton_de_lote_v2(update, chat, partes, accion):
         return
     bid = partes[1] if len(partes) > 1 else ""
     if bid and bid not in _NO_HAY_BORRADOR and not _enfocar(chat, bid):
@@ -4279,11 +4414,9 @@ async def _manejar_boton(update, chat, q, partes, accion):
         await _proponer_miembro(update, chat, dato.get("miembro"), dato.get("texto") or "", elegida.get("id"))
         return
     if accion == "abrlt":
-        dato = _memoria.get(chat) or {}
-        if dato.get("tipo") != "lote_ofrecer_abrir":
-            await update.effective_message.reply_text("Ya no tengo ese envasado. Dictamelo otra vez.")
-            return
-        await _proponer_lote(update, chat, dict(dato.get("peticion") or {}, abrir_lote_nuevo=True))
+        # Ronda 5 (B): un boton viejo de "Abrir lote nuevo" ya no abre nada.
+        await update.effective_message.reply_text(
+            "Ya no abro lotes desde un envasado: el envasado se registra solo, sin lote. Dictamelo otra vez.")
         return
     if accion == "valt":
         await _confirmar_lote(update, chat)
@@ -4890,6 +5023,12 @@ async def _latir(app):
             dt.datetime.fromtimestamp(ARRANCADO_EN).strftime("%Y-%m-%d %H:%M:%S"),
             dt.datetime.fromtimestamp(VERSION_CARGADA).strftime("%Y-%m-%d %H:%M:%S"),
         )
+        # Lote v2: el ciclo del lote cuelga del latido (recordatorios UNA vez,
+        # reclamados en la base; temperatura de Open-Meteo con reintento).
+        try:
+            await lote_ciclo.tick(app.bot, _post)
+        except Exception as e:  # el latido no se cae por el ciclo
+            log.warning("ciclo del lote: %s: %s", type(e).__name__, e)
 
 
 async def _al_arrancar(app):
@@ -4962,7 +5101,7 @@ def main():
     # deja apagada y no escribe a ninguna API.
     bot = bitacora.clase_bot()(
         TOKEN_TG,
-        request=HTTPXRequest(connection_pool_size=256),
+        request=HTTPXRequest(connection_pool_size=256, media_write_timeout=MEDIA_WRITE_TIMEOUT),
         get_updates_request=HTTPXRequest(connection_pool_size=1))
     app = Application.builder().bot(bot).post_init(_al_arrancar).build()
     # Grupo -1: corre ANTES que cualquier otro handler y no corta la cadena.

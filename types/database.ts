@@ -1204,7 +1204,7 @@ export type Database = {
           grado_alcohol: number | null
           id: string
           id_lote: string
-          litros: number
+          litros: number | null
           notas: string | null
           numero_tanda: number
           peso_kg: number | null
@@ -1213,7 +1213,7 @@ export type Database = {
           grado_alcohol?: number | null
           id?: string
           id_lote: string
-          litros: number
+          litros?: number | null
           notas?: string | null
           numero_tanda: number
           peso_kg?: number | null
@@ -1246,6 +1246,8 @@ export type Database = {
       }
       lotes: {
         Row: {
+          brix_chile: number | null
+          brix_final: number | null
           codigo_lote: string
           creado_en: string
           fecha_fin_fermentacion: string | null
@@ -1256,6 +1258,8 @@ export type Database = {
           usuario_creador: string
         }
         Insert: {
+          brix_chile?: number | null
+          brix_final?: number | null
           codigo_lote: string
           creado_en?: string
           fecha_fin_fermentacion?: string | null
@@ -1266,6 +1270,8 @@ export type Database = {
           usuario_creador: string
         }
         Update: {
+          brix_chile?: number | null
+          brix_final?: number | null
           codigo_lote?: string
           creado_en?: string
           fecha_fin_fermentacion?: string | null

@@ -360,6 +360,10 @@ test.describe('el sello del lote', () => {
     const r = normalizarLote(
       {
         dias_fermentacion: 3,
+        // Lote v2: con Brix, para que el payload traiga TODAS las llaves del sello
+        // (las dos de Brix son opcionales y solo aparecen si se dictaron).
+        brix_chile: 12.5,
+        brix_final: 18,
         tandas: [{ litros: 200, grado: 30 }, { litros: 100, grado: 15 }]
       },
       contexto({

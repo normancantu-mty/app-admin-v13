@@ -529,14 +529,21 @@ async def anotar_update(update, context=None):
 EN_PAUSA = set()
 
 
-async def marcar_procesado(update):
-    """Al terminar de atender un mensaje. Lo que quedo en pausa no se marca."""
+async def marcar_procesado(update, extra=()):
+    """Al terminar de atender un mensaje. Lo que quedo en pausa no se marca.
+
+    `extra` (Lote v2, 2026-10-19): otras claves del MISMO mensaje que tambien se
+    atendieron. Hoy, la fila `:transcripcion` de una nota de voz: se quedaba
+    `procesado=false` para siempre porque aqui solo se marcaba la de la nota
+    (bitacora id 3, humo del 2026-10-19). Si el mensaje quedo en pausa, no se
+    marca ninguna."""
     import asyncio
     clave = clave_de_update(update)
     if not clave or clave in EN_PAUSA:
         return
+    claves = [clave] + [c for c in (extra or ()) if c and c not in EN_PAUSA and c != clave]
     try:
-        await asyncio.to_thread(marcar, [clave], True)
+        await asyncio.to_thread(marcar, claves, True)
     except Exception as e:
         log.error("bitacora: no pude marcar procesado: %s", e)
 

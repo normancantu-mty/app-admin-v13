@@ -100,10 +100,19 @@ export interface PayloadLote {
   entradas: EntradaLote[]
   tandas: TandaLote[]
   envasado: EnvasadoLote[]
+  /**
+   * Lote v2 (2026-10-19): Brix del chile y Brix final (despues del aditivo 1).
+   * OPCIONALES y solo presentes si se dictaron: `canonizar` omite una llave
+   * ausente, asi que un borrador de antes del despliegue sigue empatando su sello.
+   */
+  brix_chile?: number
+  brix_final?: number
 }
 
 /** El orden es parte del sello. Ver `lib/bot-sello.ts`. */
 export const LLAVES_LOTE = [
+  'brix_chile',
+  'brix_final',
   'codigo_lote',
   'entradas',
   'envasado',
@@ -202,6 +211,8 @@ export interface PropuestaLoteLLM {
   horas_fermentacion?: unknown
   tandas?: unknown
   notas?: unknown
+  brix_chile?: unknown
+  brix_final?: unknown
 }
 
 export interface DesgloseLote {
@@ -398,6 +409,18 @@ export function normalizarLote(
 
   const notas = String(propuesta.notas ?? '').trim().slice(0, 500)
 
+  // ── Lote v2: el Brix. Tope duro 0-100 (es un porcentaje); el rango normal
+  // (0-40) solo AVISA, y eso ya lo hizo el bot desde su YAML.
+  const brix: { brix_chile?: number; brix_final?: number } = {}
+  for (const llave of ['brix_chile', 'brix_final'] as const) {
+    const v = numero(propuesta[llave])
+    if (v === null) continue
+    if (v < 0 || v > 100) {
+      return { ok: false, error: `Un Brix de ${v} no existe. Revisalo.` }
+    }
+    brix[llave] = Number(v.toFixed(2))
+  }
+
   return {
     ok: true,
     avisos,
@@ -429,7 +452,8 @@ export function normalizarLote(
       envasado: [...porFormato.values()].map((e) => ({
         id_producto: e.formato.id,
         botellas: e.botellas
-      }))
+      })),
+      ...brix
     }
   }
 }
@@ -470,6 +494,8 @@ export function mensajeDeConfirmacionLote(
   if (payload.horas_fermentacion !== null) {
     lineas.push(`Horas de fermentacion: ${numeroCorto(payload.horas_fermentacion)}`)
   }
+  if (payload.brix_chile !== undefined) lineas.push(`Brix chile: ${numeroCorto(payload.brix_chile)}`)
+  if (payload.brix_final !== undefined) lineas.push(`Brix final: ${numeroCorto(payload.brix_final)}`)
 
   if (desglose.insumos.length > 0) {
     lineas.push('', 'ENTRO:')

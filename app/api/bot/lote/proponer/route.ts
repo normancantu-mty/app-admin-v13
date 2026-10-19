@@ -61,9 +61,13 @@ import {
   sellarAgregar,
   type FaltanteEmpaque,
   type LoteExistente,
-  type PayloadAgregar,
-  VENTANA_LOTE_ABIERTO_DIAS
+  type PayloadAgregar
 } from '@/lib/bot-envasado'
+import {
+  mensajeDeEnvasadoDiario,
+  normalizarEnvasadoDiario,
+  sellarEnvasadoDiario
+} from '@/lib/bot-envasado-diario'
 import { fechaLocal } from '@/lib/fechas'
 import type { ClienteServicio } from '@/lib/bot-servidor'
 import { inventarioDelEnvasado } from '@/lib/bot-empaque-servidor'
@@ -146,8 +150,6 @@ export async function POST(request: Request) {
       propuesta?: Record<string, unknown>
       insumos?: InsumoPedido[]
       envasado?: EnvasadoPedido[]
-      /** Cazador F0 (WP-7a): la persona apreto "Abrir lote nuevo" tras un envasado sin lote abierto. */
-      abrir_lote_nuevo?: unknown
     }
 
     const telegramId = Number(cuerpo.telegram_id)
@@ -275,12 +277,99 @@ export async function POST(request: Request) {
       envasado.push({ formato, botellas: Number(pedido.botellas) })
     }
 
-    // ── D81: ¿LOTE NUEVO, O AGREGAR A UNO QUE YA EXISTE? ───────────────────
     const propuesta = cuerpo.propuesta ?? {}
     const lleno = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== ''
     const codigoDictado = lleno(propuesta.codigo_lote) ? String(propuesta.codigo_lote).trim() : null
     const tandasPedidas = Array.isArray(propuesta.tandas) ? propuesta.tandas : []
-    let agregar = esAgregarALote({
+
+    // ── LOTE V2, RONDA 5 (B, Norman 2026-10-19): EL ENVASADO ES DIARIO ──────
+    // La produccion de un lote termina en la destilacion. El envasado de
+    // botellas se hace a diario, sin importar el lote, y por ahora NO se liga a
+    // ninguno: nunca abre ni pide un lote, y un codigo L- dicho va a la NOTA.
+    // Sale un borrador `envasado_diario`; lo escribe `confirmar` con
+    // `registrar_envasado_diario` (lote_envasado con id_lote NULL + inventario).
+    if (envasado.length > 0) {
+      const hayLote =
+        insumos.length > 0 ||
+        tandasPedidas.length > 0 ||
+        ['dias_fermentacion', 'horas_fermentacion', 'fecha_inicio', 'brix_chile', 'brix_final'].some((k) =>
+          lleno(propuesta[k])
+        )
+      if (hayLote) {
+        // No se pierde en silencio ni se liga: se pide por separado.
+        return NextResponse.json(
+          {
+            error:
+              'El envasado va aparte: ya no se liga a ningun lote. Dime lo del lote y el envasado en mensajes separados.'
+          },
+          { status: 422 }
+        )
+      }
+      const diario = normalizarEnvasadoDiario(envasado, {
+        etiqueta: identidad.etiqueta,
+        ahora: new Date(),
+        codigoDicho: codigoDictado
+      })
+      if (!diario.ok) return NextResponse.json({ error: diario.error }, { status: 422 })
+      const invDiario = await inventarioDelEnvasado(supabase, diario.payload.envasado)
+      if (invDiario.faltantes.length > 0) {
+        return respuestaFaltaEmpaque(
+          diario.desglose,
+          invDiario.faltantes,
+          diario.payload.envasado,
+          identidad.rolEntidad === ROL_TRABAJADOR
+        )
+      }
+      if (!conservaPendientes(cuerpo)) {
+        await supabase
+          .from('bot_borradores')
+          .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+          .eq('telegram_id', telegramId)
+          .eq('estado', 'PENDIENTE')
+      }
+      const selloDiario = sellarEnvasadoDiario(diario.payload)
+      const { data: borradorDiario, error: errorDiario } = await supabase
+        .from('bot_borradores')
+        .insert({
+          telegram_id: telegramId,
+          chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
+          sello: selloDiario,
+          payload: {
+            tipo: 'envasado_diario',
+            envasado_diario: diario.payload,
+            meta: { avisos: diario.avisos }
+          } as unknown as Json
+        })
+        .select('id')
+        .single()
+      if (errorDiario || !borradorDiario) {
+        console.error('[bot] no se pudo guardar el borrador de envasado diario:', errorDiario)
+        return NextResponse.json({ error: 'No pude guardar la propuesta.' }, { status: 500 })
+      }
+      return NextResponse.json({
+        ok: true,
+        borrador_id: borradorDiario.id,
+        sello: selloDiario,
+        envasado_diario: true,
+        codigo_lote: null,
+        movimientos: invDiario.movimientos,
+        mensaje: mensajeDeEnvasadoDiario(
+          diario.payload,
+          diario.desglose,
+          invDiario.movimientos.map((m) => ({
+            nombre: invDiario.nombres.get(m.id_producto) ?? m.id_producto,
+            tipo: m.tipo_movimiento,
+            cantidad: m.cantidad
+          })),
+          diario.avisos
+        )
+      })
+    }
+
+    // ── D81: ¿LOTE NUEVO, O AGREGAR A UNO QUE YA EXISTE? ───────────────────
+    // Ronda 5: aqui ya no llega envasado (arriba), asi que "agregar" es solo
+    // con el codigo de un lote que existe.
+    const agregar = esAgregarALote({
       codigoDictado,
       codigosTomados,
       hayInsumos: insumos.length > 0,
@@ -297,22 +386,9 @@ export async function POST(request: Request) {
     const destino = agregar
       ? elegirLoteDestino(codigoDictado, await leerLotes(supabase), fechaLocal(ahoraDestino))
       : null
-    if (destino && !destino.ok && destino.motivo === 'sin_abiertos') {
-      // Antes era un 422 y el envasado se perdia. Ahora se OFRECE abrir el
-      // lote; con el boton, el bot repite la peticion con `abrir_lote_nuevo`
-      // y cae al camino del lote nuevo (que valida y revisa el empaque igual
-      // que siempre). Nada se escribe sin el VA.
-      if (cuerpo.abrir_lote_nuevo !== true) {
-        return NextResponse.json({
-          ok: false,
-          ofrecer_abrir_lote: true,
-          mensaje:
-            `No tengo ningun lote abierto (de los ultimos ${VENTANA_LOTE_ABIERTO_DIAS} dias). ` +
-            'Abro un lote nuevo con este envasado? Si es de un lote viejo, dime el codigo.'
-        })
-      }
-      agregar = false
-    } else if (destino && !destino.ok) {
+    // Ronda 5 (B): se RETIRO la oferta de abrir un lote ante un envasado sin
+    // lote abierto (WP-7a): el envasado ya no llega aqui.
+    if (destino && !destino.ok) {
       return NextResponse.json({ error: destino.error }, { status: 422 })
     }
 

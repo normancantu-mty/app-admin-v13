@@ -63,6 +63,9 @@ import {
   type RendimientoDelLote
 } from '@/lib/bot-lotes'
 import { selloAgregarCoincide, type PayloadAgregar } from '@/lib/bot-envasado'
+import { selloEnvasadoDiarioCoincide, type PayloadEnvasadoDiario } from '@/lib/bot-envasado-diario'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { fechaParaPersona } from '@/lib/fechas'
 
 export const dynamic = 'force-dynamic'
 
@@ -189,6 +192,17 @@ export async function POST(request: Request) {
         puerta.modo
       )
     }
+    if (guardado?.tipo === 'envasado_diario') {
+      return confirmarEnvasadoDiario(
+        supabase,
+        borradorId,
+        borrador.sello,
+        selloRecibido,
+        (borrador.payload as unknown as { envasado_diario?: PayloadEnvasadoDiario }).envasado_diario,
+        identidad,
+        puerta.modo
+      )
+    }
     if (guardado?.tipo !== 'lote') {
       return NextResponse.json({ error: 'Ese borrador no es un lote.' }, { status: 409 })
     }
@@ -254,7 +268,10 @@ export async function POST(request: Request) {
         fecha_fin_fermentacion: lote.fecha_fin_fermentacion,
         horas_fermentacion: lote.horas_fermentacion,
         notas: lote.notas || null,
-        usuario_creador: lote.usuario_creador
+        usuario_creador: lote.usuario_creador,
+        // Lote v2: el Brix, solo si se dicto (columnas de la migracion 20261019150000).
+        ...(lote.brix_chile !== undefined ? { brix_chile: lote.brix_chile } : {}),
+        ...(lote.brix_final !== undefined ? { brix_final: lote.brix_final } : {})
       })
       .select('id')
       .single()
@@ -409,5 +426,85 @@ async function confirmarAgregar(
     filas_inventario: filasInventario,
     rendimiento: resumen,
     mensaje: lineas.join('\n')
+  })
+}
+
+/**
+ * Lote v2, ronda 5 (B, Norman 2026-10-19): el ENVASADO DIARIO, sin lote. Mismos
+ * dos sellos y la misma puerta (lo del TRABAJADOR espera el Aprobar); la
+ * escritura entera es `registrar_envasado_diario` (todo o nada, con el candado
+ * de empaque de D92). No hay lote que leer ni rendimiento que ensenar.
+ */
+async function confirmarEnvasadoDiario(
+  supabase: ReturnType<typeof clienteDeServicio>,
+  borradorId: string,
+  selloGuardado: string,
+  selloRecibido: string,
+  diario: PayloadEnvasadoDiario | undefined,
+  identidad: IdentidadBot,
+  modo: ModoPuerta
+) {
+  if (!diario || !selloEnvasadoDiarioCoincide(diario, selloGuardado)) {
+    await supabase
+      .from('bot_borradores')
+      .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+      .eq('id', borradorId)
+    console.error('[bot] SELLO ROTO en la base para el envasado diario', borradorId)
+    return NextResponse.json(
+      { error: 'La propuesta cambio desde que te la ensene. No escribo nada: vuelve a dictarla.' },
+      { status: 409 }
+    )
+  }
+  if (!selloEnvasadoDiarioCoincide(diario, selloRecibido)) {
+    return NextResponse.json({ error: 'El sello no empata con lo que te ensene. No escribo nada.' }, { status: 409 })
+  }
+  if (diario.usuario_creador !== `telegram:${identidad.etiqueta}`) {
+    return NextResponse.json({ error: 'Tu alta cambio desde que propusiste esto. Vuelve a dictarlo.' }, { status: 409 })
+  }
+  if (modo === 'esperar') {
+    return pasarAEspera(supabase, borradorId, identidad, 'un envasado del dia')
+  }
+  const reclamo = await reclamarAprobacion(supabase, borradorId, modo)
+  if (reclamo) return reclamo
+
+  const sinTipos = supabase as unknown as SupabaseClient
+  const { data: hechos, error } = await sinTipos.rpc('registrar_envasado_diario', {
+    p_fecha: diario.fecha,
+    p_envasado: diario.envasado,
+    p_usuario: diario.usuario_creador,
+    p_nota: diario.nota || null
+  })
+  if (error) {
+    await liberarReclamo(supabase, borradorId, modo)
+    const falta = String((error as { message?: string }).message ?? '').includes('FALTA_EMPAQUE')
+    console.error('[bot] no se pudo registrar el envasado diario', error)
+    return NextResponse.json(
+      {
+        error: falta
+          ? 'Falta empaque registrado para ese envasado. No escribi nada: registra la entrada del empaque y vuelve a dictarlo.'
+          : 'No pude escribirlo. No quedo nada a medias: ni envasado ni inventario.'
+      },
+      { status: falta ? 409 : 500 }
+    )
+  }
+  const avisoMarca = await marcarConfirmado(supabase, borradorId, null)
+  const filasInventario = Number((hechos as { filas_inventario?: unknown } | null)?.filas_inventario ?? 0)
+  // Ronda 6 (auditoria r5): "Listo. Envasado del dd/mm/aaaa: 40 de 750 ml".
+  const { data: formatos } = await supabase
+    .from('catalogo_productos')
+    .select('id, nombre, ml_por_unidad')
+    .in('id', diario.envasado.map((e) => e.id_producto))
+  const partes = diario.envasado.map((e) => {
+    const f = (formatos ?? []).find((x) => x.id === e.id_producto)
+    return f?.ml_por_unidad ? `${e.botellas} de ${f.ml_por_unidad} ml` : `${e.botellas} de ${f?.nombre ?? 'botella'}`
+  })
+  return NextResponse.json({
+    ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
+    ok: true,
+    envasado_diario: true,
+    filas_inventario: filasInventario,
+    mensaje:
+      `Listo. Envasado del ${fechaParaPersona(diario.fecha)}: ${partes.join(', ')} (sin lote); ` +
+      `${filasInventario} movimiento${filasInventario === 1 ? '' : 's'} de inventario.`
   })
 }
