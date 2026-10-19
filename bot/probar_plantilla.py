@@ -214,33 +214,65 @@ caso("1. ... kilos de chile y aditivo 1 por SKU opaco", (kilos(pet), aditivo(pet
 caso("1. ... Brix chile y final", ((pet.get("propuesta") or {}).get("brix_chile"), (pet.get("propuesta") or {}).get("brix_final")),
      (12, 18))
 caso("1. ... el codigo que se enseno", (pet.get("propuesta") or {}).get("codigo_lote"), HOY_COD)
-caso("1. ... el tipo de chile a notas", "guajillo" in ((pet.get("propuesta") or {}).get("notas") or ""), True)
+# Ronda 5 (C): guajillo es un tipo CONOCIDO: va por su SKU, no a notas.
+caso("1. ... guajillo va por su SKU (chile-guajillo), no a notas",
+     ([i.get("insumo") for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))],
+      "guajillo" in ((pet.get("propuesta") or {}).get("notas") or "")), (["chile-guajillo"], False))
 caso("1. ... y se confirma sin pedir otro VA", doble.confirmados, 1)
 caso("1. ... y lo dice", dichos[-1].startswith("Listo. Quedo el lote"), True)
 caso("1. ... la sesion se cerro", P.activa(CHAT), False)
 
 # --- 1b. RONDA 2: el aviso de guajillo y "a 24 grados" a notas (recuperada) --
 caso("1b. guajillo: SIN el aviso de catalogo", any("unico en catalogo" in d for d in dichos), False)
+# Ronda 5 (C): un chile que no es guajillo ni guajon se AVISA y se PREGUNTA una vez.
 dichos, doble, modelo = conversar(["empecemos", "40 kilos de chile jalapeno, brix chile 12, 3 kilos de aditivo, brix final 18",
                                    "lo dejamos a 24 grados"])
-caso("1b. jalapeno: el resumen dice que los kilos se cargan a chile-guajillo",
-     "los kilos se cargan a chile-guajillo (unico en catalogo)" in dichos[-1], True)
+caso("1b. jalapeno: avisa y pregunta cual (guajillo, guajon o mezcla)",
+     sum("Solo uso guajillo, guajon o una mezcla" in d for d in dichos), 1)
+caso("1b. ... sin proponer nada todavia", len(doble.lotes()), 0)
+caso("1b. ... si no lo aclaran: el resumen avisa que los kilos se cargan a chile-guajillo",
+     "los kilos se cargan a chile-guajillo: el tipo 'jalapeno' no es guajillo ni guajon" in dichos[-1], True)
 caso("1b. 'a 24 grados' NO se adivina: a notas, visible en el resumen",
      "24 grados (no dijeron si es temperatura o alcohol)" in dichos[-1], True)
 caso("1b. ... y NO se guarda como temperatura del cuarto", getattr(doble, "temperaturas", 0), 0)
 boton("ltok", doble, dichos)
 pet = (doble.lotes() or [{}])[-1]
 caso("1b. ... y viaja en las notas del lote", "24 grados" in (pet.get("propuesta", {}).get("notas") or ""), True)
-caso("1b. ... los kilos van a chile-guajillo", [i.get("insumo") for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))],
-     ["chile-guajillo"])
+caso("1b. ... los kilos van a chile-guajillo y el tipo dicho a notas",
+     ([i.get("insumo") for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))],
+      "jalapeno" in (pet.get("propuesta", {}).get("notas") or "")), (["chile-guajillo"], True))
+
+# 1c. Ronda 5 (C): a la pregunta contestan 'guajon' -> chile-guajon, sin aviso.
+dichos, doble, modelo = conversar(["empecemos", "40 kilos de chile jalapeno, brix chile 12, 3 kilos de aditivo, brix final 18",
+                                   "guajon"])
+caso("1c. contestan 'guajon': el resumen sin el aviso de guajillo",
+     ("Tipo de chile: guajon" in dichos[-1], "se cargan a chile-guajillo" in dichos[-1]), (True, False))
+boton("ltok", doble, dichos)
+pet = (doble.lotes() or [{}])[-1]
+caso("1c. ... los kilos van a chile-guajon",
+     [(i.get("insumo"), i.get("cantidad")) for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))],
+     [("chile-guajon", 40)])
+
+# 1d. Ronda 5 (C): la MEZCLA, dos renglones de insumo.
+dichos, doble, modelo = conversar(["empecemos", "30 kg guajillo y 10 kg guajon, brix chile 12, 3 kilos de aditivo, brix final 18"])
+caso("1d. mezcla: el resumen ensena los dos chiles, total 40, sin aviso",
+     ("chile guajillo: 30 kg" in dichos[-1], "chile guajon: 10 kg" in dichos[-1], "Kilos de chile: 40 kg" in dichos[-1],
+      "se cargan a chile-guajillo" in dichos[-1], "Solo uso guajillo" in "".join(dichos)), (True, True, True, False, False))
+boton("ltok", doble, dichos)
+pet = (doble.lotes() or [{}])[-1]
+caso("1d. ... dos renglones de insumo por SKU",
+     sorted((i.get("insumo"), i.get("cantidad")) for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))),
+     [("chile-guajillo", 30), ("chile-guajon", 10)])
+caso("1d. ... y el aditivo 1 sigue", aditivo(pet), 3)
 
 # ─── 2. numeradas en un mensaje; "confirmar" dicho ──────────────────────────
-dichos, doble, modelo = conversar(["dame la plantilla del lote", "1. 35 jalapeno 2. 11.5 3. 2.5 4. 17", "confirmar"])
+dichos, doble, modelo = conversar(["dame la plantilla del lote", "1. 35 guajon 2. 11.5 3. 2.5 4. 17", "confirmar"])
 pet = (doble.lotes() or [{}])[-1]
 caso("2. numeradas: todo de una", (kilos(pet), aditivo(pet), pet.get("propuesta", {}).get("brix_chile"),
                                    pet.get("propuesta", {}).get("brix_final")), (35, 2.5, 11.5, 17))
 caso("2. ... 'confirmar' (dicho o por voz) confirma", doble.confirmados, 1)
-caso("2. ... el chile a notas", "jalapeno" in (pet.get("propuesta", {}).get("notas") or ""), True)
+caso("2. ... guajon por su SKU", [i.get("insumo") for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))],
+     ["chile-guajon"])
 
 # ─── 3. "luego": pendiente, se pregunta UNA vez ─────────────────────────────
 dichos, doble, modelo = conversar(["empezamos lote nuevo", "40 kilos de chile", "luego"])
@@ -329,29 +361,49 @@ finally:
 caso("CONTROL sin disparador no hay plantilla (la prueba puede fallar)",
      any(HOY_COD in d for d in dichos), False)
 
-# ─── 10. envasado sin lote abierto: oferta, no 422 ───────────────────────────
-OFERTA = (200, {"ok": False, "ofrecer_abrir_lote": True,
-                "mensaje": "No tengo ningun lote abierto (de los ultimos 30 dias). Abro un lote nuevo con este envasado?"})
+# ─── 10. Ronda 5 (B): el envasado es diario y NO se liga al lote ─────────────
+# Se retiro "envasado sin lote ofrece abrirlo" (WP-7a). Va al modelo y de ahi
+# al servidor como envasado; nunca abre, pide ni se junta con un lote.
 modelo = Modelo({"intencion": "lote", "confianza": "alta",
-                 "campos": {"botellas": 40, "formato": "250"}, "respuesta": ""})
-doble = PostDoble([OFERTA])
-dichos, doble, _m = conversar(["envasamos 40 chicas hoy sin lote abierto, no sé de cual salieron"],
-                              modelo=modelo, doble=doble)
-caso("10. envasado sin lote: se ofrece abrirlo", any("Abro un lote nuevo" in d for d in dichos), True)
-caso("10. ... sin texto de error", any("No pude" in d for d in dichos), False)
-caso("10. ... y queda esperando el boton", (B._memoria.get(CHAT) or {}).get("tipo"), "lote_ofrecer_abrir")
-u = UpdateDeTexto(CHAT, "")
+                 "campos": {"botellas": 40, "formato": "250", "codigo_lote": "L-12-10.1"}, "respuesta": ""})
+dichos, doble, _m = conversar(["envasamos 40 chicas hoy del L-12-10.1"], modelo=modelo)
+lotes = doble.lotes()
+caso("10. envasado: va al modelo (la plantilla no lo toma)", modelo.veces, 1)
+caso("10. ... UNA peticion, con el envasado y sin abrir_lote_nuevo",
+     (len(lotes), bool((lotes or [{}])[-1].get("envasado")), (lotes or [{}])[-1].get("abrir_lote_nuevo")), (1, True, None))
+caso("10. ... sin campos de plantilla (insumos)", (lotes or [{}])[-1].get("insumos") or [], [])
+caso("10. ... no abrio plantilla ni espera boton de abrir lote",
+     (P.activa(CHAT), (B._memoria.get(CHAT) or {}).get("tipo") == "lote_ofrecer_abrir",
+      any("Abro un lote nuevo" in d for d in dichos)), (False, False, False))
+
+# 10b. con una plantilla A MEDIAS: el envasado no se le mete y la plantilla sigue viva
+dichos, doble, _m = conversar(["empecemos", "40 kilos de chile guajillo", "envasamos 40 chicas hoy"], modelo=modelo)
+lotes = doble.lotes()
+caso("10b. plantilla a medias + envasado: el envasado va solo al servidor",
+     (len(lotes), bool((lotes or [{}])[-1].get("envasado")), (lotes or [{}])[-1].get("insumos") or []), (1, True, []))
+caso("10b. ... y la plantilla sigue viva con sus 40 kg", (P.activa(CHAT), (P.sesion(CHAT) or {}).get("campos", {}).get("kg_chile")),
+     (True, 40))
+
+# 10d. un envasado que el lector de la plantilla SI consumiria ('18 kilos' ->
+# kilos de chile) con la plantilla abierta: el envasado no entra a la plantilla.
+modelo = Modelo({"intencion": "lote", "confianza": "alta", "campos": {"botellas": 18, "formato": "750"}, "respuesta": ""})
+dichos, doble, _m = conversar(["empecemos", "envasamos 18 kilos"], modelo=modelo)
+caso("10d. 'envasamos 18 kilos' con la plantilla abierta: NO son kilos de chile, va al modelo",
+     (((P.sesion(CHAT) or {}).get("campos") or {}).get("kg_chile"), modelo.veces, P.activa(CHAT)), (None, 1, True))
+
+# 10c. un boton viejo de "Abrir lote nuevo" ya no abre nada ni re-propone
+B._memoria[CHAT] = {"tipo": "lote_ofrecer_abrir", "peticion": {"envasado": [{"formato": "250", "botellas": 40}]}}
+doble = PostDoble()
+dichos = []
+u = UpdateDeTexto(CHAT, "", dichos)
 orig = B._post
 B._post = doble
 try:
     asyncio.run(B._manejar_boton(u, CHAT, None, ["abrlt", "x"], "abrlt"))
 finally:
     B._post = orig
-lotes = doble.lotes()
-caso("10. el boton repite la peticion con abrir_lote_nuevo", (len(lotes), lotes[-1].get("abrir_lote_nuevo")), (2, True))
-caso("10. ... con el mismo envasado", lotes[-1].get("envasado"), lotes[0].get("envasado"))
-caso("10. ... y sale la propuesta de siempre (borrador con VA)", (B._memoria.get(CHAT) or {}).get("tipo"), "lote")
-caso("10. callback_data del boton cabe en 64 bytes", len("abrlt:x".encode()) <= 64, True)
+caso("10c. boton viejo abrlt: no re-propone", len(doble.lotes()), 0)
+caso("10c. ... y lo dice", any("Ya no abro lotes desde un envasado" in d for d in dichos), True)
 
 # ─── RESULTADO ──────────────────────────────────────────────────────────────
 limpiar()

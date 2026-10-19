@@ -445,7 +445,7 @@ def pregunta_de(etapa, codigo):
 
 
 def empezar(chat, etapa, codigo):
-    _etapas[chat] = {"etapa": etapa, "codigo": codigo, "kg": None, "n": None, "garrafas": [],
+    _etapas[chat] = {"etapa": etapa, "codigo": codigo, "kg": None, "n": None, "garrafas": [], "notas": [],
                      "modo": "captura", "nacido_en": time.time()}
     return _etapas[chat]
 
@@ -512,6 +512,8 @@ def resumen(s, hoy=None):
         lineas.append("Garrafas: %d" % len(s["garrafas"]))
         for i, (peso, grado) in enumerate(s["garrafas"], 1):
             lineas.append("   Garrafa %d: %s kg a %s%%" % (i, peso, grado))
+    if s.get("notas"):
+        lineas.append("Notas: " + "; ".join(s["notas"])[:300])
     lineas += ["", "Nada se guarda hasta que confirmes."]
     return "\n".join(lineas)
 
@@ -556,7 +558,17 @@ def no_abre_etapa(texto):
     datos = e.get("datos_de_etapa")
     if datos and re.search(datos, t):
         return False
+    if es_envasado(t):
+        return True
     return any(re.search(p, t) for p in (e.get("no_abren_etapa") or []))
+
+
+def es_envasado(texto):
+    """Ronda 5 (B, decision de Norman 2026-10-19): el ENVASADO de botellas es
+    diario e independiente del lote; nunca abre ni pide un lote (ni plantilla
+    ni etapa). YAML `envasado_diario`. **Pura.**"""
+    t = _plano(texto)
+    return any(re.search(p, t) for p in (cfg().get("envasado_diario") or []))
 
 
 def _disparo(texto):
@@ -566,8 +578,8 @@ def _disparo(texto):
     cod = m.group(1).upper() if m else None
     if cod and not cod.startswith("L-"):
         cod = "L-" + cod[1:]
-    # Ronda 3 (R2-B) / ronda 4: un envasado F0 ("envasamos 40 de 750 del L-..
-    # que destilamos el viernes") o una PREGUNTA ("cuanto aditivo 2 lleva el
+    # Ronda 3 (R2-B) / ronda 4 / ronda 5 (B): un ENVASADO ("envasamos 40 de 750
+    # del L-.. que destilamos el viernes"; es diario y no se liga al lote) o una PREGUNTA ("cuanto aditivo 2 lleva el
     # L-..?") no abren la etapa POR CODIGO EN MEDIO; los disparadores anclados
     # al inicio ("ya destilamos el L-..., salieron 2 garrafas, lo anotas?") y
     # los mensajes con datos de etapa si la abren. YAML `etapas.no_abren_etapa`.
@@ -587,171 +599,46 @@ def _disparo(texto):
     return None, None
 
 
-def temperatura_del_mensaje(texto):
-    """Ronda 3 (R2-A). La temperatura del CUARTO dictada en el mensaje, y que
-    tanto del mensaje es. **Pura.** Devuelve None o
-    {'valor': 22.0, 'solo': bool, 'cuarto': bool, 'sin': str}:
-      - None si no hay, o si el tramo que casa habla de otra cosa (YAML
-        `temperatura.no_es_cuarto`: "la temperatura del alcohol salio a 50").
-      - solo: quitando el tramo no queda ningun numero y lo que queda es
-        relleno (YAML `temperatura.relleno`). Solo entonces el bot lo toma
-        sin modelo; si no, el mensaje sigue COMPLETO a su camino.
-      - cuarto: el tramo trae contexto inequivoco (cuarto/ambiente/termometro).
-        En un mensaje compuesto, solo con esto se ofrece guardarla.
-      - sin: el mensaje SIN el tramo de la temperatura (lo que sigue su camino
-        en un mensaje compuesto: asi el 24 de "temperatura ambiente 24 grados"
-        no se lee como grado ni como Brix).
-    """
+def temperatura_dicha(texto):
+    """Ronda 5 (decision de Norman, 2026-10-19): la gente NO dicta temperatura;
+    la temperatura sale SOLO de Open-Meteo. Si el mensaje menciona una, NO se
+    guarda como temperatura: se devuelve (nota, texto_sin_el_tramo) para que
+    vaya a las NOTAS de la sesion (plantilla o etapa) y sus numeros no se lean
+    como kilos, Brix ni garrafas. Sin mencion: (None, texto). **Pura.**
+    Los patrones son los del extra `temperatura_dicha` del YAML (los mismos que
+    usa la plantilla)."""
+    extra = next((e for e in (cfg().get("extras") or []) if e.get("nombre") == "temperatura_dicha"), None)
+    if not extra:
+        return None, texto
     t = _plano(texto)
-    tc = cfg().get("temperatura") or {}
-    no_es = tc.get("no_es_cuarto")
-    contexto = tc.get("contexto_cuarto") or r"\b(cuarto|ambiente|termometro)\b"
-    relleno = set(str(p) for p in (tc.get("relleno") or []))
-    for patron in tc.get("manual_patrones") or []:
-        for m in re.finditer(patron, t):
-            tramo = m.group(0)
-            if no_es and re.search(no_es, tramo):
-                continue
-            valor = _num(m.group("t"))
-            if valor is None:
-                continue
-            resto = t[:m.start()] + " " + t[m.end():]
-            solo = (not re.search(r"\d", resto)) and all(p in relleno for p in re.findall(r"[a-z]+", resto))
-            base = texto if len(str(texto or "")) == len(t) else t
-            sin = re.sub(r"\s+([,.;])", r"", (base[:m.start()] + base[m.end():]).strip(" ,;."))
-            return {"valor": valor, "solo": solo, "cuarto": bool(re.search(contexto, tramo)), "sin": sin}
-    return None
+    notas = []
+
+    def quitar(m):
+        notas.append(extra.get("nota", "{t}").format(m.group(1).strip(), t=m.group(0).strip()))
+        return " "
+
+    for patron in extra.get("patrones") or []:
+        t = re.sub(patron, quitar, t)
+    if not notas:
+        return None, texto
+    return "; ".join(notas), re.sub(r"\s+", " ", t).strip(" ,;.")
 
 
-def leer_temperatura_manual(texto):
-    """'en el cuarto hay 22 grados' -> 22.0 (o None). **Pura.** Ver
-    `temperatura_del_mensaje`."""
-    d = temperatura_del_mensaje(texto)
-    return d["valor"] if d else None
-
-
-def combinar_manual(existente, lectura, fecha):
-    """El dia 'manual' con una lectura mas: min y max de todas las lecturas;
-    t_prom = punto medio (min+max)/2, porque la tabla no guarda cuantas
-    lecturas hubo. **Pura.**"""
-    lo, hi = float(lectura), float(lectura)
-    if existente:
-        lo = min(lo, float(existente["t_min"]))
-        hi = max(hi, float(existente["t_max"]))
-    return {"fecha": fecha, "fuente": "manual", "t_min": lo, "t_max": hi, "t_prom": round((lo + hi) / 2.0, 2),
-            "latitud": None, "longitud": None}
-
-
-_temperaturas = {}  # chat -> la temperatura del cuarto ENSENADA y sin confirmar (ronda 3)
-
-
-def _teclado_temperatura():
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("Guardar temperatura", callback_data="lttc:x"),
-        InlineKeyboardButton("No la guardes", callback_data="lttn:x"),
-    ]])
-
-
-def temperatura_pendiente(chat):
-    p = _temperaturas.get(chat)
-    if not p:
-        return None
-    if time.time() - p["nacido_en"] > 60 * float(cfg().get("vida_minutos", 30)):
-        _temperaturas.pop(chat, None)
-        return None
-    return p
-
-
-async def _leer_ciclo(post):
-    estado, r = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "leer", "ventana_dias": _ciclo()["ventana_dias"]})
-    return r if estado == 200 and isinstance(r, dict) and r.get("ok") else None
-
-
-def _fermentando(r):
-    return [l for l in (r.get("lotes") or []) if _etapa(l, "destilacion") is None]
-
-
-async def ofrecer_temperatura(update, chat, post, valor, compuesto=False, ahora=None, cuarto=True):
-    """Ronda 3 (R2-A): la temperatura DICTADA del cuarto se ENSENA con
-    Confirmar / No la guardes; aqui no se guarda nada. Solo si hay un lote en
-    fermentacion (sin destilacion). `compuesto`: el mensaje traia otra cosa
-    (ya atendida por su camino); entonces, si no hay a que lote anotarla o no
-    se pudo leer, se calla. True si dijo algo."""
-    if post is None:
-        return False
-    decir = update.effective_message.reply_text
-    r = await _leer_ciclo(post)
-    if r is None:
-        if not compuesto:
-            await decir("No pude leer los lotes; la temperatura NO quedo guardada. Dimela otra vez en un rato.")
-        return not compuesto
-    fermentando = _fermentando(r)
-    abriendo = lote_plantilla.activa(chat)  # un lote nuevo a medias en este chat
-    if not fermentando and not abriendo:
-        if not compuesto:
-            await decir("No hay ningun lote en fermentacion; no guardo la temperatura.")
-        return not compuesto
-    _temperaturas[chat] = {"valor": float(valor), "por_texto": not compuesto, "nacido_en": time.time()}
-    codigos = ", ".join([str(l.get("codigo_lote")) for l in fermentando[:5]] + (["el que estas abriendo"] if abriendo else []))
-    await decir("%sTemperatura del cuarto: %s C, hoy %s (fuente manual). Lote(s) en fermentacion: %s.\n"
-                "Nada se guarda hasta que confirmes."
-                % ((("Aparte de lo de arriba: dijiste la temperatura del cuarto. " if cuarto else
-                     "Aparte de lo de arriba: dijiste 'temperatura %s grados' sin decir de que. Solo si es la "
-                     "del cuarto, guardala. " % valor) if compuesto else ""), valor,
-                   lote_plantilla.fecha_para_persona(ahora_local(ahora).date()), codigos),
-                reply_markup=_teclado_temperatura())
-    return True
-
-
-async def confirmar_temperatura(update, chat, post, ahora=None):
-    """El Confirmar de la temperatura ensenada: AQUI se guarda (fuente manual)."""
-    decir = update.effective_message.reply_text
-    p = temperatura_pendiente(chat)
-    _temperaturas.pop(chat, None)
-    if not p:
-        await decir("No tengo ninguna temperatura por confirmar. Dimela otra vez.")
-        return False
-    r = await _leer_ciclo(post)
-    if r is None:
-        await decir("No pude leer los lotes; la temperatura NO quedo guardada. Dimela otra vez en un rato.")
-        return False
-    # Se guarda aunque ya no haya lote en fermentacion: se ensena solo con uno
-    # (o con un lote nuevo a medias), y la fila es del DIA, no de un lote.
-    fermentando = _fermentando(r)
-    hoy = ahora_local(ahora).date().isoformat()
-    previo = next((d for d in (r.get("temperaturas") or [])
-                   if d.get("fuente") == "manual" and str(d.get("fecha")) == hoy), None)
-    dia = combinar_manual(previo, p["valor"], hoy)
-    estado, r2 = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "temperatura", "dias": [dia]})
-    if estado != 200 or not (isinstance(r2, dict) and r2.get("ok")):
-        await decir((r2 or {}).get("error") or "No pude guardar la temperatura.")
-        return False
-    codigos = ", ".join(str(l.get("codigo_lote")) for l in fermentando[:5]) or "ninguno todavia"
-    await decir("Anotado: %s C en el cuarto, hoy %s (fuente manual). Hoy va: min %s, max %s. Lote(s) en fermentacion: %s."
-                % (p["valor"], lote_plantilla.fecha_para_persona(ahora_local(ahora).date()), dia["t_min"], dia["t_max"],
-                   codigos))
-    return True
-
-
-async def descartar_temperatura(update, chat):
-    _temperaturas.pop(chat, None)
-    await update.effective_message.reply_text("Listo, esa temperatura no se guarda.")
+def _solo_relleno(texto):
+    """True si al texto no le queda nada que decir (sin numeros, solo relleno)."""
+    relleno = set((cfg().get("relleno") or "").split()) | {"cuarto", "ambiente", "estaba", "esta", "hay", "marca"}
+    return not re.search(r"\d", texto) and all(w in relleno for w in re.findall(r"[a-z]+", _plano(texto)))
 
 
 async def atender(update, chat, texto, confirmar=None, post=None):
     """El texto de una etapa en captura. True si lo atendio.
-    Ronda 3 (R2-A): la temperatura dictada YA NO se lee aqui (la lee el bot
-    antes, con `temperatura_del_mensaje`, y solo toma el mensaje si es SOLO de
-    temperatura). Aqui queda el "si" dicho a una temperatura ensenada por un
-    mensaje que era solo de temperatura (`post`, la del bot)."""
+    Ronda 5: la temperatura dicha NO se guarda como temperatura (sale de
+    Open-Meteo): si hay etapa en captura, va a las notas de la etapa y el resto
+    del mensaje sigue (`temperatura_dicha`). Sin sesion, el mensaje sigue entero
+    su camino. `post` queda por compatibilidad."""
     s = sesion(chat)
     t = _plano(texto)
-    p = temperatura_pendiente(chat)
-    if (s is None and p and p.get("por_texto") and post is not None and not lote_plantilla.activa(chat)
-            and lote_plantilla._SI.match(t)):
-        await confirmar_temperatura(update, chat, post)
-        return True
+    nota, sin = temperatura_dicha(texto)
     if s is None:
         etapa, codigo = _disparo(texto)
         if not etapa:
@@ -762,10 +649,21 @@ async def atender(update, chat, texto, confirmar=None, post=None):
                 % ("aditivo 2" if etapa == "aditivo_2" else "destilacion"))
             return True
         s = empezar(chat, etapa, codigo)
+        if nota:
+            s["notas"].append(nota)
         # Si el mismo mensaje ya trae los datos, se usan; si no, se pregunta.
-        if not await _capturar(update, s, texto, primera=True):
+        if not await _capturar(update, s, sin, primera=True):
             await update.effective_message.reply_text(pregunta_de(etapa, codigo))
         return True
+    if nota:
+        s["notas"].append(nota)
+        if await _capturar(update, s, sin):
+            return True
+        if _solo_relleno(sin):
+            await update.effective_message.reply_text(
+                "Lo anoto en las notas de la etapa: %s. La temperatura se toma sola de Open-Meteo." % nota)
+            return True
+        return False
     if s["modo"] == "resumen":
         if lote_plantilla._SI.match(t) and confirmar is not None:
             await confirmar(update, chat)
@@ -815,6 +713,8 @@ def cuerpo_de_propuesta(s, chat):
         cuerpo["insumo_sku"] = cfg().get("aditivo_2_sku") or "ing-al"
     else:
         cuerpo["garrafas"] = [{"peso_kg": p, "grado_alcohol": g} for p, g in s["garrafas"]]
+    if s.get("notas"):
+        cuerpo["notas"] = "; ".join(s["notas"])[:500]
     return cuerpo
 
 

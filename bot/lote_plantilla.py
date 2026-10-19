@@ -165,6 +165,12 @@ def sesion(chat):
     return _sesiones.get(chat) if activa(chat) else None
 
 
+def _es_envasado(texto):
+    """Ronda 5 (B): YAML `envasado_diario` (lo mismo que mira `lote_ciclo`)."""
+    t = _plano(texto)
+    return any(re.search(p, t) for p in (plantilla().get("envasado_diario") or []))
+
+
 def es_disparador(texto):
     t = _plano(texto)
     return any(re.search(p, t) for p in plantilla().get("disparadores") or [])
@@ -219,6 +225,39 @@ def leer(texto, preguntadas=()):
         a, b = m.span()
         return not any(a < y and x < b for x, y in tramos)
 
+    def extra(e, m):
+        tomar(m)
+        if e["tipo"] == "codigo":
+            cod = m.group(1).upper()
+            if not cod.startswith("L-"):
+                cod = "L-" + cod[1:]
+            campos.setdefault("codigo_lote", cod)
+        elif e["tipo"] == "a_notas":
+            # Ronda 3: si lo que se pregunto deja UN solo campo posible
+            # (`campo_si_unico`), el dato es de ese campo; si no, a notas.
+            posibles = [n for it in items for n in it
+                        if n in (e.get("campo_si_unico") or ()) and n not in campos]
+            if len(posibles) == 1 and _num(m.group(1)) is not None:
+                campos[posibles[0]] = _num(m.group(1))
+            else:
+                notas.append(e.get("nota", "{0}").format(m.group(1).strip(), t=m.group(0).strip()))
+
+    # Ronda 5: los extras `primero` (la temperatura dicha) se leen ANTES que los
+    # campos: su tramo ya no es de nadie ("temperatura 24 grados" no da 24 kg).
+    for e in p.get("extras") or []:
+        if e.get("primero"):
+            for patron in e.get("patrones") or []:
+                for m in re.finditer(patron, t):
+                    if libre(m):
+                        extra(e, m)
+
+    # Ronda 5 (C): mezcla de chiles, "30 kg guajillo y 10 kg guajon".
+    mezcla = leer_chiles(t)
+    if mezcla:
+        for a, b in mezcla["tramos"]:
+            tramos.append((a, b))
+        campos.update(mezcla["campos"])
+
     orden = sorted(p["campos"], key=lambda c: 0 if c["nombre"] != "kg_chile" else 1)
     for c in orden:
         for patron in c.get("patrones") or []:
@@ -231,23 +270,12 @@ def leer(texto, preguntadas=()):
                 elif c["tipo"] == "texto":
                     campos.setdefault(c["nombre"], m.group(1))
     for e in p.get("extras") or []:
+        if e.get("primero"):
+            continue
         for patron in e.get("patrones") or []:
             for m in re.finditer(patron, t):
-                tomar(m)
-                if e["tipo"] == "codigo":
-                    cod = m.group(1).upper()
-                    if not cod.startswith("L-"):
-                        cod = "L-" + cod[1:]
-                    campos.setdefault("codigo_lote", cod)
-                elif e["tipo"] == "a_notas":
-                    # Ronda 3: si lo que se pregunto deja UN solo campo posible
-                    # (`campo_si_unico`), el dato es de ese campo; si no, a notas.
-                    posibles = [n for it in items for n in it
-                                if n in (e.get("campo_si_unico") or ()) and n not in campos]
-                    if len(posibles) == 1 and _num(m.group(1)) is not None:
-                        campos[posibles[0]] = _num(m.group(1))
-                    else:
-                        notas.append(e.get("nota", "{0}").format(m.group(1).strip()))
+                if libre(m):
+                    extra(e, m)
 
     omitir = any(re.search(o, t) for o in p.get("omitir") or [])
     for o in p.get("omitir") or []:
@@ -272,11 +300,65 @@ def leer(texto, preguntadas=()):
             "resto": resto_txt if len(sobra) >= 2 else "", "dinero": dinero}
 
 
+def chiles_conocidos():
+    """{tipo: sku} de los chiles que se usan (YAML `chiles.conocidos`)."""
+    return dict(((plantilla().get("chiles") or {}).get("conocidos")) or {"guajillo": "chile-guajillo"})
+
+
+def tipo_conocido(tipo):
+    """'guajillo' / 'Guajón' / 'guajillo y guajon' -> True si TODO lo dicho es
+    de los chiles conocidos. **Pura.**"""
+    palabras = [w for w in re.findall(r"[a-z]+", _plano(tipo or "")) if w not in ("y", "e", "chile", "de", "mezcla")]
+    return bool(palabras) and all(w in chiles_conocidos() for w in palabras)
+
+
+def leer_chiles(texto):
+    """Ronda 5 (C): "30 kg guajillo y 10 kg guajon" -> dos renglones. Solo si
+    hay DOS tipos conocidos distintos con sus kilos; un solo chile lo leen los
+    campos de siempre (kg_chile + tipo_chile). **Pura.** None o
+    {'campos': {'chiles': {...}, 'kg_chile': total, 'tipo_chile': 'guajillo y guajon'}, 'tramos': [...]}"""
+    patron = (plantilla().get("chiles") or {}).get("mezcla")
+    if not patron:
+        return None
+    t = _plano(texto)
+    pares, tramos = {}, []
+    for m in re.finditer(patron, t):
+        kg = _num(m.group(1))
+        if kg is None:
+            continue
+        pares[m.group(2)] = pares.get(m.group(2), 0) + kg
+        tramos.append(m.span())
+    if len(pares) < 2:
+        return None
+    total = sum(pares.values())
+    return {"campos": {"chiles": pares, "kg_chile": int(total) if float(total).is_integer() else total,
+                       "tipo_chile": " y ".join(sorted(pares))}, "tramos": tramos}
+
+
+def renglones_de_chile(campos):
+    """Los renglones de insumo del chile, por SKU (YAML `chiles.conocidos`).
+    [] si el tipo no se reconoce o no hay kilos: entonces va `kg_chile` suelto
+    (y el bot lo carga a chile-guajillo, con aviso). **Pura.**"""
+    conocidos = chiles_conocidos()
+    mezcla = campos.get("chiles")
+    if isinstance(mezcla, dict) and mezcla:
+        return [{"insumo": conocidos[k], "cantidad": v} for k, v in sorted(mezcla.items()) if k in conocidos]
+    tipo = _plano(campos.get("tipo_chile") or "").strip()
+    kg = campos.get("kg_chile")
+    if kg in (None, "", 0) or tipo not in conocidos:
+        return []
+    return [{"insumo": conocidos[tipo], "cantidad": kg}]
+
+
 def _valores_de_item(nombres, texto):
     """La respuesta a UNA pregunta numerada -> sus campos. "40 guajillo" en la
     pregunta 1 da kilos (el numero) y tipo (lo que reconoce el patron, o la
     palabra que sobra)."""
     salida = {}
+    if "kg_chile" in nombres:
+        mezcla = leer_chiles(texto)
+        if mezcla:
+            return dict(mezcla["campos"])
     numeros = re.findall(r"(\d+(?:[.,]\d+)?)", texto)
     i_num = 0
     for nombre in nombres:
@@ -368,7 +450,7 @@ def _anotar(s, leido):
 def notas_de(s):
     notas = list(s["notas"])
     tipo = s["campos"].get("tipo_chile")
-    if tipo:
+    if tipo and not tipo_conocido(tipo):
         notas.insert(0, "tipo de chile: " + str(tipo))
     for n in sorted(s["omitidos"]):
         notas.append("%s: pendiente (dijeron que luego)" % _campo(n)["etiqueta"].lower())
@@ -387,9 +469,14 @@ def campos_para_peticion(s):
     codigo = codigo_de(s)
     if codigo:
         c["codigo_lote"] = codigo
+    insumos = renglones_de_chile(s["campos"])
+    if insumos:
+        c.pop("kg_chile", None)  # va como renglon(es) con su SKU, no suelto
     kg_ad = s["campos"].get("kg_aditivo_1")
     if kg_ad not in (None, "", 0):
-        c["insumos"] = [{"insumo": plantilla().get("aditivo_1_sku") or "ing-az", "cantidad": kg_ad}]
+        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "ing-az", "cantidad": kg_ad})
+    if insumos:
+        c["insumos"] = insumos
     return c
 
 
@@ -406,10 +493,15 @@ def resumen(s, hoy=None):
         elif v not in (None, ""):
             lineas.append("%s: %s%s" % (c["etiqueta"], v, (" " + c["unidad"]) if c.get("unidad") and c["unidad"] != "Brix" else ""))
     tipo = str(s["campos"].get("tipo_chile") or "").strip()
-    if tipo and "guajillo" not in _plano(tipo):
-        # Ronda 2: el catalogo solo tiene chile-guajillo; que se vea ANTES de
-        # confirmar a que insumo van los kilos (el tipo dictado va a notas).
-        lineas.append("   (los kilos se cargan a chile-guajillo (unico en catalogo); el tipo '%s' va a notas)" % tipo)
+    mezcla = s["campos"].get("chiles")
+    if isinstance(mezcla, dict) and mezcla:
+        for k, v in sorted(mezcla.items()):
+            lineas.append("   chile %s: %s kg" % (k, v))
+    elif s["campos"].get("kg_chile") not in (None, "") and not tipo_conocido(tipo):
+        # Ronda 5 (C): solo si el tipo NO se reconoce (o no se dijo) se avisa a
+        # que insumo van los kilos, ANTES de confirmar.
+        lineas.append("   (los kilos se cargan a chile-guajillo%s)"
+                      % ((": el tipo '%s' no es guajillo ni guajon y va a notas" % tipo) if tipo else ": no dijeron el tipo"))
     notas = [n for n in s["notas"]]
     if notas:
         lineas.append("Notas: " + "; ".join(notas)[:300])
@@ -501,6 +593,10 @@ async def atender(update, chat, texto, proponer_lote=None, peticion_de=None, des
         if _CORREGIR.match(t):
             await corregir(update, chat)
             return True
+    if desde_enrutador is None and _es_envasado(t):
+        # Ronda 5 (B): el envasado es diario y no se liga al lote: la plantilla
+        # nunca lo toma (ni lo abre ni lo mete a una abierta). La sesion sigue.
+        return False
     leido = leer(texto, s["preguntadas"] if s else ())
     if leido["dinero"] and desde_enrutador is None:
         return False  # habla de dinero: lo decide el enrutador, la sesion sigue viva
@@ -527,6 +623,18 @@ async def atender(update, chat, texto, proponer_lote=None, peticion_de=None, des
     if nueva and not s["campos"]:
         s["preguntadas"] = [list(q["campos"]) for q in preguntas()]
         await update.effective_message.reply_text("\n".join(avisos + [texto_plantilla(codigo_de(s))]))
+        return True
+    tipo = s["campos"].get("tipo_chile")
+    if tipo and not tipo_conocido(tipo) and not s.get("chile_preguntado"):
+        # Ronda 5 (C): un chile que no es guajillo ni guajon: se avisa y se
+        # pregunta UNA vez. Si no lo aclaran, se carga a guajillo con aviso.
+        s["chile_preguntado"] = True
+        s["preguntadas"] = [["kg_chile", "tipo_chile"]]
+        s["modo"] = "chile"
+        s["nacido_en"] = time.time()
+        await update.effective_message.reply_text("\n".join(avisos + [
+            "Dijiste chile '%s'. Solo uso guajillo, guajon o una mezcla de los dos. Cual es? "
+            "Por ejemplo: 'guajon', o '30 kg guajillo y 10 kg guajon'." % tipo]))
         return True
     if s.get("modo") in ("corregir", "resumen"):
         await ensenar_resumen(update, s, avisos)

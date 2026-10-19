@@ -133,6 +133,86 @@ begin
    where n.nspname='public' and c.relname in ('lote_etapas','lote_recordatorios','temperatura_diaria') and c.relrowsecurity;
   if v_n <> 3 then raise exception 'FALLA 9: RLS en % de 3', v_n; end if;
   raise notice 'ok 9: RLS en las 3 tablas nuevas';
+
+  -- 12. (ronda 5, C) chile-guajon: existe UNA vez (la migracion se aplica dos
+  -- veces en la prueba: el ON CONFLICT la hace re-ejecutable) y copia tipo,
+  -- unidad y es_materia_prima de chile-guajillo; costo sin confirmar.
+  select count(*) into v_n from public.catalogo_productos where sku = 'chile-guajon';
+  if v_n <> 1 then raise exception 'FALLA 12: chile-guajon aparece % veces', v_n; end if;
+  if exists (select 1 from public.catalogo_productos n, public.catalogo_productos g
+             where n.sku = 'chile-guajon' and g.sku = 'chile-guajillo'
+               and (n.tipo, n.unidad_medida, n.es_materia_prima) is distinct from (g.tipo, g.unidad_medida, g.es_materia_prima)) then
+    raise exception 'FALLA 12: chile-guajon no copia tipo/unidad/materia prima de chile-guajillo';
+  end if;
+  if (select costo_cero_confirmado from public.catalogo_productos where sku = 'chile-guajon') then
+    raise exception 'FALLA 12: el costo del guajon quedo confirmado (no se inventa)';
+  end if;
+  raise notice 'ok 12: chile-guajon una vez, como chile-guajillo, costo sin confirmar';
+end $$;
+
+-- 13. (ronda 5, B) el envasado diario: sin lote, con su inventario, y el candado
+-- de empaque (D92) igual que el envasado de un lote.
+do $$
+declare
+  v_admin uuid;
+  v_botella uuid;
+  v_corcho uuid;
+  v_r jsonb;
+  v_n integer;
+  v_falla boolean;
+begin
+  if (select is_nullable from information_schema.columns
+      where table_schema='public' and table_name='lote_envasado' and column_name='id_lote') <> 'YES' then
+    raise exception 'FALLA 13: lote_envasado.id_lote sigue NOT NULL';
+  end if;
+  insert into public.entidades (nombre, rol, zona) values ('Matriz prueba', 'ADMIN', 'Zacatecas') returning id into v_admin;
+  insert into public.catalogo_productos (sku, nombre, tipo, unidad_medida, es_materia_prima, ml_por_unidad)
+  values ('botella-750-prueba', 'Destilado 750 (prueba)', 'TERMINADO', 'PIEZAS', false, 750) returning id into v_botella;
+  insert into public.catalogo_productos (sku, nombre, tipo, unidad_medida, es_materia_prima)
+  values ('corcho-prueba', 'Corcho (prueba)', 'INSUMO', 'PIEZAS', false) returning id into v_corcho;
+  insert into public.recetas_produccion (id_producto_terminado, id_insumo, cantidad_requerida) values (v_botella, v_corcho, 1);
+  insert into public.inventario_ledger (id_producto, tipo_movimiento, cantidad, id_entidad_destino, usuario_creador)
+  values (v_corcho, 'ENTRADA_COMPRA', 10, v_admin, 'prueba');
+
+  v_r := public.registrar_envasado_diario(date '2026-10-19',
+           jsonb_build_array(jsonb_build_object('id_producto', v_botella, 'botellas', 6)),
+           'telegram:prueba', 'codigo dicho: L-12-10.1 (el envasado no se liga al lote)');
+  if (v_r->>'envasado')::int <> 1 or (v_r->>'filas_inventario')::int <> 2 then
+    raise exception 'FALLA 13: resultado %', v_r;
+  end if;
+  if not exists (select 1 from public.lote_envasado where id_producto = v_botella and id_lote is null
+                 and botellas = 6 and fecha = date '2026-10-19' and nota like 'codigo dicho: L-12-10.1%') then
+    raise exception 'FALLA 13: no quedo la fila de lote_envasado sin lote con su nota';
+  end if;
+  if (select sum(cantidad) from public.inventario_ledger where id_producto = v_botella and tipo_movimiento = 'PRODUCCION'
+      and id_entidad_destino = v_admin) <> 6
+     or (select sum(cantidad) from public.inventario_ledger where id_producto = v_corcho and tipo_movimiento = 'TRASPASO'
+      and id_entidad_origen = v_admin) <> 6 then
+    raise exception 'FALLA 13: el inventario no se movio +6 botellas / -6 corchos';
+  end if;
+  raise notice 'ok 13: envasado diario sin lote: lote_envasado(id_lote NULL, nota) + inventario +6/-6 (%)', v_r;
+
+  -- 14. falta empaque (quedan 4 corchos, se piden 5): no queda NADA
+  select count(*) into v_n from public.lote_envasado;
+  v_falla := false;
+  begin
+    perform public.registrar_envasado_diario(date '2026-10-19',
+              jsonb_build_array(jsonb_build_object('id_producto', v_botella, 'botellas', 5)), 'telegram:prueba', null);
+  exception when others then
+    v_falla := sqlerrm like 'FALTA_EMPAQUE:%';
+  end;
+  if not v_falla then raise exception 'FALLA 14: sin empaque suficiente no salio FALTA_EMPAQUE'; end if;
+  if (select count(*) from public.lote_envasado) <> v_n then raise exception 'FALLA 14: quedo una fila a medias'; end if;
+  raise notice 'ok 14: sin empaque suficiente -> FALTA_EMPAQUE y nada escrito';
+
+  -- 15. vacio: se rechaza
+  v_falla := false;
+  begin
+    perform public.registrar_envasado_diario(date '2026-10-19', '[]'::jsonb, 'telegram:prueba', null);
+  exception when others then v_falla := sqlerrm like 'ENVASADO_VACIO%';
+  end;
+  if not v_falla then raise exception 'FALLA 15: un envasado vacio no se rechazo'; end if;
+  raise notice 'ok 15: envasado vacio rechazado';
 end $$;
 
 select count(*) as politicas_rls_public from pg_policies where schemaname = 'public';

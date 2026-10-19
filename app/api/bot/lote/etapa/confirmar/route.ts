@@ -102,7 +102,10 @@ export async function POST(request: Request) {
       p_usuario: etapa.usuario_creador,
       p_entradas: etapa.entradas,
       p_garrafas: etapa.garrafas,
-      p_datos: etapa.etapa === 'aditivo_2' ? { kg: etapa.entradas[0]?.cantidad ?? null } : { garrafas: etapa.garrafas.length }
+      p_datos: {
+        ...(etapa.etapa === 'aditivo_2' ? { kg: etapa.entradas[0]?.cantidad ?? null } : { garrafas: etapa.garrafas.length }),
+        ...(etapa.notas ? { notas: etapa.notas } : {})
+      }
     })
     if (error) {
       await liberarReclamo(supabase, borradorId, puerta.modo)

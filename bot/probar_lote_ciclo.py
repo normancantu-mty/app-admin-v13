@@ -523,79 +523,26 @@ caso("9. muestra_2 a las 3 de la manana (25 h despues): NO", tipos(latir(base9, 
 caso("9. ... a las 7: NO (antes de la hora del YAML)", tipos(latir(base9, BotTg(), local(2026, 10, 20, 7, 59))), [])
 caso("9. ... a las 8: SI", tipos(latir(base9, BotTg(), local(2026, 10, 20, 8))), ["muestra_2"])
 
-# --- 10. RONDA 2: la temperatura DICTADA del cuarto (fuente manual) ----------
-caso("10. 'en el cuarto hay 22 grados' -> 22", C.leer_temperatura_manual("en el cuarto hay 22 grados"), 22)
-caso("10. '19.5 grados en el cuarto' -> 19.5", C.leer_temperatura_manual("ahorita 19.5 grados en el cuarto"), 19.5)
-caso("10. 'la temperatura esta en 21 C' -> 21", C.leer_temperatura_manual("la temperatura esta en 21 c"), 21)
-caso("10. CONTROL 'a 24 grados' suelto NO es temperatura", C.leer_temperatura_manual("dos tambos de 200 litros a 24 grados"), None)
-caso("10. CONTROL '18 kg 52 grados' NO es temperatura", C.leer_temperatura_manual("garrafa de 18 kg a 52 grados"), None)
+# --- 10. RONDA 5 (A, Norman 2026-10-19): la gente NO dicta temperatura ------
+# La temperatura sale SOLO de Open-Meteo. Dicha en el chat: con plantilla o
+# etapa abierta va a sus NOTAS; sin sesion, el mensaje sigue ENTERO su camino
+# (el modelo). Nunca se llama `accion: temperatura` desde el chat, ni hay
+# botones lttc/lttn, y el resto del mensaje no se pierde.
+caso("10. pura: ya no existen leer_temperatura_manual / temperatura_del_mensaje / lttc",
+     [hasattr(C, n) for n in ("leer_temperatura_manual", "temperatura_del_mensaje", "confirmar_temperatura",
+                              "ofrecer_temperatura", "_temperaturas")], [False] * 5)
+nota10, sin10 = C.temperatura_dicha("2 garrafas: 18 kg 50% y 10 kg 30%, el cuarto estaba a 22 grados")
+caso("10. pura: 'el cuarto estaba a 22 grados' -> nota, y el resto (las garrafas) intacto",
+     ("cuarto estaba a 22 grados" in (nota10 or ""), "Open-Meteo" in (nota10 or ""), "18 kg 50% y 10 kg 30%" in sin10),
+     (True, True, True))
+caso("10. pura: CONTROL 'garrafa de 18 kg a 52 grados' no es temperatura dicha",
+     C.temperatura_dicha("garrafa de 18 kg a 52 grados")[0], None)
+caso("10. pura: CONTROL 'dos tambos de 200 litros a 24 grados' no es temperatura dicha",
+     C.temperatura_dicha("dos tambos de 200 litros a 24 grados")[0], None)
+
 base10 = Ciclo()
 base10.nuevo_lote("lote-f", "L-19-10.1", "2026-10-19")
 B._post_de_verdad = base10
-B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
-B._olvidar_chat(CHAT)
-C.olvidar(CHAT)
-P.olvidar(CHAT)
-C._temperaturas.clear()
-
-
-def temps(base_):
-    return [c for r, c in base_.llamadas if c.get("accion") == "temperatura"]
-
-
-u = Update(CHAT)
-texto(u, "en el cuarto hay 22 grados")
-# Ronda 3 (R2-A): ninguna temperatura se guarda sin pasar por Confirmar.
-caso("10. solo temperatura: la ENSENA con Confirmar y NO la guarda todavia",
-     (temps(base10), "Temperatura del cuarto: 22" in u.message.dichos[-1], u.message.teclados[-1]),
-     ([], True, ["lttc:x", "lttn:x"]))
-boton(u, "lttc")
-caso("10. Confirmar: se guarda fuente=manual, min=max=prom=22",
-     [(d["fuente"], d["t_min"], d["t_max"], d["t_prom"]) for d in base10.temperaturas], [("manual", 22.0, 22.0, 22.0)])
-caso("10. ... y lo dice, con el lote", ("Anotado: 22" in u.message.dichos[-1], "L-19-10.1" in u.message.dichos[-1]), (True, True))
-texto(u, "ya bajo, hay 18 grados en el cuarto")
-caso("10. segunda lectura: ensenada, sin guardar", len(base10.temperaturas), 1)
-texto(u, "si")
-caso("10. ... 'si' escrito la confirma: min 18, max 22, prom (punto medio) 20",
-     [(d["t_min"], d["t_max"], d["t_prom"]) for d in base10.temperaturas[-1:]], [(18.0, 22.0, 20.0)])
-caso("10. ... el modelo no se llamo y no se abrio etapa ni plantilla", (C.sesion(CHAT), P.activa(CHAT)), (None, False))
-texto(u, "en el cuarto hay 30 grados")
-boton(u, "lttn")
-caso("10. 'No la guardes': no se guarda", (len(base10.temperaturas), "no se guarda" in u.message.dichos[-1]), (2, True))
-boton(u, "lttc")
-caso("10. ... y un Confirmar viejo ya no guarda nada", (len(base10.temperaturas), "No tengo ninguna temperatura" in
-                                                         u.message.dichos[-1]), (2, True))
-# en medio de una destilacion: la temperatura (sola) NO se lee como garrafa
-C.empezar(CHAT, "destilacion", "L-19-10.1")
-texto(u, "en el cuarto hay 23 grados")
-caso("10. en captura de destilacion: se ofrece la temperatura, no es garrafa",
-     (u.message.teclados[-1], C.sesion(CHAT)["garrafas"]), (["lttc:x", "lttn:x"], []))
-boton(u, "lttc")
-caso("10. ... y con Confirmar se guarda", base10.temperaturas[-1]["t_max"], 23.0)
-C.olvidar(CHAT)
-base10.etapas[("lote-f", "destilacion")] = {"fecha": "2026-10-19", "telegram_id": 555}
-n = len(base10.temperaturas)
-u = Update(CHAT)
-texto(u, "en el cuarto hay 22 grados")
-caso("10. CONTROL sin lote en fermentacion: NO se ofrece ni se guarda, y lo dice",
-     (len(base10.temperaturas) - n, "No hay ningun lote en fermentacion" in u.message.dichos[-1], u.message.teclados[-1]),
-     (0, True, []))
-base10.etapas.pop(("lote-f", "destilacion"))
-
-# --- 11. RONDA 3: mensajes COMPUESTOS (criterio nuevo del auditor) -----------
-# Todo interceptor que corre antes del modelo o de la sesion: la otra mitad del
-# mensaje NO se pierde, y la temperatura no se guarda sin Confirmar.
-caso("11. pura: 'la temperatura del alcohol salio a 50 grados' NO es del cuarto",
-     C.temperatura_del_mensaje("la temperatura del alcohol salio a 50 grados"), None)
-caso("11. pura: 'temperatura de salida del alambique 78 grados' NO es del cuarto",
-     C.temperatura_del_mensaje("temperatura de salida del alambique 78 grados"), None)
-caso("11. pura: apertura + temperatura es COMPUESTO, con contexto de cuarto, y la otra mitad intacta",
-     C.temperatura_del_mensaje("hoy empezamos lote, 40 kilos de chile guajillo, brix 12, temperatura ambiente 24 grados"),
-     {"valor": 24, "solo": False, "cuarto": True, "sin": "hoy empezamos lote, 40 kilos de chile guajillo, brix 12"})
-caso("11. pura: 'temperatura 22c' sola es SOLO", C.temperatura_del_mensaje("temperatura 22c")["solo"], True)
-caso("11. pura: temperatura + 'y ya pague la luz' NO es solo",
-     C.temperatura_del_mensaje("el cuarto esta a 22 grados y ya pague la luz")["solo"], False)
-
 MODELO11 = []
 
 
@@ -606,13 +553,30 @@ def modelo11(respuesta):
     return enrutar
 
 
+def temps(base_):
+    return [c for r, c in base_.llamadas if c.get("accion") == "temperatura"]
+
+
+def teclas_temp(u_):
+    return [t for t in u_.message.teclados if any(str(x).startswith(("lttc", "lttn")) for x in t)]
+
+
+B.enrutar = modelo11({"intencion": "otro", "confianza": "baja", "campos": {}})
+for frase in ("en el cuarto hay 22 grados", "la temperatura esta en 21 c y ya pague la luz, 300 pesos"):
+    B._olvidar_chat(CHAT)
+    C.olvidar(CHAT)
+    P.olvidar(CHAT)
+    u = Update(CHAT)
+    texto(u, frase)
+    caso("10. sin sesion: %r va ENTERO al modelo" % frase, MODELO11[-1:], [frase])
+    caso("10. ... sin guardar temperatura, sin botones, sin abrir etapa ni plantilla",
+         (temps(base10), teclas_temp(u), C.sesion(CHAT), P.activa(CHAT)), ([], [], None, False))
+
+# (a) apertura + temperatura: la plantilla abre y la temperatura va a SUS notas
 B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
 B._olvidar_chat(CHAT)
 P.olvidar(CHAT)
 C.olvidar(CHAT)
-C._temperaturas.clear()
-n = len(temps(base10))
-# (a) apertura + temperatura, la frase EXACTA de la sonda del auditor
 u = Update(CHAT)
 texto(u, "hoy empezamos lote, 40 kilos de chile guajillo, brix 12, temperatura ambiente 24 grados")
 s11 = P.sesion(CHAT)
@@ -622,12 +586,11 @@ caso("11a. apertura + temperatura: se abre la plantilla con los 40 kg de guajill
 caso("11a. ... 'brix 12' sin decir cual NO se pierde: va a notas",
      any("Brix 12" in x for x in (s11 or {}).get("notas", [])), True)
 caso("11a. ... el 24 NO se leyo como dato de la plantilla", 24 in ((s11 or {}).get("campos") or {}).values(), False)
-caso("11a. ... pregunta lo que falta", any("Me falta" in d for d in u.message.dichos), True)
-caso("11a. ... y DESPUES ofrece la temperatura con Confirmar", (u.message.dichos[-1].startswith("Aparte de lo de arriba: dijiste la temperatura del cuarto"),
-                                                                u.message.teclados[-1]), (True, ["lttc:x", "lttn:x"]))
-caso("11a. ... sin guardar ninguna temperatura", len(temps(base10)) - n, 0)
+caso("11a. ... la temperatura va a las NOTAS de la plantilla",
+     any("temperatura ambiente 24 grados" in x for x in (s11 or {}).get("notas", [])), True)
+caso("11a. ... pregunta lo que falta, sin botones de temperatura ni guardarla",
+     (any("Me falta" in d for d in u.message.dichos), teclas_temp(u), temps(base10)), (True, [], []))
 P.olvidar(CHAT)
-C._temperaturas.clear()
 # (b) plantilla viva + kg/brix + temperatura
 u = Update(CHAT)
 texto(u, "hoy empezamos lote")
@@ -635,14 +598,14 @@ texto(u, "40 kilos de chile guajillo brix chile 12, la temperatura del cuarto 24
 s11 = P.sesion(CHAT) or {}
 caso("11b. plantilla viva + kg/brix + temperatura: kg y brix entran a la plantilla",
      ((s11.get("campos") or {}).get("kg_chile"), (s11.get("campos") or {}).get("brix_chile")), (40, 12))
-caso("11b. ... la temperatura se ofrece aparte y no se guarda", (u.message.teclados[-1], len(temps(base10)) - n),
-     (["lttc:x", "lttn:x"], 0))
+caso("11b. ... la temperatura a notas, sin botones ni guardarla",
+     (any("temperatura del cuarto 24 grados" in x for x in s11.get("notas", [])), teclas_temp(u), temps(base10)),
+     (True, [], []))
 texto(u, "brix 18")
 caso("11b. ... 'brix 18' con solo el Brix final pendiente -> Brix final",
      ((P.sesion(CHAT) or {}).get("campos") or {}).get("brix_final"), 18)
 P.olvidar(CHAT)
-C._temperaturas.clear()
-# (c) garrafas + temperatura, dentro de la destilacion
+# (c) garrafas + temperatura, dentro de la destilacion: las garrafas NO se pierden
 u = Update(CHAT)
 boton(u, "ltdes", "L-19-10.1")
 texto(u, "2 garrafas: 18 kg 50% y 10 kg 30%, el cuarto estaba a 22 grados")
@@ -651,25 +614,43 @@ caso("11c. garrafas + temperatura: el resumen trae las 2 garrafas",
      (bool(res), bool(res) and "Garrafa 1: 18.0 kg a 50.0%" in res[-1], bool(res) and "Garrafa 2: 10.0 kg a 30.0%" in res[-1]),
      (True, True, True))
 caso("11c. ... la etapa queda en resumen con 2 garrafas", (C.sesion(CHAT) or {}).get("garrafas"), [(18.0, 50.0), (10.0, 30.0)])
-caso("11c. ... la temperatura se ofrece DESPUES, sin guardarse",
-     (u.message.dichos[-1].startswith("Aparte de lo de arriba: dijiste la temperatura del cuarto"), len(temps(base10)) - n), (True, 0))
-caso("11c. ... y 'si' escrito NO confirma la temperatura de un compuesto (solo su boton)",
-     (asyncio.run(C.atender(u, CHAT, "si", None, post=base10)), len(temps(base10)) - n), (False, 0))
-boton(u, "lttc")
-caso("11c. ... con su boton Confirmar, si", (len(temps(base10)) - n, base10.temperaturas[-1]["t_max"]), (1, 22.0))
+caso("11c. ... y la temperatura en sus Notas, visible antes de Confirmar",
+     (bool(res) and "Notas:" in res[-1] and "cuarto estaba a 22 grados" in res[-1], teclas_temp(u), temps(base10)),
+     (True, [], []))
+n = len(base10.llamadas)
+boton(u, "ltec")
+prop = [c for r, c in base10.llamadas[n:] if r == C.RUTA_ETAPA_PROPONER]
+caso("11c. ... Confirmar: la propuesta lleva las garrafas Y las notas",
+     (len(prop), len((prop or [{}])[-1].get("garrafas") or []),
+      "cuarto estaba a 22 grados" in ((prop or [{}])[-1].get("notas") or "")), (1, 2, True))
+caso("11c. ... y ninguna temperatura guardada", temps(base10), [])
 C.olvidar(CHAT)
-# (d) 'la temperatura del alcohol' en la destilacion: ni temperatura ni se pierde en silencio
-B.enrutar = modelo11({"intencion": "otro", "confianza": "baja", "campos": {}})
-n = len(temps(base10))
+# (c2) CONTROL: una etapa SIN temperatura no manda la llave notas (el sello no cambia)
+base10.etapas.pop(("lote-f", "destilacion"), None)
 u = Update(CHAT)
 boton(u, "ltdes", "L-19-10.1")
-texto(u, "la temperatura del alcohol salio a 50 grados")
-caso("11d. 'la temperatura del alcohol salio a 50 grados': NO se ofrece ni se guarda como del cuarto",
-     (len(temps(base10)) - n, any(t == ["lttc:x", "lttn:x"] for t in u.message.teclados)), (0, False))
-caso("11d. ... y sigue al modelo (no se traga)", MODELO11[-1:], ["la temperatura del alcohol salio a 50 grados"])
+texto(u, "1 garrafa: 18 kg 50%")
+n = len(base10.llamadas)
+boton(u, "ltec")
+prop = [c for r, c in base10.llamadas[n:] if r == C.RUTA_ETAPA_PROPONER]
+caso("11c2. CONTROL sin temperatura: la propuesta NO trae la llave notas", (len(prop), "notas" in ((prop or [{}])[-1])),
+     (1, False))
+C.olvidar(CHAT)
+base10.etapas.pop(("lote-f", "destilacion"), None)
+# (d) solo la temperatura, con etapa abierta: a notas, la etapa sigue esperando sus datos
+u = Update(CHAT)
+boton(u, "ltdes", "L-19-10.1")
+texto(u, "el cuarto esta a 23 grados")
+caso("11d. solo temperatura en la destilacion: lo dice, a notas, no es garrafa",
+     ("Lo anoto en las notas de la etapa" in u.message.dichos[-1], list((C.sesion(CHAT) or {}).get("garrafas") or []),
+      len((C.sesion(CHAT) or {}).get("notas") or []), temps(base10)), (True, [], 1, []))
+texto(u, "2 garrafas: 18 kg 50% y 10 kg 30%")
+caso("11d. ... y luego las garrafas entran normal", (C.sesion(CHAT) or {}).get("garrafas"), [(18.0, 50.0), (10.0, 30.0)])
 C.olvidar(CHAT)
 B._olvidar_chat(CHAT)
-# (e) envasado F0 + "destilamos": NO abre la destilacion; va al modelo -> F0/D81
+# (e) RONDA 5 (B): envasado + "destilamos": NO abre la destilacion ni plantilla;
+# va al modelo -> /lote/proponer con el envasado (el servidor lo registra como
+# envasado DIARIO, sin lote; el codigo dicho va a la nota).
 for frase, campos in [
         ("envasamos 40 de 750 del L-12-10.1 que destilamos el viernes",
          {"codigo_lote": "L-12-10.1", "botellas": 40, "formato": "750"}),
@@ -682,9 +663,10 @@ for frase, campos in [
     u = Update(CHAT)
     texto(u, frase)
     props = [c for r, c in base10.llamadas[n:] if r == "/api/bot/lote/proponer"]
-    caso("11e. '%s': NO abre la captura de destilacion" % frase,
-         (C.sesion(CHAT), any("destilacion. Cuantas garrafas" in d for d in u.message.dichos)), (None, False))
-    caso("11e. ... pasa por el modelo y va al camino F0/D81 con el envasado",
+    caso("11e. '%s': NO abre la captura de destilacion ni la plantilla" % frase,
+         (C.sesion(CHAT), any("destilacion. Cuantas garrafas" in d for d in u.message.dichos), P.activa(CHAT)),
+         (None, False, False))
+    caso("11e. ... pasa por el modelo y va a /lote/proponer con el envasado",
          (MODELO11[-1], [(c["propuesta"].get("codigo_lote"), c["envasado"]) for c in props]),
          (frase, [("L-12-10.1", [{"botellas": 40, "formato": campos["formato"]}])]))
 B._olvidar_chat(CHAT)
@@ -705,11 +687,10 @@ texto(u, "le pusimos 4 kilos de aditivo 2 al L-12-10.1")
 caso("11g. CONTROL H1: 'le pusimos 4 kilos de aditivo 2 al L-12-10.1' sigue abriendo la etapa",
      ("LOTE L-12-10.1 - ADITIVO 2" in u.message.dichos[-1]), True)
 C.olvidar(CHAT)
-caso("11g. CONTROL: 'destilamos el L-12-10.1, garrafa 1 18 kilos a 50 grados' no trae temperatura del cuarto",
-     C.temperatura_del_mensaje("destilamos el L-12-10.1, garrafa 1 18 kilos a 50 grados"), None)
+caso("11g. CONTROL: 'destilamos el L-12-10.1, garrafa 1 18 kilos a 50 grados' no trae temperatura dicha",
+     C.temperatura_dicha("destilamos el L-12-10.1, garrafa 1 18 kilos a 50 grados")[0], None)
 B._olvidar_chat(CHAT)
 P.olvidar(CHAT)
-C._temperaturas.clear()
 
 
 # --- 12. RONDA 3 (R2-C): el envio SI salio y el POST `entregado` fallo -------
@@ -822,26 +803,18 @@ for frase, esperado in [("ya destilamos el L-19-10.1, salieron 2 garrafas, ¿lo 
 C.olvidar(CHAT)
 B._olvidar_chat(CHAT)
 
-# --- 15. RONDA 4: "temperatura 24 grados" SIN cuarto en un compuesto ---------
-# Antes: el 24 se perdia callado en la plantilla. Ahora: sale del texto y se
-# OFRECE preguntando de que es (lttc/lttn); nada se guarda sin el boton.
+# --- 15. RONDA 5 (A): "temperatura 24 grados" en un compuesto ---------------
+# Ya no se ofrece ni se pregunta de que es: va a las notas de la plantilla y el
+# resto (40 kg de guajillo) entra.
 P.olvidar(CHAT)
-C._temperaturas.clear()
-n = len(temps(base10))
 u = Update(CHAT)
 texto(u, "hoy empezamos lote, 40 kilos de chile guajillo, brix 12, temperatura 24 grados")
 s15 = P.sesion(CHAT) or {}
-caso("15. sin cuarto: la plantilla abre con 40 kg y el 24 NO entra a la plantilla",
+caso("15. la plantilla abre con 40 kg y el 24 NO entra como dato",
      ((s15.get("campos") or {}).get("kg_chile"), 24 in (s15.get("campos") or {}).values()), (40, False))
-caso("15. ... el 24 se ofrece aparte, diciendo que no dijeron de que, con su boton",
-     ("sin decir de que" in u.message.dichos[-1], "24" in u.message.dichos[-1], u.message.teclados[-1]),
-     (True, True, ["lttc:x", "lttn:x"]))
-caso("15. ... y no se guardo", len(temps(base10)) - n, 0)
-caso("15. el segundo teclado se distingue: 'Aparte de lo de arriba' y boton 'Guardar temperatura'",
-     (u.message.dichos[-1].startswith("Aparte de lo de arriba"),
-      [b.text for fila in C._teclado_temperatura().inline_keyboard for b in fila][0]), (True, "Guardar temperatura"))
+caso("15. ... 'temperatura 24 grados' a notas, sin botones ni guardarla",
+     (any("temperatura 24 grados" in x for x in s15.get("notas", [])), teclas_temp(u), temps(base10)), (True, [], []))
 P.olvidar(CHAT)
-C._temperaturas.clear()
 B._olvidar_chat(CHAT)
 
 

@@ -9,8 +9,9 @@ import { elegirLoteDestino, type LoteExistente } from '../lib/bot-envasado'
  *
  * `elegirLoteDestino` ahora dice POR QUE no hay destino; la ruta convierte
  * `sin_abiertos` en una oferta (`ofrecer_abrir_lote`) y deja el 422 solo para
- * la errata de codigo y los varios abiertos. El flujo del bot (oferta -> boton
- * -> `abrir_lote_nuevo`) lo mide `bot/probar_plantilla.py`.
+ * la errata de codigo y los varios abiertos. RONDA 5 (2026-10-19): la oferta se
+ * RETIRO por decision de Norman (el envasado es diario y no se liga a un lote);
+ * `elegirLoteDestino` sigue para el agregar a un lote con insumos.
  */
 
 const HOY = '2026-10-17'
@@ -41,14 +42,14 @@ test('CONTROL: varios abiertos -> varios (se pregunta cual)', () => {
   expect(r.ok === false && r.motivo).toBe('varios')
 })
 
-test('la ruta ofrece abrir el lote en vez del 422 cuando no hay abiertos', () => {
+// Lote v2, ronda 5 (B, Norman 2026-10-19): se RETIRO la oferta de abrir un lote
+// ante un envasado sin lote abierto (WP-7a). El envasado es diario y no se liga
+// a ningun lote: lo mide tests/bot-envasado-diario.spec.ts en el handler.
+test('ronda 5: la ruta ya NO ofrece abrir un lote desde un envasado', () => {
   const src = readFileSync(join(__dirname, '..', 'app', 'api', 'bot', 'lote', 'proponer', 'route.ts'), 'utf8')
-  const i = src.indexOf("destino.motivo === 'sin_abiertos'")
-  expect(i).toBeGreaterThan(0)
-  const tramo = src.slice(i, i + 1200)
-  expect(tramo).toContain('ofrecer_abrir_lote: true')
-  expect(tramo).toContain('cuerpo.abrir_lote_nuevo !== true')
-  expect(tramo).toContain('agregar = false')
+  expect(src).not.toContain('ofrecer_abrir_lote: true')
+  expect(src).not.toContain('abrir_lote_nuevo')
+  expect(src).toContain("tipo: 'envasado_diario'")
 })
 
 // Lote v2 (2026-10-19, ejecutor del Socio): la plantilla cambio por decision de

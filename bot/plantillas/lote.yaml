@@ -69,7 +69,7 @@ campos:
     tipo: texto
     a_notas: 'tipo de chile'
     patrones:
-      - '\b(jalapeno|guajillo|habanero|serrano|chipotle|piquin|morita|ancho|pasilla|de arbol|poblano|manzano)\b'
+      - '\b(jalapeno|guajillo|guajon|habanero|serrano|chipotle|piquin|morita|ancho|pasilla|de arbol|poblano|manzano)\b'
   - nombre: brix_chile
     etiqueta: 'Brix chile'
     pregunta: 'Cuanto Brix dio el chile?'
@@ -101,8 +101,30 @@ campos:
       - 'brix\s+final\s*(?:de|en|a|:)?\s*(\d+(?:[.,]\d+)?)'
       - 'final\s+(?:en|a|de)\s+(\d+(?:[.,]\d+)?)\s*(?:de\s+)?brix'
 
+# Ronda 5 (Norman 2026-10-19): se usa guajillo, guajon, o una mezcla de los
+# dos. Cada tipo es un renglon de insumo con su SKU. "30 kg guajillo y 10 kg
+# guajon" -> dos renglones. Un chile que no es ninguno de los dos: se avisa y se
+# pregunta (una vez).
+chiles:
+  conocidos:
+    guajillo: chile-guajillo
+    guajon: chile-guajon
+  # Cada par (kilos, tipo) de una mezcla. Grupo 1: kilos; grupo 2: tipo.
+  mezcla: '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)?\s*(?:de\s+)?(?:chile\s+)?(guajillo|guajon)\b'
+
 # Fuera de la plantilla numerada, pero se reconocen si vienen dichos.
 extras:
+  - nombre: temperatura_dicha
+    tipo: a_notas
+    # Ronda 5 (Norman 2026-10-19): la gente NO dicta temperatura; sale sola de
+    # Open-Meteo. Si la mencionan, el tramo va a notas TAL CUAL y sus numeros
+    # no se leen como kilos, Brix ni garrafas. `primero`: se lee antes que los
+    # campos. Lo usan la plantilla y las etapas (`lote_ciclo.temperatura_dicha`).
+    primero: true
+    patrones:
+      - '\b(?:temperatura|cuarto|ambiente|termometro)\b[^0-9]{0,30}?(-?\d+(?:[.,]\d+)?)\s*(?:grados?|c)\b'
+      - '(-?\d+(?:[.,]\d+)?)\s*grados?\s+(?:en\s+el\s+|de\s+)?(?:cuarto|ambiente)\b'
+    nota: 'dijeron "{t}" (la temperatura no se guarda desde el chat: sale de Open-Meteo)'
   - nombre: codigo_lote
     tipo: codigo
     patrones:
@@ -167,30 +189,21 @@ temperatura:
   fuente: 'open-meteo exterior'
   url: 'https://api.open-meteo.com/v1/forecast'
   timeout_segundos: 20
-  # Ronda 2: la temperatura DICTADA del cuarto -> fuente 'manual'. Grupo `t`.
-  # Exigen la palabra del cuarto/temperatura: "a 24 grados" suelto NO casa
-  # (puede ser alcohol; en la plantilla va a notas, regla grados_ambiguos).
-  manual_patrones:
-    - '\b(?:cuarto|ambiente|temperatura|termometro)\b[^0-9]{0,30}?(?P<t>-?\d+(?:[.,]\d+)?)\s*(?:grados?|c)\b'
-    - '(?P<t>-?\d+(?:[.,]\d+)?)\s*grados?\s+(?:en\s+el\s+|de\s+)?(?:cuarto|ambiente)\b'
-  # Ronda 3 (R2-A): la temperatura dictada YA NO secuestra el mensaje.
-  #  - Si lo que casa (el tramo del patron) trae una de estas palabras, NO es
-  #    la del cuarto ("la temperatura del alcohol salio a 50 grados").
-  no_es_cuarto: '\b(alcohol|alambique|destil\w*|garraf\w*|caldera|vapor|agua|mosto|olla|salida|columna)\b'
-  #  - Contexto inequivoco de cuarto: sin esto, una temperatura dentro de un
-  #    mensaje compuesto no se ofrece (se queda en el texto: notas o modelo).
-  contexto_cuarto: '\b(cuarto|ambiente|termometro)\b'
-  #  - El mensaje es SOLO de temperatura si, quitando el tramo, no queda ningun
-  #    numero y todas las palabras que quedan son de esta lista. Solo entonces
-  #    el bot lo toma sin modelo. En cualquier otro caso el mensaje sigue
-  #    COMPLETO a la plantilla / la etapa / el modelo, y la temperatura (si hay
-  #    contexto de cuarto) se OFRECE despues, con Confirmar.
-  #  - Nunca se guarda sin Confirmar.
-  relleno: [el, la, los, las, lo, en, hay, esta, estan, estaba, estuvo, es, son, de, del, a, al, y, ya, hoy,
-            ahorita, ahora, orita, amanecio, amanecimos, marca, marcaba, marco, tiene, tenia, trae, anda, andaba,
-            como, unos, unas, mas, menos, o, oye, pues, bueno, nos, manana, tarde, noche, ahi, aqui, bajo, subio,
-            baja, sube, quedo, sigue, igual, cuarto, ambiente, temperatura, termometro, grados, grado, c, apenas,
-            casi, mide, midio, da, dio, dice]
+  # Ronda 5 (decision de Norman, 2026-10-19): la gente NO dicta temperatura.
+  # Sale SOLO de Open-Meteo. Si alguien la menciona, va a notas (extra
+  # `temperatura_dicha`), nunca a `temperatura_diaria`.
+
+# Ronda 5 (B, decision de Norman 2026-10-19): la produccion de un lote termina
+# en la DESTILACION. El ENVASADO de botellas es diario e independiente del lote
+# y por ahora NO se liga a ninguno. Un mensaje que casa con esto nunca abre ni
+# pide un lote: ni la plantilla ni una etapa lo toman (sigue al modelo y de ahi
+# al envasado diario del servidor, sin lote). Los `disparadores` de etapa
+# anclados al inicio no lo miran ("ya destilamos..., salieron 2 botellones").
+envasado_diario:
+  - '\b(envas|embotell)\w*'
+  - '\bbotellas?\b'
+  - '\bsalieron\s+\d+\s+(botellas?\s+)?de\s+\d{2,4}\b'
+  - '\b\d+\s+(botellas?\s+)?de\s+(50|200|250|375|500|700|750|1000)\b(?!\s*(kg|kilos?|%|grados?))'
 
 ciclo:
   aditivo_2_dia: 3          # D+3 despues de la produccion: recordar el aditivo 2
@@ -217,12 +230,10 @@ etapas:
     - '\W*\bsabes\s+que\b\W*'
     - '\W*\bcomo\s+quedamos\b\W*'
   datos_de_etapa: '\bgarraf\w*|\d+(?:[.,]\d+)?\s*(?:kg|kgs|kilos?|kilogramos?)\b|%|\bpor\s*ciento\b'
+  # Ronda 5: la parte de envasados salio a `envasado_diario` (arriba).
   no_abren_etapa:
     - '\?'
     - '^\W*(oye\W+)?(cuant[oa]s?|cual(es)?|cuando|donde|quien(es)?|sabes|dime|me\s+dices)\b'
-    - '\b(envas|embotell|botell)\w*'
-    - '\bsalieron\s+\d+\s+(botellas?\s+)?de\s+\d{2,4}\b'
-    - '\b\d+\s+(botellas?\s+)?de\s+(50|200|250|375|500|700|750|1000)\b(?!\s*(kg|kilos?|%|grados?))'
   aditivo_2:
     disparadores:
       - '^\W*(registra\w*\s+|ya\s+|hoy\s+)?(el\s+)?aditivo\s*(2|dos)\b'

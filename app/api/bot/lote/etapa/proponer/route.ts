@@ -39,6 +39,7 @@ export async function POST(request: Request) {
       kg?: unknown
       insumo_sku?: unknown
       garrafas?: unknown
+      notas?: unknown
     }
     const telegramId = Number(cuerpo.telegram_id)
     if (!Number.isSafeInteger(telegramId)) {
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
     }
 
     const r = normalizarEtapa(
-      { etapa: cuerpo.etapa, kg: cuerpo.kg, garrafas: cuerpo.garrafas },
+      { etapa: cuerpo.etapa, kg: cuerpo.kg, garrafas: cuerpo.garrafas, notas: cuerpo.notas },
       {
         idLote: lote.id,
         codigoLote: lote.codigo_lote,

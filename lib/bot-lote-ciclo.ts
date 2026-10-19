@@ -53,6 +53,12 @@ export interface PayloadEtapa {
   usuario_creador: string
   entradas: EntradaEtapa[]
   garrafas: GarrafaEtapa[]
+  /**
+   * Ronda 5: lo que no es de la etapa y se dijo (p. ej. una temperatura: la
+   * gente no la dicta, sale de Open-Meteo). OPCIONAL: `canonizar` omite la
+   * llave ausente, asi que un borrador sin notas sella igual que antes.
+   */
+  notas?: string
 }
 
 /** El orden es parte del sello. Ver `lib/bot-sello.ts`. */
@@ -63,6 +69,7 @@ export const LLAVES_ETAPA = [
   'fecha',
   'garrafas',
   'id_lote',
+  'notas',
   'telegram_id',
   'usuario_creador'
 ] as const
@@ -94,6 +101,7 @@ export interface PedidoEtapa {
   etapa: unknown
   kg?: unknown
   garrafas?: unknown
+  notas?: unknown
 }
 
 export interface ContextoEtapa {
@@ -128,7 +136,8 @@ export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): Result
     etapa: pedido.etapa,
     fecha,
     telegram_id: ctx.telegramId,
-    usuario_creador: `telegram:${ctx.etiqueta}`
+    usuario_creador: `telegram:${ctx.etiqueta}`,
+    ...(String(pedido.notas ?? '').trim() !== '' ? { notas: String(pedido.notas).trim().slice(0, 500) } : {})
   }
   if (pedido.etapa === 'aditivo_2') {
     const kg = numero(pedido.kg)
@@ -168,6 +177,7 @@ export function mensajeDeEtapa(p: PayloadEtapa): string {
   for (const e of p.entradas) lineas.push(`Kilos de aditivo 2: ${corto(e.cantidad)}`)
   if (p.garrafas.length) lineas.push(`Garrafas: ${p.garrafas.length}`)
   for (const g of p.garrafas) lineas.push(`   Garrafa ${g.numero}: ${corto(g.peso_kg)} kg a ${corto(g.grado_alcohol)}%`)
+  if (p.notas) lineas.push(`Notas: ${p.notas}`)
   return lineas.join('\n')
 }
 

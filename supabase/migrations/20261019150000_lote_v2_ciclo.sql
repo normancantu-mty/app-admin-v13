@@ -5,8 +5,9 @@
 -- Encargo: Fresnillo/ERP_Fresnillo/DESDE_SOCIO_encargo_lote_v2_2026-10-19.md
 --
 -- ES ADITIVA. Solo CREATE TABLE / CREATE INDEX / CREATE FUNCTION / CREATE POLICY
--- nuevos, ADD COLUMN con default NULL y un DROP NOT NULL. No borra, no cambia el
--- tipo de ninguna columna, no toca ninguna fila existente.
+-- nuevos, ADD COLUMN con default NULL, dos DROP NOT NULL y un INSERT ... ON
+-- CONFLICT DO NOTHING (el SKU chile-guajon). No borra, no cambia el tipo de
+-- ninguna columna, no toca ninguna fila existente.
 --
 -- QUE TRAE
 --   1. `lotes.brix_chile`, `lotes.brix_final`: el Brix del chile y el Brix
@@ -28,6 +29,17 @@
 --   6. `registrar_etapa_lote(...)`: escribe en UNA transaccion la etapa, sus
 --      entradas (el aditivo 2 en `lote_entradas`) y sus garrafas
 --      (`lote_salidas`, numero_tanda = numero de garrafa).
+--   7. RONDA 5 (decision de Norman, 2026-10-19): el ENVASADO DIARIO, sin lote.
+--      `lote_envasado.id_lote` deja de ser NOT NULL (NULL = envasado del dia,
+--      que no se liga a ningun lote), `lote_envasado.nota` (el codigo de lote
+--      dicho, si lo dijeron) y `registrar_envasado_diario(...)`: la fila de
+--      `lote_envasado` y su inventario (+terminado, -empaque) en UNA
+--      transaccion, con el mismo candado de empaque que `registrar_en_lote`
+--      (D92: ningun insumo queda en negativo).
+--   8. RONDA 5: el chile GUAJON en el catalogo (`chile-guajon`), con el mismo
+--      tipo, unidad y es_materia_prima que `chile-guajillo`. Costo: el default
+--      de la tabla (0, sin `costo_cero_confirmado`): el sistema lo marca como
+--      "falta costo" hasta que Norman lo ponga. No se inventa un precio.
 --
 -- RLS: las tablas nuevas nacen con RLS y lectura solo para ADMIN, igual que las
 -- cuatro de ERP-84 (la receta es de acceso restringido). El bot entra con
@@ -43,6 +55,16 @@
 -- REVERSA: PRIMERO revertir el codigo y reiniciar el bot; DESPUES este SQL
 -- (en este orden; borra lo que se haya capturado con el ciclo v2), y al final
 -- `npx supabase migration repair --status reverted 20261019150000 --linked`.
+--   -- ronda 5 (7 y 8). El chile-guajon solo si nada lo usa todavia:
+--   delete from public.catalogo_productos c where c.sku = 'chile-guajon'
+--     and not exists (select 1 from public.lote_entradas e where e.id_insumo = c.id)
+--     and not exists (select 1 from public.inventario_ledger l where l.id_producto = c.id);
+--   drop function if exists public.registrar_envasado_diario(date, jsonb, text, text);
+--   -- solo si NINGUNA fila de lote_envasado tiene id_lote NULL (los envasados
+--   -- diarios ya escritos se quedarian sin lugar; sus movimientos de inventario
+--   -- son filas normales de inventario_ledger y no se tocan):
+--   alter table public.lote_envasado alter column id_lote set not null;
+--   alter table public.lote_envasado drop column if exists nota;
 --   drop function if exists public.registrar_etapa_lote(uuid, text, date, bigint, text, jsonb, jsonb, jsonb);
 --   drop table if exists public.lote_recordatorios;
 --   drop table if exists public.lote_etapas;
@@ -63,7 +85,7 @@ alter table public.lotes add column if not exists brix_final numeric(5,2)
 comment on column public.lotes.brix_chile is
   'Lote v2. Grados Brix del chile, dictados el dia de produccion.';
 comment on column public.lotes.brix_final is
-  'Lote v2. Grados Brix despues de agregar el aditivo 1 (interpretacion del Socio, 2026-10-19).';
+  'Lote v2. Grados Brix despues de agregar el aditivo 1 (confirmado por Norman, 2026-10-19).';
 
 -- 2. Garrafas sin litros -------------------------------------------------------
 alter table public.lote_salidas alter column litros drop not null;
@@ -120,7 +142,7 @@ create table if not exists public.temperatura_diaria (
 );
 
 comment on table public.temperatura_diaria is
-  'Lote v2. Temperatura por dia. fuente=open-meteo exterior es la del aire en Fresnillo, Zac. (PROXY sin anclar del cuarto de fermentacion); fuente=manual es la dictada.';
+  'Lote v2. Temperatura por dia. fuente=open-meteo exterior es la del aire en Fresnillo, Zac. (PROXY sin anclar del cuarto de fermentacion). fuente=manual: el bot ya no la escribe (ronda 5, Norman 2026-10-19: la gente no dicta temperatura).';
 
 -- RLS: lectura solo ADMIN, como ERP-84 ------------------------------------------
 alter table public.lote_etapas        enable row level security;
@@ -194,5 +216,107 @@ revoke all on function public.registrar_etapa_lote(uuid, text, date, bigint, tex
   from public, anon, authenticated;
 grant execute on function public.registrar_etapa_lote(uuid, text, date, bigint, text, jsonb, jsonb, jsonb)
   to service_role;
+
+-- 7. RONDA 5: el envasado diario, sin lote ---------------------------------------
+-- Norman (2026-10-19): la produccion de un lote termina en la destilacion; el
+-- envasado de botellas es diario, independiente del lote, y por ahora no se liga.
+alter table public.lote_envasado alter column id_lote drop not null;
+alter table public.lote_envasado add column if not exists nota text;
+
+comment on column public.lote_envasado.id_lote is
+  'NULL = envasado diario (lote v2 ronda 5, Norman 2026-10-19): el envasado de botellas es diario e independiente del lote y por ahora no se liga a ninguno.';
+comment on column public.lote_envasado.nota is
+  'Lote v2 ronda 5. Lo que se dijo con el envasado diario que no es dato (p. ej. el codigo de lote dicho, que NO lo liga a ese lote).';
+
+create or replace function public.registrar_envasado_diario(
+  p_fecha date, p_envasado jsonb, p_usuario text, p_nota text)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_admin uuid;
+  v_linea jsonb;
+  v_botellas integer;
+  v_envasado integer := 0;
+  v_inventario integer := 0;
+  v_n integer;
+  v_faltan text;
+begin
+  if jsonb_array_length(coalesce(p_envasado, '[]'::jsonb)) = 0 then
+    raise exception 'ENVASADO_VACIO: no hay botellas que registrar.';
+  end if;
+  -- La misma entidad que `registrarProduccionAction` y `registrar_en_lote`.
+  select id into v_admin from public.entidades where rol = 'ADMIN' limit 1;
+  if v_admin is null then
+    raise exception 'No existe una entidad ADMIN para asignar la produccion.';
+  end if;
+
+  -- D92: ningun insumo queda en negativo. MISMO candado que `registrar_en_lote`:
+  -- un envasado diario y uno de lote simultaneos no gastan dos veces el empaque.
+  perform pg_advisory_xact_lock(hashtext('registrar_en_lote:empaque'));
+  with pedido as (
+    select m.id_producto, sum(m.cantidad) as ocupa
+    from jsonb_array_elements(p_envasado) l,
+         lateral public.movimientos_de_envasado(
+           (l->>'id_producto')::uuid, (l->>'botellas')::integer) m
+    where m.tipo_movimiento = 'TRASPASO'
+    group by m.id_producto
+  ), hay as (
+    select s.id_producto, s.stock
+    from public.stock_de_insumos(v_admin, array(select id_producto from pedido)) s
+  )
+  select string_agg(
+           format('%s (ocupas %s, hay %s)', coalesce(c.nombre, p.id_producto::text),
+                  trim_scale(p.ocupa), trim_scale(coalesce(h.stock, 0))),
+           '; ' order by c.nombre)
+    into v_faltan
+  from pedido p
+  left join hay h on h.id_producto = p.id_producto
+  left join public.catalogo_productos c on c.id = p.id_producto
+  where coalesce(h.stock, 0) < p.ocupa;
+
+  if v_faltan is not null then
+    raise exception 'FALTA_EMPAQUE: %', v_faltan;
+  end if;
+
+  for v_linea in select * from jsonb_array_elements(p_envasado) loop
+    v_botellas := (v_linea->>'botellas')::integer;
+    continue when coalesce(v_botellas, 0) <= 0;
+
+    insert into public.lote_envasado (id_lote, id_producto, botellas, fecha, nota)
+    values (null, (v_linea->>'id_producto')::uuid, v_botellas,
+            coalesce(p_fecha, (now() at time zone 'America/Mexico_City')::date), nullif(p_nota, ''));
+    v_envasado := v_envasado + 1;
+
+    insert into public.inventario_ledger
+      (id_producto, tipo_movimiento, cantidad, id_entidad_origen, id_entidad_destino,
+       cubeta, status, usuario_creador, notas)
+    select m.id_producto, m.tipo_movimiento, m.cantidad,
+           case when m.tipo_movimiento = 'TRASPASO' then v_admin end,
+           case when m.tipo_movimiento = 'PRODUCCION' then v_admin end,
+           'PAGADO', 'ACTIVO', p_usuario,
+           'ENVASADO diario: ' || v_botellas || ' botellas'
+    from public.movimientos_de_envasado((v_linea->>'id_producto')::uuid, v_botellas) m;
+    get diagnostics v_n = row_count;
+    v_inventario := v_inventario + v_n;
+  end loop;
+
+  return jsonb_build_object('envasado', v_envasado, 'filas_inventario', v_inventario);
+end;
+$$;
+
+revoke all on function public.registrar_envasado_diario(date, jsonb, text, text)
+  from public, anon, authenticated;
+grant execute on function public.registrar_envasado_diario(date, jsonb, text, text)
+  to service_role;
+
+-- 8. RONDA 5: el chile guajon ---------------------------------------------------
+-- Mismo tipo, unidad y es_materia_prima que chile-guajillo. Costo: el default
+-- (0, sin confirmar) -> el sistema lo marca "falta costo"; no se inventa precio.
+insert into public.catalogo_productos (sku, nombre, tipo, unidad_medida, es_materia_prima)
+select 'chile-guajon', 'Chile Guajon', g.tipo, g.unidad_medida, g.es_materia_prima
+from public.catalogo_productos g
+where g.sku = 'chile-guajillo'
+on conflict (sku) do nothing;
 
 commit;

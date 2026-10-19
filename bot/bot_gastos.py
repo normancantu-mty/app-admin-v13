@@ -574,6 +574,8 @@ RUTA_CONFIRMAR_DE = {
     "cotizacion": "/api/bot/cotizacion/confirmar",
     "lote": "/api/bot/lote/confirmar",
     "lote_agregar": "/api/bot/lote/confirmar",
+    # Ronda 5 (B): el envasado diario (sin lote) se confirma por la misma ruta.
+    "envasado_diario": "/api/bot/lote/confirmar",
     # Lote v2: aditivo 2 y destilacion (borrador `lote_etapa`, puerta de aprobacion).
     "lote_etapa": "/api/bot/lote/etapa/confirmar",
     "entrada_insumo": "/api/bot/inventario/confirmar",
@@ -2431,18 +2433,8 @@ async def _proponer_lote(update, chat, peticion, auto=False):
             r.get("mensaje", "Me falta empaque registrado. Que paso?"))
         return True
 
-    if estado == 200 and r.get("ofrecer_abrir_lote"):
-        # Cazador F0 (WP-7a): un envasado sin lote abierto ya no es un 422. Se
-        # ofrece abrir el lote; el boton repite ESTA peticion con
-        # `abrir_lote_nuevo` y sale la propuesta de siempre, con su VA.
-        _memoria[chat] = {"tipo": "lote_ofrecer_abrir", "peticion": peticion}
-        await update.effective_message.reply_text(
-            r.get("mensaje", "No tengo lote abierto. Abro uno nuevo?"),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Abrir lote nuevo", callback_data="abrlt:x")],
-                [InlineKeyboardButton("Mejor no", callback_data="no:x")],
-            ]))
-        return True
+    # Ronda 5 (B, Norman 2026-10-19): se RETIRO "envasado sin lote ofrece
+    # abrirlo" (WP-7a). El envasado es diario y se registra sin lote.
 
     if estado != 200 or not r.get("ok"):
         # El 403 de "esto es de la matriz" y el 422 de un grado imposible SI se
@@ -3161,27 +3153,12 @@ async def _en_pausa(update, hasta=None):
 
 
 async def _enrutar_y_despachar(update, chat, texto, esperando=""):
-    """Lote v2, ronda 3 (R2-A): la temperatura del cuarto dictada YA NO
-    secuestra el mensaje. Si el mensaje es SOLO de temperatura ("en el cuarto
-    hay 22 grados"), se ensena con Confirmar y nada mas. Si trae otra cosa
-    (apertura de lote, kg/brix de la plantilla, garrafas...), esa otra mitad
-    sigue COMPLETA su camino y, si habia contexto inequivoco de cuarto, la
-    temperatura se ofrece DESPUES, tambien con Confirmar. Nunca se guarda sin
-    Confirmar. Ver `lote_ciclo.temperatura_del_mensaje`."""
-    temp = None if esperando else lote_ciclo.temperatura_del_mensaje(texto)
-    if temp and temp["solo"]:
-        if await lote_ciclo.ofrecer_temperatura(update, chat, _post, temp["valor"]):
-            return
-    # Compuesto con contexto de cuarto: la otra mitad sigue SIN el tramo de la
-    # temperatura (que se ofrece aparte); sin contexto, el texto va entero.
-    # Ronda 4: tambien sin contexto de cuarto ("temperatura 24 grados" en un
-    # compuesto): el tramo sale del texto y se OFRECE preguntando de que es;
-    # antes el 24 se perdia callado en la plantilla.
-    otra = temp["sin"] if (temp and not temp["solo"] and temp["sin"]) else texto
-    await _enrutar_y_despachar_mensaje(update, chat, otra, esperando)
-    if temp and not temp["solo"]:
-        await lote_ciclo.ofrecer_temperatura(update, chat, _post, temp["valor"], compuesto=True,
-                                             cuarto=temp["cuarto"])
+    """Ronda 5 (decision de Norman, 2026-10-19): la gente NO dicta temperatura;
+    sale SOLO de Open-Meteo. Ya no hay interceptor de temperatura antes del
+    modelo: si la mencionan con una plantilla o una etapa abierta, va a sus
+    notas (`lote_plantilla` / `lote_ciclo`); si no, el mensaje sigue entero su
+    camino normal."""
+    await _enrutar_y_despachar_mensaje(update, chat, texto, esperando)
 
 
 async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
@@ -3611,7 +3588,11 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
         # Cazador F0 (WP-7a): si habia una plantilla a medias, lo que ya se
         # sabia se junta con lo que dijo el modelo (el modelo manda).
         notas_plantilla = ""
-        viva = lote_plantilla.sesion(chat)
+        # Ronda 5 (B): un ENVASADO es diario y no se liga al lote: no se junta
+        # con una plantilla a medias (que sigue viva) ni abre una. Va solo al
+        # servidor, que lo registra sin lote (el codigo dicho va a la nota).
+        envasa = campos.get("botellas") not in (None, "", 0)
+        viva = None if envasa else lote_plantilla.sesion(chat)
         if viva:
             campos = dict(lote_plantilla.campos_para_peticion(viva), **{
                 k: v for k, v in campos.items() if v not in (None, "", [], {})})
@@ -4390,10 +4371,6 @@ async def _boton_de_lote_v2(update, chat, partes, accion):
         await lote_ciclo.abrir_etapa(update, chat, "destilacion", arg)
     elif accion == "ltmu":
         await lote_ciclo.muestra_guardada(update, chat, _post, arg)
-    elif accion == "lttc":
-        await lote_ciclo.confirmar_temperatura(update, chat, _post)
-    elif accion == "lttn":
-        await lote_ciclo.descartar_temperatura(update, chat)
     else:
         return False
     return True
@@ -4431,11 +4408,9 @@ async def _manejar_boton(update, chat, q, partes, accion):
         await _proponer_miembro(update, chat, dato.get("miembro"), dato.get("texto") or "", elegida.get("id"))
         return
     if accion == "abrlt":
-        dato = _memoria.get(chat) or {}
-        if dato.get("tipo") != "lote_ofrecer_abrir":
-            await update.effective_message.reply_text("Ya no tengo ese envasado. Dictamelo otra vez.")
-            return
-        await _proponer_lote(update, chat, dict(dato.get("peticion") or {}, abrir_lote_nuevo=True))
+        # Ronda 5 (B): un boton viejo de "Abrir lote nuevo" ya no abre nada.
+        await update.effective_message.reply_text(
+            "Ya no abro lotes desde un envasado: el envasado se registra solo, sin lote. Dictamelo otra vez.")
         return
     if accion == "valt":
         await _confirmar_lote(update, chat)

@@ -140,3 +140,20 @@ test.describe('Brix en el lote del dia de produccion', () => {
     expect(normalizarLote({ codigo_lote: 'L-19-10.3', brix_chile: 150 }, contextoLote()).ok).toBe(false)
   })
 })
+
+// Lote v2, ronda 5 (A): la temperatura dicha va a las NOTAS de la etapa. La
+// llave es opcional: un borrador SIN notas sella igual que antes de la ronda 5
+// (los borradores pendientes al desplegar siguen confirmando).
+test('ronda 5: notas de etapa opcionales; sin notas el sello es el de antes', async () => {
+  const { sellarEtapa, selloEtapaCoincide } = await import('@/lib/bot-lote-ciclo')
+  const { sellar } = await import('@/lib/bot-sello')
+  const LLAVES_ANTES = ['codigo_lote', 'entradas', 'etapa', 'fecha', 'garrafas', 'id_lote', 'telegram_id', 'usuario_creador'] as const
+  const p = {
+    id_lote: 'lote-1', codigo_lote: 'L-15-10.1', etapa: 'destilacion' as const, fecha: '2026-10-19', telegram_id: 111,
+    usuario_creador: 'telegram:norman', entradas: [], garrafas: [{ numero: 1, peso_kg: 18, grado_alcohol: 50 }]
+  }
+  expect(sellarEtapa(p)).toBe(sellar(p, LLAVES_ANTES))
+  const conNotas = { ...p, notas: 'dijeron "cuarto a 22 grados"' }
+  expect(selloEtapaCoincide(conNotas, sellarEtapa(p))).toBe(false)
+  expect(selloEtapaCoincide(conNotas, sellarEtapa(conNotas))).toBe(true)
+})

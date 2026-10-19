@@ -47,6 +47,9 @@ export function tipoDelPayload(payload: unknown): TipoPendiente | null {
     // Fase 8 D81: agregar a un lote existente se confirma por la MISMA ruta
     // (`/api/bot/lote/confirmar`), asi que para el bot es un lote.
     case 'lote_agregar':
+    // Lote v2, ronda 5: el envasado diario (sin lote) tambien se confirma por
+    // `/api/bot/lote/confirmar`.
+    case 'envasado_diario':
       return 'lote'
     case undefined:
     case null:
