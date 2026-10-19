@@ -166,7 +166,8 @@ function responder(url: string, init: RequestInit | undefined): Response {
           continue
         }
         // Los defaults de la base que las rutas dan por hechos.
-        const defaults: Fila = tabla === 'bot_borradores' ? { estado: 'PENDIENTE', resuelto_en: null, id_registro: null } : {}
+        const defaults: Fila = tabla === 'bot_borradores' ? { estado: 'PENDIENTE', resuelto_en: null, id_registro: null }
+          : tabla === 'lote_recordatorios' ? { intentos: 1, entregado_en: null } : {}
         const fila = { id: `${tabla}-${++contador}`, ...defaults, ...c }
         ;(tablas[tabla] ??= []).push(fila)
         nuevas.push(fila)
@@ -317,6 +318,29 @@ test.describe('ciclo: leer, reclamar una vez, temperatura, muestra', () => {
     expect(tablas.lote_recordatorios.length).toBe(1)
     const malo = await llamar('lote/ciclo', { accion: 'reclamar', id_lote: 'lote-1', tipo: 'otro' })
     expect(malo.status).toBe(400)
+  })
+
+  test('ronda 2: reintentar es compare-and-swap sobre intentos; entregado lo cierra; tope', async () => {
+    estadoInicial()
+    await llamar('lote/ciclo', { accion: 'reclamar', id_lote: 'lote-1', tipo: 'aditivo_2' })
+    const fila = () => tablas.lote_recordatorios.find((f) => f.id_lote === 'lote-1' && f.tipo === 'aditivo_2')!
+    expect([fila().intentos, fila().entregado_en]).toEqual([1, null])
+    const a = await llamar('lote/ciclo', { accion: 'reintentar', id_lote: 'lote-1', tipo: 'aditivo_2', intentos: 1 })
+    const b = await llamar('lote/ciclo', { accion: 'reintentar', id_lote: 'lote-1', tipo: 'aditivo_2', intentos: 1 })
+    expect([a.j.reclamado, b.j.reclamado]).toEqual([true, false])
+    expect(fila().intentos).toBe(2)
+    const e = await llamar('lote/ciclo', { accion: 'entregado', id_lote: 'lote-1', tipo: 'aditivo_2' })
+    expect(e.status, JSON.stringify(e.j)).toBe(200)
+    expect(fila().entregado_en).not.toBeNull()
+    const c = await llamar('lote/ciclo', { accion: 'reintentar', id_lote: 'lote-1', tipo: 'aditivo_2', intentos: 2 })
+    expect(c.j.reclamado).toBe(false)
+    const tope = await llamar('lote/ciclo', { accion: 'reintentar', id_lote: 'lote-1', tipo: 'aditivo_2', intentos: 10 })
+    expect(tope.j.reclamado).toBe(false)
+    const malo = await llamar('lote/ciclo', { accion: 'entregado', id_lote: 'lote-1', tipo: 'otro' })
+    expect(malo.status).toBe(400)
+    const leido = await llamar('lote/ciclo', { accion: 'leer', ventana_dias: 30 })
+    const r = ((leido.j.lotes as { id: string; recordatorios: Fila[] }[]).find((l) => l.id === 'lote-1')?.recordatorios ?? [])[0]
+    expect(r && 'intentos' in r && 'entregado_en' in r).toBe(true)
   })
 
   test('temperatura: guarda dias validos; rechaza min > max y fuentes inventadas', async () => {

@@ -11,6 +11,7 @@ declare
   v_r jsonb;
   v_n integer;
   v_falla boolean;
+  v_lote2 uuid;
 begin
   -- 1. columnas nuevas y litros ya nullable
   if (select is_nullable from information_schema.columns
@@ -85,6 +86,40 @@ begin
   end;
   if not v_falla then raise exception 'FALLA 7: aceptó t_min > t_max'; end if;
   raise notice 'ok 7: temperatura por dia y fuente; orden min<=prom<=max';
+
+  -- 10. (ronda 2) el reintento: el reclamo nace intentos=1, entregado_en NULL;
+  -- el compare-and-swap sobre intentos lo gana UNO; entregado lo cierra.
+  if (select intentos from public.lote_recordatorios where id_lote=v_lote and tipo='aditivo_2') <> 1
+     or (select entregado_en from public.lote_recordatorios where id_lote=v_lote and tipo='aditivo_2') is not null then
+    raise exception 'FALLA 10: el reclamo no nacio con intentos=1 y entregado_en NULL';
+  end if;
+  update public.lote_recordatorios set intentos = 2
+   where id_lote=v_lote and tipo='aditivo_2' and intentos = 1 and entregado_en is null;
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then raise exception 'FALLA 10: el primer reintento no gano'; end if;
+  update public.lote_recordatorios set intentos = 2
+   where id_lote=v_lote and tipo='aditivo_2' and intentos = 1 and entregado_en is null;
+  get diagnostics v_n = row_count;
+  if v_n <> 0 then raise exception 'FALLA 10: dos latidos ganaron el mismo reintento'; end if;
+  update public.lote_recordatorios set entregado_en = now()
+   where id_lote=v_lote and tipo='aditivo_2' and entregado_en is null;
+  update public.lote_recordatorios set intentos = 3
+   where id_lote=v_lote and tipo='aditivo_2' and intentos = 2 and entregado_en is null;
+  get diagnostics v_n = row_count;
+  if v_n <> 0 then raise exception 'FALLA 10: un recordatorio entregado se pudo reintentar'; end if;
+  raise notice 'ok 10: reintento por compare-and-swap (1 gana, 0 el segundo); entregado lo cierra';
+
+  -- 11. (ronda 2) destilacion en un lote con salidas previas: numera desde max+1
+  insert into public.lotes (codigo_lote, fecha_inicio, usuario_creador)
+  values ('L-19-10.2', date '2026-10-19', 'telegram:prueba') returning id into v_lote2;
+  insert into public.lote_salidas (id_lote, numero_tanda, litros, grado_alcohol) values (v_lote2, 1, 10, 45);
+  v_r := public.registrar_etapa_lote(v_lote2, 'destilacion', date '2026-10-25', 111, 'telegram:prueba', '[]'::jsonb,
+           '[{"numero":1,"peso_kg":18,"grado_alcohol":50},{"numero":2,"peso_kg":10,"grado_alcohol":30}]'::jsonb, '{}'::jsonb);
+  if (select string_agg(numero_tanda::text, ',' order by numero_tanda) from public.lote_salidas where id_lote=v_lote2) <> '1,2,3' then
+    raise exception 'FALLA 11: con una tanda previa las garrafas no van 2,3';
+  end if;
+  raise notice 'ok 11: con una salida previa las garrafas quedan 2 y 3 (max+1), sin chocar con el unique';
+  delete from public.lotes where id = v_lote2;
 
   -- 8. el borrado del lote arrastra etapas y recordatorios (cascade)
   delete from public.lotes where id = v_lote;

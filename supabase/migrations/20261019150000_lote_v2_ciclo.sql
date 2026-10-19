@@ -33,7 +33,16 @@
 -- cuatro de ERP-84 (la receta es de acceso restringido). El bot entra con
 -- service_role.
 --
--- REVERSA (en este orden; borra lo que se haya capturado con el ciclo v2):
+-- RONDA 2 (2026-10-19, auditoria): este MISMO archivo se edito; no se habia
+-- aplicado en ningun lado. Cambios: todo va entre BEGIN/COMMIT (si truena a
+-- medias no queda nada), `create or replace function` (re-ejecutable),
+-- `lote_recordatorios.intentos` + `entregado_en` (reintento con tope si fallan
+-- todos los envios) y `registrar_etapa_lote` numera las garrafas desde
+-- max(numero_tanda)+1 del lote.
+--
+-- REVERSA: PRIMERO revertir el codigo y reiniciar el bot; DESPUES este SQL
+-- (en este orden; borra lo que se haya capturado con el ciclo v2), y al final
+-- `npx supabase migration repair --status reverted 20261019150000 --linked`.
 --   drop function if exists public.registrar_etapa_lote(uuid, text, date, bigint, text, jsonb, jsonb, jsonb);
 --   drop table if exists public.lote_recordatorios;
 --   drop table if exists public.lote_etapas;
@@ -42,6 +51,8 @@
 --   alter table public.lote_salidas alter column litros set not null;
 --   alter table public.lotes drop column if exists brix_final;
 --   alter table public.lotes drop column if exists brix_chile;
+
+begin;
 
 -- 1. Brix del dia de produccion ------------------------------------------------
 alter table public.lotes add column if not exists brix_chile numeric(5,2)
@@ -83,6 +94,14 @@ create table if not exists public.lote_recordatorios (
   primary key (id_lote, tipo)
 );
 
+-- Ronda 2: el reclamo NO es la entrega. `intentos` cuenta los reclamos (1 al
+-- insertar); `entregado_en` se pone cuando AL MENOS un envio salio. Con
+-- entregado_en NULL y intentos < tope (YAML), el siguiente latido lo reintenta
+-- (compare-and-swap sobre `intentos`: un solo latido gana el reintento).
+alter table public.lote_recordatorios add column if not exists intentos integer not null default 1
+  check (intentos >= 1);
+alter table public.lote_recordatorios add column if not exists entregado_en timestamptz;
+
 comment on table public.lote_recordatorios is
   'Lote v2. Cada recordatorio del ciclo que el bot ya mando. Se reclama con INSERT ON CONFLICT DO NOTHING: lo que ya esta aqui no se vuelve a mandar.';
 
@@ -121,7 +140,7 @@ create policy temperatura_diaria_sel_admin on public.temperatura_diaria
   for select to authenticated using (public.mi_rol() = 'ADMIN');
 
 -- 6. La escritura de una etapa, todo o nada ---------------------------------------
-create function public.registrar_etapa_lote(
+create or replace function public.registrar_etapa_lote(
   p_id_lote uuid, p_etapa text, p_fecha date, p_telegram_id bigint, p_usuario text,
   p_entradas jsonb, p_garrafas jsonb, p_datos jsonb)
 returns jsonb
@@ -132,6 +151,7 @@ declare
   v_id uuid;
   v_entradas integer := 0;
   v_garrafas integer := 0;
+  v_base integer := 0;
 begin
   select codigo_lote into v_codigo from public.lotes where id = p_id_lote for update;
   if v_codigo is null then
@@ -155,10 +175,12 @@ begin
     do update set cantidad = public.lote_entradas.cantidad + excluded.cantidad;
   get diagnostics v_entradas = row_count;
 
-  -- Las garrafas: una fila por garrafa, numero_tanda = numero de garrafa.
-  -- litros va NULL a proposito: no hay densidad medida.
+  -- Las garrafas: una fila por garrafa. numero_tanda = max(numero_tanda) del
+  -- lote + numero de garrafa (ronda 2: si el lote ya tenia salidas, p. ej. tandas
+  -- del F0, no choca con el unique). litros va NULL: no hay densidad medida.
+  select coalesce(max(numero_tanda), 0) into v_base from public.lote_salidas where id_lote = p_id_lote;
   insert into public.lote_salidas (id_lote, numero_tanda, litros, grado_alcohol, peso_kg)
-  select p_id_lote, (g->>'numero')::integer, null,
+  select p_id_lote, v_base + (g->>'numero')::integer, null,
          (g->>'grado_alcohol')::numeric, (g->>'peso_kg')::numeric
   from jsonb_array_elements(coalesce(p_garrafas, '[]'::jsonb)) g;
   get diagnostics v_garrafas = row_count;
@@ -172,3 +194,5 @@ revoke all on function public.registrar_etapa_lote(uuid, text, date, bigint, tex
   from public, anon, authenticated;
 grant execute on function public.registrar_etapa_lote(uuid, text, date, bigint, text, jsonb, jsonb, jsonb)
   to service_role;
+
+commit;

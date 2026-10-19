@@ -127,7 +127,11 @@ def main(argv):
             print("FALLA: el esquema base no quedo completo; no tiene sentido probar encima.")
             return 1
         for m in migraciones:
-            r = psql("--single-transaction", "-v", "ON_ERROR_STOP=1", "-f", m)
+            # Si la migracion trae su propio BEGIN/COMMIT se aplica TAL CUAL (como
+            # `db query --linked -f` en produccion); si no, con --single-transaction.
+            with open(m, encoding="utf-8") as f:
+                propia = re.search(r"(?im)^\s*begin\s*;", f.read()) is not None
+            r = psql(*([] if propia else ["--single-transaction"]), "-v", "ON_ERROR_STOP=1", "-f", m)
             print("migracion %s -> rc=%d %s" % (os.path.basename(m), r.returncode, r.stderr.strip()[-600:]))
             if r.returncode != 0:
                 return 1

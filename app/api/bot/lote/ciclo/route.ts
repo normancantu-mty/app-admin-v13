@@ -15,6 +15,12 @@
  *                     `reclamado: true` solo para el que inserto: cada
  *                     recordatorio sale UNA vez aunque el bot se reinicie o dos
  *                     latidos se crucen. El estado vive en la base, no en RAM.
+ *   · `reintentar`  — (ronda 2) si un recordatorio se reclamo pero NO salio a
+ *                     nadie, el siguiente latido lo vuelve a reclamar con un
+ *                     compare-and-swap sobre `intentos` (gana UNO). El tope lo
+ *                     pone el bot (YAML) y aqui se acota a TOPE_INTENTOS.
+ *   · `entregado`   — (ronda 2) al menos un envio salio: `entregado_en = now()`.
+ *                     Ya no se reintenta.
  *   · `temperatura` — upsert de dias de temperatura (fuente 'open-meteo
  *                     exterior' o 'manual'). PROXY sin anclar: es el aire de
  *                     fuera, no el mosto.
@@ -32,6 +38,7 @@ import { fechaLocal } from '@/lib/fechas'
 export const dynamic = 'force-dynamic'
 
 const VENTANA_MAXIMA_DIAS = 120
+const TOPE_INTENTOS = 10
 
 export async function POST(request: Request) {
   if (!tokenValido(request)) {
@@ -63,7 +70,7 @@ export async function POST(request: Request) {
           ? supabase.from('lote_etapas').select('id, id_lote, etapa, fecha, telegram_id, registrado_por, registrado_en').in('id_lote', ids)
           : Promise.resolve({ data: [], error: null }),
         ids.length
-          ? supabase.from('lote_recordatorios').select('id_lote, tipo, enviado_en').in('id_lote', ids)
+          ? supabase.from('lote_recordatorios').select('id_lote, tipo, enviado_en, intentos, entregado_en').in('id_lote', ids)
           : Promise.resolve({ data: [], error: null }),
         ids.length
           ? supabase.from('bot_borradores').select('telegram_id, id_registro, payload').eq('estado', 'CONFIRMADO').in('id_registro', ids)
@@ -119,6 +126,43 @@ export async function POST(request: Request) {
       if (error) {
         console.error('[bot/ciclo] reclamar:', error)
         return NextResponse.json({ error: 'No pude reclamar el recordatorio.' }, { status: 500 })
+      }
+      return NextResponse.json({ ok: true, reclamado: (data ?? []).length === 1 })
+    }
+
+    if (accion === 'reintentar' || accion === 'entregado') {
+      const idLote = String(cuerpo.id_lote ?? '')
+      if (idLote === '' || !esTipoRecordatorio(cuerpo.tipo)) {
+        return NextResponse.json({ error: 'id_lote y tipo validos.' }, { status: 400 })
+      }
+      if (accion === 'entregado') {
+        const { error } = await supabase
+          .from('lote_recordatorios')
+          .update({ entregado_en: new Date().toISOString() })
+          .eq('id_lote', idLote)
+          .eq('tipo', cuerpo.tipo)
+          .is('entregado_en', null)
+        if (error) {
+          console.error('[bot/ciclo] entregado:', error)
+          return NextResponse.json({ error: 'No pude marcarlo entregado.' }, { status: 500 })
+        }
+        return NextResponse.json({ ok: true })
+      }
+      const intentos = Number(cuerpo.intentos)
+      if (!Number.isSafeInteger(intentos) || intentos < 1 || intentos >= TOPE_INTENTOS) {
+        return NextResponse.json({ ok: true, reclamado: false })
+      }
+      const { data, error } = await supabase
+        .from('lote_recordatorios')
+        .update({ intentos: intentos + 1 })
+        .eq('id_lote', idLote)
+        .eq('tipo', cuerpo.tipo)
+        .eq('intentos', intentos)
+        .is('entregado_en', null)
+        .select('id_lote')
+      if (error) {
+        console.error('[bot/ciclo] reintentar:', error)
+        return NextResponse.json({ error: 'No pude reclamar el reintento.' }, { status: 500 })
       }
       return NextResponse.json({ ok: true, reclamado: (data ?? []).length === 1 })
     }
