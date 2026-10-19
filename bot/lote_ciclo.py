@@ -570,17 +570,47 @@ def _disparo(texto):
     return None, None
 
 
-def leer_temperatura_manual(texto):
-    """'en el cuarto hay 22 grados' -> 22.0. **Pura.** Solo con la palabra del
-    cuarto/temperatura (YAML `temperatura.manual_patrones`, grupo `t`): "a 24
-    grados" suelto NO es temperatura (puede ser alcohol; va a notas en la
-    plantilla)."""
+def temperatura_del_mensaje(texto):
+    """Ronda 3 (R2-A). La temperatura del CUARTO dictada en el mensaje, y que
+    tanto del mensaje es. **Pura.** Devuelve None o
+    {'valor': 22.0, 'solo': bool, 'cuarto': bool, 'sin': str}:
+      - None si no hay, o si el tramo que casa habla de otra cosa (YAML
+        `temperatura.no_es_cuarto`: "la temperatura del alcohol salio a 50").
+      - solo: quitando el tramo no queda ningun numero y lo que queda es
+        relleno (YAML `temperatura.relleno`). Solo entonces el bot lo toma
+        sin modelo; si no, el mensaje sigue COMPLETO a su camino.
+      - cuarto: el tramo trae contexto inequivoco (cuarto/ambiente/termometro).
+        En un mensaje compuesto, solo con esto se ofrece guardarla.
+      - sin: el mensaje SIN el tramo de la temperatura (lo que sigue su camino
+        en un mensaje compuesto: asi el 24 de "temperatura ambiente 24 grados"
+        no se lee como grado ni como Brix).
+    """
     t = _plano(texto)
-    for patron in (cfg().get("temperatura") or {}).get("manual_patrones") or []:
-        m = re.search(patron, t)
-        if m:
-            return _num(m.group("t"))
+    tc = cfg().get("temperatura") or {}
+    no_es = tc.get("no_es_cuarto")
+    contexto = tc.get("contexto_cuarto") or r"\b(cuarto|ambiente|termometro)\b"
+    relleno = set(str(p) for p in (tc.get("relleno") or []))
+    for patron in tc.get("manual_patrones") or []:
+        for m in re.finditer(patron, t):
+            tramo = m.group(0)
+            if no_es and re.search(no_es, tramo):
+                continue
+            valor = _num(m.group("t"))
+            if valor is None:
+                continue
+            resto = t[:m.start()] + " " + t[m.end():]
+            solo = (not re.search(r"\d", resto)) and all(p in relleno for p in re.findall(r"[a-z]+", resto))
+            base = texto if len(str(texto or "")) == len(t) else t
+            sin = re.sub(r"\s+([,.;])", r"", (base[:m.start()] + base[m.end():]).strip(" ,;."))
+            return {"valor": valor, "solo": solo, "cuarto": bool(re.search(contexto, tramo)), "sin": sin}
     return None
+
+
+def leer_temperatura_manual(texto):
+    """'en el cuarto hay 22 grados' -> 22.0 (o None). **Pura.** Ver
+    `temperatura_del_mensaje`."""
+    d = temperatura_del_mensaje(texto)
+    return d["valor"] if d else None
 
 
 def combinar_manual(existente, lectura, fecha):
@@ -595,42 +625,114 @@ def combinar_manual(existente, lectura, fecha):
             "latitud": None, "longitud": None}
 
 
-async def temperatura_manual(update, post, texto, ahora=None):
-    """Lote v2, ronda 2: la temperatura DICTADA del cuarto, fuente='manual'.
-    Solo si hay un lote en fermentacion (sin destilacion). True si lo atendio."""
-    lectura = leer_temperatura_manual(texto)
-    if lectura is None or post is None:
+_temperaturas = {}  # chat -> la temperatura del cuarto ENSENADA y sin confirmar (ronda 3)
+
+
+def _teclado_temperatura():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("Confirmar", callback_data="lttc:x"),
+        InlineKeyboardButton("No la guardes", callback_data="lttn:x"),
+    ]])
+
+
+def temperatura_pendiente(chat):
+    p = _temperaturas.get(chat)
+    if not p:
+        return None
+    if time.time() - p["nacido_en"] > 60 * float(cfg().get("vida_minutos", 30)):
+        _temperaturas.pop(chat, None)
+        return None
+    return p
+
+
+async def _leer_ciclo(post):
+    estado, r = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "leer", "ventana_dias": _ciclo()["ventana_dias"]})
+    return r if estado == 200 and isinstance(r, dict) and r.get("ok") else None
+
+
+def _fermentando(r):
+    return [l for l in (r.get("lotes") or []) if _etapa(l, "destilacion") is None]
+
+
+async def ofrecer_temperatura(update, chat, post, valor, compuesto=False, ahora=None):
+    """Ronda 3 (R2-A): la temperatura DICTADA del cuarto se ENSENA con
+    Confirmar / No la guardes; aqui no se guarda nada. Solo si hay un lote en
+    fermentacion (sin destilacion). `compuesto`: el mensaje traia otra cosa
+    (ya atendida por su camino); entonces, si no hay a que lote anotarla o no
+    se pudo leer, se calla. True si dijo algo."""
+    if post is None:
         return False
     decir = update.effective_message.reply_text
-    estado, r = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "leer", "ventana_dias": _ciclo()["ventana_dias"]})
-    if estado != 200 or not (isinstance(r, dict) and r.get("ok")):
-        await decir("No pude leer los lotes; la temperatura NO quedo guardada. Dimela otra vez en un rato.")
-        return True
-    fermentando = [l for l in (r.get("lotes") or []) if _etapa(l, "destilacion") is None]
-    if not fermentando:
-        await decir("No hay ningun lote en fermentacion; no guardo la temperatura.")
-        return True
-    hoy = ahora_local(ahora).date().isoformat()
-    previo = next((d for d in (r.get("temperaturas") or [])
-                   if d.get("fuente") == "manual" and str(d.get("fecha")) == hoy), None)
-    dia = combinar_manual(previo, lectura, hoy)
-    estado, r2 = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "temperatura", "dias": [dia]})
-    if estado != 200 or not (isinstance(r2, dict) and r2.get("ok")):
-        await decir((r2 or {}).get("error") or "No pude guardar la temperatura.")
-        return True
-    codigos = ", ".join(str(l.get("codigo_lote")) for l in fermentando[:5])
-    await decir("Anotado: %s C en el cuarto, hoy %s (fuente manual). Hoy va: min %s, max %s. Lote(s) en fermentacion: %s."
-                % (lectura, lote_plantilla.fecha_para_persona(ahora_local(ahora).date()), dia["t_min"], dia["t_max"], codigos))
+    r = await _leer_ciclo(post)
+    if r is None:
+        if not compuesto:
+            await decir("No pude leer los lotes; la temperatura NO quedo guardada. Dimela otra vez en un rato.")
+        return not compuesto
+    fermentando = _fermentando(r)
+    abriendo = lote_plantilla.activa(chat)  # un lote nuevo a medias en este chat
+    if not fermentando and not abriendo:
+        if not compuesto:
+            await decir("No hay ningun lote en fermentacion; no guardo la temperatura.")
+        return not compuesto
+    _temperaturas[chat] = {"valor": float(valor), "por_texto": not compuesto, "nacido_en": time.time()}
+    codigos = ", ".join([str(l.get("codigo_lote")) for l in fermentando[:5]] + (["el que estas abriendo"] if abriendo else []))
+    await decir("%sTemperatura del cuarto: %s C, hoy %s (fuente manual). Lote(s) en fermentacion: %s.\n"
+                "Nada se guarda hasta que confirmes."
+                % ("Tambien dijiste la temperatura del cuarto. " if compuesto else "", valor,
+                   lote_plantilla.fecha_para_persona(ahora_local(ahora).date()), codigos),
+                reply_markup=_teclado_temperatura())
     return True
 
 
+async def confirmar_temperatura(update, chat, post, ahora=None):
+    """El Confirmar de la temperatura ensenada: AQUI se guarda (fuente manual)."""
+    decir = update.effective_message.reply_text
+    p = temperatura_pendiente(chat)
+    _temperaturas.pop(chat, None)
+    if not p:
+        await decir("No tengo ninguna temperatura por confirmar. Dimela otra vez.")
+        return False
+    r = await _leer_ciclo(post)
+    if r is None:
+        await decir("No pude leer los lotes; la temperatura NO quedo guardada. Dimela otra vez en un rato.")
+        return False
+    # Se guarda aunque ya no haya lote en fermentacion: se ensena solo con uno
+    # (o con un lote nuevo a medias), y la fila es del DIA, no de un lote.
+    fermentando = _fermentando(r)
+    hoy = ahora_local(ahora).date().isoformat()
+    previo = next((d for d in (r.get("temperaturas") or [])
+                   if d.get("fuente") == "manual" and str(d.get("fecha")) == hoy), None)
+    dia = combinar_manual(previo, p["valor"], hoy)
+    estado, r2 = await asyncio.to_thread(post, RUTA_CICLO, {"accion": "temperatura", "dias": [dia]})
+    if estado != 200 or not (isinstance(r2, dict) and r2.get("ok")):
+        await decir((r2 or {}).get("error") or "No pude guardar la temperatura.")
+        return False
+    codigos = ", ".join(str(l.get("codigo_lote")) for l in fermentando[:5]) or "ninguno todavia"
+    await decir("Anotado: %s C en el cuarto, hoy %s (fuente manual). Hoy va: min %s, max %s. Lote(s) en fermentacion: %s."
+                % (p["valor"], lote_plantilla.fecha_para_persona(ahora_local(ahora).date()), dia["t_min"], dia["t_max"],
+                   codigos))
+    return True
+
+
+async def descartar_temperatura(update, chat):
+    _temperaturas.pop(chat, None)
+    await update.effective_message.reply_text("Listo, esa temperatura no se guarda.")
+
+
 async def atender(update, chat, texto, confirmar=None, post=None):
-    """El texto de una etapa en captura. True si lo atendio. Con `post` (la del
-    bot), primero la temperatura dictada del cuarto (ronda 2)."""
-    if await temperatura_manual(update, post, texto):
-        return True
+    """El texto de una etapa en captura. True si lo atendio.
+    Ronda 3 (R2-A): la temperatura dictada YA NO se lee aqui (la lee el bot
+    antes, con `temperatura_del_mensaje`, y solo toma el mensaje si es SOLO de
+    temperatura). Aqui queda el "si" dicho a una temperatura ensenada por un
+    mensaje que era solo de temperatura (`post`, la del bot)."""
     s = sesion(chat)
     t = _plano(texto)
+    p = temperatura_pendiente(chat)
+    if (s is None and p and p.get("por_texto") and post is not None and not lote_plantilla.activa(chat)
+            and lote_plantilla._SI.match(t)):
+        await confirmar_temperatura(update, chat, post)
+        return True
     if s is None:
         etapa, codigo = _disparo(texto)
         if not etapa:

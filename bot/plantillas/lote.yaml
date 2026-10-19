@@ -113,6 +113,15 @@ extras:
     patrones:
       - '\ba\s+(\d+(?:[.,]\d+)?)\s*grados?\b'
     nota: '{0} grados (no dijeron si es temperatura o alcohol)'
+  - nombre: brix_ambiguo
+    tipo: a_notas
+    # Ronda 3: "brix 12" sin decir si es del chile o el final se perdia callado
+    # (ni campo ni notas). NO se adivina: va a notas y se ve en el resumen.
+    patrones:
+      - '\bbrix\s*(?:de\s+|en\s+|:\s*)?(\d+(?:[.,]\d+)?)'
+    nota: 'Brix {0} (no dijeron si es del chile o el final)'
+    # Si lo que se pregunto deja UN solo Brix posible, es ese.
+    campo_si_unico: [brix_chile, brix_final]
 
 # "No se", "luego": el campo preguntado se deja vacio y queda anotado.
 omitir:
@@ -164,6 +173,24 @@ temperatura:
   manual_patrones:
     - '\b(?:cuarto|ambiente|temperatura|termometro)\b[^0-9]{0,30}?(?P<t>-?\d+(?:[.,]\d+)?)\s*(?:grados?|c)\b'
     - '(?P<t>-?\d+(?:[.,]\d+)?)\s*grados?\s+(?:en\s+el\s+|de\s+)?(?:cuarto|ambiente)\b'
+  # Ronda 3 (R2-A): la temperatura dictada YA NO secuestra el mensaje.
+  #  - Si lo que casa (el tramo del patron) trae una de estas palabras, NO es
+  #    la del cuarto ("la temperatura del alcohol salio a 50 grados").
+  no_es_cuarto: '\b(alcohol|alambique|destil\w*|garraf\w*|caldera|vapor|agua|mosto|olla|salida|columna)\b'
+  #  - Contexto inequivoco de cuarto: sin esto, una temperatura dentro de un
+  #    mensaje compuesto no se ofrece (se queda en el texto: notas o modelo).
+  contexto_cuarto: '\b(cuarto|ambiente|termometro)\b'
+  #  - El mensaje es SOLO de temperatura si, quitando el tramo, no queda ningun
+  #    numero y todas las palabras que quedan son de esta lista. Solo entonces
+  #    el bot lo toma sin modelo. En cualquier otro caso el mensaje sigue
+  #    COMPLETO a la plantilla / la etapa / el modelo, y la temperatura (si hay
+  #    contexto de cuarto) se OFRECE despues, con Confirmar.
+  #  - Nunca se guarda sin Confirmar.
+  relleno: [el, la, los, las, lo, en, hay, esta, estan, estaba, estuvo, es, son, de, del, a, al, y, ya, hoy,
+            ahorita, ahora, orita, amanecio, amanecimos, marca, marcaba, marco, tiene, tenia, trae, anda, andaba,
+            como, unos, unas, mas, menos, o, oye, pues, bueno, nos, manana, tarde, noche, ahi, aqui, bajo, subio,
+            baja, sube, quedo, sigue, igual, cuarto, ambiente, temperatura, termometro, grados, grado, c, apenas,
+            casi, mide, midio, da, dio, dice]
 
 ciclo:
   aditivo_2_dia: 3          # D+3 despues de la produccion: recordar el aditivo 2

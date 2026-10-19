@@ -240,7 +240,14 @@ def leer(texto, preguntadas=()):
                         cod = "L-" + cod[1:]
                     campos.setdefault("codigo_lote", cod)
                 elif e["tipo"] == "a_notas":
-                    notas.append(e.get("nota", "{0}").format(m.group(1).strip()))
+                    # Ronda 3: si lo que se pregunto deja UN solo campo posible
+                    # (`campo_si_unico`), el dato es de ese campo; si no, a notas.
+                    posibles = [n for it in items for n in it
+                                if n in (e.get("campo_si_unico") or ()) and n not in campos]
+                    if len(posibles) == 1 and _num(m.group(1)) is not None:
+                        campos[posibles[0]] = _num(m.group(1))
+                    else:
+                        notas.append(e.get("nota", "{0}").format(m.group(1).strip()))
 
     omitir = any(re.search(o, t) for o in p.get("omitir") or [])
     for o in p.get("omitir") or []:

@@ -3161,6 +3161,26 @@ async def _en_pausa(update, hasta=None):
 
 
 async def _enrutar_y_despachar(update, chat, texto, esperando=""):
+    """Lote v2, ronda 3 (R2-A): la temperatura del cuarto dictada YA NO
+    secuestra el mensaje. Si el mensaje es SOLO de temperatura ("en el cuarto
+    hay 22 grados"), se ensena con Confirmar y nada mas. Si trae otra cosa
+    (apertura de lote, kg/brix de la plantilla, garrafas...), esa otra mitad
+    sigue COMPLETA su camino y, si habia contexto inequivoco de cuarto, la
+    temperatura se ofrece DESPUES, tambien con Confirmar. Nunca se guarda sin
+    Confirmar. Ver `lote_ciclo.temperatura_del_mensaje`."""
+    temp = None if esperando else lote_ciclo.temperatura_del_mensaje(texto)
+    if temp and temp["solo"]:
+        if await lote_ciclo.ofrecer_temperatura(update, chat, _post, temp["valor"]):
+            return
+    # Compuesto con contexto de cuarto: la otra mitad sigue SIN el tramo de la
+    # temperatura (que se ofrece aparte); sin contexto, el texto va entero.
+    otra = temp["sin"] if (temp and not temp["solo"] and temp["cuarto"] and temp["sin"]) else texto
+    await _enrutar_y_despachar_mensaje(update, chat, otra, esperando)
+    if temp and not temp["solo"] and temp["cuarto"]:
+        await lote_ciclo.ofrecer_temperatura(update, chat, _post, temp["valor"], compuesto=True)
+
+
+async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     """UNA llamada al modelo decide que quiso decir Norman, y se despacha.
 
     Antes esto era una cascada de tres intentos EN FILA -- gasto, abono,
@@ -4366,6 +4386,10 @@ async def _boton_de_lote_v2(update, chat, partes, accion):
         await lote_ciclo.abrir_etapa(update, chat, "destilacion", arg)
     elif accion == "ltmu":
         await lote_ciclo.muestra_guardada(update, chat, _post, arg)
+    elif accion == "lttc":
+        await lote_ciclo.confirmar_temperatura(update, chat, _post)
+    elif accion == "lttn":
+        await lote_ciclo.descartar_temperatura(update, chat)
     else:
         return False
     return True
