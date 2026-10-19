@@ -43,6 +43,10 @@ RUTA_ETAPA_PROPONER = "/api/bot/lote/etapa/proponer"
 RUTA_ETAPA_CONFIRMAR = "/api/bot/lote/etapa/confirmar"
 
 _etapas = {}  # chat -> sesion de captura de una etapa (solo la captura; el estado del ciclo esta en la base)
+# Ronda 3 (R2-C): (id_lote, tipo) que SI salio por Telegram pero cuyo POST
+# `entregado` fallo. El siguiente latido no lo reenvia: solo reintenta marcarlo.
+# Vive en RAM a proposito (ver `marcar_entregado`).
+_sin_marcar = set()
 
 
 # ── configuracion ───────────────────────────────────────────────────────────
@@ -183,7 +187,10 @@ def recordatorios_debidos(lotes, ahora, ciclo=None):
         if des is not None and mue is None:
             primero = _recordatorio(lote, "muestra")
             if not _cerrado(lote, "muestra", tope):
-                salida.append((lote, "muestra", _reintento(lote, "muestra")))
+                # Ronda 3: la PRIMERA (red de la del confirmar) sale a cualquier
+                # hora; el REINTENTO de una que no salio espera la hora del YAML.
+                if not (temprano and primero is not None):
+                    salida.append((lote, "muestra", _reintento(lote, "muestra")))
             elif primero and not temprano and not _cerrado(lote, "muestra_2", tope):
                 enviado = _instante(primero.get("enviado_en"))
                 if enviado and (ahora_local(ahora) - enviado) >= dt.timedelta(hours=float(c["muestra_horas"])):
@@ -336,11 +343,28 @@ def reclamar(post, id_lote, tipo, intentos=None):
 
 
 def entregado(post, id_lote, tipo):
-    estado, r = post(RUTA_CICLO, {"accion": "entregado", "id_lote": id_lote, "tipo": tipo})
+    try:
+        estado, r = post(RUTA_CICLO, {"accion": "entregado", "id_lote": id_lote, "tipo": tipo})
+    except Exception as e:
+        estado, r = None, {"error": str(e)}
     if not (estado == 200 and isinstance(r, dict) and r.get("ok")):
         log.warning("ciclo: no pude marcar entregado %s del lote %s (%s)", tipo, id_lote, estado)
         return False
     return True
+
+
+def marcar_entregado(post, id_lote, tipo):
+    """Ronda 3 (R2-C): `entregado` DESPUES de un envio que si salio. Si el POST
+    falla, (id_lote, tipo) queda en `_sin_marcar` y el siguiente latido solo
+    reintenta la marca, sin reenviar. Se eligio RAM y no la base porque lo que
+    fallo ES la base: no hay donde escribir la marca. El hueco que queda: si el
+    bot se reinicia antes de que la base vuelva, ese recordatorio puede salir
+    una segunda vez (duplicar antes que callar, como la voz)."""
+    if entregado(post, id_lote, tipo):
+        _sin_marcar.discard((id_lote, tipo))
+        return True
+    _sin_marcar.add((id_lote, tipo))
+    return False
 
 
 async def tick(bot, post, ahora=None, abrir=None):
@@ -359,7 +383,13 @@ async def tick(bot, post, ahora=None, abrir=None):
         completar_temperatura, post, lotes, r.get("temperaturas") or [], local.date(), abrir)
     tope = int(_ciclo().get("intentos_recordatorio") or 3)
     hecho["sin_entregar"] = []
+    hecho["solo_marcados"] = []
     for lote, tipo, extra in recordatorios_debidos(lotes, ahora):
+        if (lote["id"], tipo) in _sin_marcar:
+            # Ya salio; lo que fallo fue la marca. Se reintenta SOLO la marca.
+            await asyncio.to_thread(marcar_entregado, post, lote["id"], tipo)
+            hecho["solo_marcados"].append((lote.get("codigo_lote"), tipo))
+            continue
         if not await asyncio.to_thread(reclamar, post, lote["id"], tipo, extra.get("intentos")):
             continue  # otro latido (u otro proceso) ya lo mando o lo reintenta
         texto = mensaje_de(lote, tipo, extra)
@@ -373,7 +403,7 @@ async def tick(bot, post, ahora=None, abrir=None):
             except Exception as e:
                 log.warning("ciclo: no pude mandar %s del lote %s a %s: %s", tipo, lote.get("codigo_lote"), tid, e)
         if salio:
-            await asyncio.to_thread(entregado, post, lote["id"], tipo)
+            await asyncio.to_thread(marcar_entregado, post, lote["id"], tipo)
         else:
             # Ronda 2: reclamado pero no salio a nadie. Queda entregado_en NULL
             # en la base y el siguiente latido lo reintenta, hasta el tope.
@@ -696,7 +726,7 @@ async def pedir_muestra(update, post, id_lote, codigo):
     lote = {"id": id_lote, "codigo_lote": codigo}
     etiqueta, data = boton_de(lote, "muestra")
     await update.effective_message.reply_text(mensaje_de(lote, "muestra", {}), reply_markup=_teclado(etiqueta, data))
-    await asyncio.to_thread(entregado, post, id_lote, "muestra")
+    await asyncio.to_thread(marcar_entregado, post, id_lote, "muestra")
     return True
 
 
