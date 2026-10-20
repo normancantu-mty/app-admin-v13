@@ -38,6 +38,7 @@ lo que se nota cuando uno pregunta algo desde el celular.**
 import json
 import shutil
 import subprocess
+import claude_cli  # auditoria IA E1: minimo privilegio
 import sys
 
 NL = chr(10)
@@ -95,7 +96,7 @@ def _claude():
     ruta = shutil.which("claude") or shutil.which("claude.cmd")
     if not ruta:
         raise RuntimeError("no encuentro el ejecutable `claude` en el PATH")
-    return [ruta, "-p", "--model", "haiku"]
+    return claude_cli.comando(claude_cli.HAIKU, ruta)
 
 
 def clasificar(texto):
@@ -111,6 +112,7 @@ def clasificar(texto):
             encoding="utf-8",
             errors="replace",
             timeout=TIMEOUT,
+            cwd=claude_cli.cwd_neutro(),
         )
     except subprocess.TimeoutExpired:
         return False, "el modelo tardo demasiado"

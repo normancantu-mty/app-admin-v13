@@ -90,6 +90,12 @@ caso("CONTROL un JSON bueno que dice 'limit reached' NO es tope", (ok, r.get("in
 # ─── 3. el bot ──────────────────────────────────────────────────────────────
 import bitacora  # noqa: E402
 import bot_gastos as B  # noqa: E402
+# E2 (auditoria IA 2026-10-17): estas pruebas no son de la puerta de privado
+# (esa se prueba en probar_minimo_privilegio.py); aqui el chat privado es de
+# alguien dado de alta.
+async def _alta_ok(update, clave):
+    return True
+B._puerta_de_privado = _alta_ok
 
 
 class Base(object):

@@ -32,6 +32,7 @@ problema que todavia no se midio. [Filtro: DOC02 - YAGNI]
 import json
 import shutil
 import subprocess
+import claude_cli  # auditoria IA E1: minimo privilegio
 import sys
 
 NL = chr(10)
@@ -120,7 +121,7 @@ def _claude():
     # exactamente el modo de fallo contra el que esta escrito el prompt.
     # A 30-40 capturas por semana la diferencia de costo es irrelevante; la de
     # criterio no.
-    return [ruta, "-p", "--model", "sonnet"]
+    return claude_cli.comando(claude_cli.SONNET, ruta)
 
 
 def extraer(texto, extras=None):
@@ -148,6 +149,7 @@ def extraer(texto, extras=None):
             encoding="utf-8",
             errors="replace",
             timeout=TIMEOUT,
+            cwd=claude_cli.cwd_neutro(),
         )
     except subprocess.TimeoutExpired:
         return False, "el modelo no contesto a tiempo"

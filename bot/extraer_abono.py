@@ -38,6 +38,7 @@ ensuciaria una etiqueta, moveria dinero a la entidad equivocada.
 import json
 import shutil
 import subprocess
+import claude_cli  # auditoria IA E1: minimo privilegio
 import sys
 
 NL = chr(10)
@@ -107,7 +108,7 @@ def _claude():
     ruta = shutil.which("claude") or shutil.which("claude.cmd")
     if not ruta:
         raise RuntimeError("no encuentro el ejecutable `claude` en el PATH")
-    return [ruta, "-p", "--model", "sonnet"]
+    return claude_cli.comando(claude_cli.SONNET, ruta)
 
 
 def extraer_abono(texto, deudores=None):
@@ -136,6 +137,7 @@ def extraer_abono(texto, deudores=None):
             encoding="utf-8",
             errors="replace",
             timeout=TIMEOUT,
+            cwd=claude_cli.cwd_neutro(),
         )
     except subprocess.TimeoutExpired:
         return False, "el modelo no contesto a tiempo"

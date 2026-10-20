@@ -419,6 +419,26 @@ async def _puerta_de_grupo(update, clave):
     return False
 
 
+async def _puerta_de_privado(update, clave):
+    """E2 (auditoria IA): en privado, antes de llamar al modelo con datos de la
+    empresa (deudores, catalogo), se revisa el alta. En grupo no hace nada: ahi
+    ya paso `_puerta_de_grupo`. Los comandos no pasan por aqui (no llaman al
+    modelo; el servidor decide). El telegram_id queda en el log, que es de
+    donde Norman lo saca para el alta (LEEME)."""
+    if _en_grupo(clave):
+        return True
+    ident = await asyncio.to_thread(_identidad_de, _persona(clave))
+    if ident is None:
+        await update.effective_message.reply_text(
+            "No pude revisar quien eres (el ERP no contesto). No hice nada.")
+        return False
+    if ident.get("registrado"):
+        return True
+    log.info("privado: persona %s sin alta, no se llama al modelo", _persona(clave))
+    await update.effective_message.reply_text("No te tengo dado de alta. No hice nada.")
+    return False
+
+
 def _nombre_visible(usuario):
     """Como se ve alguien en Telegram: "Nombre Apellido (@usuario)". **Pura.**"""
     nombre = " ".join(p for p in (getattr(usuario, "first_name", None),
@@ -3190,6 +3210,16 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     que ya se sabian y el bot nunca se los mandaba, asi que una captura a medias
     volvia a empezar de cero en cada vuelta.
     """
+    # Auditoria IA 2026-10-17, E2 (item #4, aprobado 2026-10-19): PRIMERO
+    # autorizacion, DESPUES datos. En privado `_puerta_de_grupo` deja pasar a
+    # todos ("el servidor ya contesta"), pero el enrutador corre ANTES del
+    # servidor y lleva al contexto la lista de deudores y el catalogo; en
+    # `charla` el modelo redacta la respuesta. Un desconocido que encontrara el
+    # bot por su nombre llegaba al modelo con la cartera adentro. Ahora, si no
+    # esta dado de alta, se contesta fijo y no se llama al modelo.
+    if not await _puerta_de_privado(update, chat):
+        return
+
     # Cazador F0 (WP-7a): "hoy empezamos lote" y las respuestas a la plantilla
     # se leen SIN modelo (`bot/plantillas/lote.yaml`). Si el mensaje no es de
     # la plantilla, `atender` devuelve False y sigue el camino de siempre.

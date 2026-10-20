@@ -184,6 +184,12 @@ def reiniciar():
 
 # ─── 1b. el codigo, por el bot, contra la ruta ──────────────────────────────
 import bot_gastos as B  # noqa: E402
+# E2 (auditoria IA 2026-10-17): estas pruebas no son de la puerta de privado
+# (esa se prueba en probar_minimo_privilegio.py); aqui el chat privado es de
+# alguien dado de alta.
+async def _alta_ok(update, clave):
+    return True
+B._puerta_de_privado = _alta_ok
 base = Ciclo()
 B._post_de_verdad = base
 caso("1b. el bot sin lotes hoy -> .1", B.lote_ciclo.codigo_nuevo(base, ahora=local(2026, 10, 19, 9)), "L-19-10.1")

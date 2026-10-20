@@ -74,6 +74,12 @@ BOT = r'''
 import asyncio, json, os, sys
 sys.path.insert(0, sys.argv[1])
 import bot_gastos as B
+# E2 (auditoria IA 2026-10-17): estas pruebas no son de la puerta de privado
+# (esa se prueba en probar_minimo_privilegio.py); aqui el chat privado es de
+# alguien dado de alta.
+async def _alta_ok(update, clave):
+    return True
+B._puerta_de_privado = _alta_ok
 import grabar_enrutador as G
 modo, CHAT = sys.argv[2], int(sys.argv[3])
 class M:

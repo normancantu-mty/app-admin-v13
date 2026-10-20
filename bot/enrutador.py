@@ -29,6 +29,7 @@ import json
 import re
 import shutil
 import subprocess
+import claude_cli  # auditoria IA E1: minimo privilegio
 import sys
 import unicodedata
 
@@ -412,7 +413,7 @@ def _claude():
     # Sonnet, por la misma razon que en extraer.py: enrutar es criterio, no
     # mecanica. Equivocar la intencion manda un dinero real a la tabla
     # equivocada, y eso no se nota hasta que cuadran las cuentas.
-    return [ruta, "-p", "--model", "sonnet"]
+    return claude_cli.comando(claude_cli.SONNET, ruta)
 
 
 def _linea_de_producto(p):
@@ -849,6 +850,7 @@ def enrutar(texto, borrador=None, catalogo=None, deudores=None,
             encoding="utf-8",
             errors="replace",
             timeout=TIMEOUT,
+            cwd=claude_cli.cwd_neutro(),
         )
     except subprocess.TimeoutExpired:
         return False, "el modelo no contesto a tiempo"
