@@ -196,6 +196,11 @@ QUE ES CADA INTENCION
   Campos: codigo_lote, kg_chile, dias_fermentacion, horas_fermentacion, tandas (lista de {litros, grado}), botellas, formato.
   **formato** es el tamano de la botella en ml: "750", "250" o "50". Asi se nombran: "la grande" = "750", "la chica" / "las chicas" = "250", "la mini" / "las minis" = "50". Si no lo dijo, no lo pongas: el servidor pregunta.
   **Envasar tambien es lote**: "hoy envasamos 24 de 750", "del lote L-0915 salieron 40 de 250". Si no dice el codigo, el servidor lo busca.
+  **Una lectura de fermentacion tambien es lote**: "tanque 2 va en el dia 5, 4.5 brix", "el tambo 1 ya lleva 3 dias",
+  "revise el L-1012, dia 9, grado 3.2". El dia va en dias_fermentacion y el brix o grado en tandas ({"grado": ...}, sin litros si no los dijo).
+  "tanque" y "tambo" son lo mismo: donde fermenta. **La temperatura NO es campo del lote** (sale sola del clima): si la dice,
+  no la pongas en campos, y NO conviertas por eso la lectura en nota. Si ademas trae una observacion ("huele bien",
+  "se subio la temperatura"), esa va como un segundo hecho: nota.
 - cotizacion: quiere un precio para un cliente ANTES de vender. "cotizale a", "cuanto le sale".
   Campos: productos (lista de {producto, cantidad, id_producto}), cliente, vigencia_dias,
   monto_objetivo, descuento.
