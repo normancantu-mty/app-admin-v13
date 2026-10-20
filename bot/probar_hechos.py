@@ -378,10 +378,12 @@ limpiar()
 texto("cuanto me debe aeropuerto", g("d76_cuanto_me_debe_aeropuerto"))
 cuerpo = [c for r, c in SERVIDOR[0].llamadas if r == "/api/bot/consulta"][0]
 caso("D76 - 'cuanto me debe aeropuerto' pide la cartera DE aeropuerto",
-     (cuerpo["consulta"], cuerpo["filtro"]), ("cartera", "aeropuerto"))
+     # Regrabado 2026-10-19 (minimo privilegio): el modelo a veces capitaliza el
+     # nombre; lo que se prueba es DE QUIEN es la cartera, no la mayuscula.
+     (cuerpo["consulta"], str(cuerpo["filtro"]).lower()), ("cartera", "aeropuerto"))
 hist = B.historial_para_el_modelo(CHAT)
 caso("D73 - el turno queda en el historial con lo que contesto el bot",
-     (len(hist), hist[0][1], hist[0][2]), (1, "cuanto me debe aeropuerto", "CARTERA de aeropuerto"))
+     (len(hist), hist[0][1], hist[0][2].lower()), (1, "cuanto me debe aeropuerto", "cartera de aeropuerto"))
 visto = {}
 
 

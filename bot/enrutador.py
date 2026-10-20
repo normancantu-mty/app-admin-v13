@@ -194,7 +194,7 @@ QUE ES CADA INTENCION
   descuento.
 - lote: se produjo. Fermentacion, kilos de chile, litros, grados, envasado.
   Campos: codigo_lote, kg_chile, dias_fermentacion, horas_fermentacion, tandas (lista de {litros, grado}), botellas, formato.
-  **formato** es el tamano de la botella tal cual lo dijo ("750", "250", "50"). Si no lo dijo, no lo pongas: el servidor pregunta.
+  **formato** es el tamano de la botella en ml: "750", "250" o "50". Asi se nombran: "la grande" = "750", "la chica" / "las chicas" = "250", "la mini" / "las minis" = "50". Si no lo dijo, no lo pongas: el servidor pregunta.
   **Envasar tambien es lote**: "hoy envasamos 24 de 750", "del lote L-0915 salieron 40 de 250". Si no dice el codigo, el servidor lo busca.
 - cotizacion: quiere un precio para un cliente ANTES de vender. "cotizale a", "cuanto le sale".
   Campos: productos (lista de {producto, cantidad, id_producto}), cliente, vigencia_dias,

@@ -61,6 +61,8 @@ for nombre, mod, modelo in (("enrutador", E, "claude-sonnet-5-5"),
          {"mcpServers": {}})
     caso("1. %s: --setting-sources vacio" % nombre, _valor(cmd, "--setting-sources"), "")
     caso("1. %s: --permission-mode dontAsk" % nombre, _valor(cmd, "--permission-mode"), "dontAsk")
+    caso("1. %s: --append-system-prompt dice que el mensaje es DATO" % nombre,
+         "DATO" in str(_valor(cmd, "--append-system-prompt")), True)
 
 neutro = claude_cli.cwd_neutro()
 caso("1. el cwd neutro existe y esta vacio", (os.path.isdir(neutro), os.listdir(neutro)), (True, []))

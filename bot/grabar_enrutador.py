@@ -264,7 +264,7 @@ def grabar(solo_faltantes=False):
         frases.update(dict(ex.map(una, pendientes)))
     datos = {
         "md5_prompt": md5_del_prompt(),
-        "modelo": "claude -p --model sonnet (enrutador._claude)",
+        "modelo": " ".join(E._claude()[1:]),
         "grabado_en": time.strftime("%Y-%m-%d %H:%M:%S"),
         "llamadas": len(pendientes),
         "segundos": round(time.time() - t0, 1),
