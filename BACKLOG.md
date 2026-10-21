@@ -136,3 +136,4 @@
 - [ ] TKT-055: Anulación UI para Distribuidores (Habilitar botones de anular para DSTs solo si `usuario_creador` = DST y < 24h).
 - [ ] TKT-052: Paginación de Rendimiento (Limitar historiales a 15 rows + botón "Cargar Más").
 - [ ] TKT-053: Nuevo Rol TRABAJADOR (Ventana de anulación de 15 min, bloqueo total a Finanzas, sin permisos de aprobación).
+- [ ] TKT-059: Categorías y Subcategorías de Gasto Configurables (Bot). `bot_categorias` (`supabase/migrations/20260912172851_bot_categorias_vivas.sql`) ya es una lista viva de un solo nivel que crece con el "va" de una persona; falta un segundo nivel (subcategoría) para el mismo flujo. Ojo: `categoria` alimenta el clasificador fiscal de `v_pasivo_fiscal`, así que la subcategoría necesita el mismo CHECK contra las subcadenas de fuga fiscal (`bot_categorias_sin_disparador_fiscal`) antes de escribirse. Pedido por Norman 2026-09-24, pendiente sin desarrollar.
