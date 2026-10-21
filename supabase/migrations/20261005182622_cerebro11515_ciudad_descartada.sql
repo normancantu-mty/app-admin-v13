@@ -1,0 +1,2 @@
+alter table agente.pedidos add column if not exists ciudad_descartada text;
+comment on column agente.pedidos.ciudad_descartada is 'cerebro 1.15.15 A1: ciudad que escribio el cliente y la salvaguarda T3 no aplico (no era colonia evidente); copy y aviso la muestran con ⚠️';
