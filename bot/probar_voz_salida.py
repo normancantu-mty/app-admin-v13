@@ -40,6 +40,14 @@ def caso(nombre, obtenido, esperado):
 
 # ─── 1. cuando hay audio ────────────────────────────────────────────────────
 PREGUNTA = "Me falta:\n1. Cuantos dias va a fermentar?"
+# 2026-10-21 (Norman): el ERP no manda audios. El maestro BOT_AUDIO esta apagado por defecto.
+caso("0. DEFAULT: te hablaron en audio -> SIN audio (maestro apagado)", V.debe_hablar(True, "Esto es lo que voy a escribir."), False)
+caso("0. DEFAULT: ni la ronda del cazador", V.debe_hablar(False, "Lote nuevo. Contestame lo que sepas:"), False)
+os.environ["BOT_AUDIO_SIEMPRE"] = "1"
+caso("0. DEFAULT: ni con BOT_AUDIO_SIEMPRE, si el maestro esta apagado", V.debe_hablar(False, "Listo."), False)
+os.environ.pop("BOT_AUDIO_SIEMPRE")
+caso("0. encendido=True explicito -> las reglas de WP-V de abajo", V.debe_hablar(True, "Esto es lo que voy a escribir.", encendido=True), True)
+os.environ["BOT_AUDIO"] = "1"  # de aqui en adelante, las reglas de WP-V con el maestro encendido
 caso("1. te hablaron en audio -> audio", V.debe_hablar(True, "Esto es lo que voy a escribir."), True)
 caso("1. ronda del cazador (plantilla) -> audio aunque sea texto", V.debe_hablar(False, PREGUNTA), True)
 caso("1. ... la plantilla completa tambien", V.debe_hablar(False, "Lote nuevo. Contestame lo que sepas:"), True)
@@ -147,13 +155,13 @@ class Update(object):
 
 
 class Archivo(object):
-    async def download_to_drive(self, ruta):
+    async def download_to_drive(self, ruta, **k):
         Path(ruta).write_bytes(b"OggS")
 
 
 class Contexto(object):
     def __init__(self):
-        async def get_file(_fid):
+        async def get_file(_fid, **k):
             return Archivo()
         self.bot = types.SimpleNamespace(get_file=get_file)
 
@@ -216,6 +224,24 @@ try:
     caso("CONTROL grupo, 'Listo.': ni mencion ni audio", (m.dichos[-1].startswith("@"), m.voces), (False, []))
 finally:
     V.texto_a_voz = orig_tts
+
+# ─── 3c. CONTROL maestro apagado (el default de produccion desde 2026-10-21):
+#         por voz, el texto sale y NO se sintetiza ni se manda audio.
+os.environ.pop("BOT_AUDIO", None)
+orig3c = B.enrutar, B._post
+B.enrutar = modelo
+B._post = lambda ruta, cuerpo: (200, {"ok": True, "productos": []})
+try:
+    B.lote_plantilla.olvidar(CHAT)
+    SINTETIZADOS.clear()
+    u = Update(Mensaje(CHAT, voz=True))
+    asyncio.run(B.manejar_voz(u, Contexto()))
+    caso("3c. maestro apagado, por voz: el texto sale", any("1. Kilos de chile" in d for d in u.message.dichos), True)
+    caso("3c. ... y NO hay audio ni sintesis", (list(u.message.voces), list(SINTETIZADOS)), ([], []))
+finally:
+    B.enrutar, B._post = orig3c
+    B.lote_plantilla.olvidar(CHAT)
+os.environ["BOT_AUDIO"] = "1"
 
 # ─── 4b. si el audio truena (p.ej. edge-tts 7.2.8 -> 403), el texto ya salio ──
 def tts_que_truena(texto, destino):

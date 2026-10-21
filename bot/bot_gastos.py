@@ -3984,14 +3984,44 @@ async def _manejar_texto(update, chat, texto):
     await _enrutar_y_despachar(update, chat, texto)
 
 
+# 2026-10-21 (E-612, medido en bitacora + log): dos notas de voz de Norman
+# (09:04 y 14:29) NO tuvieron respuesta. `get_file`/`download_to_drive` iban
+# con el read_timeout por defecto de PTB (5 s); Telegram tardo mas, salto
+# TimedOut, el manejador de errores lo clasifico "transitorio" y callo. La
+# nota se perdio en silencio; Norman pregunto "Estas ahi?" en el grupo. Aqui:
+# timeouts explicitos, UN reintento, y si no baja se le dice.
+TIMEOUTS_DESCARGA = {"read_timeout": 60, "write_timeout": 60, "connect_timeout": 15, "pool_timeout": 15}
+REINTENTOS_DESCARGA = 1
+AVISO_VOZ_NO_BAJO = "No pude bajar tu nota de voz (Telegram no la entrego a tiempo). Mandala otra vez, o escribemelo."
+
+
+async def _bajar_voz(bot, file_id, destino):
+    """True si la nota quedo en `destino`. Solo reintenta errores de red."""
+    for intento in range(REINTENTOS_DESCARGA + 1):
+        try:
+            archivo = await bot.get_file(file_id, **TIMEOUTS_DESCARGA)
+            await archivo.download_to_drive(str(destino), **TIMEOUTS_DESCARGA)
+            return True
+        except BadRequest as e:  # es subclase de NetworkError: va ANTES, y no se reintenta
+            log.warning("nota de voz: no se pudo bajar (%s): %s", type(e).__name__, e)
+            return False
+        except (NetworkError, TimedOut) as e:
+            log.warning("nota de voz: intento %d de bajarla fallo (%s)", intento + 1, type(e).__name__)
+        except Exception as e:
+            log.warning("nota de voz: no se pudo bajar (%s): %s", type(e).__name__, e)
+            return False
+    return False
+
+
 async def manejar_voz(update, context):
     chat = _clave_de(update)
     if not await _puerta_de_grupo(update, chat):
         return
     AUDIOS.mkdir(parents=True, exist_ok=True)
-    archivo = await context.bot.get_file(update.message.voice.file_id)
     destino = AUDIOS / ("tg_" + dt.datetime.now().strftime("%Y%m%d_%H%M%S") + ".ogg")
-    await archivo.download_to_drive(str(destino))
+    if not await _bajar_voz(context.bot, update.message.voice.file_id, destino):
+        await update.message.reply_text(AVISO_VOZ_NO_BAJO)
+        return
 
     await update.message.chat.send_action("typing")
     from transcribir_nota import transcribir

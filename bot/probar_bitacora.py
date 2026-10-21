@@ -316,13 +316,13 @@ import types as _types  # noqa: E402
 
 
 class _ArchivoTg(object):
-    async def download_to_drive(self, ruta):
+    async def download_to_drive(self, ruta, **k):
         with open(ruta, "wb") as f:
             f.write(b"OggS")
 
 
 class _BotTg(object):
-    async def get_file(self, _fid):
+    async def get_file(self, _fid, **k):
         return _ArchivoTg()
 
 

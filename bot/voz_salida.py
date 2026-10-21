@@ -39,6 +39,13 @@ def audio_siempre():
     return str(os.environ.get("BOT_AUDIO_SIEMPRE", "")).strip().lower() in _SI
 
 
+def audio_encendido():
+    """Interruptor MAESTRO. 2026-10-21, Norman en el chat: "el ERP no es
+    necesario que mande audios". Apagado por defecto; `setx BOT_AUDIO 1` y
+    reiniciar el bot lo vuelve a encender con las reglas de WP-V de abajo."""
+    return str(os.environ.get("BOT_AUDIO", "")).strip().lower() in _SI
+
+
 def es_registro(texto):
     return bool(_REGISTRO.search(str(texto or "")))
 
@@ -47,9 +54,12 @@ def es_ronda(texto):
     return bool(_RONDA.search(str(texto or "")))
 
 
-def debe_hablar(por_voz, texto, siempre=None):
-    """True si este mensaje del bot va tambien en audio. **Pura.**"""
+def debe_hablar(por_voz, texto, siempre=None, encendido=None):
+    """True si este mensaje del bot va tambien en audio. **Pura.**
+    Con el maestro apagado (default desde 2026-10-21) nunca habla."""
     if not str(texto or "").strip():
+        return False
+    if not (audio_encendido() if encendido is None else encendido):
         return False
     if audio_siempre() if siempre is None else siempre:
         return True
