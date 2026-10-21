@@ -18,11 +18,11 @@ begin
     return null;
   end if;
   if v_ahora then
-    v_texto := '⚠️ PUENTE DEL GRUPO CAIDO: sin latido desde '
+    v_texto := '⚠️ ENTRADA DEL GRUPO CAIDA: el webhook de Telegram sin latido sano desde '
             || coalesce(to_char(v_en at time zone 'America/Mexico_City', 'DD/MM HH24:MI'), 'nunca') || ' (hora MX).'
-            || chr(10) || 'Lo que escribas en el grupo (entregado #E, costos) no llega al cerebro hasta que vuelva;'
-            || ' no se pierde, se procesa al volver (hasta 24 h).'
-            || chr(10) || 'Ya no depende de la PC: es el webhook telegram-entrada en Supabase. Revisa su accion=info (last_error_message) y el cron latido-telegram.';
+            || chr(10) || 'Telegram no esta entregando a telegram-entrada: lo que escribas en el grupo (entregado #E, costos)'
+            || ' puede no llegar al cerebro. Telegram guarda lo pendiente hasta 24 h.'
+            || chr(10) || 'Revisa getWebhookInfo: corre desplegar_telegram_entrada_2026-10-07.ps1 -Paso e (en migracion_meta).';
   else
     v_texto := '✅ Puente del grupo de vuelta. Estuvo caido '
             || coalesce(round(extract(epoch from (now() - v_desde)) / 60)::text, '?') || ' min.';
