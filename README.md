@@ -364,5 +364,5 @@ ya no protege nada. Lo que **si** bloquea es lo que de verdad rompe el sistema: 
 | `CLAUDE.md` | Como escribir codigo en este repo: reglas de negocio, trampas de Next.js 16, convenciones. |
 | `CONVENTIONS.md` | Convenciones de codigo y decisiones YAGNI. |
 | `BACKLOG.md` | Tickets pendientes. |
-| `LECCIONES_DE_GUERRA.md` | Incidentes reales y como se resolvieron. |
+| `docs/LECCIONES_DE_GUERRA.md` | Incidentes reales y como se resolvieron. |
 | `AGENTS.md` | ⚠️ **Aspiracional, no descriptivo.** Describe una arquitectura que no existe en este repo. |

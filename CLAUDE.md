@@ -78,7 +78,7 @@ The V13 documents (`SYSTEM_MANIFEST_V13.json`, `FRONTEND_ARCHITECTURE_V13.md`, `
 
 ## Next.js 15/16 gotchas specific to this repo
 
-(Distilled from `LECCIONES_DE_GUERRA.md` / `AI_OPERATIONS_MANUAL.md` — real incidents hit in this codebase, not generic advice.)
+(Distilled from `docs/LECCIONES_DE_GUERRA.md` / `docs/AI_OPERATIONS_MANUAL.md` — real incidents hit in this codebase, not generic advice.)
 
 - `cookies()` and `searchParams` are **Promises** — always `await` them before use. Forgetting this doesn't always error visibly; it silently freezes the server on stale cached data.
 - Never import `next/headers` (or any server-only utility) into a file that also has `'use client'` or client hooks — it's a fatal Turbopack Client Boundary Error. Keep server-only cookie/header reads in `page.tsx` / server actions, and pass results down as plain props (never invent client hooks like `useCurrentUser()` to read session state).
