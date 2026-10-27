@@ -40,13 +40,16 @@ export default async function DashboardGeneralPage() {
 
   // `getLiderazgoRed` se calcula UNA vez y se pasa a `getAspectosUrgentes`:
   // antes corria dos veces por carga y se traia tickets y ledger completos 2x.
-  const [finanzasPeriodo, liderazgoHistorico, currentUser, liquidezHistorica] = await Promise.all([
+  // Se le pasa la PROMESA, no el resultado: sus propias lecturas arrancan ya,
+  // en paralelo con las demas, en lugar de esperar al liderazgo.
+  const liderazgoPromesa = getLiderazgoRed()
+  const [finanzasPeriodo, liderazgoHistorico, currentUser, liquidezHistorica, urgentes] = await Promise.all([
     getFinanzasDashboard(fechaInicio, fechaFin),
-    getLiderazgoRed(),
+    liderazgoPromesa,
     getCurrentUser(),
-    getLiquidezPorCuenta()
+    getLiquidezPorCuenta(),
+    getAspectosUrgentes(liderazgoPromesa)
   ])
-  const urgentes = await getAspectosUrgentes(liderazgoHistorico)
 
   const canMutate = currentUser?.rol !== 'SOCIO'
 

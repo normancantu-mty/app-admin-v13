@@ -475,15 +475,20 @@ export async function getLiquidezPorCuenta(
     // cuenta (`clasificarCuentaLiquidezPorNombre`), y `v_movimiento_clasificado`
     // solo lleva los ids. Por eso estas dos consultas siguen aqui. Lo que si se
     // fue es el firewall en memoria: lo pone la vista.
-    const adminRows = await fetchAdminCuentasRows()
+    //
+    // Las dos lecturas no dependen una de otra: van en paralelo. En serie eran
+    // tres viajes a Supabase (entidad -> cuentas -> movimientos) y cada viaje
+    // de Vercel (iad1) a la base (us-west-1) cuesta una ida y vuelta completa.
+    const [adminRows, data] = await Promise.all([
+      fetchAdminCuentasRows(),
+      fetchMovimientosClasificados(fechaInicio, fechaFin)
+    ])
 
     const cuentaIdABucket = new Map<string, keyof LiquidezPorCuenta>()
     for (const row of adminRows) {
       const bucket = clasificarCuentaLiquidezPorNombre(row.nombre)
       if (bucket) cuentaIdABucket.set(row.id, bucket)
     }
-
-    const data = await fetchMovimientosClasificados(fechaInicio, fechaFin)
 
     const tiposIngreso = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO'])
     const tiposEgreso = new Set([
@@ -640,23 +645,29 @@ export async function getLiderazgoRed(): Promise<LiderazgoRed> {
  *
  * Recibe el liderazgo ya calculado: antes lo volvia a pedir aqui dentro, asi
  * que cada carga del General traia dos veces los tickets y el ledger completos.
+ *
+ * Acepta tambien la PROMESA del liderazgo: asi el ledger y el catalogo se piden
+ * mientras el liderazgo todavia viaja, en vez de esperar a que llegue. Se
+ * consume al final, que es donde se usa.
  */
-export async function getAspectosUrgentes(liderazgo: LiderazgoRed): Promise<AspectosUrgentes> {
+export async function getAspectosUrgentes(
+  liderazgoOPromesa: LiderazgoRed | PromiseLike<LiderazgoRed>
+): Promise<AspectosUrgentes> {
   try {
     const supabase = await getSupabaseServer()
-    const inventarioLedger = await fetchTodasLasFilas<{
-      id_producto: string
-      tipo_movimiento: string
-      cantidad: number
-      status: string | null
-    }>(
-      () => supabase.from('inventario_ledger').select('id_producto, tipo_movimiento, cantidad, status'),
-      'getAspectosUrgentes inventario'
-    )
-
-    const { data: productos, error: productosError } = await supabase
-      .from('catalogo_productos')
-      .select('id, nombre, sku')
+    const [inventarioLedger, { data: productos, error: productosError }, liderazgo] = await Promise.all([
+      fetchTodasLasFilas<{
+        id_producto: string
+        tipo_movimiento: string
+        cantidad: number
+        status: string | null
+      }>(
+        () => supabase.from('inventario_ledger').select('id_producto, tipo_movimiento, cantidad, status'),
+        'getAspectosUrgentes inventario'
+      ),
+      supabase.from('catalogo_productos').select('id, nombre, sku'),
+      liderazgoOPromesa
+    ])
 
     if (productosError) {
       console.error('Error fetching productos:', productosError?.message, productosError?.details, productosError?.hint)

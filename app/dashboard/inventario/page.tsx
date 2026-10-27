@@ -127,6 +127,26 @@ async function getInventarioLedger(
   }
 }
 
+/**
+ * El mismo corte que `getInventarioLedger(fechaInicio, fechaFin)` hacia en
+ * Postgres (`gte desde` y `lt hastaExclusivo`), aplicado a filas ya traidas.
+ * Sin rango devuelve todo, igual que la consulta.
+ */
+function recortarAlRango(
+  movimientos: MovimientoInventario[],
+  fechaInicio?: string,
+  fechaFin?: string
+): MovimientoInventario[] {
+  const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
+  if (!desde || !hastaExclusivo) return movimientos
+  const inicio = Date.parse(desde)
+  const fin = Date.parse(hastaExclusivo)
+  return movimientos.filter((mov) => {
+    const t = Date.parse(mov.fecha_movimiento)
+    return t >= inicio && t < fin
+  })
+}
+
 function normalizeEntidad(
   value?: { nombre: string; rol: string } | { nombre: string; rol: string }[] | null
 ): { nombre: string; rol: string } | null {
@@ -303,15 +323,18 @@ export default async function InventarioPage() {
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
   
-  const [productos, movimientosRango, movimientosStock, distribuidores, currentUser, preciosRetailPorProducto] = await Promise.all([
+  // El ledger se pide UNA vez, completo (el stock lo necesita entero), y el rango
+  // se recorta aqui con los mismos limites `[desde, hastaExclusivo)` que la
+  // consulta usaba. Antes eran dos lecturas del mismo ledger con sus dos joins.
+  const [productos, movimientosStock, distribuidores, currentUser, preciosRetailPorProducto] = await Promise.all([
     getCatalogoProductos(),
-    getInventarioLedger(fechaInicio, fechaFin),
     getInventarioLedger(),
     getDistribuidores(),
     getCurrentUser(),
     getPreciosRetailPorProducto()
   ])
-  
+  const movimientosRango = recortarAlRango(movimientosStock, fechaInicio, fechaFin)
+
   // Stock actual debe calcularse contra todo el ledger (no solo contra rango de fechas).
   const productosConStock = calcularStockActual(productos, movimientosStock)
   const productosConStockOrdenados = [...productosConStock].sort((a, b) => {
