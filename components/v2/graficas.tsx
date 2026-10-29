@@ -118,19 +118,27 @@ export function BarrasMes({
   )
 }
 
-/** Cascada: Inicio, pasos que suman (verde) o restan (rojo), Final. */
-export function Cascada({ pasos }: { pasos: PasoCascada[] }) {
+/** Cascada: Inicio, pasos que suman (verde) o restan (rojo), Final.
+ *  Desde/hasta de cada barra de la cascada (funcion pura, fuera del render). */
+function armarBarras(pasos: PasoCascada[]) {
+  const out: (PasoCascada & { desde: number; hasta: number })[] = []
   let corriendo = 0
-  const barras = pasos.map((p) => {
+  for (const p of pasos) {
     if (p.tipo === 'inicio') {
       corriendo = p.valor
-      return { ...p, desde: 0, hasta: p.valor }
+      out.push({ ...p, desde: 0, hasta: p.valor })
+    } else if (p.tipo === 'final') {
+      out.push({ ...p, desde: 0, hasta: p.valor })
+    } else {
+      out.push({ ...p, desde: corriendo, hasta: corriendo + p.valor })
+      corriendo += p.valor
     }
-    if (p.tipo === 'final') return { ...p, desde: 0, hasta: p.valor }
-    const desde = corriendo
-    corriendo += p.valor
-    return { ...p, desde, hasta: corriendo }
-  })
+  }
+  return out
+}
+
+export function Cascada({ pasos }: { pasos: PasoCascada[] }) {
+  const barras = armarBarras(pasos)
   const max = techo(Math.max(...barras.map((b) => Math.max(b.desde, b.hasta)), 1))
   const iw = W - M.l - M.r
   const ih = H - M.t - M.b
