@@ -25,7 +25,7 @@ import {
   type FilaStockPorCubeta,
   type FilaVentasPorMes
 } from '@/lib/vistas'
-import type { MovimientoDinero } from './dinero'
+import type { CategoriaLista, MovimientoDinero } from './dinero'
 
 type Cliente = SupabaseClient<Database>
 // Las vistas y la RPC v2 no estan todas en `types/database.ts` (parchado a mano):
@@ -147,6 +147,22 @@ export async function leerResumenTransferencias(client: Cliente): Promise<Resume
   )
 }
 
+/**
+ * La lista CERRADA de categorias de egreso (`categorias_movimiento`), con la
+ * misma consulta que el formulario de gasto (`app/dashboard/finanzas/nuevo`):
+ * tipo EGRESO, activas, por `orden`. Solo lectura. Falla cerrada.
+ */
+export async function leerCategoriasEgreso(client: Cliente): Promise<CategoriaLista[]> {
+  const { data, error } = await libre(client)
+    .from('categorias_movimiento')
+    .select('categoria, subcategoria, orden')
+    .eq('tipo', 'EGRESO')
+    .eq('activa', true)
+    .order('orden', { ascending: true })
+  if (error) throw new Error(`categorias_movimiento: ${error.message}`)
+  return (data ?? []).map((f: CategoriaLista) => ({ ...f, orden: Number(f.orden) || 0 }))
+}
+
 /** Nombres de entidades por id (para «Asignado a» y el acreedor de la cartera). */
 export async function leerNombresEntidades(client: Cliente): Promise<Map<string, { nombre: string; rol: string }>> {
   const { data, error } = await libre(client).from('entidades').select('id, nombre, rol')
@@ -186,6 +202,7 @@ export interface DatosTablero {
   insumosEnNegativo: number
   conteosFisicos: number
   lotes: number
+  categorias: CategoriaLista[]
 }
 
 /** Todo lo que pinta `/v2`, en paralelo. */
@@ -194,7 +211,7 @@ export async function leerTablero(client: Cliente): Promise<DatosTablero> {
   const nombresP = leerNombresEntidades(client)
   const admins = (await nombresP)
   const idsAdmin = [...admins.entries()].filter(([, e]) => e.rol === 'ADMIN').map(([id]) => id)
-  const [cuentas, transferencias, pasivo, cartera, stock, ventasPorMes, envasado, insumosEnNegativo, conteosFisicos, lotes] =
+  const [cuentas, transferencias, pasivo, cartera, stock, ventasPorMes, envasado, insumosEnNegativo, conteosFisicos, lotes, categorias] =
     await Promise.all([
       cuentasP,
       leerResumenTransferencias(client),
@@ -205,7 +222,8 @@ export async function leerTablero(client: Cliente): Promise<DatosTablero> {
       leerEnvasado(client),
       contar(client, 'v_insumos_en_negativo'),
       contar(client, 'conteos_fisicos'),
-      contar(client, 'lotes')
+      contar(client, 'lotes'),
+      leerCategoriasEgreso(client)
     ])
   const movimientos = await leerMovimientosDeCuentas(
     client,
@@ -223,6 +241,7 @@ export async function leerTablero(client: Cliente): Promise<DatosTablero> {
     nombres: admins,
     insumosEnNegativo,
     conteosFisicos,
-    lotes
+    lotes,
+    categorias
   }
 }

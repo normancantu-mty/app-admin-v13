@@ -114,11 +114,73 @@ function esTraspaso(tipo: string): boolean {
   return tipo === 'INGRESO_TRASPASO' || tipo === 'EGRESO_TRASPASO'
 }
 
+// ── Categorias: la lista CERRADA de `categorias_movimiento` ──────────────────
+// `finanzas_ledger.categoria` es texto libre. Se agrupa contra la lista que lee
+// `leerCategoriasEgreso` (tipo EGRESO, activas, por `orden`), con sus etiquetas y
+// su orden. Lo que no casa con la lista NO se esconde ni se renombra: va al grupo
+// visible «Fuera de la lista», con su texto original como subcategoria.
+
+export interface CategoriaLista {
+  categoria: string
+  subcategoria: string
+  orden: number
+}
+
+export const FUERA_DE_LISTA = 'Fuera de la lista'
+
+/** Clave de comparacion: sin acentos, sin espacios de orilla, en minusculas. */
+function clave(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+}
+
+export interface IndiceCategorias {
+  porClave: Map<string, { nombre: string; orden: number; subs: Map<string, string> }>
+  /** cuantas categorias tiene la lista (para rotular, no se escribe fijo) */
+  nCategorias: number
+}
+
+export function indiceCategorias(lista: CategoriaLista[]): IndiceCategorias {
+  const porClave: IndiceCategorias['porClave'] = new Map()
+  for (const f of [...lista].sort((a, b) => a.orden - b.orden)) {
+    const k = clave(f.categoria)
+    const c = porClave.get(k) ?? { nombre: f.categoria, orden: f.orden, subs: new Map<string, string>() }
+    c.subs.set(clave(f.subcategoria), f.subcategoria)
+    porClave.set(k, c)
+  }
+  return { porClave, nCategorias: porClave.size }
+}
+
+export interface Clasificacion {
+  categoria: string
+  subcategoria: string
+  fuera: boolean
+  orden: number
+}
+
+/** Categoria y subcategoria de la lista para una fila; o «Fuera de la lista». */
+export function clasificarCategoria(
+  m: Pick<MovimientoDinero, 'categoria' | 'subcategoria'>,
+  idx: IndiceCategorias
+): Clasificacion {
+  const c = m.categoria ? idx.porClave.get(clave(m.categoria)) : undefined
+  if (!c) {
+    const texto = m.categoria ? `${m.categoria}${m.subcategoria ? ` / ${m.subcategoria}` : ''}` : 'sin categoría'
+    return { categoria: FUERA_DE_LISTA, subcategoria: texto, fuera: true, orden: Number.MAX_SAFE_INTEGER }
+  }
+  const sub = m.subcategoria ? c.subs.get(clave(m.subcategoria)) : undefined
+  return {
+    categoria: c.nombre,
+    subcategoria: sub ?? (m.subcategoria ? `${m.subcategoria} (fuera de la lista)` : 'sin subcategoría'),
+    fuera: false,
+    orden: c.orden
+  }
+}
+
 export interface MesDinero {
   mes: string
   entro: number
   salio: number
-  /** egreso por categoria (solo gastos, sin traspasos) */
+  /** egreso por categoria de la lista (solo gastos, sin traspasos) */
   egresoPorCategoria: Record<string, number>
 }
 
@@ -130,7 +192,8 @@ export interface MesDinero {
 export function dineroPorMes(
   movs: MovimientoDinero[],
   cuentas: ReadonlySet<string>,
-  meses: string[]
+  meses: string[],
+  idx: IndiceCategorias
 ): MesDinero[] {
   const porMes = new Map<string, MesDinero>(
     meses.map((mes) => [mes, { mes, entro: 0, salio: 0, egresoPorCategoria: {} }])
@@ -143,7 +206,7 @@ export function dineroPorMes(
     if (e > 0) fila.entro += e
     if (e < 0) {
       fila.salio += -e
-      const cat = m.categoria && m.categoria !== 'ARRANQUE' ? m.categoria : 'Sin categoría'
+      const cat = clasificarCategoria(m, idx).categoria
       fila.egresoPorCategoria[cat] = (fila.egresoPorCategoria[cat] ?? 0) + -e
     }
   }
@@ -156,7 +219,7 @@ export interface PasoCascada {
   tipo: 'inicio' | 'paso' | 'final'
 }
 
-function etiquetaCascada(m: MovimientoDinero): string {
+function etiquetaCascada(m: MovimientoDinero, idx: IndiceCategorias): string {
   switch (m.tipo_movimiento) {
     case 'SALDO_INICIAL':
       return 'Saldo de arranque'
@@ -168,7 +231,7 @@ function etiquetaCascada(m: MovimientoDinero): string {
     case 'EGRESO_TRASPASO':
       return 'Traspasos (neto)'
     default:
-      return m.categoria && m.categoria !== 'ARRANQUE' ? m.categoria : 'Gastos sin categoría'
+      return clasificarCategoria(m, idx).categoria
   }
 }
 
@@ -181,7 +244,8 @@ export function cascadaDeCaja(
   movs: MovimientoDinero[],
   cuentas: ReadonlySet<string>,
   desde: Date,
-  hasta: Date
+  hasta: Date,
+  idx: IndiceCategorias
 ): PasoCascada[] {
   let inicio = 0
   const pasos = new Map<string, number>()
@@ -194,7 +258,7 @@ export function cascadaDeCaja(
       continue
     }
     if (f >= hasta) continue
-    const k = etiquetaCascada(m)
+    const k = etiquetaCascada(m, idx)
     pasos.set(k, (pasos.get(k) ?? 0) + e)
   }
   const ordenados = [...pasos.entries()]
@@ -211,31 +275,36 @@ export function cascadaDeCaja(
 
 export interface CategoriaEgreso {
   categoria: string
+  /** true = el grupo «Fuera de la lista» */
+  fuera: boolean
+  orden: number
   total: number
   movimientos: number
   subcategorias: { subcategoria: string; total: number; movimientos: number }[]
 }
 
-/** «En qué se fue el dinero»: egresos de UNA cuenta por categoria y subcategoria. */
-export function egresosPorCategoria(movs: MovimientoDinero[], idCuenta: string): CategoriaEgreso[] {
+/**
+ * «En qué se fue el dinero»: egresos de UNA cuenta por categoria y subcategoria
+ * de la lista cerrada, en el orden de la lista; «Fuera de la lista» al final.
+ */
+export function egresosPorCategoria(movs: MovimientoDinero[], idCuenta: string, idx: IndiceCategorias): CategoriaEgreso[] {
   const cats = new Map<string, CategoriaEgreso>()
   for (const m of movs) {
     if (esTraspaso(m.tipo_movimiento)) continue
     const e = efectoEnCuenta(m, idCuenta)
     if (e >= 0) continue
-    const nombre = m.categoria && m.categoria !== 'ARRANQUE' ? m.categoria : 'Sin categoría'
-    const sub = m.subcategoria || 'sin subcategoría'
-    const c = cats.get(nombre) ?? { categoria: nombre, total: 0, movimientos: 0, subcategorias: [] }
+    const k = clasificarCategoria(m, idx)
+    const c = cats.get(k.categoria) ?? { categoria: k.categoria, fuera: k.fuera, orden: k.orden, total: 0, movimientos: 0, subcategorias: [] }
     c.total += -e
     c.movimientos += 1
-    const s = c.subcategorias.find((x) => x.subcategoria === sub)
+    const s = c.subcategorias.find((x) => x.subcategoria === k.subcategoria)
     if (s) {
       s.total += -e
       s.movimientos += 1
-    } else c.subcategorias.push({ subcategoria: sub, total: -e, movimientos: 1 })
-    cats.set(nombre, c)
+    } else c.subcategorias.push({ subcategoria: k.subcategoria, total: -e, movimientos: 1 })
+    cats.set(k.categoria, c)
   }
   return [...cats.values()]
     .map((c) => ({ ...c, total: redondear(c.total), subcategorias: c.subcategorias.sort((a, b) => b.total - a.total) }))
-    .sort((a, b) => b.total - a.total)
+    .sort((a, b) => a.orden - b.orden || b.total - a.total)
 }

@@ -13,6 +13,7 @@ import { notFound } from 'next/navigation'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { exigirMandoV2 } from '@/lib/v2/puerta'
 import {
+  leerCategoriasEgreso,
   leerCuentasMatriz,
   leerMovimientosDeCuentas,
   leerNombresEntidades,
@@ -20,7 +21,15 @@ import {
   slugDeClase,
   SLUG_CLASE
 } from '@/lib/v2/lecturas'
-import { cuadra, dineroPorMes, efectoEnCuenta, egresosPorCategoria, saldoDesdeMovimientos } from '@/lib/v2/dinero'
+import {
+  cuadra,
+  dineroPorMes,
+  efectoEnCuenta,
+  egresosPorCategoria,
+  FUERA_DE_LISTA,
+  indiceCategorias,
+  saldoDesdeMovimientos
+} from '@/lib/v2/dinero'
 import { fechaHoraMx, mesMx, mxn, rangoMeses, tipoLegible } from '@/lib/v2/formato'
 import { BarrasMes, Leyenda } from '@/components/v2/graficas'
 import TransferenciasCard from '@/components/dashboard/TransferenciasCard'
@@ -52,11 +61,13 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
   if (!clase) notFound()
 
   const client = await getServerSupabaseClient()
-  const [cuentas, nombres, transferencias] = await Promise.all([
+  const [cuentas, nombres, transferencias, categorias] = await Promise.all([
     leerCuentasMatriz(client),
     leerNombresEntidades(client),
-    leerResumenTransferencias(client)
+    leerResumenTransferencias(client),
+    leerCategoriasEgreso(client)
   ])
+  const idxCat = indiceCategorias(categorias)
   const cuenta = cuentas.find((c) => c.clase === clase)
   if (!cuenta) notFound()
 
@@ -70,9 +81,9 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
   const fechas = movs.map((m) => m.fecha_movimiento).filter((f): f is string => Boolean(f)).sort()
   const mesHoy = mesMx(new Date())
   const meses = rangoMeses(fechas[0] ? mesMx(fechas[0]) : mesHoy, mesHoy)
-  const porMes = dineroPorMes(movs, new Set([cuenta.id]), meses)
+  const porMes = dineroPorMes(movs, new Set([cuenta.id]), meses, idxCat)
   const hayFlujo = porMes.some((m) => m.entro > 0 || m.salio > 0)
-  const cats = egresosPorCategoria(movs, cuenta.id)
+  const cats = egresosPorCategoria(movs, cuenta.id, idxCat)
   const totalEgresos = cats.reduce((a, c) => a + c.total, 0)
   const visibles = movs.filter((m) => m.status === 'ACTIVO' || m.status === 'APPROVED').slice(0, LIMITE)
   const nActivos = movs.filter((m) => m.status === 'ACTIVO' || m.status === 'APPROVED').length
@@ -169,7 +180,7 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
           <div className="hd">
             <div>
               <h2>En qué se fue el dinero</h2>
-              <div className="sub">Egresos por categoría y subcategoría (lista cerrada: 14 categorías). Toca una para abrirla.</div>
+              <div className="sub">Egresos por categoría y subcategoría de la lista cerrada ({idxCat.nCategorias} categorías de egreso, en su orden). Lo que no casa con la lista va en «{FUERA_DE_LISTA}». Toca una para abrirla.</div>
             </div>
           </div>
           {cats.length === 0 ? (
@@ -180,9 +191,9 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
           ) : (
             <div>
               {cats.map((c) => (
-                <details className="cat" key={c.categoria}>
+                <details className="cat" key={c.categoria} open={c.fuera}>
                   <summary>
-                    <span>
+                    <span className={c.fuera ? 'neg' : undefined}>
                       {c.categoria} <small style={{ color: 'var(--muted)', fontWeight: 500 }}>({c.movimientos} mov.)</small>
                     </span>
                     <span>{mxn(c.total)}</span>
@@ -201,7 +212,7 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
               </div>
             </div>
           )}
-          <div className="fuente">finanzas_ledger.categoria / subcategoria · categorias_movimiento</div>
+          <div className="fuente">finanzas_ledger.categoria / subcategoria agrupadas contra categorias_movimiento (EGRESO, activas, por orden)</div>
         </section>
       </div>
 

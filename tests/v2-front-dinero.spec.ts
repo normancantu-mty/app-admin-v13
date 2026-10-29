@@ -17,7 +17,10 @@ import {
   dineroPorMes,
   efectoEnCuenta,
   egresosPorCategoria,
+  FUERA_DE_LISTA,
   gastosDesdeCorte,
+  indiceCategorias,
+  clasificarCategoria,
   saldoDesdeMovimientos,
   CATEGORIA_QUE_NO_CUENTA,
   STATUS_QUE_CUENTAN,
@@ -33,6 +36,14 @@ const FI = 'cuenta-fresnillo'
 const TR = 'cuenta-transferencias'
 const GI = 'cuenta-gilberto'
 const MATRIZ = new Set([EF, FI, TR, GI])
+
+// Un recorte REAL de categorias_movimiento (base local 2026-10-29, tipo EGRESO).
+const LISTA = [
+  { categoria: 'Costo de producción', subcategoria: 'chile', orden: 8 },
+  { categoria: 'Financieros', subcategoria: 'Comisión por conversión de transferencias (5%)', orden: 51 },
+  { categoria: 'Financieros', subcategoria: 'Intereses', orden: 52 }
+]
+const IDX = indiceCategorias(LISTA)
 
 let n = 0
 function mov(p: Partial<MovimientoDinero>): MovimientoDinero {
@@ -147,7 +158,7 @@ test.describe('Front v2 · saldo por cuenta = regla de saldo_cuenta()', () => {
     expect(saldoDesdeMovimientos(ARRANQUE, FI)).toBe(12059.33)
     expect(saldoDesdeMovimientos(ARRANQUE, TR)).toBe(599)
     expect(saldoDesdeMovimientos(ARRANQUE, GI)).toBe(0)
-    const pasos = cascadaDeCaja(ARRANQUE, MATRIZ, new Date('2026-10-01T06:00:00Z'), new Date('2026-11-01T06:00:00Z'))
+    const pasos = cascadaDeCaja(ARRANQUE, MATRIZ, new Date('2026-10-01T06:00:00Z'), new Date('2026-11-01T06:00:00Z'), IDX)
     expect(pasos[0]).toEqual({ etiqueta: 'Inicio', valor: 0, tipo: 'inicio' })
     expect(pasos.at(-1)?.valor).toBe(17348.33)
   })
@@ -196,13 +207,13 @@ test.describe('Front v2 · conversion 95/5 en la cascada y por mes', () => {
       id_cuenta_origen: null,
       id_cuenta_destino: TR,
       categoria: 'Financieros',
-      subcategoria: 'Comisión por conversión de transferencias',
+      subcategoria: 'Comisión por conversión de transferencias (5%)',
       fecha_movimiento: '2026-10-29T18:00:00Z'
     })
   ]
 
   test('los traspasos se netean y la comision aparece como gasto Financieros', () => {
-    const pasos = cascadaDeCaja(conv, MATRIZ, new Date('2026-10-01T06:00:00Z'), new Date('2026-11-01T06:00:00Z'))
+    const pasos = cascadaDeCaja(conv, MATRIZ, new Date('2026-10-01T06:00:00Z'), new Date('2026-11-01T06:00:00Z'), IDX)
     const final = pasos.at(-1)!.valor
     expect(cuadra(final, 17348.33 - 29.95)).toBe(true)
     expect(pasos.find((p) => p.etiqueta === 'Financieros')?.valor).toBe(-29.95)
@@ -210,7 +221,7 @@ test.describe('Front v2 · conversion 95/5 en la cascada y por mes', () => {
   })
 
   test('por mes: el saldo de arranque y los traspasos no son entrada ni salida', () => {
-    const [oct] = dineroPorMes(conv, MATRIZ, ['2026-10'])
+    const [oct] = dineroPorMes(conv, MATRIZ, ['2026-10'], IDX)
     expect(oct.entro).toBe(0)
     expect(oct.salio).toBeCloseTo(29.95, 2)
     expect(oct.egresoPorCategoria).toEqual({ Financieros: 29.95 })
@@ -219,10 +230,46 @@ test.describe('Front v2 · conversion 95/5 en la cascada y por mes', () => {
   test('egresos por categoria agrupan subcategoria', () => {
     expect(saldoDesdeMovimientos(conv, TR)).toBe(0)
     expect(saldoDesdeMovimientos(conv, EF)).toBe(5259.05)
-    const cats = egresosPorCategoria(conv, TR)
+    const cats = egresosPorCategoria(conv, TR, IDX)
     expect(cats).toHaveLength(1)
     expect(cats[0].categoria).toBe('Financieros')
-    expect(cats[0].subcategorias[0].subcategoria).toBe('Comisión por conversión de transferencias')
+    expect(cats[0].subcategorias[0].subcategoria).toBe('Comisión por conversión de transferencias (5%)')
+  })
+})
+
+test.describe('Front v2 · categorias de la lista cerrada (categorias_movimiento)', () => {
+  test('casa sin importar acentos ni mayusculas y devuelve la etiqueta de la lista', () => {
+    expect(clasificarCategoria({ categoria: 'financieros', subcategoria: 'comision por conversion de transferencias (5%)' }, IDX)).toEqual({
+      categoria: 'Financieros',
+      subcategoria: 'Comisión por conversión de transferencias (5%)',
+      fuera: false,
+      orden: 51
+    })
+  })
+
+  test('lo que no casa va a «Fuera de la lista» con su texto original (control negativo)', () => {
+    expect(clasificarCategoria({ categoria: 'Gasolina', subcategoria: 'Ruta norte' }, IDX)).toMatchObject({
+      categoria: FUERA_DE_LISTA,
+      subcategoria: 'Gasolina / Ruta norte',
+      fuera: true
+    })
+    expect(clasificarCategoria({ categoria: null, subcategoria: null }, IDX).categoria).toBe(FUERA_DE_LISTA)
+    expect(clasificarCategoria({ categoria: 'ARRANQUE', subcategoria: null }, IDX).categoria).toBe(FUERA_DE_LISTA)
+    expect(clasificarCategoria({ categoria: 'Financieros', subcategoria: 'Otra cosa' }, IDX).subcategoria).toBe(
+      'Otra cosa (fuera de la lista)'
+    )
+  })
+
+  test('egresos por categoria: en el orden de la lista y «Fuera de la lista» al final y visible', () => {
+    const movs = [
+      mov({ monto: 500, id_cuenta_origen: EF, categoria: 'Gasolina' }),
+      mov({ monto: 10, id_cuenta_origen: EF, categoria: 'Financieros', subcategoria: 'Intereses' }),
+      mov({ monto: 20, id_cuenta_origen: EF, categoria: 'Costo de producción', subcategoria: 'CHILE' })
+    ]
+    const cats = egresosPorCategoria(movs, EF, IDX)
+    expect(cats.map((c) => c.categoria)).toEqual(['Costo de producción', 'Financieros', FUERA_DE_LISTA])
+    expect(cats.at(-1)).toMatchObject({ fuera: true, total: 500 })
+    expect(IDX.nCategorias).toBe(2)
   })
 })
 

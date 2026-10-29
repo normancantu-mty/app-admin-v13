@@ -12,7 +12,16 @@ import Link from 'next/link'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { exigirMandoV2 } from '@/lib/v2/puerta'
 import { leerTablero, slugDeClase } from '@/lib/v2/lecturas'
-import { cascadaDeCaja, corteDeArranque, cuadra, dineroPorMes, gastosDesdeCorte, redondear } from '@/lib/v2/dinero'
+import {
+  cascadaDeCaja,
+  corteDeArranque,
+  cuadra,
+  dineroPorMes,
+  FUERA_DE_LISTA,
+  gastosDesdeCorte,
+  indiceCategorias,
+  redondear
+} from '@/lib/v2/dinero'
 import { fechaHoraMx, mesMx, mxn, mxn0, num, rangoMeses } from '@/lib/v2/formato'
 import { esDeudaConLaMatriz, totalesCarteraVista } from '@/lib/vistas'
 import { diasDesde } from '@/lib/actividad'
@@ -67,7 +76,9 @@ export default async function InicioV2() {
   const corte = corteDeArranque(d.movimientos)
   const mesHoy = mesMx(ahora)
   const meses = rangoMeses(corte ? mesMx(corte) : mesHoy, mesHoy)
-  const porMes = dineroPorMes(d.movimientos, idsMatriz, meses)
+  // Categorias: la lista cerrada de categorias_movimiento; lo que no casa va a «Fuera de la lista».
+  const idxCat = indiceCategorias(d.categorias)
+  const porMes = dineroPorMes(d.movimientos, idsMatriz, meses, idxCat)
   const ventas = meses.map((mes) => d.ventasPorMes.find((v) => String(v.mes).slice(0, 7) === mes))
   const hayVentas = ventas.some((v) => v && Number(v.vendido) > 0)
   const hayEgresos = porMes.some((m) => m.salio > 0)
@@ -75,14 +86,18 @@ export default async function InicioV2() {
 
   // ── Cascada del mes en curso (México es UTC-6 sin horario de verano) ──
   const desde = new Date(`${mesHoy}-01T00:00:00-06:00`)
-  const pasos = cascadaDeCaja(d.movimientos, idsMatriz, desde, new Date(ahora.getTime() + 60_000))
+  const pasos = cascadaDeCaja(d.movimientos, idsMatriz, desde, new Date(ahora.getTime() + 60_000), idxCat)
   const final = pasos[pasos.length - 1]?.valor ?? 0
   const cascadaCuadra = cuadra(final, totalCuentas)
 
-  // ── Egresos por categoría (las 4 mayores + otros) ──
+  // ── Egresos por categoría (las 4 mayores de la lista + otros; «Fuera de la lista» siempre aparte) ──
   const totCat = new Map<string, number>()
   for (const m of porMes) for (const [k, v] of Object.entries(m.egresoPorCategoria)) totCat.set(k, (totCat.get(k) ?? 0) + v)
-  const topCat = [...totCat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k)
+  const topCat = [...totCat.entries()]
+    .filter(([k]) => k !== FUERA_DE_LISTA)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([k]) => k)
   const colores = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--cobre)', '#c9bdb8']
   const seriesEgreso = [
     ...topCat.map((cat, i) => ({ nombre: cat, color: colores[i], valores: porMes.map((m) => m.egresoPorCategoria[cat] ?? 0) })),
@@ -91,10 +106,11 @@ export default async function InicioV2() {
       color: colores[4],
       valores: porMes.map((m) =>
         Object.entries(m.egresoPorCategoria)
-          .filter(([k]) => !topCat.includes(k))
+          .filter(([k]) => !topCat.includes(k) && k !== FUERA_DE_LISTA)
           .reduce((a, [, v]) => a + v, 0)
       )
-    }
+    },
+    { nombre: FUERA_DE_LISTA, color: '#6b6b6b', valores: porMes.map((m) => m.egresoPorCategoria[FUERA_DE_LISTA] ?? 0) }
   ].filter((s) => s.valores.some((v) => v > 0))
 
   // ── Producción por mes ──
@@ -463,7 +479,7 @@ export default async function InicioV2() {
           <div className="hd">
             <div>
               <h2>Egresos por mes</h2>
-              <div className="sub">Lo que salió de caja, por categoría (las 4 mayores + otros). 14 categorías con subcategoría.</div>
+              <div className="sub">Lo que salió de caja, por categoría de la lista cerrada ({idxCat.nCategorias} de egreso); las 4 mayores + otros. Lo que no casa con la lista va en «{FUERA_DE_LISTA}».</div>
             </div>
           </div>
           {hayEgresos ? (
@@ -474,7 +490,7 @@ export default async function InicioV2() {
           ) : (
             <Vacio titulo="Sin egresos desde el arranque">El primer gasto con categoría y subcategoría aparece aquí.</Vacio>
           )}
-          <div className="fuente">finanzas_ledger · categorias_movimiento</div>
+          <div className="fuente">finanzas_ledger.categoria agrupada contra categorias_movimiento (EGRESO, activas, por orden)</div>
         </section>
 
         <section className="card">
