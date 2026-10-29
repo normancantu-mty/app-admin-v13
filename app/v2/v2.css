@@ -174,7 +174,7 @@
 .v2 .cifras { display: flex; gap: 22px; flex-wrap: wrap; align-items: baseline; margin: 2px 0 14px; }
 .v2 .cifras div { color: var(--ink-2); }
 .v2 .cifras b { font-family: var(--f-display); font-size: 20px; color: var(--ink); margin-left: 6px; }
-.v2 .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.v2 .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0 14px; }
 .v2 .tabs a { padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--surface); font-weight: 600; }
 .v2 .tabs a.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .v2 .check { display: flex; gap: 8px; align-items: center; font-size: 12.5px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--good-bg); color: var(--good); font-weight: 600; margin-bottom: 14px; }
