@@ -2,12 +2,12 @@
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
-project_id = "app-admin-dev"
+project_id = "app-admin-v2"
 
 [api]
 enabled = true
 # Port to use for the API URL.
-port = 54321
+port = 55321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
 # endpoints. `public` and `graphql_public` schemas are included by default.
 schemas = ["public", "graphql_public"]
@@ -31,9 +31,9 @@ enabled = false
 
 [db]
 # Port to use for the local database URL.
-port = 54322
+port = 55322
 # Port used by db diff command to initialize the shadow database.
-shadow_port = 54320
+shadow_port = 55320
 # Maximum amount of time to wait for health check when starting the local database.
 health_timeout = "2m"
 # The database major version to use. This has to be the same as your remote database's. Run `SHOW
@@ -45,7 +45,7 @@ orioledb_version = ""
 [db.pooler]
 enabled = false
 # Port to use for the local connection pooler.
-port = 54329
+port = 55329
 # Specifies when a server connection can be reused by other clients.
 # Configure one of the supported pooler modes: `transaction`, `session`.
 pool_mode = "transaction"
@@ -59,8 +59,10 @@ max_client_conn = 100
 
 [db.migrations]
 # If disabled, migrations will be skipped during a db push or reset.
-# app-admin: desactivado. supabase/migrations no trae el esquema base (la 1a migracion
-# altera tablas que no crea). El esquema se carga desde el respaldo. Ver docs/BASE_DESARROLLO.md
+# v2-arranque-limpio (2026-10-28): desactivado A PROPOSITO. Las migraciones las aplica
+# scripts/v2_local_reset.py (salta 5 correcciones de datos de produccion que abortan en una
+# base vacia). El esquema base que faltaba lo pone 20260101000000_v2_local_esquema_base_previo.
+# Ver docs/V2_LOCAL.md
 enabled = false
 # Specifies an ordered list of schema files, directories, or glob patterns that describe your database.
 # Supports paths relative to supabase directory: "./schemas/*.sql", "./database".
@@ -68,10 +70,11 @@ schema_paths = []
 
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
+# v2: desactivado; scripts/v2_local_reset.py corre seed_local/*.sql despues de las migraciones.
 enabled = false
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
-sql_paths = ["./seed.sql"]
+sql_paths = ["./seed_local/*.sql"]
 
 [db.network_restrictions]
 # Enable management of network restrictions.
@@ -97,7 +100,7 @@ enabled = true
 [studio]
 enabled = true
 # Port to use for Supabase Studio.
-port = 54323
+port = 55323
 # External URL of the API server that frontend connects to.
 api_url = "http://127.0.0.1"
 # OpenAI API Key to use for Supabase AI in the Supabase Studio.
@@ -108,7 +111,7 @@ openai_api_key = "env(OPENAI_API_KEY)"
 [local_smtp]
 enabled = true
 # Port to use for the email testing server web interface.
-port = 54324
+port = 55324
 # Uncomment to expose additional ports for testing user applications that send emails.
 # smtp_port = 54325
 # pop3_port = 54326
@@ -382,7 +385,7 @@ enabled = true
 # `oneshot` — fallback mode if hot reload causes issues (e.g. in large repos or with symlinks).
 policy = "per_worker"
 # Port to attach the Chrome inspector for debugging edge functions.
-inspector_port = 8083
+inspector_port = 8093
 # The Deno major version to use.
 deno_version = 2
 
@@ -391,7 +394,7 @@ deno_version = 2
 
 [analytics]
 enabled = true
-port = 54327
+port = 55327
 # Configure one of the supported backends: `postgres`, `bigquery`.
 backend = "postgres"
 

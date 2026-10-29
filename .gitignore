@@ -66,3 +66,7 @@ supabase/_respaldos/
 /bot/__pycache__/
 # El reloj de la espera del vigilante (D23): estado de ejecucion, no codigo.
 /bot/vigilante_espera.txt
+
+# v2 local: datos copiados de produccion (PII de clientes); nunca al repo
+/supabase/seed_local/50_*.sql
+/scripts/arranque_datos/*.json
