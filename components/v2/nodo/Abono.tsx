@@ -8,6 +8,7 @@ import { formatCurrency } from '@/lib/utils'
 import { hoyEnMX } from '@/lib/date-format'
 import { METODOS_PAGO } from '@/lib/abonos'
 import {
+  getCuentaMatrizAbonoAction,
   getPropuestaAbonoAction,
   registrarAbonoAction,
   type PropuestaTicketAbono
@@ -57,6 +58,9 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [cuentasAdmin, setCuentasAdmin] = useState<CuentaOption[]>([])
   const [cuentasEntidad, setCuentasEntidad] = useState<CuentaOption[]>([])
+  // v2 (2026-10-29): para un DST, RLS esconde las cuentas ADMIN. Su destino es la
+  // cuenta de la matriz (D97, la misma del bot), leida en servidor.
+  const [cuentaMatriz, setCuentaMatriz] = useState<CuentaOption | null>(null)
 
   const [idCuentaOrigen, setIdCuentaOrigen] = useState('')
   const [idCuentaDestino, setIdCuentaDestino] = useState('')
@@ -112,8 +116,24 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
         })
 
         const sinVirtual = (cuenta: CuentaOption) => !cuenta.nombre.toLowerCase().includes('virtual')
-        setCuentasAdmin(mapped.filter((cuenta) => cuenta.ownerRole === 'ADMIN' && sinVirtual(cuenta)))
+        const admin = mapped.filter((cuenta) => cuenta.ownerRole === 'ADMIN' && sinVirtual(cuenta))
+        setCuentasAdmin(admin)
         setCuentasEntidad(mapped.filter((cuenta) => cuenta.ownerEntityId === resolvedParams.id && sinVirtual(cuenta)))
+
+        if (admin.length === 0) {
+          const matriz = await getCuentaMatrizAbonoAction()
+          if (matriz) {
+            setCuentaMatriz({
+              id: matriz.id,
+              nombre: matriz.nombre,
+              ownerEntityId: null,
+              ownerRole: 'ADMIN',
+              ownerNombre: null,
+              soloEgresos: false
+            })
+            setIdCuentaDestino((actual) => actual || matriz.id)
+          }
+        }
       } catch (error) {
         console.error('Error in fetchCuentas:', error)
       } finally {
@@ -124,8 +144,12 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
     fetchCuentas()
   }, [resolvedParams.id])
 
+  const cuentasAdminDestino = [
+    ...cuentasAdmin.filter((cuenta) => !cuenta.soloEgresos),
+    ...(cuentaMatriz && !cuentasAdmin.some((cuenta) => cuenta.id === cuentaMatriz.id) ? [cuentaMatriz] : [])
+  ]
   const cuentaOrigen = [...cuentasAdmin, ...cuentasEntidad].find((cuenta) => cuenta.id === idCuentaOrigen)
-  const cuentaDestino = [...cuentasAdmin, ...cuentasEntidad].find((cuenta) => cuenta.id === idCuentaDestino)
+  const cuentaDestino = [...cuentasAdminDestino, ...cuentasEntidad].find((cuenta) => cuenta.id === idCuentaDestino)
   const origenEsAdmin = cuentaOrigen?.ownerRole === 'ADMIN'
   const destinoEsAdmin = cuentaDestino?.ownerRole === 'ADMIN'
 
@@ -310,12 +334,13 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
             >
               <option value="">{isLoadingData ? 'Cargando cuentas...' : 'Selecciona destino...'}</option>
               <optgroup label="Cuentas ADMIN">
-                {cuentasAdmin.filter((cuenta) => !cuenta.soloEgresos).map((cuenta) => (
+                {cuentasAdminDestino.map((cuenta) => (
                   <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre}</option>
                 ))}
               </optgroup>
               <optgroup label="Cuentas Distribuidor/Local">
-                {cuentasEntidad.map((cuenta) => (
+                {/* Un DST (cuentaMatriz puesta) solo abona a la matriz: sus cuentas no son destino. */}
+                {(cuentaMatriz ? [] : cuentasEntidad).map((cuenta) => (
                   <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre}</option>
                 ))}
               </optgroup>

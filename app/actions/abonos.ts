@@ -46,6 +46,8 @@ import {
   netearAbonosSinPedido
 } from '@/lib/abonos'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
+import { clienteDeServicio } from '@/lib/bot-servidor'
+import { cuentaDeLaMatrizParaAbono } from '@/lib/bot-aprobacion'
 import { hoyEnMX } from '@/lib/date-format'
 
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
@@ -414,6 +416,38 @@ export async function getPropuestaAbonoAction(
   }
 }
 
+/**
+ * La cuenta de la matriz que recibe el abono de un DST (FASE 9, D97: la misma
+ * que usa el bot). Un DST no la ve por RLS (`cuentas_sel_mias`), asi que se lee
+ * con el cliente de servicio. Una cuenta `solo_egresos` nunca recibe abonos.
+ * Escrito el 2026-10-29 por el ejecutor del Socio (paridad v2).
+ */
+async function cuentaMatrizParaAbonoWeb(): Promise<{ id: string; nombre: string } | null> {
+  const servicio = clienteDeServicio()
+  const matriz = await cuentaDeLaMatrizParaAbono(servicio)
+  if (!matriz) return null
+  const { data } = await servicio
+    .from('cuentas_financieras')
+    .select('solo_egresos')
+    .eq('id', matriz.id)
+    .maybeSingle()
+  if (!data || data.solo_egresos) return null
+  return matriz
+}
+
+/** Destino del abono para quien no es ADMIN. ADMIN recibe null: ya ve todas las cuentas. */
+export async function getCuentaMatrizAbonoAction(): Promise<{ id: string; nombre: string } | null> {
+  try {
+    const supabase = await getServerSupabaseClient()
+    const sesionResult = await resolverSesionOperador(supabase)
+    if (!sesionResult.ok || sesionResult.sesion.rol !== 'DST') return null
+    return await cuentaMatrizParaAbonoWeb()
+  } catch (error) {
+    console.error('Error leyendo la cuenta de la matriz:', error)
+    return null
+  }
+}
+
 export async function registrarAbonoAction(
   payload: RegistrarAbonoPayload
 ): Promise<RegistrarAbonoResult> {
@@ -540,6 +574,16 @@ export async function registrarAbonoAction(
         id_entidad: cuenta.id_entidad,
         rol: owner?.rol ? String(owner.rol).toUpperCase() : null
       })
+    }
+
+    // Paridad v2 (2026-10-29): un DST no ve por RLS la cuenta de la matriz. Si el
+    // destino que no pudo leer es exactamente esa cuenta (D97), se acepta como ADMIN.
+    // Cualquier otra cuenta ADMIN sigue sin resolverse y se rechaza abajo.
+    if (sesion.rol === 'DST' && !cuentas.has(idCuentaDestino)) {
+      const matriz = await cuentaMatrizParaAbonoWeb()
+      if (matriz && matriz.id === idCuentaDestino) {
+        cuentas.set(matriz.id, { id: matriz.id, id_entidad: null, rol: 'ADMIN' })
+      }
     }
 
     const cuentaOrigen = cuentas.get(idCuentaOrigenResuelta)

@@ -46,6 +46,20 @@ Desde `C:/Users/norma/Documents/Cursor/app-admin-v2`, en este orden:
 - App: http://localhost:3002
 - Studio: http://127.0.0.1:55323
 
+## Usar la v2: modo producción, no dev
+
+Para USAR la v2 (revisarla, capturar, enseñarla) se corre en modo producción: `npm run v2:prod`
+(`next build && next start -p 3003`; depende de los pasos 1-3). `next dev` compila cada ruta la
+primera vez que se abre (0.8-2.1 s por ruta); producción ya trae todo compilado. Medido el
+2026-10-29: x3 más rápido al navegar y x6 en la carga completa. `next dev` queda solo para
+desarrollar.
+
+- Build con Turbopack (el default de Next 16): compila (`Compiled successfully in 11.6s`, 2026-10-29).
+  Si algún día falla, el respaldo es `next build --webpack`.
+- `next build` prerenderiza páginas y necesita `.env.local` en la carpeta desde donde se corre;
+  sin él truena en `/login` con *"Your project's URL and API key are required"*.
+- Después de cambiar código hay que volver a correr `npm run v2:prod`: producción no recarga sola.
+
 ## Usuarios de prueba (solo existen en local)
 
 | Rol | Correo | Clave | Entidad |
