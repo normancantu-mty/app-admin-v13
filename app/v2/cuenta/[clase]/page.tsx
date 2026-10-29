@@ -11,7 +11,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getServerSupabaseClient } from '@/lib/server-session'
-import { getCurrentUser } from '@/lib/auth-utils'
 import {
   leerCuentasMatriz,
   leerMovimientosDeCuentas,
@@ -51,11 +50,10 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
   if (!clase) notFound()
 
   const client = await getServerSupabaseClient()
-  const [cuentas, nombres, transferencias, usuario] = await Promise.all([
+  const [cuentas, nombres, transferencias] = await Promise.all([
     leerCuentasMatriz(client),
     leerNombresEntidades(client),
-    leerResumenTransferencias(client),
-    getCurrentUser()
+    leerResumenTransferencias(client)
   ])
   const cuenta = cuentas.find((c) => c.clase === clase)
   if (!cuenta) notFound()
@@ -122,7 +120,12 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
 
       {clase === 'TRANSFERENCIAS' && transferencias && (
         <div style={{ marginBottom: 16 }}>
-          <TransferenciasCard resumen={transferencias} canMutate={usuario?.rol === 'ADMIN'} />
+          {/* /v2 es de SOLO LECTURA: la tarjeta se monta sin el boton que escribe. */}
+          <TransferenciasCard resumen={transferencias} canMutate={false} />
+          <p className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+            La conversión a efectivo se hace en el ERP actual:{' '}
+            <Link href="/dashboard/general">Panel general → Transferencias</Link>.
+          </p>
         </div>
       )}
 
