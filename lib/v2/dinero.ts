@@ -308,3 +308,34 @@ export function egresosPorCategoria(movs: MovimientoDinero[], idCuenta: string, 
     .map((c) => ({ ...c, total: redondear(c.total), subcategorias: c.subcategorias.sort((a, b) => b.total - a.total) }))
     .sort((a, b) => a.orden - b.orden || b.total - a.total)
 }
+
+/**
+ * Paginas v2 (2026-10-29, ejecutor del Socio): «En qué se fue el dinero» de VARIAS
+ * cuentas a la vez (la pagina de Finanzas con «Todas las cuentas»). Suma el
+ * desglose de cada cuenta; los traspasos entre cuentas ya quedan fuera.
+ */
+export function egresosPorCategoriaVarias(movs: MovimientoDinero[], idsCuentas: string[], idx: IndiceCategorias): CategoriaEgreso[] {
+  const cats = new Map<string, CategoriaEgreso>()
+  for (const id of idsCuentas) {
+    for (const c of egresosPorCategoria(movs, id, idx)) {
+      const t = cats.get(c.categoria) ?? { ...c, total: 0, movimientos: 0, subcategorias: [] }
+      t.total += c.total
+      t.movimientos += c.movimientos
+      for (const s of c.subcategorias) {
+        const x = t.subcategorias.find((y) => y.subcategoria === s.subcategoria)
+        if (x) {
+          x.total += s.total
+          x.movimientos += s.movimientos
+        } else t.subcategorias.push({ ...s })
+      }
+      cats.set(c.categoria, t)
+    }
+  }
+  return [...cats.values()]
+    .map((c) => ({
+      ...c,
+      total: redondear(c.total),
+      subcategorias: c.subcategorias.map((s) => ({ ...s, total: redondear(s.total) })).sort((a, b) => b.total - a.total)
+    }))
+    .sort((a, b) => a.orden - b.orden || b.total - a.total)
+}

@@ -10,11 +10,16 @@
  * Paridad v2 (2026-10-29): MODAL del panel unico (`/v2/m/cuenta/<clase>`). ADMIN
  * anula (fila o en bloque) y convierte transferencias aqui mismo; ya no manda a
  * /dashboard.
+ *
+ * Paginas v2 (2026-10-29): la tabla y el desglose de egresos viven en
+ * `components/v2/finanzas/Movimientos.tsx` (los comparte `/v2/finanzas`), y el
+ * encabezado lleva «Toda Finanzas →» a la pagina completa.
  */
 
 import { CambiarModal } from '@/components/v2/modal/AbrirModal'
 import { Modal } from '@/components/v2/modal/Modal'
-import { BarraAnular, BotonAnular, CasillaAnular, ProveedorSeleccion } from '@/components/v2/anular/Anular'
+import { EgresosPorCategoria, filasPedidas, TablaMovimientos, TANDA } from '@/components/v2/finanzas/Movimientos'
+import { VerTodo } from '@/components/v2/pagina/Encabezado'
 import { notFound } from 'next/navigation'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { exigirMandoV2 } from '@/lib/v2/puerta'
@@ -37,7 +42,7 @@ import {
   indiceCategorias,
   saldoDesdeMovimientos
 } from '@/lib/v2/dinero'
-import { fechaHoraMx, mesMx, mxn, rangoMeses, tipoLegible } from '@/lib/v2/formato'
+import { mesMx, mxn, rangoMeses } from '@/lib/v2/formato'
 import { BarrasMes, Leyenda } from '@/components/v2/graficas'
 import TransferenciasCard from '@/components/v2/cuentas/TransferenciasCard'
 
@@ -55,15 +60,6 @@ const REGLA: Record<string, string> = {
     'LIBRE y SOLO EGRESOS: la base rechaza cualquier ingreso a esta cuenta (trigger trg_cuenta_solo_egresos). Sirve para registrar lo que se paga desde ella.',
   TRANSFERENCIAS:
     'Aquí caen los cobros por transferencia. Al convertirlos a efectivo, 95% pasa a Efectivo y 5% se registra como gasto «Financieros / Comisión por conversión de transferencias».'
-}
-
-/** Filas por tanda en «Cargar más» (ronda 2: no un tope fijo). */
-const TANDA = 60
-
-/** `?filas=N` -> cuantas filas mostrar: multiplo de TANDA, minimo una tanda. */
-function filasPedidas(v: string | string[] | undefined): number {
-  const n = Number.parseInt(Array.isArray(v) ? v[0] : v ?? '', 10)
-  return Number.isFinite(n) && n > TANDA ? Math.ceil(n / TANDA) * TANDA : TANDA
 }
 
 export default async function CuentaV2({
@@ -104,7 +100,6 @@ export default async function CuentaV2({
   const porMes = dineroPorMes(movs, new Set([cuenta.id]), meses, idxCat)
   const hayFlujo = porMes.some((m) => m.entro > 0 || m.salio > 0)
   const cats = egresosPorCategoria(movs, cuenta.id, idxCat)
-  const totalEgresos = cats.reduce((a, c) => a + c.total, 0)
   // La suma que se compara con saldo_cuenta() es sobre TODOS los movimientos leidos
   // en el servidor (`movs`), no sobre la pagina que se muestra.
   const nCuentan = movs.filter((m) => cuentaParaSaldo(m)).length
@@ -112,7 +107,7 @@ export default async function CuentaV2({
   const hayMas = movs.length > visibles.length
 
   return (
-    <Modal titulo={NOMBRE[clase] ?? cuenta.nombre} sub={REGLA[clase]} tam="xl">
+    <Modal titulo={NOMBRE[clase] ?? cuenta.nombre} sub={REGLA[clase]} tam="xl" acciones={<VerTodo href={`/v2/finanzas?cuenta=${slug}`}>Toda Finanzas →</VerTodo>}>
       <div className="tabs" style={{ marginTop: 0 }}>
         {cuentas.map((c) => (
           <CambiarModal key={c.id} href={`/v2/m/cuenta/${slugDeClase(c.clase)}`} className={c.id === cuenta.id ? 'on' : ''}>
@@ -198,35 +193,7 @@ export default async function CuentaV2({
               <div className="sub">Egresos por categoría y subcategoría de la lista cerrada ({idxCat.nCategorias} categorías de egreso, en su orden). Lo que no casa con la lista va en «{FUERA_DE_LISTA}». Toca una para abrirla.</div>
             </div>
           </div>
-          {cats.length === 0 ? (
-            <div className="vacio">
-              <b>Sin egresos desde el arranque</b>
-              El primer gasto con categoría y subcategoría aparece aquí.
-            </div>
-          ) : (
-            <div>
-              {cats.map((c) => (
-                <details className="cat" key={c.categoria} open={c.fuera}>
-                  <summary>
-                    <span className={c.fuera ? 'neg' : undefined}>
-                      {c.categoria} <small style={{ color: 'var(--muted)', fontWeight: 500 }}>({c.movimientos} mov.)</small>
-                    </span>
-                    <span>{mxn(c.total)}</span>
-                  </summary>
-                  {c.subcategorias.map((s) => (
-                    <div className="subl" key={s.subcategoria}>
-                      <span>{s.subcategoria}</span>
-                      <span>{mxn(s.total)}</span>
-                    </div>
-                  ))}
-                </details>
-              ))}
-              <div className="subl" style={{ paddingLeft: 0, fontWeight: 800, color: 'var(--ink)' }}>
-                <span>Total de egresos</span>
-                <span>{mxn(totalEgresos)}</span>
-              </div>
-            </div>
-          )}
+          <EgresosPorCategoria cats={cats} />
           <div className="fuente">finanzas_ledger.categoria / subcategoria agrupadas contra categorias_movimiento (EGRESO, activas, por orden)</div>
         </section>
       </div>
@@ -238,69 +205,7 @@ export default async function CuentaV2({
             <div className="sub">Columnas del ERP (finanzas_ledger). Las filas atenuadas no cuentan para el saldo (anuladas, ABONO_PENDIENTE o que no mueven esta cuenta). Anular marca ANULADO, no borra.</div>
           </div>
         </div>
-        <ProveedorSeleccion>
-        {esAdmin && <BarraAnular tipo="finanzas" />}
-        <div className="tabla-w">
-          <table className="t">
-            <thead>
-              <tr>
-                {esAdmin && <th />}
-                <th>Fecha</th>
-                <th>Concepto</th>
-                <th>Categoría</th>
-                <th>Asignado a</th>
-                <th className="r">Monto</th>
-                <th>Creado por</th>
-                {esAdmin && <th />}
-              </tr>
-            </thead>
-            <tbody>
-              {visibles.map((m) => {
-                const motivo = !cuentaParaSaldo(m)
-                  ? m.status !== 'ACTIVO' && m.status !== 'APPROVED'
-                    ? `${m.status.toLowerCase()} · no cuenta para el saldo`
-                    : `${m.categoria} · no cuenta para el saldo`
-                  : m.efecto === 0
-                    ? 'no mueve el saldo de esta cuenta'
-                    : null
-                return (
-                <tr key={m.id} style={motivo ? { opacity: 0.5 } : undefined}>
-                  {esAdmin && <td>{anulable(m) ? <CasillaAnular id={m.id} /> : null}</td>}
-                  <td style={{ whiteSpace: 'nowrap' }}>{fechaHoraMx(m.fecha_movimiento)}</td>
-                  <td>
-                    <b>{tipoLegible(m.tipo_movimiento)}</b>
-                    {motivo && (
-                      <div>
-                        <span className="chip">{motivo}</span>
-                      </div>
-                    )}
-                    {m.descripcion && <div style={{ color: 'var(--muted)', fontSize: 12 }}>{m.descripcion}</div>}
-                  </td>
-                  <td>
-                    {m.categoria ?? '—'}
-                    {m.subcategoria && <div style={{ color: 'var(--muted)', fontSize: 12 }}>{m.subcategoria}</div>}
-                  </td>
-                  <td>{(m.id_entidad_relacionada && nombres.get(m.id_entidad_relacionada)?.nombre) ?? 'Matriz'}</td>
-                  <td className={`r ${m.efecto > 0 ? 'pos' : m.efecto < 0 ? 'neg' : ''}`}>
-                    {m.efecto > 0 ? '+' : m.efecto < 0 ? '−' : ''}
-                    {mxn(Math.abs(m.efecto || m.monto))}
-                  </td>
-                  <td className="mono">{m.usuario_creador ?? 'sin dato'}</td>
-                  {esAdmin && <td>{anulable(m) ? <BotonAnular id={m.id} tipo="finanzas" /> : null}</td>}
-                </tr>
-                )
-              })}
-              {visibles.length === 0 && (
-                <tr>
-                  <td colSpan={esAdmin ? 8 : 6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                    Sin movimientos
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        </ProveedorSeleccion>
+        <TablaMovimientos movs={visibles} nombres={nombres} esAdmin={esAdmin} />
         <div className="fuente">
           Mostrando {visibles.length} de {movs.length} filas ({nCuentan} cuentan para el saldo) · finanzas_ledger
         </div>
@@ -316,7 +221,3 @@ export default async function CuentaV2({
   )
 }
 
-/** Se ofrece Anular en lo que sigue vivo; el servidor vuelve a decidir. */
-function anulable(m: { status: string; tipo_movimiento: string }): boolean {
-  return m.status !== 'ANULADO' && m.status !== 'CANCELADO' && m.tipo_movimiento !== 'SALDO_INICIAL'
-}

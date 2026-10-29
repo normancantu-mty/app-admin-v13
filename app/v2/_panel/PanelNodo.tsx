@@ -14,6 +14,7 @@ import { leerFichaNodo } from '@/lib/v2/nodo'
 import { leerRed } from '@/lib/v2/red'
 import { mxn } from '@/lib/v2/formato'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
+import { VerTodo } from '@/components/v2/pagina/Encabezado'
 import { FichaVista } from '@/components/v2/nodo/FichaVista'
 import { DiasSeguimiento } from '@/components/v2/red/AccionesNodo'
 
@@ -51,6 +52,12 @@ export async function PanelNodo() {
         <AbrirModal className="btn" href="/v2/m/avisos" titulo="Avisos" tam="md">
           Avisos
         </AbrirModal>
+      </div>
+      {/* Paginas v2 (2026-10-29): el apartado completo, como pagina. */}
+      <div className="acciones" data-testid="panel-ver-todo">
+        <span className="lbl">VER TODO</span>
+        {esDst && <VerTodo href="/v2/red">Mi red →</VerTodo>}
+        <VerTodo href="/v2/catalogo">Mis precios →</VerTodo>
       </div>
 
       <FichaVista ficha={ficha} usuario={usuario} propia />

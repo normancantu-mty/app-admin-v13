@@ -319,7 +319,8 @@ function EmptyState() {
   )
 }
 
-export default async function InventarioVista() {
+/** `sinAcciones`: la pagina `/v2/inventario` ya pone Envasar y Comprar en su encabezado (Paginas v2, 2026-10-29). */
+export default async function InventarioVista({ sinAcciones = false }: { sinAcciones?: boolean } = {}) {
   const cookieStore = await cookies()
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
@@ -406,6 +407,7 @@ export default async function InventarioVista() {
         <p className="text-sm text-gray-600">Stock de la matriz contra todo el ledger; KPIs y movimientos del rango global.</p>
         {canMutate && (
           <div className="flex w-full flex-wrap gap-2 md:w-auto md:justify-end md:gap-3">
+            {!sinAcciones && (<>
             <AbrirModal
               href="/v2/m/envasado"
               titulo="Registrar envasado"
@@ -422,6 +424,7 @@ export default async function InventarioVista() {
             >
               Comprar Insumos
             </AbrirModal>
+            </>)}
             <div className="w-full min-w-[9rem] flex-1 sm:w-auto sm:flex-none">
               <LogisticaInversaModal
                 productos={productos.map((p) => ({ id: p.id, nombre: p.nombre, sku: p.sku }))}

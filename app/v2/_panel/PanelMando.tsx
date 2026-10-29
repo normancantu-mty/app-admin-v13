@@ -9,6 +9,7 @@
  */
 
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
+import { VerTodo } from '@/components/v2/pagina/Encabezado'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { exigirMandoV2 } from '@/lib/v2/puerta'
 import { leerTablero, slugDeClase } from '@/lib/v2/lecturas'
@@ -215,6 +216,7 @@ export async function PanelMando() {
           <span className={`chip ${cascadaCuadra ? 'good' : 'crit'}`}>
             {cascadaCuadra ? 'saldo_cuenta() = suma de movimientos' : 'NO cuadra con los movimientos'}
           </span>
+          <VerTodo href="/v2/finanzas" className="vertodo-l">Toda Finanzas →</VerTodo>
         </div>
         <div className="kpis">
           {cuentas.map((c) => (
@@ -296,6 +298,14 @@ export async function PanelMando() {
         <AbrirModal className="btn" href="/v2/m/avisos" titulo="Avisos" tam="md">Avisos</AbrirModal>
         <AbrirModal className="btn" href="/v2/m/actividad" titulo="Actividad">Actividad</AbrirModal>
         <AbrirModal className="btn" href="/v2/m/ventas" titulo="Ventas">Ventas</AbrirModal>
+      </div>
+      {/* Paginas v2 (2026-10-29): los apartados completos son paginas; lo de arriba sigue en modal. */}
+      <div className="acciones" data-testid="panel-ver-todo">
+        <span className="lbl">VER TODO</span>
+        <VerTodo href="/v2/finanzas">Finanzas →</VerTodo>
+        <VerTodo href="/v2/red">Red y cartera →</VerTodo>
+        <VerTodo href="/v2/catalogo">Catálogo →</VerTodo>
+        <VerTodo href="/v2/inventario">Inventario →</VerTodo>
       </div>
 
       <div className="grid g336">

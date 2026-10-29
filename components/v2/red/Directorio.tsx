@@ -1,7 +1,9 @@
 'use client'
 // Paridad v2: copia de app/dashboard/distribuidores/DirectoryTableClient.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
+// Paginas v2 (2026-10-29, ejecutor del Socio): prop `fichaEnPagina` (enlace a /v2/red/<id>).
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { BotonSeguimiento } from './AccionesNodo'
 import EditEntidadModal from './EditarEntidad'
@@ -18,6 +20,8 @@ interface DirectoryTableClientProps {
   canDeleteEntity?: boolean
   /** Solo ADMIN ve la columna Zona (DST u otros roles: columna omitida del DOM). */
   showZonaColumn?: boolean
+  /** Paginas v2: en `/v2/red` cada fila lleva tambien a la ficha completa (`/v2/red/<id>`). */
+  fichaEnPagina?: boolean
 }
 
 function formatCurrency(amount: number): string {
@@ -44,7 +48,8 @@ export default function DirectoryTableClient({
   rows,
   canEdit,
   canDeleteEntity = false,
-  showZonaColumn = false
+  showZonaColumn = false,
+  fichaEnPagina = false
 }: DirectoryTableClientProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [roleFilter, setRoleFilter] = useState<RolFilter>('ALL')
@@ -200,6 +205,11 @@ export default function DirectoryTableClient({
                       >
                         Ver estado
                       </AbrirModal>
+                      {fichaEnPagina && (
+                        <Link href={`/v2/red/${row.id}`} className="enlace-pg" style={{ fontSize: 12 }}>
+                          Ficha completa →
+                        </Link>
+                      )}
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium text-gray-900">{row.nombre}</span>
                         <span
@@ -296,6 +306,11 @@ export default function DirectoryTableClient({
                 >
                   Ver estado
                 </AbrirModal>
+                {fichaEnPagina && (
+                  <Link href={`/v2/red/${row.id}`} className="enlace-pg shrink-0" style={{ fontSize: 12 }}>
+                    Ficha →
+                  </Link>
+                )}
               </div>
 
               {(row.telefono || row.ubicacionMaps) && (

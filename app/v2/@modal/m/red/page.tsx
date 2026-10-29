@@ -1,4 +1,4 @@
-/** Paridad v2 — modal «Red de distribución» (directorio: seguimiento, editar, eliminar, alta). Escrito el 2026-10-29 por el ejecutor del Socio. */
+/** Paridad v2 — modal «Red de distribución» (directorio: seguimiento, editar, eliminar, alta). Escrito el 2026-10-29 por el ejecutor del Socio. «Ver todo →» lleva a la pagina /v2/red (Paginas v2, 2026-10-29). */
 
 import { notFound } from 'next/navigation'
 import { exigirSesionV2 } from '@/lib/v2/puerta'
@@ -7,6 +7,7 @@ import { leerRed } from '@/lib/v2/red'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { Modal } from '@/components/v2/modal/Modal'
 import Directorio from '@/components/v2/red/Directorio'
+import { VerTodo } from '@/components/v2/pagina/Encabezado'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,11 +24,14 @@ export default async function ModalRed() {
       sub="Directorio de la red · saldos de v_saldo_entidad"
       tam="xl"
       acciones={
-        usuario.rol !== 'SOCIO' ? (
-          <AbrirModal className="btn p" href="/v2/m/red/nuevo" titulo="Nuevo miembro" tam="md" data-testid="red-alta">
-            + Nuevo miembro
-          </AbrirModal>
-        ) : null
+        <>
+          <VerTodo href="/v2/red" />
+          {usuario.rol !== 'SOCIO' ? (
+            <AbrirModal className="btn p" href="/v2/m/red/nuevo" titulo="Nuevo miembro" tam="md" data-testid="red-alta">
+              + Nuevo miembro
+            </AbrirModal>
+          ) : null}
+        </>
       }
     >
       <div className="kpis k3" style={{ marginBottom: 16 }}>

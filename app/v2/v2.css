@@ -277,6 +277,26 @@ html.dark .v2 .btn.p { color: #1a0d0b; }
 .v2 .tabs a:hover:not(.on), .v2 .tabs button:hover:not(.on) { background: var(--surface-2); transform: scale(1.02); }
 .v2 a.it:hover { background: var(--surface-2); }
 
+/* ── Paginas completas (Paginas v2, 2026-10-29) ─────────────────────────────────
+   Modal = accion rapida o vista general; pagina = TODO un apartado. Sin menu ni
+   pestanas: «← Panel», el titulo y sus acciones. Mismos tokens y mismo hover. */
+.v2 .pg-hd { margin: 16px 0 14px; display: flex; flex-direction: column; gap: 6px; }
+.v2 .pg-migas { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.v2 .pg-miga { display: inline-flex; align-items: center; gap: 6px; }
+.v2 .volver { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink-2); font-weight: 700; font-size: 12.5px; }
+.v2 .volver:hover { color: var(--chile); border-color: var(--chile); background: var(--surface-2); transform: scale(1.02); }
+.v2 .btn.vertodo { color: var(--chile); border-color: var(--saldos-line); background: var(--chile-soft); }
+.v2 .vertodo-l { margin-left: auto; color: var(--chile); font-weight: 700; font-size: 13px; }
+.v2 .vertodo-l:hover { text-decoration: underline; }
+.v2 .kpi.on { border-color: var(--chile); box-shadow: 0 0 0 2px var(--chile-soft); }
+.v2 .enlace-pg { color: var(--chile); font-weight: 700; }
+.v2 .enlace-pg:hover { text-decoration: underline; }
+.v2 .seg a { color: var(--ink-2); background: var(--surface); }
+.v2 .seg a.on { background: var(--ink); color: var(--bg); }
+.v2 .seg a:hover:not(.on) { background: var(--surface-2); }
+.v2 .volver, .v2 .seg a { transition: transform .16s ease, background-color .16s ease, color .16s ease, border-color .16s ease; }
+@media (prefers-reduced-motion: reduce) { .v2 .volver:hover { transform: none; } }
+
 /* ── Modales ─────────────────────────────────────────────────────────────────── */
 .v2 .m-fondo { position: fixed; inset: 0; z-index: 60; background: var(--velo); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); display: flex; align-items: flex-start; justify-content: center; padding: 0 14px 4vh; overflow-y: auto; animation: v2-fondo .18s ease-out; }
 .v2 .m-fondo.esq { z-index: 70; }

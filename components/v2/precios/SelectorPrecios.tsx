@@ -12,7 +12,8 @@ export function SelectorPrecios({
   tipo,
   entidadId,
   opciones,
-  conTipo
+  conTipo,
+  ruta = '/v2/m/precios'
 }: {
   fiscalidad: string
   tipo: 'DST' | 'LOC'
@@ -20,6 +21,8 @@ export function SelectorPrecios({
   opciones: Opcion[]
   /** La matriz elige Distribuidor o Local; el DST solo ve sus locales. */
   conTipo: boolean
+  /** A donde se aplica: el modal (por defecto) o la pagina `/v2/catalogo` (Paginas v2, 2026-10-29). */
+  ruta?: string
 }) {
   const router = useRouter()
   const [pend, iniciar] = useTransition()
@@ -34,7 +37,7 @@ export function SelectorPrecios({
     if (conTipo) q.set('tipo', nt)
     if (ne) q.set('localId', ne)
     const s = q.toString()
-    iniciar(() => router.replace(`/v2/m/precios${s ? `?${s}` : ''}`, { scroll: false }))
+    iniciar(() => router.replace(`${ruta}${s ? `?${s}` : ''}`, { scroll: false }))
   }
 
   return (

@@ -12,6 +12,16 @@
  *  - `cambio`: si algo se guardo. Si si, al cerrar se pide el panel con `?act=`
  *    (URL nueva -> el servidor vuelve a leer las cifras); si no, `back()` y el
  *    panel sale de la cache del router sin pedir nada.
+ *
+ * Paginas v2 (2026-10-29, ejecutor del Socio): ademas del panel hay paginas
+ * completas (`/v2/finanzas`, `/v2/red`, `/v2/red/<id>`, `/v2/catalogo`,
+ * `/v2/inventario`) y sus capturas se abren como modal ENCIMA de la pagina. Por
+ * eso el proveedor recuerda la `base`: la ultima ruta que no es modal (con su
+ * query). «Volver al panel» (`/v2` o sin destino) significa volver a la base.
+ * Si se abrio el modal desde una pagina, un destino de modal que el usuario no
+ * recorrio (p. ej. Compra -> `/v2/m/inventario`) tambien vuelve a la base: el
+ * usuario ya esta viendo el apartado completo. El ticket tras una venta se
+ * respeta. Desde el panel el comportamiento es el de siempre.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
@@ -32,6 +42,18 @@ type EstadoModal = {
 
 const Ctx = createContext<EstadoModal | null>(null)
 
+const PREFIJO_MODAL = '/v2/m/'
+const esModal = (ruta: string) => ruta.startsWith(PREFIJO_MODAL)
+const sinQuery = (ruta: string) => ruta.split('?')[0]
+
+/** La URL actual sin `act` (la base a la que se vuelve). */
+function rutaActualSinAct(): string {
+  const u = new URL(window.location.href)
+  u.searchParams.delete('act')
+  const q = u.searchParams.toString()
+  return u.pathname + (q ? `?${q}` : '')
+}
+
 function conAct(ruta: string): string {
   const sep = ruta.includes('?') ? '&' : '?'
   return `${ruta}${sep}act=${Date.now()}`
@@ -43,13 +65,29 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
   const pila = useRef(0)
   const cambio = useRef(false)
   const esqueletoVisto = useRef(false)
+  /** Ultima ruta que no es modal: el panel o una pagina completa. */
+  const base = useRef('/v2')
+  /** Rutas de modal recorridas desde la base (padres reales de un modal anidado). */
+  const visitados = useRef(new Set<string>())
 
   useEffect(() => {
-    if (pathname === '/v2') {
+    if (!esModal(pathname)) {
       pila.current = 0
       cambio.current = false
+      visitados.current.clear()
+      base.current = rutaActualSinAct()
+    } else {
+      visitados.current.add(pathname)
     }
   }, [pathname])
+
+  /** A donde se va de verdad cuando un modal pide `destino`. */
+  const resolver = useCallback((destino?: string): string => {
+    if (!destino || destino === '/v2') return base.current
+    if (base.current === '/v2' || !esModal(destino)) return destino
+    if (destino.startsWith('/v2/m/ticket/') || visitados.current.has(sinQuery(destino))) return destino
+    return base.current
+  }, [])
 
   useEffect(() => {
     const alVolver = () => {
@@ -60,6 +98,8 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
   }, [])
 
   const alAbrir = useCallback(() => {
+    // Abrir desde una pagina con filtros: la base guarda tambien su query.
+    if (!esModal(window.location.pathname)) base.current = rutaActualSinAct()
     pila.current += 1
   }, [])
   const marcarCambio = useCallback(() => {
@@ -73,33 +113,30 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
         // Con padre (modal anidado) se vuelve al padre ya refrescado; el cambio
         // sigue marcado para que al cerrar el padre tambien se refresque el panel.
         pila.current = 0
-        router.replace(conAct(padre ?? '/v2'), { scroll: false })
+        router.replace(conAct(resolver(padre)), { scroll: false })
         return
       }
       if (pila.current > 0) {
         router.back()
         return
       }
-      router.replace(padre ?? '/v2', { scroll: false })
+      router.replace(resolver(padre), { scroll: false })
     },
-    [router]
+    [router, resolver]
   )
 
   const irTrasGuardar = useCallback(
     (destino?: string) => {
       cambio.current = true
       pila.current = 0
-      router.replace(conAct(destino ?? '/v2'), { scroll: false })
+      router.replace(conAct(resolver(destino)), { scroll: false })
     },
-    [router]
+    [router, resolver]
   )
 
   const refrescar = useCallback(() => {
     cambio.current = true
-    const u = new URL(window.location.href)
-    u.searchParams.delete('act')
-    const q = u.searchParams.toString()
-    router.replace(conAct(u.pathname + (q ? `?${q}` : '')), { scroll: false })
+    router.replace(conAct(rutaActualSinAct()), { scroll: false })
   }, [router])
 
   const valor = useMemo(

@@ -1,10 +1,11 @@
-/** Paridad v2 — modal de la ficha de un nodo (Q6, Q14). Escrito el 2026-10-29 por el ejecutor del Socio. */
+/** Paridad v2 — modal de la ficha de un nodo (Q6, Q14). Escrito el 2026-10-29 por el ejecutor del Socio. «Ficha completa →» lleva a /v2/red/<id> (Paginas v2, 2026-10-29). */
 
 import { notFound } from 'next/navigation'
 import { exigirSesionV2 } from '@/lib/v2/puerta'
 import { leerFichaNodo } from '@/lib/v2/nodo'
 import { Modal } from '@/components/v2/modal/Modal'
 import { FichaVista } from '@/components/v2/nodo/FichaVista'
+import { VerTodo } from '@/components/v2/pagina/Encabezado'
 
 export default async function ModalNodo({ params }: { params: Promise<{ id: string }> }) {
   const usuario = await exigirSesionV2()
@@ -12,7 +13,7 @@ export default async function ModalNodo({ params }: { params: Promise<{ id: stri
   const ficha = await leerFichaNodo(id, usuario)
   if (!ficha) notFound()
   return (
-    <Modal titulo={ficha.entidad.nombre} sub="Ficha del nodo" tam="xl">
+    <Modal titulo={ficha.entidad.nombre} sub="Ficha del nodo" tam="xl" acciones={<VerTodo href={`/v2/red/${id}`}>Ficha completa →</VerTodo>}>
       <FichaVista ficha={ficha} usuario={usuario} />
     </Modal>
   )
