@@ -22,11 +22,12 @@ setup('iniciar sesion como ADMIN y guardar la sesion', async ({ page }) => {
   await page.locator('#password').fill(process.env.E2E_ADMIN_PASSWORD as string)
   await page.locator('button[type="submit"]').click()
 
-  // Un ADMIN aterriza en /dashboard/finanzas (app/login/page.tsx). Si en vez de
-  // eso el formulario pinta su error rojo, se reporta ESE texto: "credencial
+  // Un ADMIN aterriza en /v2 desde el 2026-10-29 (app/login/page.tsx; antes
+  // /dashboard/finanzas). Se aceptan las dos zonas. Si en vez de eso el
+  // formulario pinta su error rojo, se reporta ESE texto: "credencial
   // incorrecta" es un diagnostico, "waitForURL agoto el tiempo" no lo es.
   const errorLogin = page.locator('p.text-red-600')
-  const aterrizo = page.waitForURL(/\/dashboard\//, { timeout: 45_000 }).then(() => 'ok' as const)
+  const aterrizo = page.waitForURL(/\/(dashboard\/|v2(\/|$))/, { timeout: 45_000 }).then(() => 'ok' as const)
   const fallo = errorLogin
     .waitFor({ state: 'visible', timeout: 45_000 })
     .then(() => 'error' as const)

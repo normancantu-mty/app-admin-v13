@@ -23,9 +23,9 @@ export default function LoginPage() {
         
         if (entidad) {
           if (entidad.rol === 'ADMIN') {
-            router.push('/dashboard/finanzas')
+            router.push('/v2')
           } else if (entidad.rol === 'SOCIO') {
-            router.push('/dashboard/general')
+            router.push('/v2')
           } else if (entidad.rol === 'DST' || entidad.rol === 'LOC') {
             router.push('/dashboard/distribuidores/' + entidad.id)
           }
@@ -57,9 +57,9 @@ export default function LoginPage() {
         
         if (entidad) {
           if (entidad.rol === 'ADMIN') {
-            router.push('/dashboard/finanzas')
+            router.push('/v2')
           } else if (entidad.rol === 'SOCIO') {
-            router.push('/dashboard/general')
+            router.push('/v2')
           } else if (entidad.rol === 'DST' || entidad.rol === 'LOC') {
             router.push('/dashboard/distribuidores/' + entidad.id)
           }
