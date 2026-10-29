@@ -54,8 +54,12 @@ export default async function InicioV2() {
   const botellas = new Map<string, number>()
   for (const s of d.stockMatriz) botellas.set(s.producto, (botellas.get(s.producto) ?? 0) + Number(s.stock))
   const totalBotellas = [...botellas.values()].reduce((a, b) => a + b, 0)
-  const iva = Number(d.pasivo?.iva_por_pagar ?? 0)
-  const ieps = Number(d.pasivo?.ieps_por_pagar ?? 0)
+  // Sin fila en v_pasivo_fiscal (o con el campo nulo) es «Sin dato», no 0.
+  const aNumero = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number(v))
+  const iva = aNumero(d.pasivo?.iva_por_pagar)
+  const ieps = aNumero(d.pasivo?.ieps_por_pagar)
+  const impuestos = iva !== null && ieps !== null ? redondear(iva + ieps) : null
+  const oSinDato = (n: number | null) => (n === null ? 'Sin dato' : mxn(n))
 
   // ── Corte y meses ──
   const arranque = d.movimientos.filter((m) => m.tipo_movimiento === 'SALDO_INICIAL' && m.fecha_movimiento)
@@ -216,13 +220,20 @@ export default async function InicioV2() {
           <div className="kpi">
             <span className="t">Total en cuentas</span>
             <span className="v">{mxn(totalCuentas)}</span>
-            <span className="d">{cuentas.length} cuentas · la suma cuadra</span>
+            {cascadaCuadra ? (
+              <span className="d">{cuentas.length} cuentas · cuadra con la suma de movimientos</span>
+            ) : (
+              <span className="d neg">
+                {cuentas.length} cuentas · NO cuadra: los movimientos dan {mxn(final)}, diferencia {mxn(redondear(final - totalCuentas))}
+              </span>
+            )}
           </div>
           <div className="kpi">
             <span className="t">Impuestos por pagar</span>
-            <span className="v">{mxn(iva + ieps)}</span>
+            <span className="v">{oSinDato(impuestos)}</span>
             <span className="d">
-              IVA {mxn(iva)} · IEPS {mxn(ieps)}
+              IVA {oSinDato(iva)} · IEPS {oSinDato(ieps)}
+              {d.pasivo === null && ' · v_pasivo_fiscal sin fila'}
             </span>
           </div>
           <Link href="/v2/cartera" className="kpi">
@@ -421,14 +432,21 @@ export default async function InicioV2() {
           <div className="hd">
             <div>
               <h2>Utilidad de caja por mes</h2>
-              <div className="sub">Entró − salió de caja. No es utilidad contable.</div>
+              <div className="sub">Entró − salió de caja. No es utilidad contable. Una pérdida va negativa, en rojo.</div>
             </div>
           </div>
           {hayCaja ? (
             <BarrasMes
               meses={meses}
               enCurso={mesHoy}
-              series={[{ nombre: 'Utilidad', color: 'var(--s4)', valores: porMes.map((m) => Math.max(0, m.entro - m.salio)) }]}
+              series={[
+                {
+                  nombre: 'Utilidad',
+                  color: 'var(--s4)',
+                  colorNegativo: 'var(--crit)',
+                  valores: porMes.map((m) => redondear(m.entro - m.salio))
+                }
+              ]}
             />
           ) : (
             <Vacio titulo="Sin movimientos de caja desde el arranque">Se calcula con la primera entrada o salida.</Vacio>
