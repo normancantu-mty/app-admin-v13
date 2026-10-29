@@ -34,7 +34,6 @@ import { createServerClient } from '@supabase/ssr'
 import type { Database } from '@/types/database'
 import { registrarVenta, type ProcesarVentaPOSPayload } from '@/lib/venta-servidor'
 
-export type { ProcesarVentaPOSPayload }
 
 interface ProcesarVentaPOSResult {
   ok: boolean

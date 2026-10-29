@@ -45,7 +45,7 @@ function Eje({ ticks, y, formato }: { ticks: number[]; y: (v: number) => number;
     <>
       {ticks.map((t) => (
         <g key={t}>
-          <line className="eje" x1={M.l} x2={W - M.r} y1={y(t)} y2={y(t)} style={t === 0 ? { stroke: '#8a7b77' } : undefined} />
+          <line className="eje" x1={M.l} x2={W - M.r} y1={y(t)} y2={y(t)} style={t === 0 ? { stroke: 'var(--cero-graf)' } : undefined} />
           <text x={M.l - 6} y={y(t) + 4} textAnchor="end">
             {formato(t)}
           </text>
@@ -146,12 +146,12 @@ export function BarrasMes({
         <g>
           <polyline
             fill="none"
-            stroke="#221816"
+            stroke="var(--linea-graf)"
             strokeWidth={2}
             points={linea.valores.map((v, i) => `${M.l + paso * i + paso / 2},${y(v)}`).join(' ')}
           />
           {linea.valores.map((v, i) => (
-            <circle key={i} cx={M.l + paso * i + paso / 2} cy={y(v)} r={3.5} fill="#fff" stroke="#221816" strokeWidth={2} />
+            <circle key={i} cx={M.l + paso * i + paso / 2} cy={y(v)} r={3.5} fill="var(--punto-graf)" stroke="var(--linea-graf)" strokeWidth={2} />
           ))}
         </g>
       )}
@@ -193,7 +193,7 @@ export function Cascada({ pasos }: { pasos: PasoCascada[] }) {
         const top = y(Math.max(b.desde, b.hasta))
         const alto = Math.max(2, Math.abs(y(b.desde) - y(b.hasta)))
         const negativo = b.valor < 0
-        const color = b.tipo === 'paso' ? (b.valor >= 0 ? 'var(--s4)' : 'var(--s1)') : negativo ? 'var(--crit)' : '#5a4a46'
+        const color = b.tipo === 'paso' ? (b.valor >= 0 ? 'var(--s4)' : 'var(--s1)') : negativo ? 'var(--crit)' : 'var(--neutro-graf)'
         const etiqueta = b.tipo === 'paso' ? `${b.valor >= 0 ? '+' : ''}${mxnCorto(b.valor)}` : mxnCorto(b.valor)
         return (
           <g key={b.etiqueta + i}>

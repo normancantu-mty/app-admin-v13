@@ -6,9 +6,15 @@
  * solo egresos) y Transferencias (95/5). Saldo de `saldo_cuenta()`, movimientos
  * de `finanzas_ledger` y una comprobacion en vivo: la suma de los movimientos
  * que se pintan tiene que dar el saldo de la base al centavo.
+ *
+ * Paridad v2 (2026-10-29): MODAL del panel unico (`/v2/m/cuenta/<clase>`). ADMIN
+ * anula (fila o en bloque) y convierte transferencias aqui mismo; ya no manda a
+ * /dashboard.
  */
 
-import Link from 'next/link'
+import { CambiarModal } from '@/components/v2/modal/AbrirModal'
+import { Modal } from '@/components/v2/modal/Modal'
+import { BarraAnular, BotonAnular, CasillaAnular, ProveedorSeleccion } from '@/components/v2/anular/Anular'
 import { notFound } from 'next/navigation'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { exigirMandoV2 } from '@/lib/v2/puerta'
@@ -33,9 +39,7 @@ import {
 } from '@/lib/v2/dinero'
 import { fechaHoraMx, mesMx, mxn, rangoMeses, tipoLegible } from '@/lib/v2/formato'
 import { BarrasMes, Leyenda } from '@/components/v2/graficas'
-import TransferenciasCard from '@/components/dashboard/TransferenciasCard'
-
-export const dynamic = 'force-dynamic'
+import TransferenciasCard from '@/components/v2/cuentas/TransferenciasCard'
 
 const NOMBRE: Record<string, string> = {
   EFECTIVO: 'Efectivo',
@@ -69,7 +73,8 @@ export default async function CuentaV2({
   params: Promise<{ clase: string }>
   searchParams: Promise<{ filas?: string | string[] }>
 }) {
-  await exigirMandoV2()
+  const usuario = await exigirMandoV2()
+  const esAdmin = usuario.rol === 'ADMIN'
   const { clase: slug } = await params
   const filas = filasPedidas((await searchParams).filas)
   const clase = SLUG_CLASE[slug]
@@ -107,20 +112,16 @@ export default async function CuentaV2({
   const hayMas = movs.length > visibles.length
 
   return (
-    <>
-      <div className="tabs">
+    <Modal titulo={NOMBRE[clase] ?? cuenta.nombre} sub={REGLA[clase]} tam="xl">
+      <div className="tabs" style={{ marginTop: 0 }}>
         {cuentas.map((c) => (
-          <Link key={c.id} href={`/v2/cuenta/${slugDeClase(c.clase)}`} className={c.id === cuenta.id ? 'on' : ''}>
+          <CambiarModal key={c.id} href={`/v2/m/cuenta/${slugDeClase(c.clase)}`} className={c.id === cuenta.id ? 'on' : ''}>
             {c.clase ? NOMBRE[c.clase] ?? c.nombre : c.nombre} · {mxn(c.saldo)}
-          </Link>
+          </CambiarModal>
         ))}
       </div>
 
       <div className="ph">
-        <div>
-          <h1>{NOMBRE[clase] ?? cuenta.nombre}</h1>
-          <p>{REGLA[clase]}</p>
-        </div>
         <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <span className="chip">{cuenta.tipo_fiscalidad ?? 'fiscalidad sin dato'}</span>
           {cuenta.solo_egresos && <span className="chip warn">solo egresos</span>}
@@ -151,12 +152,8 @@ export default async function CuentaV2({
 
       {clase === 'TRANSFERENCIAS' && transferencias && (
         <div style={{ marginBottom: 16 }}>
-          {/* /v2 es de SOLO LECTURA: la tarjeta se monta sin el boton que escribe. */}
-          <TransferenciasCard resumen={transferencias} canMutate={false} />
-          <p style={{ fontSize: 12.5, marginTop: 6, color: 'var(--muted)' }}>
-            La conversión a efectivo se hace en el ERP actual:{' '}
-            <Link href="/dashboard/general">Panel general → Transferencias</Link>.
-          </p>
+          {/* Paridad v2: ADMIN convierte aqui (convertir_transferencias, 95/5). */}
+          <TransferenciasCard resumen={transferencias} canMutate={esAdmin} />
         </div>
       )}
 
@@ -238,22 +235,23 @@ export default async function CuentaV2({
         <div className="hd">
           <div>
             <h2>Movimientos</h2>
-            <div className="sub">Columnas del ERP (finanzas_ledger). Las filas atenuadas no cuentan para el saldo (anuladas, ABONO_PENDIENTE o que no mueven esta cuenta). Anular se hace en el ERP actual: marca ANULADO, no borra.</div>
+            <div className="sub">Columnas del ERP (finanzas_ledger). Las filas atenuadas no cuentan para el saldo (anuladas, ABONO_PENDIENTE o que no mueven esta cuenta). Anular marca ANULADO, no borra.</div>
           </div>
-          <Link className="btn" href="/dashboard/finanzas">
-            Abrir en Finanzas
-          </Link>
         </div>
+        <ProveedorSeleccion>
+        {esAdmin && <BarraAnular tipo="finanzas" />}
         <div className="tabla-w">
           <table className="t">
             <thead>
               <tr>
+                {esAdmin && <th />}
                 <th>Fecha</th>
                 <th>Concepto</th>
                 <th>Categoría</th>
                 <th>Asignado a</th>
                 <th className="r">Monto</th>
                 <th>Creado por</th>
+                {esAdmin && <th />}
               </tr>
             </thead>
             <tbody>
@@ -267,6 +265,7 @@ export default async function CuentaV2({
                     : null
                 return (
                 <tr key={m.id} style={motivo ? { opacity: 0.5 } : undefined}>
+                  {esAdmin && <td>{anulable(m) ? <CasillaAnular id={m.id} /> : null}</td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{fechaHoraMx(m.fecha_movimiento)}</td>
                   <td>
                     <b>{tipoLegible(m.tipo_movimiento)}</b>
@@ -287,12 +286,13 @@ export default async function CuentaV2({
                     {mxn(Math.abs(m.efecto || m.monto))}
                   </td>
                   <td className="mono">{m.usuario_creador ?? 'sin dato'}</td>
+                  {esAdmin && <td>{anulable(m) ? <BotonAnular id={m.id} tipo="finanzas" /> : null}</td>}
                 </tr>
                 )
               })}
               {visibles.length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                  <td colSpan={esAdmin ? 8 : 6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                     Sin movimientos
                   </td>
                 </tr>
@@ -300,17 +300,23 @@ export default async function CuentaV2({
             </tbody>
           </table>
         </div>
+        </ProveedorSeleccion>
         <div className="fuente">
           Mostrando {visibles.length} de {movs.length} filas ({nCuentan} cuentan para el saldo) · finanzas_ledger
         </div>
         {hayMas && (
           <div style={{ marginTop: 10 }}>
-            <Link className="btn" href={`/v2/cuenta/${slug}?filas=${filas + TANDA}`} scroll={false}>
+            <CambiarModal className="btn" href={`/v2/m/cuenta/${slug}?filas=${filas + TANDA}`}>
               Cargar más ({Math.min(TANDA, movs.length - visibles.length)} de {movs.length - visibles.length} restantes)
-            </Link>
+            </CambiarModal>
           </div>
         )}
       </section>
-    </>
+    </Modal>
   )
+}
+
+/** Se ofrece Anular en lo que sigue vivo; el servidor vuelve a decidir. */
+function anulable(m: { status: string; tipo_movimiento: string }): boolean {
+  return m.status !== 'ANULADO' && m.status !== 'CANCELADO' && m.tipo_movimiento !== 'SALDO_INICIAL'
 }

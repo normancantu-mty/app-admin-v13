@@ -1,67 +1,53 @@
 /**
  * Front v2 — la puerta y el marco de `/v2`. Escrito el 2026-10-29 por el ejecutor
- * del Front v2 (lanzado por el Socio).
+ * del Front v2; reescrito el 2026-10-29 por el ejecutor de paridad (Socio).
  *
- * Rutas NUEVAS a proposito: no tocan `/dashboard/*` (pantallas actuales) ni el
- * `/dashboard/panel` del rediseño de Cristian. La puerta es doble, igual que en
- * `/dashboard`: `proxy.ts` rebota sin sesion (`/v2` esta en RUTAS_PROTEGIDAS) y
- * este layout vuelve a preguntar y ademas exige rol de mando (ADMIN o SOCIO):
- * el tablero muestra el dinero de la matriz. La misma comprobacion
- * (`exigirMandoV2`, lib/v2/puerta.ts) se repite en CADA pagina.
+ * UN SOLO PANEL: no hay menu. `children` es el panel (page.tsx / default.tsx) y
+ * `modal` es el slot paralelo `@modal`, donde se abre TODO lo demas
+ * (rutas `/v2/m/...`). La puerta es doble: `proxy.ts` rebota sin sesion y este
+ * layout exige una sesion con entidad (`exigirSesionV2`). Lo que pinta el panel
+ * depende del rol (mando ADMIN/SOCIO o nodo DST/LOC); cada pagina y cada modal
+ * vuelve a preguntar.
  */
 
 import type { ReactNode } from 'react'
-import { headers } from 'next/headers'
-import Link from 'next/link'
-import { CABECERA_RUTA } from '@/lib/puerta-dashboard'
-import { exigirMandoV2 } from '@/lib/v2/puerta'
+import { exigirSesionV2 } from '@/lib/v2/puerta'
+import { ProveedorModal } from '@/components/v2/modal/ProveedorModal'
+import { Salir, TemaSelector } from '@/components/v2/Marco'
 import './v2.css'
 
 export const dynamic = 'force-dynamic'
 
-export const metadata = { title: 'Fresnillo · ERP v2' }
+export const metadata = { title: 'Fresnillo · ERP' }
 
-const NAV = [
-  { href: '/v2', label: 'Inicio' },
-  { href: '/v2/cartera', label: 'Cartera' },
-  { href: '/v2/cuenta/efectivo', label: 'Cuentas', prefijo: '/v2/cuenta' }
-]
-
-export default async function LayoutV2({ children }: { children: ReactNode }) {
-  const usuario = await exigirMandoV2()
-
-  const ruta = (await headers()).get(CABECERA_RUTA) ?? '/v2'
+export default async function LayoutV2({ children, modal }: { children: ReactNode; modal: ReactNode }) {
+  const usuario = await exigirSesionV2()
 
   return (
     <div className="v2">
-      <header className="top">
-        <div className="top-in">
-          <Link href="/v2" className="marca">
-            <span className="logo">F</span>
-            <span>
-              <b>Fresnillo</b>
-              <small>Destilado de chile</small>
-            </span>
-          </Link>
-          <nav className="nav">
-            {NAV.map((n) => {
-              const on = n.prefijo ? ruta.startsWith(n.prefijo) : ruta === n.href
-              return (
-                <Link key={n.href} href={n.href} className={on ? 'on' : ''}>
-                  {n.label}
-                </Link>
-              )
-            })}
-          </nav>
-          <div className="der">
-            <span>
-              {usuario.nombre} · {usuario.rol}
-            </span>
-            <Link href="/dashboard/general">ERP actual</Link>
+      <ProveedorModal>
+        <header className="top">
+          <div className="top-in">
+            <a href="/v2" className="marca">
+              <span className="logo">F</span>
+              <span>
+                <b>Fresnillo</b>
+                <small>Destilado de chile</small>
+              </span>
+            </a>
+            <div className="der">
+              <span className="quien" data-testid="v2-usuario">
+                {usuario.nombre} · {usuario.rol}
+              </span>
+              <TemaSelector />
+              <Salir />
+            </div>
           </div>
-        </div>
-      </header>
-      <div className="wrap">{children}</div>
+        </header>
+        <div className="wrap panel">{children}</div>
+        {modal}
+        <div id="v2-portal" />
+      </ProveedorModal>
     </div>
   )
 }

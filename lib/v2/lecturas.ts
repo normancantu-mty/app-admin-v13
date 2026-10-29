@@ -207,13 +207,15 @@ export interface DatosTablero {
 
 /** Todo lo que pinta `/v2`, en paralelo. */
 export async function leerTablero(client: Cliente): Promise<DatosTablero> {
+  // A4 (paridad v2): una sola tanda. Los movimientos salen en cuanto llegan las
+  // cuentas, en paralelo con todo lo demas (antes esperaban a que terminara la tanda).
   const cuentasP = leerCuentasMatriz(client)
-  const nombresP = leerNombresEntidades(client)
-  const admins = (await nombresP)
-  const idsAdmin = [...admins.entries()].filter(([, e]) => e.rol === 'ADMIN').map(([id]) => id)
-  const [cuentas, transferencias, pasivo, cartera, stock, ventasPorMes, envasado, insumosEnNegativo, conteosFisicos, lotes, categorias] =
+  const movimientosP = cuentasP.then((cs) => leerMovimientosDeCuentas(client, cs.map((c) => c.id)))
+  const [cuentas, movimientos, admins, transferencias, pasivo, cartera, stock, ventasPorMes, envasado, insumosEnNegativo, conteosFisicos, lotes, categorias] =
     await Promise.all([
       cuentasP,
+      movimientosP,
+      leerNombresEntidades(client),
       leerResumenTransferencias(client),
       leerPasivoFiscal(client),
       leerCartera(client),
@@ -225,10 +227,7 @@ export async function leerTablero(client: Cliente): Promise<DatosTablero> {
       contar(client, 'lotes'),
       leerCategoriasEgreso(client)
     ])
-  const movimientos = await leerMovimientosDeCuentas(
-    client,
-    cuentas.map((c) => c.id)
-  )
+  const idsAdmin = [...admins.entries()].filter(([, e]) => e.rol === 'ADMIN').map(([id]) => id)
   return {
     cuentas,
     movimientos,

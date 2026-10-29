@@ -27,7 +27,7 @@ export default function LoginPage() {
           } else if (entidad.rol === 'SOCIO') {
             router.push('/v2')
           } else if (entidad.rol === 'DST' || entidad.rol === 'LOC') {
-            router.push('/dashboard/distribuidores/' + entidad.id)
+            router.push('/v2')
           }
         }
       }
@@ -61,7 +61,7 @@ export default function LoginPage() {
           } else if (entidad.rol === 'SOCIO') {
             router.push('/v2')
           } else if (entidad.rol === 'DST' || entidad.rol === 'LOC') {
-            router.push('/dashboard/distribuidores/' + entidad.id)
+            router.push('/v2')
           }
         } else {
           throw new Error('Usuario no encontrado en el sistema')
