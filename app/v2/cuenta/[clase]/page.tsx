@@ -11,6 +11,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getServerSupabaseClient } from '@/lib/server-session'
+import { exigirMandoV2 } from '@/lib/v2/puerta'
 import {
   leerCuentasMatriz,
   leerMovimientosDeCuentas,
@@ -45,6 +46,7 @@ const REGLA: Record<string, string> = {
 const LIMITE = 60
 
 export default async function CuentaV2({ params }: { params: Promise<{ clase: string }> }) {
+  await exigirMandoV2()
   const { clase: slug } = await params
   const clase = SLUG_CLASE[slug]
   if (!clase) notFound()
@@ -122,7 +124,7 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
         <div style={{ marginBottom: 16 }}>
           {/* /v2 es de SOLO LECTURA: la tarjeta se monta sin el boton que escribe. */}
           <TransferenciasCard resumen={transferencias} canMutate={false} />
-          <p className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+          <p style={{ fontSize: 12.5, marginTop: 6, color: 'var(--muted)' }}>
             La conversión a efectivo se hace en el ERP actual:{' '}
             <Link href="/dashboard/general">Panel general → Transferencias</Link>.
           </p>

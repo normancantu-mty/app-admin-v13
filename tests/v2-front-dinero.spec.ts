@@ -26,6 +26,7 @@ import {
   type MovimientoDinero
 } from '@/lib/v2/dinero'
 import { esRutaProtegida } from '@/lib/puerta-dashboard'
+import { esRolDeMandoV2 } from '@/lib/v2/roles'
 
 const EF = 'cuenta-efectivo'
 const FI = 'cuenta-fresnillo'
@@ -243,6 +244,54 @@ test.describe('Front v2 · gastos capturados desde el corte', () => {
       mov({ tipo_movimiento: 'EGRESO_TRASPASO', monto: 10, id_cuenta_destino: TR, fecha_movimiento: '2026-10-29T12:00:00Z' }) // no es gasto
     ]
     expect(gastosDesdeCorte(movs, corte)).toBe(2)
+  })
+})
+
+// ── Rol en CADA pagina (patron de tests/puerta-servidor.spec.ts: leer el fuente vivo) ──
+function codigoVivo(texto: string): string {
+  return texto
+    .split('\n')
+    .filter((l) => {
+      const t = l.trim()
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*')
+    })
+    .join('\n')
+}
+
+/** ¿El archivo exige rol de mando ANTES de abrir el cliente de la base? */
+function exigeMandoAntesDeLeer(fuente: string): boolean {
+  const vivo = codigoVivo(fuente)
+  const puerta = vivo.indexOf('await exigirMandoV2()')
+  if (puerta < 0) return false
+  const lectura = vivo.indexOf('getServerSupabaseClient()')
+  return lectura < 0 || puerta < lectura
+}
+
+function archivosDeV2(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) return archivosDeV2(p)
+    return e.name === 'page.tsx' || e.name === 'layout.tsx' ? [p] : []
+  })
+}
+
+test.describe('Front v2 · rol ADMIN/SOCIO en el layout y en cada pagina', () => {
+  test('solo ADMIN y SOCIO son de mando', () => {
+    expect(esRolDeMandoV2('ADMIN')).toBe(true)
+    expect(esRolDeMandoV2('SOCIO')).toBe(true)
+    for (const r of ['DST', 'LOC', 'SUB-ADMIN', '', null, undefined]) expect(esRolDeMandoV2(r), String(r)).toBe(false)
+  })
+
+  test('cada page.tsx y layout.tsx de app/v2 llama a exigirMandoV2() antes de leer la base', () => {
+    const archivos = archivosDeV2(path.join(process.cwd(), 'app', 'v2'))
+    expect(archivos.filter((a) => a.endsWith('page.tsx')).length).toBeGreaterThanOrEqual(3)
+    for (const a of archivos) expect(exigeMandoAntesDeLeer(fs.readFileSync(a, 'utf-8')), a).toBe(true)
+  })
+
+  test('control negativo: una pagina sin la puerta, o con la puerta despues de leer, no pasa', () => {
+    expect(exigeMandoAntesDeLeer('const c = await getServerSupabaseClient()')).toBe(false)
+    expect(exigeMandoAntesDeLeer('const c = await getServerSupabaseClient()\nawait exigirMandoV2()')).toBe(false)
+    expect(exigeMandoAntesDeLeer('// await exigirMandoV2()\nconst c = await getServerSupabaseClient()')).toBe(false)
   })
 })
 

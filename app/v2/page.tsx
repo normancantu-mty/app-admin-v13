@@ -10,7 +10,7 @@
 
 import Link from 'next/link'
 import { getServerSupabaseClient } from '@/lib/server-session'
-import { getCurrentUser } from '@/lib/auth-utils'
+import { exigirMandoV2 } from '@/lib/v2/puerta'
 import { leerTablero, slugDeClase } from '@/lib/v2/lecturas'
 import { cascadaDeCaja, corteDeArranque, cuadra, dineroPorMes, gastosDesdeCorte, redondear } from '@/lib/v2/dinero'
 import { fechaHoraMx, mesMx, mxn, mxn0, num, rangoMeses } from '@/lib/v2/formato'
@@ -39,9 +39,10 @@ function Vacio({ titulo, children }: { titulo: string; children: React.ReactNode
 }
 
 export default async function InicioV2() {
+  const usuario = await exigirMandoV2()
   const client = await getServerSupabaseClient()
-  const [d, usuario] = await Promise.all([leerTablero(client), getCurrentUser()])
-  const puedeCapturar = usuario?.rol === 'ADMIN'
+  const d = await leerTablero(client)
+  const puedeCapturar = usuario.rol === 'ADMIN'
   const ahora = new Date()
 
   // ── Saldos ──

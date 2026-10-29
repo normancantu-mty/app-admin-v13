@@ -6,15 +6,15 @@
  * `/dashboard/panel` del rediseño de Cristian. La puerta es doble, igual que en
  * `/dashboard`: `proxy.ts` rebota sin sesion (`/v2` esta en RUTAS_PROTEGIDAS) y
  * este layout vuelve a preguntar y ademas exige rol de mando (ADMIN o SOCIO):
- * el tablero muestra el dinero de la matriz.
+ * el tablero muestra el dinero de la matriz. La misma comprobacion
+ * (`exigirMandoV2`, lib/v2/puerta.ts) se repite en CADA pagina.
  */
 
 import type { ReactNode } from 'react'
-import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
 import Link from 'next/link'
-import { getAuthUser, getCurrentUser } from '@/lib/auth-utils'
-import { CABECERA_RUTA, RUTA_LOGIN } from '@/lib/puerta-dashboard'
+import { CABECERA_RUTA } from '@/lib/puerta-dashboard'
+import { exigirMandoV2 } from '@/lib/v2/puerta'
 import './v2.css'
 
 export const dynamic = 'force-dynamic'
@@ -28,10 +28,7 @@ const NAV = [
 ]
 
 export default async function LayoutV2({ children }: { children: ReactNode }) {
-  const auth = await getAuthUser()
-  if (!auth) redirect(RUTA_LOGIN)
-  const usuario = await getCurrentUser()
-  if (!usuario || (usuario.rol !== 'ADMIN' && usuario.rol !== 'SOCIO')) redirect('/dashboard')
+  const usuario = await exigirMandoV2()
 
   const ruta = (await headers()).get(CABECERA_RUTA) ?? '/v2'
 

@@ -9,6 +9,7 @@
 
 import Link from 'next/link'
 import { getServerSupabaseClient } from '@/lib/server-session'
+import { exigirMandoV2 } from '@/lib/v2/puerta'
 import { leerCartera, esDeudaConLaMatriz, totalesCarteraVista, type FilaCarteraVista } from '@/lib/vistas'
 import { leerNombresEntidades } from '@/lib/v2/lecturas'
 import { redondear } from '@/lib/v2/dinero'
@@ -28,6 +29,7 @@ function Dias({ f }: { f: FilaCarteraVista }) {
 }
 
 export default async function CarteraV2() {
+  await exigirMandoV2()
   const client = await getServerSupabaseClient()
   const [cartera, nombres] = await Promise.all([leerCartera(client), leerNombresEntidades(client)])
   const tot = totalesCarteraVista(cartera)
