@@ -8,7 +8,7 @@ import { formatCurrency } from '@/lib/utils'
 import { hoyEnMX } from '@/lib/date-format'
 import { METODOS_PAGO } from '@/lib/abonos'
 import {
-  getCuentaMatrizAbonoAction,
+  getDestinoAbonoAction,
   getPropuestaAbonoAction,
   registrarAbonoAction,
   type PropuestaTicketAbono
@@ -61,6 +61,9 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
   // v2 (2026-10-29): para un DST, RLS esconde las cuentas ADMIN. Su destino es la
   // cuenta de la matriz (D97, la misma del bot), leida en servidor.
   const [cuentaMatriz, setCuentaMatriz] = useState<CuentaOption | null>(null)
+  // D8 (2026-10-29): cuando el DST registra el abono de UNO DE SUS LOCALES, el
+  // destino es su propia cuenta ("los locales de David le pagan a David").
+  const [cuentasDstPropias, setCuentasDstPropias] = useState<CuentaOption[]>([])
 
   const [idCuentaOrigen, setIdCuentaOrigen] = useState('')
   const [idCuentaDestino, setIdCuentaDestino] = useState('')
@@ -121,8 +124,9 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
         setCuentasEntidad(mapped.filter((cuenta) => cuenta.ownerEntityId === resolvedParams.id && sinVirtual(cuenta)))
 
         if (admin.length === 0) {
-          const matriz = await getCuentaMatrizAbonoAction()
-          if (matriz) {
+          const destino = await getDestinoAbonoAction(resolvedParams.id)
+          if (destino?.modo === 'MATRIZ') {
+            const matriz = destino.cuenta
             setCuentaMatriz({
               id: matriz.id,
               nombre: matriz.nombre,
@@ -132,6 +136,12 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
               soloEgresos: false
             })
             setIdCuentaDestino((actual) => actual || matriz.id)
+          } else if (destino?.modo === 'PROPIA') {
+            const propias = mapped.filter(
+              (cuenta) => cuenta.ownerEntityId === destino.idEntidadDst && sinVirtual(cuenta) && !cuenta.soloEgresos
+            )
+            setCuentasDstPropias(propias)
+            if (propias[0]) setIdCuentaDestino((actual) => actual || propias[0].id)
           }
         }
       } catch (error) {
@@ -149,20 +159,28 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
     ...(cuentaMatriz && !cuentasAdmin.some((cuenta) => cuenta.id === cuentaMatriz.id) ? [cuentaMatriz] : [])
   ]
   const cuentaOrigen = [...cuentasAdmin, ...cuentasEntidad].find((cuenta) => cuenta.id === idCuentaOrigen)
-  const cuentaDestino = [...cuentasAdminDestino, ...cuentasEntidad].find((cuenta) => cuenta.id === idCuentaDestino)
+  const cuentaDestino = [...cuentasAdminDestino, ...cuentasEntidad, ...cuentasDstPropias].find(
+    (cuenta) => cuenta.id === idCuentaDestino
+  )
   const origenEsAdmin = cuentaOrigen?.ownerRole === 'ADMIN'
   const destinoEsAdmin = cuentaDestino?.ownerRole === 'ADMIN'
+  const esDstPorSuLocal = cuentasDstPropias.length > 0
+  const destinoEsDstPropia = Boolean(cuentaDestino && cuentasDstPropias.some((c) => c.id === cuentaDestino.id))
 
   const conceptoAutomatico = (() => {
     if (!cuentaOrigen || !cuentaDestino) return 'Transferencia manual'
+    if (destinoEsDstPropia) return 'Abono de Deuda (Local → Distribuidor)'
     if (origenEsAdmin && !destinoEsAdmin) return 'Cargo de Deuda (Admin → Distribuidor)'
     if (!origenEsAdmin && destinoEsAdmin) return 'Abono de Deuda (Distribuidor → Admin)'
     return 'Transferencia manual'
   })()
 
   // Solo un abono (Distribuidor → Admin) paga pedidos. Un cargo de deuda no.
-  const esAbonoDeDeuda = Boolean(cuentaOrigen && cuentaDestino && !origenEsAdmin && destinoEsAdmin)
-  const entregaActiva = esAbonoDeDeuda && esEntregaEfectivo
+  const esAbonoDeDeuda = Boolean(
+    cuentaOrigen && cuentaDestino && !origenEsAdmin && (destinoEsAdmin || destinoEsDstPropia)
+  )
+  // La entrega de efectivo (D112) va del DST a la matriz: no aplica al abono de su local.
+  const entregaActiva = esAbonoDeDeuda && esEntregaEfectivo && !destinoEsDstPropia
   const montoNum = Number.parseFloat(monto)
   const montoValido = Number.isFinite(montoNum) && montoNum > 0
 
@@ -333,17 +351,28 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
             >
               <option value="">{isLoadingData ? 'Cargando cuentas...' : 'Selecciona destino...'}</option>
-              <optgroup label="Cuentas ADMIN">
-                {cuentasAdminDestino.map((cuenta) => (
-                  <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre}</option>
-                ))}
-              </optgroup>
-              <optgroup label="Cuentas Distribuidor/Local">
-                {/* Un DST (cuentaMatriz puesta) solo abona a la matriz: sus cuentas no son destino. */}
-                {(cuentaMatriz ? [] : cuentasEntidad).map((cuenta) => (
-                  <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre}</option>
-                ))}
-              </optgroup>
+              {esDstPorSuLocal ? (
+                // D8: el abono de su local entra a la cuenta propia del DST. La matriz no aplica.
+                <optgroup label="Tu cuenta (distribuidor)">
+                  {cuentasDstPropias.map((cuenta) => (
+                    <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre}</option>
+                  ))}
+                </optgroup>
+              ) : (
+                <>
+                  <optgroup label="Cuentas ADMIN">
+                    {cuentasAdminDestino.map((cuenta) => (
+                      <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Cuentas Distribuidor/Local">
+                    {/* Un DST (cuentaMatriz puesta) solo abona a la matriz: sus cuentas no son destino. */}
+                    {(cuentaMatriz ? [] : cuentasEntidad).map((cuenta) => (
+                      <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre}</option>
+                    ))}
+                  </optgroup>
+                </>
+              )}
             </select>
           </div>
 
@@ -438,7 +467,7 @@ export default function Abono({ id, padre }: { id: string; padre: string }) {
             />
           </div>
 
-          {esAbonoDeDeuda && (
+          {esAbonoDeDeuda && !destinoEsDstPropia && (
             <label className="flex items-start gap-2 text-sm">
               <input
                 id="esEntregaEfectivo"

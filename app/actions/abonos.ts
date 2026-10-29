@@ -435,15 +435,31 @@ async function cuentaMatrizParaAbonoWeb(): Promise<{ id: string; nombre: string 
   return matriz
 }
 
-/** Destino del abono para quien no es ADMIN. ADMIN recibe null: ya ve todas las cuentas. */
-export async function getCuentaMatrizAbonoAction(): Promise<{ id: string; nombre: string } | null> {
+/**
+ * Destino del abono que registra un DST (2026-10-29, D8):
+ *   - si abona SU PROPIA deuda (idEntidad = el DST), el destino es la cuenta de la matriz (D97);
+ *   - si registra el abono de UNO DE SUS LOCALES, el destino es su propia cuenta
+ *     («los locales de David le pagan a David»). La matriz no aplica.
+ * ADMIN (y cualquier otro rol) recibe null: ADMIN ya ve todas las cuentas.
+ */
+export type DestinoAbonoDst =
+  | { modo: 'MATRIZ'; cuenta: { id: string; nombre: string } }
+  | { modo: 'PROPIA'; idEntidadDst: string }
+  | null
+
+export async function getDestinoAbonoAction(idEntidad: string): Promise<DestinoAbonoDst> {
   try {
     const supabase = await getServerSupabaseClient()
     const sesionResult = await resolverSesionOperador(supabase)
     if (!sesionResult.ok || sesionResult.sesion.rol !== 'DST') return null
-    return await cuentaMatrizParaAbonoWeb()
+    const sesion = sesionResult.sesion
+    if (String(idEntidad || '').trim() !== sesion.entidadId) {
+      return { modo: 'PROPIA', idEntidadDst: sesion.entidadId }
+    }
+    const matriz = await cuentaMatrizParaAbonoWeb()
+    return matriz ? { modo: 'MATRIZ', cuenta: matriz } : null
   } catch (error) {
-    console.error('Error leyendo la cuenta de la matriz:', error)
+    console.error('Error leyendo el destino del abono:', error)
     return null
   }
 }
@@ -579,7 +595,10 @@ export async function registrarAbonoAction(
     // Paridad v2 (2026-10-29): un DST no ve por RLS la cuenta de la matriz. Si el
     // destino que no pudo leer es exactamente esa cuenta (D97), se acepta como ADMIN.
     // Cualquier otra cuenta ADMIN sigue sin resolverse y se rechaza abajo.
-    if (sesion.rol === 'DST' && !cuentas.has(idCuentaDestino)) {
+    // D8 (2026-10-29): solo cuando el DST abona SU deuda. El abono de su LOC va a la
+    // cuenta propia del DST (ver `esDstPorSuLocal`), nunca a la matriz.
+    const esDstPorSuLocal = sesion.rol === 'DST' && idEntidad !== sesion.entidadId
+    if (sesion.rol === 'DST' && !esDstPorSuLocal && !cuentas.has(idCuentaDestino)) {
       const matriz = await cuentaMatrizParaAbonoWeb()
       if (matriz && matriz.id === idCuentaDestino) {
         cuentas.set(matriz.id, { id: matriz.id, id_entidad: null, rol: 'ADMIN' })
@@ -595,30 +614,49 @@ export async function registrarAbonoAction(
     const origenEsAdmin = cuentaOrigen.rol === 'ADMIN'
     const destinoEsAdmin = cuentaDestino.rol === 'ADMIN'
 
-    // Regla original (`abono/page.tsx:148-154`): solo transferencias cruzadas
-    // ADMIN <-> no-ADMIN. No se toca.
-    const transferenciaValida =
-      (origenEsAdmin && !destinoEsAdmin) || (!origenEsAdmin && destinoEsAdmin)
-    if (!transferenciaValida) {
-      return {
-        success: false,
-        error: 'Solo se permiten transferencias cruzadas entre ADMIN y Distribuidor/Local.'
+    let cuentaNoAdmin: CuentaResuelta
+    if (esDstPorSuLocal) {
+      // D8: el DST registra el abono de SU local. Origen = cuenta del local,
+      // destino = cuenta propia del DST. Nada de ADMIN en ninguno de los dos lados.
+      // Mismo patron que la cobranza del DST sobre su LOC (auditoria.ts: destino
+      // en la cuenta del DST, id_entidad_relacionada = el LOC, sin aprobacion).
+      if (cuentaDestino.id_entidad !== sesion.entidadId) {
+        return {
+          success: false,
+          error: 'El abono de tu local entra a tu propia cuenta, no a la de la matriz ni a otra.'
+        }
       }
-    }
+      if (cuentaOrigen.id_entidad !== idEntidad) {
+        return { success: false, error: 'La cuenta de origen tiene que ser del local.' }
+      }
+      cuentaNoAdmin = cuentaOrigen
+    } else {
+      // Regla original (`abono/page.tsx:148-154`): solo transferencias cruzadas
+      // ADMIN <-> no-ADMIN. No se toca.
+      const transferenciaValida =
+        (origenEsAdmin && !destinoEsAdmin) || (!origenEsAdmin && destinoEsAdmin)
+      if (!transferenciaValida) {
+        return {
+          success: false,
+          error: 'Solo se permiten transferencias cruzadas entre ADMIN y Distribuidor/Local.'
+        }
+      }
 
-    // La cuenta que no es de ADMIN tiene que ser de la entidad del expediente:
-    // es exactamente lo que ofrecia el formulario, ahora verificado en servidor.
-    const cuentaNoAdmin = origenEsAdmin ? cuentaDestino : cuentaOrigen
-    if (cuentaNoAdmin.id_entidad !== idEntidad) {
-      return {
-        success: false,
-        error: 'La cuenta del distribuidor no pertenece a la entidad del movimiento.'
+      // La cuenta que no es de ADMIN tiene que ser de la entidad del expediente:
+      // es exactamente lo que ofrecia el formulario, ahora verificado en servidor.
+      cuentaNoAdmin = origenEsAdmin ? cuentaDestino : cuentaOrigen
+      if (cuentaNoAdmin.id_entidad !== idEntidad) {
+        return {
+          success: false,
+          error: 'La cuenta del distribuidor no pertenece a la entidad del movimiento.'
+        }
       }
     }
 
     // Admin -> Dist: CARGO_DEUDA. Dist -> Admin: ABONO_DEUDA. Regla original.
+    // D8: Local -> su DST tambien es ABONO_DEUDA (baja la deuda del LOC en v_cartera).
     const tipoMovimiento: 'CARGO_DEUDA' | 'ABONO_DEUDA' =
-      origenEsAdmin && !destinoEsAdmin ? 'CARGO_DEUDA' : 'ABONO_DEUDA'
+      !esDstPorSuLocal && origenEsAdmin && !destinoEsAdmin ? 'CARGO_DEUDA' : 'ABONO_DEUDA'
 
     // FASE 11 (D112): la entrega de efectivo. Misma regla que el bot.
     const esEntrega = payload?.esEntregaEfectivo === true
@@ -646,7 +684,9 @@ export async function registrarAbonoAction(
     const conceptoAutomatico =
       tipoMovimiento === 'CARGO_DEUDA'
         ? 'Cargo de Deuda (Admin -> Distribuidor)'
-        : 'Abono de Deuda (Distribuidor -> Admin)'
+        : esDstPorSuLocal
+          ? 'Abono de Deuda (Local -> Distribuidor)'
+          : 'Abono de Deuda (Distribuidor -> Admin)'
     const referencia =
       String(payload?.referencia || '').trim() || (esEntrega ? REFERENCIA_ENTREGA : conceptoAutomatico)
     const nota = String(payload?.nota || '').trim() || null

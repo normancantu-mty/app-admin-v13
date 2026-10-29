@@ -6,7 +6,7 @@
  * de enviar con indicador de carga. Escrito el 2026-10-29 por el ejecutor del Socio.
  */
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { useFormStatus } from 'react-dom'
@@ -18,10 +18,13 @@ const OPCIONES = [
   { v: 'system', l: 'Sistema' }
 ] as const
 
+const sinSuscripcion = () => () => {}
+
 export function TemaSelector() {
   const { theme, setTheme } = useTheme()
-  const [listo, setListo] = useState(false)
-  useEffect(() => setListo(true), [])
+  // Montado en el cliente sin setState en un effect: false en el servidor y en la
+  // hidratacion, true despues (el tema guardado solo existe en el navegador).
+  const listo = useSyncExternalStore(sinSuscripcion, () => true, () => false)
   const actual = listo ? (theme ?? 'system') : 'system'
   return (
     <div className="tema" role="radiogroup" aria-label="Tema">

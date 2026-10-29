@@ -11,22 +11,24 @@
  */
 
 import Link, { useLinkStatus } from 'next/link'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useModalV2 } from './ProveedorModal'
 import { EsqueletoModal } from './Esqueleto'
 import type { TamModal } from './Modal'
 
+const sinSuscripcion = () => () => {}
+/** El nodo del portal; null en el servidor y en la hidratacion (sin setState en un effect). */
+const nodoPortal = () => document.getElementById('v2-portal') ?? document.body
+const sinPortal = () => null
+
 function Pendiente({ titulo, tam }: { titulo?: string; tam?: TamModal }) {
   const { pending } = useLinkStatus()
-  const { esqueletoVisto } = useModalV2()
-  const [destino, setDestino] = useState<HTMLElement | null>(null)
+  const { marcarEsqueletoVisto } = useModalV2()
+  const destino = useSyncExternalStore(sinSuscripcion, nodoPortal, sinPortal)
   useEffect(() => {
-    setDestino(document.getElementById('v2-portal') ?? document.body)
-  }, [])
-  useEffect(() => {
-    if (pending) esqueletoVisto.current = true
-  }, [pending, esqueletoVisto])
+    if (pending) marcarEsqueletoVisto()
+  }, [pending, marcarEsqueletoVisto])
   if (!pending || !destino) return null
   return createPortal(<EsqueletoModal titulo={titulo} tam={tam} />, destino)
 }

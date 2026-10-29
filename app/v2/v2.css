@@ -13,7 +13,11 @@
   --surface-2: #f8f3f1;
   --ink: #221816;
   --ink-2: #5b4b47;
-  --muted: #7d6c67;
+  --muted: #75645f; /* 4.9:1 sobre --bg (era #7d6c67 = 4.37) */
+  /* Texto de cifras y enlaces dentro de las tablas copiadas de la v1 (>= 4.5:1). */
+  --texto-pos: #0f7a0f;
+  --texto-neg: #b42318;
+  --texto-enlace: #a8281d;
   --line: #e6dcd8;
   --line-2: #d6c9c4;
   --chile: #a8281d;
@@ -38,10 +42,10 @@
   /* Paleta de Tailwind re-mapeada (solo dentro de .v2): grises calidos y azul -> chile. */
   --color-white: #fdfbfa;
   --color-gray-50: #faf6f5; --color-gray-100: #f3eeec; --color-gray-200: #e6dcd8; --color-gray-300: #d6c9c4;
-  --color-gray-400: #ad9c97; --color-gray-500: #7d6c67; --color-gray-600: #6b5a56; --color-gray-700: #4f403c;
+  --color-gray-400: #ad9c97; --color-gray-500: #75645f; --color-gray-600: #6b5a56; --color-gray-700: #4f403c;
   --color-gray-800: #2e2321; --color-gray-900: #211917; --color-gray-950: #160f0e;
   --color-slate-50: #faf6f5; --color-slate-100: #f3eeec; --color-slate-200: #e6dcd8; --color-slate-300: #d6c9c4;
-  --color-slate-400: #ad9c97; --color-slate-500: #7d6c67; --color-slate-600: #6b5a56; --color-slate-700: #4f403c;
+  --color-slate-400: #ad9c97; --color-slate-500: #75645f; --color-slate-600: #6b5a56; --color-slate-700: #4f403c;
   --color-slate-800: #2e2321; --color-slate-900: #211917;
   --color-blue-50: #fbefed; --color-blue-100: #f6e3df; --color-blue-200: #ecc9c1; --color-blue-300: #dea095;
   --color-blue-400: #cd6e5f; --color-blue-500: #b9463a; --color-blue-600: #a8281d; --color-blue-700: #8c2017;
@@ -63,6 +67,9 @@ html.dark .v2 {
   --ink: #f4ece9;
   --ink-2: #d2c3be;
   --muted: #a8968f;
+  --texto-pos: #6fd17b;
+  --texto-neg: #f5776e;
+  --texto-enlace: #f08a7a;
   --line: #3a2f2c;
   --line-2: #4e403c;
   --chile: #e8604c;
@@ -100,6 +107,26 @@ html.dark .v2 {
   --color-blue-50: #2a1512; --color-blue-100: #3e1e19; --color-blue-200: #5a2a22; --color-blue-700: #f19a8c; --color-blue-800: #f5b4a9; --color-blue-900: #f9cec7;
   --color-indigo-50: #2a1512; --color-indigo-100: #3e1e19; --color-indigo-200: #5a2a22; --color-indigo-700: #f19a8c; --color-indigo-800: #f5b4a9; --color-indigo-900: #f9cec7;
 }
+/* Contraste (2026-10-29): las clases de TEXTO de cifras y enlaces van a tokens de la
+   paleta. Se apunta a text-*, no a --color-*-600: esos mismos tonos son fondo de
+   botones con texto blanco y no deben aclararse en oscuro. */
+.v2 .text-green-600, .v2 .text-emerald-600 { color: var(--texto-pos); }
+.v2 .text-red-600, .v2 .text-rose-600 { color: var(--texto-neg); }
+.v2 .text-blue-600, .v2 .text-indigo-600 { color: var(--texto-enlace); }
+.v2 .hover\:text-blue-800:hover, .v2 .hover\:text-indigo-800:hover,
+.v2 .hover\:text-blue-900:hover, .v2 .hover\:text-indigo-900:hover { color: var(--ink); }
+/* globals.css (v1) pinta en .dark los grises con la paleta azul de Tailwind
+   (bg-gray-50 = #111827: los encabezados de tabla azul marino). Dentro de la v2
+   mandan los tokens cafes. */
+html.dark .v2 .bg-gray-50 { background-color: var(--color-gray-50); }
+html.dark .v2 .text-gray-900 { color: var(--color-gray-900); }
+html.dark .v2 .text-gray-800 { color: var(--color-gray-800); }
+html.dark .v2 .text-gray-700 { color: var(--color-gray-700); }
+html.dark .v2 .text-gray-600 { color: var(--color-gray-600); }
+html.dark .v2 .text-gray-500 { color: var(--color-gray-500); }
+/* bg-slate-800 + text-white (boton de la v1): en oscuro --color-slate-800 es claro. */
+html.dark .v2 .bg-slate-800 { background-color: var(--color-gray-300); }
+html.dark .v2 .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: var(--color-gray-200); }
 /* text-white sigue siendo blanco en oscuro (botones sobre color). */
 html.dark .v2 .text-white { color: #fff; }
 html.dark .v2 .bg-black\/40, html.dark .v2 .bg-black\/50 { background: rgba(0,0,0,.65); }
@@ -288,6 +315,8 @@ html.dark .v2 .btn.p { color: #1a0d0b; }
 .v2 .btn.vertodo { color: var(--chile); border-color: var(--saldos-line); background: var(--chile-soft); }
 .v2 .vertodo-l { margin-left: auto; color: var(--chile); font-weight: 700; font-size: 13px; }
 .v2 .vertodo-l:hover { text-decoration: underline; }
+/* Oscuro: --chile sobre --chile-soft queda en 4.4:1; el enlace usa el token de enlace (6.1:1). */
+html.dark .v2 .btn.vertodo, html.dark .v2 .vertodo-l { color: var(--texto-enlace); }
 .v2 .kpi.on { border-color: var(--chile); box-shadow: 0 0 0 2px var(--chile-soft); }
 .v2 .enlace-pg { color: var(--chile); font-weight: 700; }
 .v2 .enlace-pg:hover { text-decoration: underline; }

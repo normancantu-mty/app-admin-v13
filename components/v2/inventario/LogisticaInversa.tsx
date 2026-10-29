@@ -31,18 +31,23 @@ export default function LogisticaInversaModal({
   const [open, setOpen] = useState(false)
   const { refrescar } = useModalV2()
   const [tipoMovimiento, setTipoMovimiento] = useState<'MERMA' | 'DEVOLUCION_FISICA'>('MERMA')
-  const [state, formAction, isPending] = useActionState(registrarLogisticaInversaAction, initialState)
+  // v2 (2026-10-29): el cierre tras guardar va en la propia accion, no en un effect
+  // que hace setState al ver `state.success` (render en cascada; lint react-hooks).
+  const [state, formAction, isPending] = useActionState(
+    async (previo: RegistrarLogisticaInversaState, datos: FormData) => {
+      const resultado = await registrarLogisticaInversaAction(previo, datos)
+      if (resultado.success) {
+        setOpen(false)
+        setTipoMovimiento('MERMA')
+        refrescar()
+      }
+      return resultado
+    },
+    initialState
+  )
 
   const isDevolucionFisica = tipoMovimiento === 'DEVOLUCION_FISICA'
   const titulo = useMemo(() => 'Registrar Logística Inversa', [])
-
-  useEffect(() => {
-    if (state.success) {
-      setOpen(false)
-      setTipoMovimiento('MERMA')
-      refrescar()
-    }
-  }, [state.success, refrescar])
 
   useEffect(() => {
     if (!open) return

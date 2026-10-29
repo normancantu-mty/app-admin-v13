@@ -2,7 +2,6 @@
 // Paridad v2: copia de app/dashboard/conteo/CapturaConteo.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
 
 import { useEffect, useState, useTransition } from 'react'
-import { useModalV2 } from '@/components/v2/modal/ProveedorModal'
 import {
   leerLibroDeEntidadAction,
   registrarConteoFisicoAction,
@@ -32,32 +31,16 @@ interface ResultadoVisible {
 }
 
 export function CapturaConteo({ entidades, fija }: { entidades: EntidadParaConteo[]; fija?: string }) {
-  const { marcarCambio } = useModalV2()
-  const [idEntidad, setIdEntidad] = useState('')
+  const [idEntidad, setIdEntidad] = useState(fija ?? '')
   const [fecha, setFecha] = useState(hoyEnMexico())
   const [notas, setNotas] = useState('')
   const [renglones, setRenglones] = useState<RenglonDeLibro[]>([])
   const [contadas, setContadas] = useState<Record<string, string>>({})
   const [resultado, setResultado] = useState<ResultadoVisible | null>(null)
-  const [cargandoLibro, setCargandoLibro] = useState(false)
+  const [cargandoLibro, setCargandoLibro] = useState(Boolean(fija))
   const [guardando, empezarGuardado] = useTransition()
 
-  // Paridad v2: en la ficha del nodo la entidad ya viene elegida.
-  useEffect(() => {
-    if (fija) void elegirEntidad(fija)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fija])
-
-  async function elegirEntidad(id: string) {
-    setIdEntidad(id)
-    setRenglones([])
-    setContadas({})
-    setResultado(null)
-
-    if (!id) return
-
-    setCargandoLibro(true)
-    const libro = await leerLibroDeEntidadAction(id)
+  function aplicarLibro(libro: Awaited<ReturnType<typeof leerLibroDeEntidadAction>>) {
     setCargandoLibro(false)
 
     if (!libro.success) {
@@ -74,6 +57,31 @@ export function CapturaConteo({ entidades, fija }: { entidades: EntidadParaConte
     }
 
     setRenglones(libro.renglones)
+  }
+
+  // Paridad v2: en la ficha del nodo la entidad ya viene elegida (el estado inicial
+  // ya la trae); aqui solo se lee su libro. El setState va en el .then, no en el effect.
+  useEffect(() => {
+    if (!fija) return
+    let vigente = true
+    void leerLibroDeEntidadAction(fija).then((libro) => {
+      if (vigente) aplicarLibro(libro)
+    })
+    return () => {
+      vigente = false
+    }
+  }, [fija])
+
+  async function elegirEntidad(id: string) {
+    setIdEntidad(id)
+    setRenglones([])
+    setContadas({})
+    setResultado(null)
+
+    if (!id) return
+
+    setCargandoLibro(true)
+    aplicarLibro(await leerLibroDeEntidadAction(id))
   }
 
   function guardar() {

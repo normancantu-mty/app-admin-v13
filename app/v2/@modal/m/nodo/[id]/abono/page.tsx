@@ -8,7 +8,8 @@ import Abono from '@/components/v2/nodo/Abono'
 
 export default async function ModalAbono({ params }: { params: Promise<{ id: string }> }) {
   const usuario = await exigirSesionV2()
-  if (usuario.rol === 'SOCIO') notFound()
+  // LOC y SOCIO no operan (el RLS de estas escrituras solo deja a ADMIN y DST): 404 aunque llegue por URL.
+  if (usuario.rol !== 'ADMIN' && usuario.rol !== 'DST') notFound()
   const { id } = await params
   const e = await leerNodoVisible(id, usuario)
   if (!e) notFound()

@@ -52,7 +52,7 @@ function roundTo2(value: number): number {
 }
 
 export default function Venta({ vendedor }: { vendedor?: string | null }) {
-  const { irTrasGuardar, cerrar } = useModalV2()
+  const { irTrasGuardar } = useModalV2()
   const vendedorUrl = vendedor ?? null
   
   const [entidades, setEntidades] = useState<Entidad[]>([])

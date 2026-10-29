@@ -27,12 +27,13 @@ export function Modal({
   padre?: string
   children: ReactNode
 }) {
-  const { cerrar, esqueletoVisto } = useModalV2()
-  const [sinAnim] = useState(() => {
-    const v = esqueletoVisto.current
-    esqueletoVisto.current = false
-    return v
-  })
+  const { cerrar, leerEsqueletoVisto, olvidarEsqueleto } = useModalV2()
+  // Render puro: solo LEE si el esqueleto se vio; el reinicio va en un effect
+  // (en StrictMode el inicializador corre dos veces y no debe mutar nada).
+  const [sinAnim] = useState(leerEsqueletoVisto)
+  useEffect(() => {
+    olvidarEsqueleto()
+  }, [olvidarEsqueleto])
   const caja = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

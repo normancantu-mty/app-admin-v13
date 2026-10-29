@@ -37,7 +37,12 @@ type EstadoModal = {
   irTrasGuardar: (destino?: string) => void
   /** Vuelve a leer el modal abierto (misma ruta, `?act=` nuevo) y marca el cambio. */
   refrescar: () => void
-  esqueletoVisto: { current: boolean }
+  /** El esqueleto de AbrirModal se pinto (el modal real no repite la animacion). */
+  marcarEsqueletoVisto: () => void
+  /** Lee si el esqueleto se vio, sin cambiar nada (se puede llamar en render). */
+  leerEsqueletoVisto: () => boolean
+  /** Olvida el esqueleto ya consumido (en un effect, no en render). */
+  olvidarEsqueleto: () => void
 }
 
 const Ctx = createContext<EstadoModal | null>(null)
@@ -139,9 +144,27 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
     router.replace(conAct(rutaActualSinAct()), { scroll: false })
   }, [router])
 
+  const marcarEsqueletoVisto = useCallback(() => {
+    esqueletoVisto.current = true
+  }, [])
+  const leerEsqueletoVisto = useCallback(() => esqueletoVisto.current, [])
+  const olvidarEsqueleto = useCallback(() => {
+    esqueletoVisto.current = false
+  }, [])
+
   const valor = useMemo(
-    () => ({ alAbrir, marcarCambio, hayCambio, cerrar, irTrasGuardar, refrescar, esqueletoVisto }),
-    [alAbrir, marcarCambio, hayCambio, cerrar, irTrasGuardar, refrescar]
+    () => ({
+      alAbrir,
+      marcarCambio,
+      hayCambio,
+      cerrar,
+      irTrasGuardar,
+      refrescar,
+      marcarEsqueletoVisto,
+      leerEsqueletoVisto,
+      olvidarEsqueleto
+    }),
+    [alAbrir, marcarCambio, hayCambio, cerrar, irTrasGuardar, refrescar, marcarEsqueletoVisto, leerEsqueletoVisto, olvidarEsqueleto]
   )
   return <Ctx.Provider value={valor}>{children}</Ctx.Provider>
 }

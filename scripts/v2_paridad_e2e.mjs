@@ -215,10 +215,8 @@ await paso('anular_inventario', async () => {
   throw new Error('el movimiento no quedo ANULADO')
 })
 
-let ticketDst = null
 await paso('venta_concesion_a_dst', async () => {
   const r = await venta({ vendedor: CEO, comprador: DST_ID, condicion: 'CONCESION', cuenta: 'Efectivo', producto: P750, cantidad: 5 })
-  ticketDst = r.id
   await cerrarTodo()
   return r.nota + '; ticket en modal con Imprimir'
 })
@@ -269,7 +267,7 @@ await paso('cobranza_corte_concesion', async () => {
 await paso('conteo_en_ficha', async () => {
   const antes = await q('conteos_fisicos', `id_entidad=eq.${AEROPUERTO}&select=id`)
   await fichaDesdeCartera(AEROPUERTO)
-  await page.click('[data-testid=ficha-conteo]')
+  await modal().locator('[data-testid=ficha-conteo]').click()
   await page.waitForURL((u) => u.pathname.endsWith('/conteo'), { timeout: 60000 })
   const inp = modal().locator('table input[type=number]').first()
   await inp.waitFor({ timeout: 60000 })
@@ -394,10 +392,16 @@ await paso('panel_dst', async () => {
 await paso('dst_sin_alta', async () => {
   // lib/entidad-servidor.ts (assertPuedeDarDeAlta) + RLS entidades_ins_admin: solo ADMIN da de alta.
   exigir(!(await page.locator('a[href="/v2/m/red/nuevo"]').count()), 'el DST ve el alta')
+  await page.goto(`${BASE}/v2/m/red`)
+  await modal().waitFor({ timeout: 60000 })
+  exigir(!(await modal().locator('[data-testid=red-alta]').count()), 'el DST ve «+ Nuevo miembro» en el modal Red')
+  await page.goto(`${BASE}/v2/red`)
+  await page.waitForLoadState('networkidle')
+  exigir(!(await page.locator('[data-testid=red-pagina-alta]').count()), 'el DST ve «+ Nuevo miembro» en /v2/red')
   const r = await page.goto(`${BASE}/v2/m/red/nuevo`)
   exigir(r.status() === 404, `DST abre el alta: HTTP ${r.status()}`)
   await page.goto(`${BASE}/v2`)
-  return 'sin boton de alta; /v2/m/red/nuevo -> 404'
+  return 'sin boton de alta (panel, modal Red, /v2/red); /v2/m/red/nuevo -> 404'
 })
 
 let ticketLoc = null
@@ -430,7 +434,7 @@ await paso('conteo_local_dst', async () => {
   const antes = await q('conteos_fisicos', `id_entidad=eq.${LOC_ID}&select=id`)
   await page.locator('[data-testid=mis-locales]').locator(`a[href="/v2/m/nodo/${LOC_ID}"]`).click()
   await page.waitForURL((u) => u.pathname === `/v2/m/nodo/${LOC_ID}`, { timeout: 60000 })
-  await page.click('[data-testid=ficha-conteo]')
+  await modal().locator('[data-testid=ficha-conteo]').click()
   await page.waitForURL((u) => u.pathname.endsWith('/conteo'), { timeout: 60000 })
   const inp = modal().locator('table input[type=number]').first()
   await inp.waitFor({ timeout: 60000 })
@@ -456,11 +460,23 @@ await paso('panel_loc', async () => {
 
 await paso('loc_sin_venta', async () => {
   // RLS: transacciones_tickets no tiene INSERT para LOC (la v1 le ofrecia el POS y fallaba).
-  exigir(!(await page.locator('a[href^="/v2/m/venta"]').count()), 'el LOC ve Nueva venta')
+  exigir(!(await page.locator('a[href="/v2/m/venta"], a[href^="/v2/m/venta?"]').count()), 'el LOC ve Nueva venta')
   const r = await page.goto(`${BASE}/v2/m/venta`)
   exigir(r.status() === 404, `LOC abre la venta: HTTP ${r.status()}`)
   await page.goto(`${BASE}/v2`)
   return 'sin Nueva venta; /v2/m/venta -> 404'
+})
+
+await paso('loc_sin_modales_de_operacion', async () => {
+  // El RLS de estas escrituras solo deja a ADMIN y DST: la puerta de la pagina da 404.
+  const codigos = []
+  for (const k of ['abono', 'cobranza', 'conteo', 'devolucion']) {
+    const r = await page.goto(`${BASE}/v2/m/nodo/${LOC_ID}/${k}`)
+    codigos.push(`${k}=${r.status()}`)
+  }
+  await page.goto(`${BASE}/v2`)
+  exigir(codigos.every((c) => c.endsWith('=404')), codigos.join(' '))
+  return codigos.join(' ')
 })
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -507,6 +523,36 @@ await paso('lotes_y_actividad', async () => {
   await abrir('/v2/m/avisos')
   await cerrarTodo()
   return 'lotes, actividad y avisos abren'
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+await entrar('DST')
+
+await paso('abono_de_su_local_a_su_cuenta', async () => {
+  // D8: «los locales de David le pagan a David». Destino = cuenta propia del DST; la matriz no aparece.
+  const [cuentaDst] = await q('cuentas_financieras', `id_entidad=eq.${DST_ID}&select=id,nombre`)
+  exigir(cuentaDst, 'el DST no tiene cuenta propia en la copia')
+  await page.goto(`${BASE}/v2/m/nodo/${LOC_ID}/abono`)
+  await modal().waitFor({ timeout: 60000 })
+  await page.waitForFunction(() => document.querySelectorAll('#destino option').length > 1, null, { timeout: 60000 })
+  const ids = await page.locator('#destino option').evaluateAll((os) => os.map((o) => o.value).filter(Boolean))
+  exigir(ids.length > 0 && ids.every((v) => v === cuentaDst.id), `destinos ofrecidos: ${ids.join(' | ')}`)
+  if (!(await page.inputValue('#origen'))) await page.selectOption('#origen', { index: 1 })
+  if (!(await page.inputValue('#destino'))) await page.selectOption('#destino', cuentaDst.id)
+  await page.fill('#monto', '137')
+  await page.click('text=Guardar Transferencia')
+  await page.waitForURL((u) => !u.pathname.endsWith('/abono'), { timeout: 60000 })
+  let f = []
+  for (let i = 0; i < 30 && !f.length; i++) {
+    f = await q('finanzas_ledger', `${desde}&id_entidad_relacionada=eq.${LOC_ID}&tipo_movimiento=eq.ABONO_DEUDA&usuario_creador=eq.${encodeURIComponent(U.DST.email)}&select=id,monto,categoria,id_cuenta_destino`)
+    if (!f.length) await page.waitForTimeout(500)
+  }
+  const suma = f.reduce((a, x) => a + Number(x.monto), 0)
+  exigir(Math.abs(suma - 137) < 0.005, `base: ${JSON.stringify(f)}`)
+  exigir(f.every((x) => x.id_cuenta_destino === cuentaDst.id), `destino en la base: ${JSON.stringify(f)}`)
+  exigir(f.every((x) => x.categoria === 'ABONO_REAL'), `categoria: ${JSON.stringify(f)}`)
+  await page.goto(`${BASE}/v2`)
+  return `${f.length} fila(s), 137 a ${cuentaDst.nombre}, ABONO_REAL`
 })
 
 // ════════════════════════════════════════════════════════════════════════════

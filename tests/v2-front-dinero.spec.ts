@@ -314,12 +314,64 @@ function exigeMandoAntesDeLeer(fuente: string): boolean {
   return lectura < 0 || puerta < lectura
 }
 
+/**
+ * Panel unico (2026-10-29): DST y LOC tambien entran a /v2, asi que no toda pagina
+ * usa `exigirMandoV2()`. La que usa `exigirSesionV2()` tiene que filtrar por rol
+ * justo despues -- un `if (... rol ...) notFound()/redirect(...)` -- y ANTES de
+ * abrir el cliente de la base. Las unicas sin filtro por rol son las de
+ * PAGINAS_ABIERTAS: abiertas a todo rol a proposito (el RLS o `leer*Visible`
+ * recortan lo que ve cada quien).
+ */
+function exigeSesionYRolAntesDeLeer(fuente: string): boolean {
+  const vivo = codigoVivo(fuente)
+  const puerta = vivo.indexOf('await exigirSesionV2()')
+  if (puerta < 0) return false
+  const lectura = vivo.indexOf('getServerSupabaseClient()')
+  const filtro = /^\s*if\s*\(.*\brol\b.*\)\s*(notFound\(\)|redirect\()/m.exec(vivo.slice(puerta))
+  if (!filtro) return false
+  const posFiltro = puerta + filtro.index
+  return lectura < 0 || posFiltro < lectura
+}
+
+/** Solo la puerta de sesion, sin filtro por rol (para las PAGINAS_ABIERTAS). */
+function exigeSesionAntesDeLeer(fuente: string): boolean {
+  const vivo = codigoVivo(fuente)
+  const puerta = vivo.indexOf('await exigirSesionV2()')
+  if (puerta < 0) return false
+  const lectura = vivo.indexOf('getServerSupabaseClient()')
+  return lectura < 0 || puerta < lectura
+}
+
+/** Una pagina sin un solo import no puede leer la base ni pintar nada (los `return null` del slot). */
+function noLeeNada(fuente: string): boolean {
+  return !/^\s*import\s/m.test(codigoVivo(fuente))
+}
+
+/** Abiertas a todo rol con sesion, a proposito. Ruta relativa a app/v2, con '/'. */
+const PAGINAS_ABIERTAS = new Set([
+  'layout.tsx', // marco comun; cada pagina vuelve a filtrar
+  'page.tsx', // el panel unico: Panel.tsx elige PanelMando o PanelNodo por rol
+  'default.tsx', // el mismo panel en navegacion dura
+  '@modal/m/ticket/[id]/page.tsx', // el RLS oculta el ticket ajeno («Ticket no encontrado»)
+  '@modal/m/nodo/[id]/page.tsx', // leerFichaVisible: lo ajeno es 404
+  '@modal/m/avisos/page.tsx', // AvisosVista recibe esMando; el RLS recorta
+  '@modal/m/ventas/page.tsx', // «Mis ventas»: el RLS recorta
+  'red/[id]/page.tsx' // ficha completa: lo ajeno es 404
+])
+
 function archivosDeV2(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name)
     if (e.isDirectory()) return archivosDeV2(p)
-    return e.name === 'page.tsx' || e.name === 'layout.tsx' ? [p] : []
+    return e.name === 'page.tsx' || e.name === 'layout.tsx' || e.name === 'default.tsx' ? [p] : []
   })
+}
+
+function puertaCorrecta(relativa: string, fuente: string): boolean {
+  if (noLeeNada(fuente)) return true
+  if (exigeMandoAntesDeLeer(fuente)) return true
+  if (PAGINAS_ABIERTAS.has(relativa)) return exigeSesionAntesDeLeer(fuente)
+  return exigeSesionYRolAntesDeLeer(fuente)
 }
 
 test.describe('Front v2 · rol ADMIN/SOCIO en el layout y en cada pagina', () => {
@@ -329,16 +381,37 @@ test.describe('Front v2 · rol ADMIN/SOCIO en el layout y en cada pagina', () =>
     for (const r of ['DST', 'LOC', 'SUB-ADMIN', '', null, undefined]) expect(esRolDeMandoV2(r), String(r)).toBe(false)
   })
 
-  test('cada page.tsx y layout.tsx de app/v2 llama a exigirMandoV2() antes de leer la base', () => {
-    const archivos = archivosDeV2(path.join(process.cwd(), 'app', 'v2'))
+  test('cada page.tsx, layout.tsx y default.tsx de app/v2 pasa por una puerta con chequeo de rol antes de leer la base', () => {
+    const raiz = path.join(process.cwd(), 'app', 'v2')
+    const archivos = archivosDeV2(raiz)
     expect(archivos.filter((a) => a.endsWith('page.tsx')).length).toBeGreaterThanOrEqual(3)
-    for (const a of archivos) expect(exigeMandoAntesDeLeer(fs.readFileSync(a, 'utf-8')), a).toBe(true)
+    const relativas = new Set<string>()
+    for (const a of archivos) {
+      const rel = path.relative(raiz, a).split(path.sep).join('/')
+      relativas.add(rel)
+      expect(puertaCorrecta(rel, fs.readFileSync(a, 'utf-8')), a).toBe(true)
+    }
+    // Una entrada de PAGINAS_ABIERTAS que ya no existe es una excepcion muerta: se quita.
+    for (const abierta of PAGINAS_ABIERTAS) expect(relativas.has(abierta), `PAGINAS_ABIERTAS: ${abierta}`).toBe(true)
   })
 
-  test('control negativo: una pagina sin la puerta, o con la puerta despues de leer, no pasa', () => {
+  test('control negativo: una pagina sin la puerta, con la puerta despues de leer, o sin filtro por rol, no pasa', () => {
     expect(exigeMandoAntesDeLeer('const c = await getServerSupabaseClient()')).toBe(false)
     expect(exigeMandoAntesDeLeer('const c = await getServerSupabaseClient()\nawait exigirMandoV2()')).toBe(false)
     expect(exigeMandoAntesDeLeer('// await exigirMandoV2()\nconst c = await getServerSupabaseClient()')).toBe(false)
+    const sinRol = "import x from 'y'\nconst usuario = await exigirSesionV2()\nconst c = await getServerSupabaseClient()"
+    expect(puertaCorrecta('@modal/m/gasto/page.tsx', sinRol)).toBe(false)
+    const rolTarde =
+      "import x from 'y'\nconst usuario = await exigirSesionV2()\nconst c = await getServerSupabaseClient()\nif (usuario.rol !== 'ADMIN') notFound()"
+    expect(puertaCorrecta('@modal/m/gasto/page.tsx', rolTarde)).toBe(false)
+    const comentado = "import x from 'y'\nconst usuario = await exigirSesionV2()\n// if (usuario.rol !== 'ADMIN') notFound()"
+    expect(puertaCorrecta('@modal/m/gasto/page.tsx', comentado)).toBe(false)
+    const sinPuerta = "import x from 'y'\nexport default function P() { return <X /> }"
+    expect(puertaCorrecta('@modal/m/gasto/page.tsx', sinPuerta)).toBe(false)
+    expect(puertaCorrecta('page.tsx', sinPuerta)).toBe(false)
+    const bien =
+      "import x from 'y'\nconst usuario = await exigirSesionV2()\nif (!puedeCapturarMatriz(usuario.rol)) notFound()\nconst c = await getServerSupabaseClient()"
+    expect(puertaCorrecta('@modal/m/gasto/page.tsx', bien)).toBe(true)
   })
 })
 

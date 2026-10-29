@@ -26,7 +26,8 @@ export default async function ModalRed() {
       acciones={
         <>
           <VerTodo href="/v2/red" />
-          {usuario.rol !== 'SOCIO' ? (
+          {/* Solo ADMIN da altas (red/nuevo le da 404 a DST y SOCIO): sin boton muerto. */}
+          {esAdmin ? (
             <AbrirModal className="btn p" href="/v2/m/red/nuevo" titulo="Nuevo miembro" tam="md" data-testid="red-alta">
               + Nuevo miembro
             </AbrirModal>
