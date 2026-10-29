@@ -1,7 +1,8 @@
 // Front v2 LOCAL: capturas y comprobacion de cifras por pantalla (SOLO LECTURA).
 // Escrito el 2026-10-29 por el ejecutor del Front v2 (lanzado por el Socio).
 //
-//   E2E_BASE_URL=http://localhost:3002 node scripts/v2_front_capturas.mjs <carpeta> [ruta ...]
+//   E2E_ADMIN_EMAIL=... E2E_ADMIN_PASSWORD=... E2E_BASE_URL=http://localhost:3002 \
+//     node scripts/v2_front_capturas.mjs <carpeta> [ruta ...]
 //
 // Entra como admin, abre cada ruta /v2, falla si hay error de Next o HTTP >= 400,
 // imprime las cifras que encuentra y guarda captura a 1440 y a 390 px.
@@ -15,6 +16,31 @@ if (!/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(B)) { console.error('URL no 
 const OUT = process.argv[2] || 'capturas_front_v2'
 const RUTAS = process.argv.slice(3).length ? process.argv.slice(3) : ['/v2']
 const ESPERADAS = (process.env.V2_ESPERADAS || '').split(';').map((s) => s.trim()).filter(Boolean)
+
+// Credenciales: E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD (los nombres de la bateria,
+// ver tests/auth.setup.ts). Si no vienen en el entorno, se leen del .env.local del
+// repo SI existe. Sin ellas, falla con un mensaje claro: ninguna clave va en el
+// codigo (correccion de la auditoria, 2026-10-29).
+function leerEnvLocal() {
+  const p = new URL('../.env.local', import.meta.url)
+  if (!fs.existsSync(p)) return {}
+  const out = {}
+  for (const l of fs.readFileSync(p, 'utf-8').split(/\r?\n/)) {
+    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(l)
+    if (m) out[m[1]] = m[2].replace(/^['"]|['"]$/g, '')
+  }
+  return out
+}
+const envLocal = leerEnvLocal()
+const EMAIL = process.env.E2E_ADMIN_EMAIL || envLocal.E2E_ADMIN_EMAIL
+const CLAVE = process.env.E2E_ADMIN_PASSWORD || envLocal.E2E_ADMIN_PASSWORD
+if (!EMAIL || !CLAVE) {
+  console.error(
+    'Faltan E2E_ADMIN_EMAIL y E2E_ADMIN_PASSWORD. Ponlas en el entorno o en .env.local ' +
+      '(los usuarios de prueba locales estan en docs/V2_LOCAL.md).'
+  )
+  process.exit(2)
+}
 fs.mkdirSync(OUT, { recursive: true })
 
 const br = await chromium.launch()
@@ -23,8 +49,8 @@ const pg = await ctx.newPage()
 const errores = []
 pg.on('pageerror', (e) => errores.push(String(e)))
 await pg.goto(B + '/login')
-await pg.fill('input[type=email]', 'normancantu@gmail.com')
-await pg.fill('input[type=password]', 'v2-local-admin')
+await pg.fill('input[type=email]', EMAIL)
+await pg.fill('input[type=password]', CLAVE)
 await pg.click('button[type=submit]')
 await pg.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 60000 })
 

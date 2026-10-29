@@ -39,9 +39,10 @@ export const RUTA_LOGIN = '/login'
 export const CABECERA_RUTA = 'x-ruta-actual'
 
 /**
- * Las tres zonas que hoy exigen sesion. Son exactamente las tres que envolvian
- * su layout en `<ProtectedRoute>`: `/dashboard`, `/pos` y `/ticket`. No se
- * agrega ni se quita ninguna aqui sin mirar `tests/puerta-servidor.spec.ts`.
+ * Las cuatro zonas que hoy exigen sesion: las tres que envolvian su layout en
+ * `<ProtectedRoute>` (`/dashboard`, `/pos` y `/ticket`) y `/v2`, el Front v2
+ * (2026-10-29). No se agrega ni se quita ninguna aqui sin mirar
+ * `tests/puerta-servidor.spec.ts`.
  *
  * `/api/**` queda FUERA a proposito: el bot de Telegram entra por
  * `app/api/bot/**` con su propio sello (`lib/bot-sello.ts`), no con cookies de
