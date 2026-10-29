@@ -18,8 +18,9 @@ import Historial from './Historial'
 export function FichaVista({ ficha, usuario, propia = false }: { ficha: FichaNodo; usuario: CurrentUser; propia?: boolean }) {
   const { entidad: e } = ficha
   const id = e.id
-  // Igual que la v1: todo el que puede ver la ficha opera, salvo SOCIO (solo lectura).
-  const opera = usuario.rol !== 'SOCIO' && usuario.rol !== 'SUB-ADMIN'
+  // Operan ADMIN y DST. SOCIO lee; el LOC no opera: la RLS le niega tickets y cobranza,
+  // conteo y devolucion son de ADMIN/DST (la v1 se los mostraba y fallaban).
+  const opera = usuario.rol === 'ADMIN' || usuario.rol === 'DST'
   const aFavor = ficha.saldoPendiente < 0
 
   return (

@@ -315,7 +315,7 @@ await paso('anular_finanzas_desde_cuenta', async () => {
   const [g] = await q('finanzas_ledger', `categoria_gasto=eq.${encodeURIComponent(`E2E gasto ${RUN}`)}&select=id`)
   exigir(g, 'no hay gasto previo')
   await abrir('/v2/m/cuenta/efectivo')
-  const fila = modal().locator('tr').filter({ hasText: `E2E gasto ${RUN}` }).first()
+  const fila = modal().locator('tr').filter({ hasText: '123.45' }).first()
   await fila.locator('button:has-text("Anular")').click()
   for (let i = 0; i < 30; i++) {
     const [r] = await q('finanzas_ledger', `id=eq.${g.id}&select=status`)
@@ -354,7 +354,7 @@ await paso('red_seguimiento_y_editar', async () => {
   const tel = `49200${RUN}`
   const fila = modal().locator('tr').filter({ hasText: 'Luis Rodriguez' }).first()
   await fila.locator('button', { hasText: /Editar/ }).first().click()
-  const campoTel = page.getByLabel('Teléfono').last()
+  const campoTel = page.locator('label:text-is("Teléfono") + input').last()
   await campoTel.fill(tel)
   await page.click('button:has-text("Guardar cambios")')
   for (let i = 0; i < 30; i++) {
@@ -400,9 +400,11 @@ await paso('dst_sin_alta', async () => {
   return 'sin boton de alta; /v2/m/red/nuevo -> 404'
 })
 
+let ticketLoc = null
 const LOC_ID = (await q('entidades', `email=eq.${encodeURIComponent(U.LOC.email)}&select=id`))[0]?.id
 await paso('venta_dst_a_su_local', async () => {
   const r = await venta({ vendedor: DST_ID, comprador: LOC_ID, condicion: 'CONCESION', producto: P750, cantidad: 2 })
+  ticketLoc = r.id
   await cerrarTodo()
   return r.nota
 })
@@ -413,7 +415,8 @@ await paso('abono_dst_pendiente', async () => {
   await page.waitForFunction(() => document.querySelectorAll('#destino option').length > 1, null, { timeout: 60000 })
   const destinos = await page.locator('#destino option').allTextContents()
   exigir(!destinos.some((t) => /Gilberto/i.test(t)), `ofrece solo_egresos: ${destinos.join(' | ')}`)
-  await page.selectOption('#origen', { index: 1 }).catch(() => {})
+  if (!(await page.inputValue('#origen'))) await page.selectOption('#origen', { index: 1 })
+  if (!(await page.inputValue('#destino'))) await page.selectOption('#destino', { index: 1 })
   await page.fill('#monto', '131')
   await page.selectOption('#metodoPago', 'EFECTIVO').catch(() => {})
   await page.click('text=Guardar Transferencia')
@@ -451,12 +454,13 @@ await paso('panel_loc', async () => {
   return 'su ficha, sin Total ganado'
 })
 
-let ticketLoc = null
-await paso('venta_loc_publico', async () => {
-  const r = await venta({ vendedor: LOC_ID, condicion: 'CONTADO', producto: P750, cantidad: 1 })
-  ticketLoc = r.id
-  await cerrarTodo()
-  return r.nota
+await paso('loc_sin_venta', async () => {
+  // RLS: transacciones_tickets no tiene INSERT para LOC (la v1 le ofrecia el POS y fallaba).
+  exigir(!(await page.locator('a[href^="/v2/m/venta"]').count()), 'el LOC ve Nueva venta')
+  const r = await page.goto(`${BASE}/v2/m/venta`)
+  exigir(r.status() === 404, `LOC abre la venta: HTTP ${r.status()}`)
+  await page.goto(`${BASE}/v2`)
+  return 'sin Nueva venta; /v2/m/venta -> 404'
 })
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -477,7 +481,7 @@ await paso('aprobar_abono_dst', async () => {
 })
 
 await paso('anular_ticket_desde_ficha', async () => {
-  exigir(ticketLoc, 'sin ticket del LOC')
+  exigir(ticketLoc, 'sin ticket DST -> LOC')
   await abrir('/v2/m/red')
   await modal().locator(`a[href="/v2/m/nodo/${LOC_ID}"]`).first().click()
   await page.waitForURL((u) => u.pathname === `/v2/m/nodo/${LOC_ID}`, { timeout: 60000 })
@@ -486,7 +490,7 @@ await paso('anular_ticket_desde_ficha', async () => {
   await botones.first().waitFor({ timeout: 60000 })
   await botones.first().click()
   for (let i = 0; i < 40; i++) {
-    const t = await q('transacciones_tickets', `id_vendedor=eq.${LOC_ID}&select=id,status&order=fecha_transaccion.desc&limit=3`)
+    const t = await q('transacciones_tickets', `id=eq.${ticketLoc}&select=id,status`)
     const f = await q('finanzas_ledger', `${desde}&status=eq.ANULADO&select=id`)
     if (t.some((x) => x.status === 'ANULADO') || f.length > 1) { await cerrarTodo(); return `ficha -> Anular: ${t.map((x) => x.status).join(',')}` }
     await page.waitForTimeout(500)

@@ -20,9 +20,13 @@ export function puedeCapturarMatriz(rol: string | null | undefined): boolean {
   return rol === 'ADMIN'
 }
 
-/** Vender por el POS: ADMIN, DST y LOC (las mismas puertas que `procesarVentaPOS`). */
+/**
+ * Vender por el POS: ADMIN y DST. El LOC no: la RLS de `transacciones_tickets` solo tiene
+ * INSERT para ADMIN y DST (tickets_ins_admin / tickets_ins_dst), asi que su venta fallaba
+ * en la v1 con "violates row-level security". Abrirselo es una decision de esquema, no de UI.
+ */
 export function puedeVender(rol: string | null | undefined): boolean {
-  return rol === 'ADMIN' || rol === 'DST' || rol === 'LOC'
+  return rol === 'ADMIN' || rol === 'DST'
 }
 
 /** Operar sobre un nodo (abono, conteo, alta de local): ADMIN y DST (el DST, solo en su red). */
