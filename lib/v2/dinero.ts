@@ -71,6 +71,30 @@ export function efectoEnCuentas(m: MovimientoDinero, cuentas: ReadonlySet<string
   return total
 }
 
+/** Fecha del corte: el SALDO_INICIAL mas antiguo que trae la base. null si no hay. */
+export function corteDeArranque(movs: Pick<MovimientoDinero, 'tipo_movimiento' | 'fecha_movimiento'>[]): string | null {
+  const fechas = movs
+    .filter((m) => m.tipo_movimiento === 'SALDO_INICIAL' && m.fecha_movimiento)
+    .map((m) => m.fecha_movimiento as string)
+  if (fechas.length === 0) return null
+  return fechas.reduce((a, b) => (new Date(b) < new Date(a) ? b : a))
+}
+
+export const TIPOS_GASTO = ['GASTO_OPERATIVO', 'COMPRA_INSUMOS'] as const
+const GASTO = new Set<string>(TIPOS_GASTO)
+
+/**
+ * Gastos capturados DESDE EL CORTE (fecha >= corte), con el mismo filtro de filas
+ * que `saldo_cuenta` (ACTIVO o APPROVED, sin ABONO_PENDIENTE). Antes se contaban
+ * solo los del mes en curso y solo ACTIVO, con un rotulo que decia «desde el corte».
+ */
+export function gastosDesdeCorte(movs: MovimientoDinero[], corte: string): number {
+  const desde = new Date(corte)
+  return movs.filter(
+    (m) => GASTO.has(m.tipo_movimiento) && cuentaParaSaldo(m) && m.fecha_movimiento && new Date(m.fecha_movimiento) >= desde
+  ).length
+}
+
 /** Saldo de una cuenta reconstruido desde sus movimientos. */
 export function saldoDesdeMovimientos(movs: MovimientoDinero[], idCuenta: string): number {
   return redondear(movs.reduce((acc, m) => acc + efectoEnCuenta(m, idCuenta), 0))

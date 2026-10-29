@@ -12,7 +12,7 @@ import Link from 'next/link'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { leerTablero, slugDeClase } from '@/lib/v2/lecturas'
-import { cascadaDeCaja, cuadra, dineroPorMes, redondear } from '@/lib/v2/dinero'
+import { cascadaDeCaja, corteDeArranque, cuadra, dineroPorMes, gastosDesdeCorte, redondear } from '@/lib/v2/dinero'
 import { fechaHoraMx, mesMx, mxn, mxn0, num, rangoMeses } from '@/lib/v2/formato'
 import { esDeudaConLaMatriz, totalesCarteraVista } from '@/lib/vistas'
 import { diasDesde } from '@/lib/actividad'
@@ -62,8 +62,8 @@ export default async function InicioV2() {
   const oSinDato = (n: number | null) => (n === null ? 'Sin dato' : mxn(n))
 
   // ── Corte y meses ──
-  const arranque = d.movimientos.filter((m) => m.tipo_movimiento === 'SALDO_INICIAL' && m.fecha_movimiento)
-  const corte = arranque.map((m) => m.fecha_movimiento!).sort()[0] ?? null
+  // El corte sale de la base: el SALDO_INICIAL mas antiguo de las cuentas de la matriz.
+  const corte = corteDeArranque(d.movimientos)
   const mesHoy = mesMx(ahora)
   const meses = rangoMeses(corte ? mesMx(corte) : mesHoy, mesHoy)
   const porMes = dineroPorMes(d.movimientos, idsMatriz, meses)
@@ -112,13 +112,8 @@ export default async function InicioV2() {
   const vencida = deudoresMatriz.filter((f) => (f.dias_sin_abono ?? 0) > 60)
   const montoVencido = vencida.reduce((a, f) => a + Number(f.deuda), 0)
   const enPiso = d.cartera.reduce((a, f) => a + Number(f.estimado_en_piso), 0)
-  const gastosMes = d.movimientos.filter(
-    (m) =>
-      ['GASTO_OPERATIVO', 'COMPRA_INSUMOS'].includes(m.tipo_movimiento) &&
-      m.status === 'ACTIVO' &&
-      m.fecha_movimiento &&
-      mesMx(m.fecha_movimiento) === mesHoy
-  ).length
+  // Desde el corte y con el filtro de saldo_cuenta (ACTIVO/APPROVED, sin ABONO_PENDIENTE).
+  const gastosCorte = corte ? gastosDesdeCorte(d.movimientos, corte) : null
   // Dias de calendario en hora de Mexico: la misma regla que `v_cartera` y `lib/actividad.ts`.
   const diasDesdeCorte = corte ? diasDesde(corte, ahora) : null
   const semaforo: { luz: Luz; titulo: string; detalle: string; estado: string }[] = [
@@ -140,12 +135,19 @@ export default async function InicioV2() {
       detalle: hayVentas ? `${num(totalBotellas)} pzas en la matriz` : `${num(totalBotellas)} pzas · sin ventas para calcular meses`,
       estado: hayVentas ? 'Bien' : 'Sin dato'
     },
-    {
-      luz: gastosMes ? 'verde' : 'ambar',
-      titulo: 'Gastos capturados',
-      detalle: gastosMes ? `${gastosMes} este mes` : `0 desde el corte${diasDesdeCorte !== null ? ` (${diasDesdeCorte} d)` : ''}`,
-      estado: gastosMes ? 'Bien' : 'Revisar'
-    },
+    gastosCorte === null
+      ? {
+          luz: 'gris',
+          titulo: 'Gastos capturados',
+          detalle: 'Sin fecha de corte: la base no trae SALDO_INICIAL',
+          estado: 'Sin dato'
+        }
+      : {
+          luz: gastosCorte ? 'verde' : 'ambar',
+          titulo: 'Gastos capturados',
+          detalle: `${gastosCorte} desde el corte (${diasDesdeCorte} d)`,
+          estado: gastosCorte ? 'Bien' : 'Revisar'
+        },
     {
       luz: 'gris',
       titulo: 'Caja sin conciliar',
@@ -171,7 +173,7 @@ export default async function InicioV2() {
       href: '/v2/cuenta/transferencias'
     })
   if (!d.conteosFisicos) alertas.push({ nivel: 'warn', texto: `Concesión sin contar: ${num(enPiso)} pzas en ${d.cartera.length} nodos`, href: '/dashboard/conteo' })
-  if (!gastosMes) alertas.push({ nivel: 'warn', texto: 'Sin gastos capturados desde el corte', href: '/dashboard/finanzas/nuevo' })
+  if (gastosCorte === 0) alertas.push({ nivel: 'warn', texto: 'Sin gastos capturados desde el corte', href: '/dashboard/finanzas/nuevo' })
   if (cart.deudaConDistribuidor > 0)
     alertas.push({
       nivel: 'info',

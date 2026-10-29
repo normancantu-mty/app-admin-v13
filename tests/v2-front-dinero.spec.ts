@@ -12,10 +12,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   cascadaDeCaja,
+  corteDeArranque,
   cuadra,
   dineroPorMes,
   efectoEnCuenta,
   egresosPorCategoria,
+  gastosDesdeCorte,
   saldoDesdeMovimientos,
   CATEGORIA_QUE_NO_CUENTA,
   STATUS_QUE_CUENTAN,
@@ -220,6 +222,27 @@ test.describe('Front v2 · conversion 95/5 en la cascada y por mes', () => {
     expect(cats).toHaveLength(1)
     expect(cats[0].categoria).toBe('Financieros')
     expect(cats[0].subcategorias[0].subcategoria).toBe('Comisión por conversión de transferencias')
+  })
+})
+
+test.describe('Front v2 · gastos capturados desde el corte', () => {
+  test('el corte es el SALDO_INICIAL mas antiguo; sin SALDO_INICIAL no hay corte', () => {
+    expect(corteDeArranque(ARRANQUE)).toBe('2026-10-28T05:59:00Z')
+    expect(corteDeArranque([mov({ tipo_movimiento: 'CARGO_DEUDA' })])).toBeNull()
+  })
+
+  test('cuenta desde la fecha del corte (no solo el mes) con el filtro de saldo_cuenta', () => {
+    const corte = '2026-10-28T05:59:00Z'
+    const movs = [
+      ...ARRANQUE,
+      mov({ monto: 10, id_cuenta_origen: EF, fecha_movimiento: '2026-10-29T12:00:00Z' }), // cuenta
+      mov({ tipo_movimiento: 'COMPRA_INSUMOS', monto: 10, id_cuenta_origen: EF, status: 'APPROVED', fecha_movimiento: '2026-11-03T12:00:00Z' }), // cuenta, otro mes
+      mov({ monto: 10, id_cuenta_origen: EF, status: 'ANULADO', fecha_movimiento: '2026-10-29T12:00:00Z' }), // no
+      mov({ monto: 10, id_cuenta_origen: EF, categoria: 'ABONO_PENDIENTE', fecha_movimiento: '2026-10-29T12:00:00Z' }), // no
+      mov({ monto: 10, id_cuenta_origen: EF, fecha_movimiento: '2026-10-27T12:00:00Z' }), // antes del corte: no
+      mov({ tipo_movimiento: 'EGRESO_TRASPASO', monto: 10, id_cuenta_destino: TR, fecha_movimiento: '2026-10-29T12:00:00Z' }) // no es gasto
+    ]
+    expect(gastosDesdeCorte(movs, corte)).toBe(2)
   })
 })
 
