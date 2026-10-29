@@ -22,8 +22,13 @@ export const TIPOS_EGRESO = [
   'EGRESO_TRASPASO'
 ] as const
 
+/** El WHERE de `saldo_cuenta`: status que cuentan y la categoria que nunca cuenta. */
+export const STATUS_QUE_CUENTAN = ['ACTIVO', 'APPROVED'] as const
+export const CATEGORIA_QUE_NO_CUENTA = 'ABONO_PENDIENTE'
+
 const ING = new Set<string>(TIPOS_INGRESO)
 const EGR = new Set<string>(TIPOS_EGRESO)
+const STATUS_OK = new Set<string>(STATUS_QUE_CUENTAN)
 
 export interface MovimientoDinero {
   id: string
@@ -43,7 +48,7 @@ export interface MovimientoDinero {
 
 /** ¿La fila cuenta para el saldo? Mismo WHERE que `saldo_cuenta`. */
 export function cuentaParaSaldo(m: Pick<MovimientoDinero, 'status' | 'categoria'>): boolean {
-  return (m.status === 'ACTIVO' || m.status === 'APPROVED') && m.categoria !== 'ABONO_PENDIENTE'
+  return STATUS_OK.has(m.status) && m.categoria !== CATEGORIA_QUE_NO_CUENTA
 }
 
 /** Efecto con signo de una fila sobre UNA cuenta. 0 si no la toca. */

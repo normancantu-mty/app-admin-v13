@@ -17,6 +17,8 @@ import {
   efectoEnCuenta,
   egresosPorCategoria,
   saldoDesdeMovimientos,
+  CATEGORIA_QUE_NO_CUENTA,
+  STATUS_QUE_CUENTAN,
   TIPOS_EGRESO,
   TIPOS_INGRESO,
   type MovimientoDinero
@@ -59,13 +61,82 @@ const ARRANQUE = [
   mov({ tipo_movimiento: 'CARGO_DEUDA', monto: 11327, categoria: 'ARRANQUE' })
 ]
 
+// ── Paridad con la funcion SQL ──────────────────────────────────────────────
+// Se busca la definicion VIGENTE de `saldo_cuenta` en TODAS las migraciones (la
+// ultima por nombre de archivo que la crea o la reemplaza; si despues alguna la
+// borra sin recrearla, la prueba falla) y se comparan sus listas de tipos como
+// CONJUNTOS con las de `lib/v2/dinero.ts`. Antes solo se miraba que cada tipo
+// apareciera entre comillas en un archivo fijo: un tipo cambiado de lista no la
+// tumbaba.
+const DIR_MIGRACIONES = path.join(process.cwd(), 'supabase/migrations')
+const RE_CREA = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?saldo_cuenta\s*\(/gi
+const RE_BORRA = /DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?(?:public\.)?saldo_cuenta\b/gi
+
+function definicionVigenteDeSaldoCuenta(): { archivo: string; cuerpo: string } {
+  const archivos = fs.readdirSync(DIR_MIGRACIONES).filter((f) => f.endsWith('.sql')).sort()
+  let ultimo: { archivo: string; sql: string; idx: number; tipo: 'crea' | 'borra' } | null = null
+  for (const archivo of archivos) {
+    const sql = fs.readFileSync(path.join(DIR_MIGRACIONES, archivo), 'utf-8')
+    const eventos = [
+      ...[...sql.matchAll(RE_CREA)].map((m) => ({ idx: m.index ?? 0, tipo: 'crea' as const })),
+      ...[...sql.matchAll(RE_BORRA)].map((m) => ({ idx: m.index ?? 0, tipo: 'borra' as const }))
+    ].sort((a, b) => a.idx - b.idx)
+    for (const e of eventos) ultimo = { archivo, sql, ...e }
+  }
+  if (!ultimo) throw new Error('Ninguna migracion crea saldo_cuenta')
+  if (ultimo.tipo === 'borra') throw new Error(`${ultimo.archivo} borra saldo_cuenta y nadie la recrea despues`)
+  const resto = ultimo.sql.slice(ultimo.idx)
+  const cuerpo = /\bAS\s+(\$[A-Za-z_]*\$)([\s\S]*?)\1/.exec(resto)?.[2]
+  if (!cuerpo) throw new Error(`No encontre el cuerpo $$...$$ de saldo_cuenta en ${ultimo.archivo}`)
+  return { archivo: ultimo.archivo, cuerpo }
+}
+
+/** De `WHEN x.tipo_movimiento IN (...) ... THEN [-]x.monto`: el signo dice la lista. */
+function listasDeTipos(cuerpo: string): { ingreso: string[]; egreso: string[] } {
+  const re = /WHEN\s+(?:\w+\.)?tipo_movimiento\s+IN\s*\(([^)]*)\)[\s\S]*?THEN\s+(-?)\s*(?:\w+\.)?monto\b/gi
+  const ingreso: string[] = []
+  const egreso: string[] = []
+  for (const m of cuerpo.matchAll(re)) {
+    const tipos = [...m[1].matchAll(/'([A-Z_]+)'/g)].map((t) => t[1])
+    ;(m[2] === '-' ? egreso : ingreso).push(...tipos)
+  }
+  return { ingreso: [...new Set(ingreso)].sort(), egreso: [...new Set(egreso)].sort() }
+}
+
+function statusQueCuentan(cuerpo: string): string[] {
+  const g = /\bstatus\s+IN\s*\(([^)]*)\)/i.exec(cuerpo)?.[1] ?? ''
+  return [...g.matchAll(/'([A-Z_]+)'/g)].map((t) => t[1]).sort()
+}
+
+const ordenada = (xs: readonly string[]) => [...xs].sort()
+
 test.describe('Front v2 · saldo por cuenta = regla de saldo_cuenta()', () => {
-  test('las listas de tipos son las de la funcion SQL (leidas de la migracion)', () => {
-    const sql = fs.readFileSync(
-      path.join(process.cwd(), 'supabase/migrations/20261028120100_v2_cuentas_clase_y_saldo_inicial.sql'),
-      'utf-8'
-    )
-    for (const t of [...TIPOS_INGRESO, ...TIPOS_EGRESO]) expect(sql, `${t} no esta en saldo_cuenta`).toContain(`'${t}'`)
+  test('las listas de tipos son, como conjuntos, las de la definicion vigente de saldo_cuenta', () => {
+    const { archivo, cuerpo } = definicionVigenteDeSaldoCuenta()
+    const sql = listasDeTipos(cuerpo)
+    expect(sql.ingreso.length, `sin lista de ingreso en ${archivo}`).toBeGreaterThan(0)
+    expect(sql.egreso.length, `sin lista de egreso en ${archivo}`).toBeGreaterThan(0)
+    expect(ordenada(TIPOS_INGRESO), `ingreso distinto de ${archivo}`).toEqual(sql.ingreso)
+    expect(ordenada(TIPOS_EGRESO), `egreso distinto de ${archivo}`).toEqual(sql.egreso)
+  })
+
+  test('el filtro de filas es el de saldo_cuenta: status y ABONO_PENDIENTE', () => {
+    const { archivo, cuerpo } = definicionVigenteDeSaldoCuenta()
+    expect(ordenada(STATUS_QUE_CUENTAN), `status distinto de ${archivo}`).toEqual(statusQueCuentan(cuerpo))
+    expect(cuerpo).toMatch(new RegExp(`categoria\\s+IS\\s+DISTINCT\\s+FROM\\s+'${CATEGORIA_QUE_NO_CUENTA}'`, 'i'))
+  })
+
+  test('control negativo: un tipo movido de lista en la SQL ya no casa', () => {
+    const { cuerpo } = definicionVigenteDeSaldoCuenta()
+    // CARGO_DEUDA sale de la lista de egreso y entra a la de ingreso (en memoria).
+    const movido = cuerpo
+      .replace("'GASTO_OPERATIVO', 'CARGO_DEUDA',", "'GASTO_OPERATIVO',")
+      .replace("'SALDO_INICIAL')", "'SALDO_INICIAL', 'CARGO_DEUDA')")
+    expect(movido).not.toBe(cuerpo)
+    const sql = listasDeTipos(movido)
+    expect(sql.ingreso).toContain('CARGO_DEUDA')
+    expect(ordenada(TIPOS_INGRESO)).not.toEqual(sql.ingreso)
+    expect(ordenada(TIPOS_EGRESO)).not.toEqual(sql.egreso)
   })
 
   test('el arranque da los 4 saldos reales y suma 17,348.33', () => {
@@ -94,17 +165,33 @@ test.describe('Front v2 · saldo por cuenta = regla de saldo_cuenta()', () => {
 })
 
 test.describe('Front v2 · conversion 95/5 en la cascada y por mes', () => {
-  // Como la escribe `convertir_transferencias` (migracion 20261028120300): neto
-  // de Transferencias a Efectivo como traspaso, y la comision como gasto que
-  // sale de Transferencias.
+  // Las tres filas TAL COMO las inserta `convertir_transferencias` (migracion
+  // 20261028120300, lineas 144-149): id_cuenta_origen NULL en las tres; el
+  // EGRESO_TRASPASO y el gasto llevan destino = Transferencias (saldo_cuenta los
+  // resta por COALESCE(origen, destino)) y el INGRESO_TRASPASO destino = Efectivo.
   const conv = [
     ...ARRANQUE,
-    mov({ tipo_movimiento: 'EGRESO_TRASPASO', monto: 569.05, id_cuenta_origen: TR, id_cuenta_destino: EF, fecha_movimiento: '2026-10-29T18:00:00Z' }),
-    mov({ tipo_movimiento: 'INGRESO_TRASPASO', monto: 569.05, id_cuenta_origen: TR, id_cuenta_destino: EF, fecha_movimiento: '2026-10-29T18:00:00Z' }),
+    mov({
+      tipo_movimiento: 'EGRESO_TRASPASO',
+      monto: 569.05,
+      categoria: 'TRANSFERENCIA',
+      id_cuenta_origen: null,
+      id_cuenta_destino: TR,
+      fecha_movimiento: '2026-10-29T18:00:00Z'
+    }),
+    mov({
+      tipo_movimiento: 'INGRESO_TRASPASO',
+      monto: 569.05,
+      categoria: 'TRANSFERENCIA',
+      id_cuenta_origen: null,
+      id_cuenta_destino: EF,
+      fecha_movimiento: '2026-10-29T18:00:00Z'
+    }),
     mov({
       tipo_movimiento: 'GASTO_OPERATIVO',
       monto: 29.95,
-      id_cuenta_origen: TR,
+      id_cuenta_origen: null,
+      id_cuenta_destino: TR,
       categoria: 'Financieros',
       subcategoria: 'Comisión por conversión de transferencias',
       fecha_movimiento: '2026-10-29T18:00:00Z'
