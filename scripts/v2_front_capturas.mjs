@@ -31,7 +31,16 @@ await pg.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 60000 })
 let fallas = 0
 for (const ruta of RUTAS) {
   const nombre = ruta.replace(/^\/+/, '').replace(/[^a-z0-9]+/gi, '_') || 'raiz'
-  const r = await pg.goto(B + ruta, { timeout: 120000 })
+  // El servidor de desarrollo compila la ruta la primera vez y el HMR puede
+  // abortar esa navegacion (ver V2_LOCAL.md, precalentar): un reintento.
+  let r
+  try {
+    r = await pg.goto(B + ruta, { timeout: 120000 })
+  } catch (e) {
+    console.log(`  reintento tras: ${String(e).slice(0, 120)}`)
+    await pg.waitForTimeout(3000)
+    r = await pg.goto(B + ruta, { timeout: 120000 })
+  }
   await pg.waitForLoadState('networkidle')
   await pg.evaluate(() => document.fonts.ready)
   const t = await pg.innerText('body')
