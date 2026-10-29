@@ -47,7 +47,7 @@ export const CABECERA_RUTA = 'x-ruta-actual'
  * `app/api/bot/**` con su propio sello (`lib/bot-sello.ts`), no con cookies de
  * navegador. Meterlo aqui lo dejaria mudo.
  */
-export const RUTAS_PROTEGIDAS = ['/dashboard', '/pos', '/ticket'] as const
+export const RUTAS_PROTEGIDAS = ['/dashboard', '/pos', '/ticket', '/v2'] as const
 
 /**
  * Las areas de mando: lo que un rol de consulta (DST, LOC, SUB-ADMIN) no abre.

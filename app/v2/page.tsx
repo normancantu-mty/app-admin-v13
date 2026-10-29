@@ -1,0 +1,488 @@
+/**
+ * Front v2 — Inicio (tablero de la matriz). Escrito el 2026-10-29 por el ejecutor
+ * del Front v2 (lanzado por el Socio). Diseño: ronda 3 (artefacto
+ * 1cyDAQie7R52SbJnUvTSJg), con las cifras REALES de la base.
+ *
+ * Lo decidido gana al diseño: 4 cuentas (Efectivo, Cuenta Fresnillo, Cuenta
+ * Gilberto LIBRE solo egresos, Transferencias 95/5) y la cartera de la matriz sin
+ * la deuda de los locales con su distribuidor.
+ */
+
+import Link from 'next/link'
+import { getServerSupabaseClient } from '@/lib/server-session'
+import { getCurrentUser } from '@/lib/auth-utils'
+import { leerTablero, slugDeClase } from '@/lib/v2/lecturas'
+import { cascadaDeCaja, cuadra, dineroPorMes, redondear } from '@/lib/v2/dinero'
+import { fechaHoraMx, mesMx, mxn, mxn0, num, rangoMeses } from '@/lib/v2/formato'
+import { esDeudaConLaMatriz, totalesCarteraVista } from '@/lib/vistas'
+import { diasDesde } from '@/lib/actividad'
+import { BarrasMes, Cascada, Leyenda } from '@/components/v2/graficas'
+
+export const dynamic = 'force-dynamic'
+
+type Luz = 'rojo' | 'ambar' | 'verde' | 'gris'
+
+const NOMBRE_CLASE: Record<string, string> = {
+  EFECTIVO: 'Efectivo',
+  FISCAL: 'Cuenta Fresnillo',
+  PERSONAL: 'Cuenta Gilberto',
+  TRANSFERENCIAS: 'Transferencias'
+}
+
+function Vacio({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <div className="vacio">
+      <b>{titulo}</b>
+      {children}
+    </div>
+  )
+}
+
+export default async function InicioV2() {
+  const client = await getServerSupabaseClient()
+  const [d, usuario] = await Promise.all([leerTablero(client), getCurrentUser()])
+  const puedeCapturar = usuario?.rol === 'ADMIN'
+  const ahora = new Date()
+
+  // ── Saldos ──
+  const cuentas = d.cuentas
+  const idsMatriz = new Set(cuentas.map((c) => c.id))
+  const totalCuentas = redondear(cuentas.reduce((a, c) => a + c.saldo, 0))
+  const cart = totalesCarteraVista(d.cartera)
+  const totalRed = redondear(cart.deuda + cart.deudaConDistribuidor)
+  const deudoresMatriz = d.cartera.filter((f) => esDeudaConLaMatriz(f) && Number(f.deuda) > 0)
+  const botellas = new Map<string, number>()
+  for (const s of d.stockMatriz) botellas.set(s.producto, (botellas.get(s.producto) ?? 0) + Number(s.stock))
+  const totalBotellas = [...botellas.values()].reduce((a, b) => a + b, 0)
+  const iva = Number(d.pasivo?.iva_por_pagar ?? 0)
+  const ieps = Number(d.pasivo?.ieps_por_pagar ?? 0)
+
+  // ── Corte y meses ──
+  const arranque = d.movimientos.filter((m) => m.tipo_movimiento === 'SALDO_INICIAL' && m.fecha_movimiento)
+  const corte = arranque.map((m) => m.fecha_movimiento!).sort()[0] ?? null
+  const mesHoy = mesMx(ahora)
+  const meses = rangoMeses(corte ? mesMx(corte) : mesHoy, mesHoy)
+  const porMes = dineroPorMes(d.movimientos, idsMatriz, meses)
+  const ventas = meses.map((mes) => d.ventasPorMes.find((v) => String(v.mes).slice(0, 7) === mes))
+  const hayVentas = ventas.some((v) => v && Number(v.vendido) > 0)
+  const hayEgresos = porMes.some((m) => m.salio > 0)
+  const hayCaja = porMes.some((m) => m.entro > 0 || m.salio > 0)
+
+  // ── Cascada del mes en curso (México es UTC-6 sin horario de verano) ──
+  const desde = new Date(`${mesHoy}-01T00:00:00-06:00`)
+  const pasos = cascadaDeCaja(d.movimientos, idsMatriz, desde, new Date(ahora.getTime() + 60_000))
+  const final = pasos[pasos.length - 1]?.valor ?? 0
+  const cascadaCuadra = cuadra(final, totalCuentas)
+
+  // ── Egresos por categoría (las 4 mayores + otros) ──
+  const totCat = new Map<string, number>()
+  for (const m of porMes) for (const [k, v] of Object.entries(m.egresoPorCategoria)) totCat.set(k, (totCat.get(k) ?? 0) + v)
+  const topCat = [...totCat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k)
+  const colores = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--cobre)', '#c9bdb8']
+  const seriesEgreso = [
+    ...topCat.map((cat, i) => ({ nombre: cat, color: colores[i], valores: porMes.map((m) => m.egresoPorCategoria[cat] ?? 0) })),
+    {
+      nombre: 'Otros',
+      color: colores[4],
+      valores: porMes.map((m) =>
+        Object.entries(m.egresoPorCategoria)
+          .filter(([k]) => !topCat.includes(k))
+          .reduce((a, [, v]) => a + v, 0)
+      )
+    }
+  ].filter((s) => s.valores.some((v) => v > 0))
+
+  // ── Producción por mes ──
+  const nombreProd = new Map(d.stockMatriz.map((s) => [s.id_producto, s.producto]))
+  const prodPorMes = new Map<string, Map<string, number>>()
+  for (const e of d.envasado) {
+    const mes = mesMx(e.fecha)
+    const p = nombreProd.get(e.id_producto) ?? 'Otro'
+    const fila = prodPorMes.get(mes) ?? new Map<string, number>()
+    fila.set(p, (fila.get(p) ?? 0) + Number(e.botellas))
+    prodPorMes.set(mes, fila)
+  }
+  const productos = [...new Set(d.envasado.map((e) => nombreProd.get(e.id_producto) ?? 'Otro'))]
+
+  // ── Semáforo ──
+  const vencida = deudoresMatriz.filter((f) => (f.dias_sin_abono ?? 0) > 60)
+  const montoVencido = vencida.reduce((a, f) => a + Number(f.deuda), 0)
+  const enPiso = d.cartera.reduce((a, f) => a + Number(f.estimado_en_piso), 0)
+  const gastosMes = d.movimientos.filter(
+    (m) =>
+      ['GASTO_OPERATIVO', 'COMPRA_INSUMOS'].includes(m.tipo_movimiento) &&
+      m.status === 'ACTIVO' &&
+      m.fecha_movimiento &&
+      mesMx(m.fecha_movimiento) === mesHoy
+  ).length
+  // Dias de calendario en hora de Mexico: la misma regla que `v_cartera` y `lib/actividad.ts`.
+  const diasDesdeCorte = corte ? diasDesde(corte, ahora) : null
+  const semaforo: { luz: Luz; titulo: string; detalle: string; estado: string }[] = [
+    {
+      luz: vencida.length ? 'rojo' : 'verde',
+      titulo: 'Cobranza vencida',
+      detalle: vencida.length ? `${mxn0(montoVencido)} con +60 días (${vencida.length})` : 'Nadie con +60 días sin abonar',
+      estado: vencida.length ? 'Atender' : 'Bien'
+    },
+    {
+      luz: d.insumosEnNegativo ? 'rojo' : 'verde',
+      titulo: 'Insumos en negativo',
+      detalle: d.insumosEnNegativo ? `${d.insumosEnNegativo} insumos` : 'Ninguno',
+      estado: d.insumosEnNegativo ? 'Atender' : 'Bien'
+    },
+    {
+      luz: hayVentas ? 'verde' : 'gris',
+      titulo: 'Producto para vender',
+      detalle: hayVentas ? `${num(totalBotellas)} pzas en la matriz` : `${num(totalBotellas)} pzas · sin ventas para calcular meses`,
+      estado: hayVentas ? 'Bien' : 'Sin dato'
+    },
+    {
+      luz: gastosMes ? 'verde' : 'ambar',
+      titulo: 'Gastos capturados',
+      detalle: gastosMes ? `${gastosMes} este mes` : `0 desde el corte${diasDesdeCorte !== null ? ` (${diasDesdeCorte} d)` : ''}`,
+      estado: gastosMes ? 'Bien' : 'Revisar'
+    },
+    {
+      luz: 'gris',
+      titulo: 'Caja sin conciliar',
+      detalle: `${mxn0(totalCuentas)} según el sistema · el ERP aún no guarda conciliaciones`,
+      estado: 'Sin dato'
+    },
+    {
+      luz: d.conteosFisicos ? 'verde' : 'ambar',
+      titulo: 'Concesión sin conteo',
+      detalle: d.conteosFisicos ? `${d.conteosFisicos} conteos` : `${num(enPiso)} pzas en la red, 0 conteos`,
+      estado: d.conteosFisicos ? 'Bien' : 'Revisar'
+    }
+  ]
+
+  // ── Alertas ──
+  const alertas: { nivel: 'crit' | 'warn' | 'info'; texto: string; href: string }[] = []
+  for (const f of vencida) alertas.push({ nivel: 'crit', texto: `${f.nombre}: ${f.dias_sin_abono} días sin abonar`, href: `/dashboard/distribuidores/${f.id_entidad}` })
+  if (d.insumosEnNegativo) alertas.push({ nivel: 'crit', texto: `${d.insumosEnNegativo} insumos en negativo`, href: '/dashboard/inventario' })
+  if (d.transferencias && d.transferencias.pendienteMonto > 0)
+    alertas.push({
+      nivel: 'warn',
+      texto: `${d.transferencias.pendientesN} transferencia(s) por convertir: ${mxn(d.transferencias.pendienteMonto)}`,
+      href: '/v2/cuenta/transferencias'
+    })
+  if (!d.conteosFisicos) alertas.push({ nivel: 'warn', texto: `Concesión sin contar: ${num(enPiso)} pzas en ${d.cartera.length} nodos`, href: '/dashboard/conteo' })
+  if (!gastosMes) alertas.push({ nivel: 'warn', texto: 'Sin gastos capturados desde el corte', href: '/dashboard/finanzas/nuevo' })
+  if (cart.deudaConDistribuidor > 0)
+    alertas.push({
+      nivel: 'info',
+      texto: `${cart.nodosConDistribuidor} locales deben ${mxn0(cart.deudaConDistribuidor)} a su distribuidor (fuera de la cartera de la matriz)`,
+      href: '/v2/cartera'
+    })
+
+  const top4 = deudoresMatriz.slice(0, 4)
+  const sumaTop4 = top4.reduce((a, f) => a + Number(f.deuda), 0)
+
+  return (
+    <>
+      <div className="aviso">
+        <span className="chip info">ERP v2 · local</span>
+        <b>Datos reales de la base local, carga conciliada{corte ? ` (corte ${fechaHoraMx(corte)})` : ''}.</b>
+        <span className="muted">Leído {fechaHoraMx(ahora.toISOString())}. Las capturas llevan a las pantallas actuales del ERP.</span>
+      </div>
+
+      <section className="saldos">
+        <div className="hd">
+          <h2>Saldos al día</h2>
+          <span className="chip chile">Saldo de hoy</span>
+          <span className={`chip ${cascadaCuadra ? 'good' : 'crit'}`}>
+            {cascadaCuadra ? 'saldo_cuenta() = suma de movimientos' : 'NO cuadra con los movimientos'}
+          </span>
+        </div>
+        <div className="kpis">
+          {cuentas.map((c) => (
+            <Link key={c.id} href={`/v2/cuenta/${slugDeClase(c.clase)}`} className={`kpi ${c.clase === 'EFECTIVO' || c.clase === 'FISCAL' ? 'fuerte' : ''}`}>
+              <span className="t">
+                {c.clase ? NOMBRE_CLASE[c.clase] ?? c.nombre : c.nombre} <span>›</span>
+              </span>
+              <span className="v">{mxn(c.saldo)}</span>
+              <span className="d">
+                {c.clase === 'PERSONAL' && (
+                  <span className="chip warn">LIBRE · solo egresos</span>
+                )}
+                {c.clase === 'TRANSFERENCIAS' && d.transferencias && (
+                  <>por convertir <b>{mxn(d.transferencias.pendienteMonto)}</b> · 95/5</>
+                )}
+                {c.clase === 'FISCAL' && <>{c.tipo_fiscalidad ?? 'sin fiscalidad'} · IVA e IEPS</>}
+                {c.clase === 'EFECTIVO' && <>{c.tipo_fiscalidad ?? ''} · caja</>}
+              </span>
+            </Link>
+          ))}
+          <div className="kpi">
+            <span className="t">Total en cuentas</span>
+            <span className="v">{mxn(totalCuentas)}</span>
+            <span className="d">{cuentas.length} cuentas · la suma cuadra</span>
+          </div>
+          <div className="kpi">
+            <span className="t">Impuestos por pagar</span>
+            <span className="v">{mxn(iva + ieps)}</span>
+            <span className="d">
+              IVA {mxn(iva)} · IEPS {mxn(ieps)}
+            </span>
+          </div>
+          <Link href="/v2/cartera" className="kpi">
+            <span className="t">
+              Por cobrar (matriz) <span>›</span>
+            </span>
+            <span className="v">{mxn(cart.deuda)}</span>
+            <span className="d">
+              {deudoresMatriz.length} nodos · red total <b>{mxn(totalRed)}</b>
+            </span>
+          </Link>
+          <div className="kpi">
+            <span className="t">Botellas en la matriz</span>
+            <span className="v">
+              {num(totalBotellas)} <small style={{ fontSize: 12, fontWeight: 600 }}>pzas</small>
+            </span>
+            <span className="d">
+              {[...botellas.entries()].map(([p, n]) => `${p.replace('Destilado Plata ', '')} ${num(n)}`).join(' · ')}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {puedeCapturar && (
+        <div className="acciones">
+          <span className="lbl">CAPTURAR</span>
+          <Link className="btn p" href="/pos">+ Venta</Link>
+          <Link className="btn p" href="/dashboard/inventario/nuevo">+ Envasado</Link>
+          <Link className="btn p" href="/dashboard/finanzas/nuevo">+ Gasto</Link>
+          <Link className="btn p" href="/dashboard/inventario/compra">Comprar insumos</Link>
+          <Link className="btn" href="/dashboard/conteo">Conteo físico</Link>
+        </div>
+      )}
+      <div className="acciones">
+        <span className="lbl">ABRIR</span>
+        <Link className="btn" href="/v2/cuenta/efectivo">Movimientos de dinero</Link>
+        <Link className="btn" href="/dashboard/inventario">Movimientos de inventario</Link>
+        <Link className="btn" href="/v2/cartera">Cartera completa</Link>
+        <Link className="btn" href="/dashboard/catalogo">Catálogo y precios</Link>
+        <Link className="btn" href="/dashboard/feed">Actividad</Link>
+      </div>
+
+      <div className="grid g336">
+        <section className="card">
+          <div className="hd">
+            <div>
+              <h2>Semáforo</h2>
+              <div className="sub">
+                {semaforo.filter((s) => s.luz === 'rojo').length} en rojo · {semaforo.filter((s) => s.luz === 'ambar').length} en ámbar ·{' '}
+                {semaforo.filter((s) => s.luz === 'gris').length} sin dato
+              </div>
+            </div>
+          </div>
+          <div className="sem">
+            {semaforo.map((s) => (
+              <div className="fila" key={s.titulo}>
+                <span className={`luz ${s.luz}`}>
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <span className="tx">
+                  <b>{s.titulo}</b>
+                  <span>{s.detalle}</span>
+                </span>
+                <span className={`chip ${s.luz === 'rojo' ? 'crit' : s.luz === 'ambar' ? 'warn' : s.luz === 'verde' ? 'good' : ''}`}>{s.estado}</span>
+              </div>
+            ))}
+          </div>
+          <div className="fuente">v_cartera · v_insumos_en_negativo · conteos_fisicos · finanzas_ledger · v_stock_por_cubeta</div>
+        </section>
+
+        <section className="card">
+          <div className="hd">
+            <div>
+              <h2>Alertas</h2>
+              <div className="sub">
+                {alertas.filter((a) => a.nivel === 'crit').length} urgentes · {alertas.length} en total
+              </div>
+            </div>
+          </div>
+          <div className="alertas">
+            {alertas.length === 0 && <Vacio titulo="Sin alertas">Todo en orden.</Vacio>}
+            {alertas.map((a) => (
+              <div className={`a ${a.nivel}`} key={a.texto}>
+                <span className="tx">{a.texto}</span>
+                <Link href={a.href}>Ver</Link>
+              </div>
+            ))}
+          </div>
+          <div className="fuente">v_cartera · v_transferencias_resumen · conteos_fisicos · finanzas_ledger</div>
+        </section>
+
+        <section className="card">
+          <div className="hd">
+            <div>
+              <h2>Vendido y cobrado por mes</h2>
+              <div className="sub">Desde el arranque. La línea es lo que de verdad entró a caja (contado + abonos).</div>
+            </div>
+          </div>
+          {hayVentas || hayCaja ? (
+            <>
+              <Leyenda
+                items={[
+                  { nombre: 'Contado', color: 'var(--s2)' },
+                  { nombre: 'Concesión', color: 'var(--s3)' },
+                  { nombre: 'Entró a caja', color: '#221816', linea: true }
+                ]}
+              />
+              <BarrasMes
+                meses={meses}
+                enCurso={mesHoy}
+                series={[
+                  { nombre: 'Contado', color: 'var(--s2)', valores: ventas.map((v) => Number(v?.vendido_contado ?? 0)) },
+                  { nombre: 'Concesión', color: 'var(--s3)', valores: ventas.map((v) => Number(v?.vendido_concesion ?? 0)) }
+                ]}
+                linea={{ nombre: 'Entró a caja', valores: porMes.map((m) => m.entro) }}
+              />
+            </>
+          ) : (
+            <Vacio titulo="Sin ventas ni cobros desde el arranque">
+              La base arrancó en limpio{corte ? ` el ${fechaHoraMx(corte)}` : ''}. La gráfica se llena con la primera venta o abono.
+            </Vacio>
+          )}
+          <div className="fuente">v_ventas_por_mes · finanzas_ledger (cuentas de la matriz)</div>
+        </section>
+      </div>
+
+      <div className="grid g363">
+        <section className="card cobrar">
+          <div className="hd">
+            <div>
+              <h2>A quién cobrar</h2>
+              <div className="sub">Deuda con la matriz · orden del ERP: deuda × días sin abonar</div>
+            </div>
+          </div>
+          <p className="lead">
+            Los <b>{top4.length}</b> primeros suman <b>{mxn0(sumaTop4)}</b>, el{' '}
+            <b>{cart.deuda > 0 ? Math.round((sumaTop4 / cart.deuda) * 100) : 0}%</b> de la cartera de la matriz.
+          </p>
+          {top4.map((f, i) => {
+            const pct = Math.round(Number(f.porcentaje_pagado ?? 0))
+            const dias = f.dias_sin_abono ?? 0
+            return (
+              <Link className="it" key={f.id_entidad} href={`/dashboard/distribuidores/${f.id_entidad}`}>
+                <span className="n">{i + 1}</span>
+                <span className="nom">
+                  <b>{f.nombre}</b>
+                  <small>{f.rol === 'DST' ? 'Distribuidor' : 'Local'}</small>{' '}
+                  <span className={`chip ${dias > 60 ? 'crit' : dias > 30 ? 'warn' : ''}`}>
+                    {dias} d sin abonar{f.referencia_dias === 'ENTREGA' ? ' (desde entrega)' : ''}
+                  </span>
+                </span>
+                <span className="m">
+                  {mxn0(Number(f.deuda))}
+                  <small>{pct}% pagado</small>
+                  <span className="barra">
+                    <i style={{ width: `${Math.min(100, pct)}%` }} />
+                  </span>
+                </span>
+              </Link>
+            )
+          })}
+          <Link className="vermas" href="/v2/cartera">
+            Ver los {deudoresMatriz.length} deudores →
+          </Link>
+          <div className="fuente">v_cartera (id_acreedor = matriz)</div>
+        </section>
+
+        <section className="card">
+          <div className="hd">
+            <div>
+              <h2>Cascada de caja</h2>
+              <div className="sub">De dónde vino y a dónde se fue el dinero en el mes. Verde suma, rojo resta.</div>
+            </div>
+            <span className="chip">Mes en curso</span>
+          </div>
+          <p className="lead">
+            Empezó el mes en <b>{mxn(pasos[0]?.valor ?? 0)}</b> y va en <b>{mxn(final)}</b>.{' '}
+            {cascadaCuadra ? (
+              <span className="chip good">Final = Total en cuentas</span>
+            ) : (
+              <span className="chip crit">Final ≠ Total en cuentas ({mxn(totalCuentas)})</span>
+            )}
+          </p>
+          <Cascada pasos={pasos} />
+          <div className="nota">
+            El saldo de arranque es lo que había en las 4 cuentas al corte; desde ahí todo sale del libro. Los traspasos
+            internos (incluida la conversión 95/5 de Transferencias) se netean; la comisión del 5% aparece como gasto
+            «Financieros».
+          </div>
+          <div className="fuente">finanzas_ledger · regla de saldo_cuenta()</div>
+        </section>
+
+        <section className="card">
+          <div className="hd">
+            <div>
+              <h2>Utilidad de caja por mes</h2>
+              <div className="sub">Entró − salió de caja. No es utilidad contable.</div>
+            </div>
+          </div>
+          {hayCaja ? (
+            <BarrasMes
+              meses={meses}
+              enCurso={mesHoy}
+              series={[{ nombre: 'Utilidad', color: 'var(--s4)', valores: porMes.map((m) => Math.max(0, m.entro - m.salio)) }]}
+            />
+          ) : (
+            <Vacio titulo="Sin movimientos de caja desde el arranque">Se calcula con la primera entrada o salida.</Vacio>
+          )}
+          <div className="fuente">finanzas_ledger por mes</div>
+        </section>
+      </div>
+
+      <div className="grid g2">
+        <section className="card">
+          <div className="hd">
+            <div>
+              <h2>Egresos por mes</h2>
+              <div className="sub">Lo que salió de caja, por categoría (las 4 mayores + otros). 14 categorías con subcategoría.</div>
+            </div>
+          </div>
+          {hayEgresos ? (
+            <>
+              <Leyenda items={seriesEgreso.map((s) => ({ nombre: s.nombre, color: s.color }))} />
+              <BarrasMes meses={meses} enCurso={mesHoy} series={seriesEgreso} />
+            </>
+          ) : (
+            <Vacio titulo="Sin egresos desde el arranque">El primer gasto con categoría y subcategoría aparece aquí.</Vacio>
+          )}
+          <div className="fuente">finanzas_ledger · categorias_movimiento</div>
+        </section>
+
+        <section className="card">
+          <div className="hd">
+            <div>
+              <h2>Producción por mes</h2>
+              <div className="sub">Botellas envasadas, por presentación.</div>
+            </div>
+            <span className={`chip ${d.lotes ? '' : 'warn'}`}>{d.lotes} lotes registrados</span>
+          </div>
+          {d.envasado.length ? (
+            <BarrasMes
+              meses={meses}
+              enCurso={mesHoy}
+              formato={(n) => num(n)}
+              series={productos.map((p, i) => ({
+                nombre: p,
+                color: colores[i % colores.length],
+                valores: meses.map((mes) => prodPorMes.get(mes)?.get(p) ?? 0)
+              }))}
+            />
+          ) : (
+            <Vacio titulo="Sin envasado desde el arranque">
+              El inventario de la matriz arrancó con {num(totalBotellas)} botellas contadas; la producción se registra por lote.
+            </Vacio>
+          )}
+          <div className="fuente">lote_envasado · lotes</div>
+        </section>
+      </div>
+    </>
+  )
+}
