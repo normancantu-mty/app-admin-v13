@@ -24,6 +24,7 @@ import {
 import {
   cuadra,
   dineroPorMes,
+  cuentaParaSaldo,
   efectoEnCuenta,
   egresosPorCategoria,
   FUERA_DE_LISTA,
@@ -52,11 +53,25 @@ const REGLA: Record<string, string> = {
     'Aquí caen los cobros por transferencia. Al convertirlos a efectivo, 95% pasa a Efectivo y 5% se registra como gasto «Financieros / Comisión por conversión de transferencias».'
 }
 
-const LIMITE = 60
+/** Filas por tanda en «Cargar más» (ronda 2: no un tope fijo). */
+const TANDA = 60
 
-export default async function CuentaV2({ params }: { params: Promise<{ clase: string }> }) {
+/** `?filas=N` -> cuantas filas mostrar: multiplo de TANDA, minimo una tanda. */
+function filasPedidas(v: string | string[] | undefined): number {
+  const n = Number.parseInt(Array.isArray(v) ? v[0] : v ?? '', 10)
+  return Number.isFinite(n) && n > TANDA ? Math.ceil(n / TANDA) * TANDA : TANDA
+}
+
+export default async function CuentaV2({
+  params,
+  searchParams
+}: {
+  params: Promise<{ clase: string }>
+  searchParams: Promise<{ filas?: string | string[] }>
+}) {
   await exigirMandoV2()
   const { clase: slug } = await params
+  const filas = filasPedidas((await searchParams).filas)
   const clase = SLUG_CLASE[slug]
   if (!clase) notFound()
 
@@ -85,8 +100,11 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
   const hayFlujo = porMes.some((m) => m.entro > 0 || m.salio > 0)
   const cats = egresosPorCategoria(movs, cuenta.id, idxCat)
   const totalEgresos = cats.reduce((a, c) => a + c.total, 0)
-  const visibles = movs.filter((m) => m.status === 'ACTIVO' || m.status === 'APPROVED').slice(0, LIMITE)
-  const nActivos = movs.filter((m) => m.status === 'ACTIVO' || m.status === 'APPROVED').length
+  // La suma que se compara con saldo_cuenta() es sobre TODOS los movimientos leidos
+  // en el servidor (`movs`), no sobre la pagina que se muestra.
+  const nCuentan = movs.filter((m) => cuentaParaSaldo(m)).length
+  const visibles = movs.slice(0, filas)
+  const hayMas = movs.length > visibles.length
 
   return (
     <>
@@ -127,8 +145,8 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
 
       <div className={`check ${ok ? '' : 'mal'}`}>
         {ok
-          ? `Cuadra: la suma de los ${nActivos} movimientos de abajo da ${mxn(reconstruido)} = saldo_cuenta() de la base.`
-          : `NO cuadra: los movimientos suman ${mxn(reconstruido)} y saldo_cuenta() dice ${mxn(cuenta.saldo)}.`}
+          ? `Cuadra: la suma de los ${nCuentan} movimientos que cuentan para el saldo (de ${movs.length} filas de la cuenta; la tabla muestra ${visibles.length}) da ${mxn(reconstruido)} = saldo_cuenta() de la base.`
+          : `NO cuadra: los ${nCuentan} movimientos que cuentan para el saldo suman ${mxn(reconstruido)} y saldo_cuenta() dice ${mxn(cuenta.saldo)} (diferencia ${mxn(reconstruido - cuenta.saldo)}).`}
       </div>
 
       {clase === 'TRANSFERENCIAS' && transferencias && (
@@ -170,7 +188,7 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
           ) : (
             <div className="vacio">
               <b>Sin entradas ni salidas desde el arranque</b>
-              {nActivos ? 'El único movimiento es el saldo de arranque del corte.' : 'La cuenta no tiene movimientos.'}
+              {nCuentan ? 'El único movimiento es el saldo de arranque del corte.' : 'La cuenta no tiene movimientos.'}
             </div>
           )}
           <div className="fuente">finanzas_ledger · id_cuenta = {cuenta.nombre}</div>
@@ -220,7 +238,7 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
         <div className="hd">
           <div>
             <h2>Movimientos</h2>
-            <div className="sub">Columnas del ERP (finanzas_ledger). Anular se hace en el ERP actual: marca ANULADO, no borra.</div>
+            <div className="sub">Columnas del ERP (finanzas_ledger). Las filas atenuadas no cuentan para el saldo (anuladas, ABONO_PENDIENTE o que no mueven esta cuenta). Anular se hace en el ERP actual: marca ANULADO, no borra.</div>
           </div>
           <Link className="btn" href="/dashboard/finanzas">
             Abrir en Finanzas
@@ -239,11 +257,24 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
               </tr>
             </thead>
             <tbody>
-              {visibles.map((m) => (
-                <tr key={m.id}>
+              {visibles.map((m) => {
+                const motivo = !cuentaParaSaldo(m)
+                  ? m.status !== 'ACTIVO' && m.status !== 'APPROVED'
+                    ? `${m.status.toLowerCase()} · no cuenta para el saldo`
+                    : `${m.categoria} · no cuenta para el saldo`
+                  : m.efecto === 0
+                    ? 'no mueve el saldo de esta cuenta'
+                    : null
+                return (
+                <tr key={m.id} style={motivo ? { opacity: 0.5 } : undefined}>
                   <td style={{ whiteSpace: 'nowrap' }}>{fechaHoraMx(m.fecha_movimiento)}</td>
                   <td>
                     <b>{tipoLegible(m.tipo_movimiento)}</b>
+                    {motivo && (
+                      <div>
+                        <span className="chip">{motivo}</span>
+                      </div>
+                    )}
                     {m.descripcion && <div style={{ color: 'var(--muted)', fontSize: 12 }}>{m.descripcion}</div>}
                   </td>
                   <td>
@@ -257,7 +288,8 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
                   </td>
                   <td className="mono">{m.usuario_creador ?? 'sin dato'}</td>
                 </tr>
-              ))}
+                )
+              })}
               {visibles.length === 0 && (
                 <tr>
                   <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
@@ -269,8 +301,15 @@ export default async function CuentaV2({ params }: { params: Promise<{ clase: st
           </table>
         </div>
         <div className="fuente">
-          Mostrando {visibles.length} de {nActivos} · finanzas_ledger
+          Mostrando {visibles.length} de {movs.length} filas ({nCuentan} cuentan para el saldo) · finanzas_ledger
         </div>
+        {hayMas && (
+          <div style={{ marginTop: 10 }}>
+            <Link className="btn" href={`/v2/cuenta/${slug}?filas=${filas + TANDA}`} scroll={false}>
+              Cargar más ({Math.min(TANDA, movs.length - visibles.length)} de {movs.length - visibles.length} restantes)
+            </Link>
+          </div>
+        )}
       </section>
     </>
   )

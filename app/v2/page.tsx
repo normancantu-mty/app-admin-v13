@@ -394,7 +394,7 @@ export default async function InicioV2() {
             <b>{cart.deuda > 0 ? Math.round((sumaTop4 / cart.deuda) * 100) : 0}%</b> de la cartera de la matriz.
           </p>
           {top4.map((f, i) => {
-            const pct = Math.round(Number(f.porcentaje_pagado ?? 0))
+            const pct = f.porcentaje_pagado === null || f.porcentaje_pagado === undefined ? null : Math.round(Number(f.porcentaje_pagado))
             const dias = f.dias_sin_abono ?? 0
             return (
               <Link className="it" key={f.id_entidad} href={`/dashboard/distribuidores/${f.id_entidad}`}>
@@ -408,10 +408,12 @@ export default async function InicioV2() {
                 </span>
                 <span className="m">
                   {mxn0(Number(f.deuda))}
-                  <small>{pct}% pagado</small>
-                  <span className="barra">
-                    <i style={{ width: `${Math.min(100, pct)}%` }} />
-                  </span>
+                  <small>{pct === null ? '% pagado: Sin dato' : `${pct}% pagado`}</small>
+                  {pct !== null && (
+                    <span className="barra">
+                      <i style={{ width: `${Math.min(100, pct)}%` }} />
+                    </span>
+                  )}
                 </span>
               </Link>
             )

@@ -93,7 +93,6 @@ export default async function CarteraV2() {
                 <th>#</th>
                 <th>Nodo</th>
                 <th className="r">Deuda</th>
-                <th>% pagado</th>
                 <th>Sin abonar</th>
                 <th className="r">En piso</th>
                 <th className="r">Recibidas</th>
@@ -102,7 +101,8 @@ export default async function CarteraV2() {
             </thead>
             <tbody>
               {matriz.map((f, i) => {
-                const pct = Math.round(Number(f.porcentaje_pagado ?? 0))
+                // Ronda 2, A7: sin columna «% pagado»; va en gris debajo de la deuda. Nulo = «Sin dato», no 0.
+                const pct = f.porcentaje_pagado === null || f.porcentaje_pagado === undefined ? null : Math.round(Number(f.porcentaje_pagado))
                 return (
                   <tr key={f.id_entidad}>
                     <td className="mono">{i + 1}</td>
@@ -112,11 +112,8 @@ export default async function CarteraV2() {
                     </td>
                     <td className="r">
                       <b>{mxn(Number(f.deuda))}</b>
-                    </td>
-                    <td style={{ minWidth: 90 }}>
-                      {pct}%
-                      <div className="barra">
-                        <i style={{ width: `${Math.min(100, pct)}%` }} />
+                      <div style={{ color: 'var(--muted)', fontSize: 12, fontWeight: 500 }}>
+                        {pct === null ? '% pagado: Sin dato' : `${pct}% pagado`}
                       </div>
                     </td>
                     <td>
@@ -132,7 +129,6 @@ export default async function CarteraV2() {
                 <td />
                 <td>Total matriz</td>
                 <td className="r">{mxn(tot.deuda)}</td>
-                <td />
                 <td />
                 <td className="r">{num(enPisoMatriz)}</td>
                 <td />
