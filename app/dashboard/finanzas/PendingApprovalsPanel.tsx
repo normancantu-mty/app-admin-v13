@@ -2,12 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  FACTOR_RECONSTRUCCION as FACTOR_FRESNILLO,
-  TASA_IEPS,
-  TASA_IVA,
-  type TipoCuentaDestino
-} from '@/lib/finance-utils'
+import { calcularFugaFiscal, type CuentaParaDesglose, type FugaFiscal } from '@/lib/aprobacion-abonos'
 import { formatFechaHoraMX } from '@/lib/utils'
 
 interface PendingApproval {
@@ -19,47 +14,14 @@ interface PendingApproval {
   cuenta_destino: { nombre: string } | null
 }
 
-export interface FiscalLeakResult {
-  montoBase: number
-  ieps: number
-  iva: number
-  gastoOperativo: number
-}
+// v2, ronda 3 (2026-10-29, Socio ejecutor): el desglose se decide por la fiscalidad de la
+// cuenta (columna `tipo_fiscalidad` + `clase`), no por una clave fija. Antes:
+// `case 'CUENTA_PERSONAL'` = IVA incluido, y en v2 esa cuenta (hoy "Cuenta Gilberto") es LIBRE.
+// La logica vive en `lib/aprobacion-abonos.ts` junto al calculo que escribe la aprobacion.
+export type FiscalLeakResult = FugaFiscal
 
-export function calculateFiscalLeak(
-  monto: number,
-  tipoCuentaDestino: TipoCuentaDestino
-): FiscalLeakResult {
-  let base: number
-  let ieps: number
-  let iva: number
-  let gastoOperativo = 0
-
-  switch(tipoCuentaDestino) {
-    case 'CUENTA_FRESNILLO':
-      base = monto / FACTOR_FRESNILLO
-      ieps = base * TASA_IEPS
-      iva = (base + ieps) * TASA_IVA
-      break
-    case 'CUENTA_PERSONAL':
-      base = monto / (1 + TASA_IVA)
-      ieps = 0
-      iva = base * TASA_IVA
-      break
-    case 'EFECTIVO':
-      base = monto
-      ieps = 0
-      iva = 0
-      // Fuga fiscal: empresa absorbe el IVA
-      gastoOperativo = monto * TASA_IVA / (1 + TASA_IVA)
-  }
-
-  return {
-    montoBase: parseFloat(base.toFixed(2)),
-    ieps: parseFloat(ieps.toFixed(2)),
-    iva: parseFloat(iva.toFixed(2)),
-    gastoOperativo: parseFloat(gastoOperativo.toFixed(2))
-  }
+export function calculateFiscalLeak(monto: number, cuenta: CuentaParaDesglose): FiscalLeakResult {
+  return calcularFugaFiscal(monto, cuenta)
 }
 
 function formatCurrency(amount: number): string {

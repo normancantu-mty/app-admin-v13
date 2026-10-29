@@ -131,6 +131,21 @@ export interface FilaCarteraVista {
   /** deuda x dias. El orden de visita. */
   prioridad: number
   calculado_en: string
+  /**
+   * v2 (migracion 20261029120000): con quien es la deuda. `null` = la matriz; si
+   * no, el id del padre en la red (el DST que le entrego). Opcional para que las
+   * filas de prueba viejas sigan valiendo: ausente = la matriz.
+   */
+  id_acreedor?: string | null
+}
+
+/**
+ * v2: la deuda de un local con su distribuidor NO es cartera de la matriz: el
+ * distribuidor ya la debe en su propio renglon. Sumarla la cuenta dos veces
+ * (19,382.00 en la carga conciliada del 2026-10-29).
+ */
+export function esDeudaConLaMatriz(fila: Pick<FilaCarteraVista, 'id_acreedor'>): boolean {
+  return !fila.id_acreedor
 }
 
 // ─── Fontaneria ─────────────────────────────────────────────────────────────
@@ -317,14 +332,21 @@ export function ordenarCartera(filas: FilaCarteraVista[]): FilaCarteraVista[] {
  * las cuatro columnas que ya vienen calculadas de Postgres.
  */
 export function totalesCarteraVista(filas: FilaCarteraVista[]) {
+  // `deuda` = por cobrar DE LA MATRIZ. La de los locales con su distribuidor va
+  // aparte (`deudaConDistribuidor`) y no se suma: ver `esDeudaConLaMatriz`.
   return filas.reduce(
-    (acc, fila) => ({
-      recibidas: acc.recibidas + Number(fila.recibidas),
-      libroDice: acc.libroDice + Number(fila.libro_dice),
-      estimadoEnPiso: acc.estimadoEnPiso + Number(fila.estimado_en_piso),
-      deuda: acc.deuda + Number(fila.deuda)
-    }),
-    { recibidas: 0, libroDice: 0, estimadoEnPiso: 0, deuda: 0 }
+    (acc, fila) => {
+      const conMatriz = esDeudaConLaMatriz(fila)
+      return {
+        recibidas: acc.recibidas + Number(fila.recibidas),
+        libroDice: acc.libroDice + Number(fila.libro_dice),
+        estimadoEnPiso: acc.estimadoEnPiso + Number(fila.estimado_en_piso),
+        deuda: acc.deuda + (conMatriz ? Number(fila.deuda) : 0),
+        deudaConDistribuidor: acc.deudaConDistribuidor + (conMatriz ? 0 : Number(fila.deuda)),
+        nodosConDistribuidor: acc.nodosConDistribuidor + (conMatriz ? 0 : 1)
+      }
+    },
+    { recibidas: 0, libroDice: 0, estimadoEnPiso: 0, deuda: 0, deudaConDistribuidor: 0, nodosConDistribuidor: 0 }
   )
 }
 

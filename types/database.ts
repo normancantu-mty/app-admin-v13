@@ -282,6 +282,84 @@ export type Database = {
           },
         ]
       }
+      categorias_movimiento: {
+        Row: {
+          activa: boolean
+          categoria: string
+          creada_en: string
+          id: number
+          orden: number
+          subcategoria: string
+          tipo: string
+        }
+        Insert: {
+          activa?: boolean
+          categoria: string
+          creada_en?: string
+          id?: never
+          orden?: number
+          subcategoria: string
+          tipo: string
+        }
+        Update: {
+          activa?: boolean
+          categoria?: string
+          creada_en?: string
+          id?: never
+          orden?: number
+          subcategoria?: string
+          tipo?: string
+        }
+        Relationships: []
+      }
+      conversiones_transferencia: {
+        Row: {
+          comision: number
+          creado_en: string
+          fecha: string
+          id: string
+          id_cuenta_destino: string
+          id_cuenta_origen: string
+          ids_ledger: string[]
+          monto: number
+          neto: number
+          nota: string | null
+          pct_comision: number
+          status: string
+          usuario_creador: string | null
+        }
+        Insert: {
+          comision: number
+          creado_en?: string
+          fecha?: string
+          id?: string
+          id_cuenta_destino: string
+          id_cuenta_origen: string
+          ids_ledger: string[]
+          monto: number
+          neto: number
+          nota?: string | null
+          pct_comision: number
+          status?: string
+          usuario_creador?: string | null
+        }
+        Update: {
+          comision?: number
+          creado_en?: string
+          fecha?: string
+          id?: string
+          id_cuenta_destino?: string
+          id_cuenta_origen?: string
+          ids_ledger?: string[]
+          monto?: number
+          neto?: number
+          nota?: string | null
+          pct_comision?: number
+          status?: string
+          usuario_creador?: string | null
+        }
+        Relationships: []
+      }
       catalogo_productos: {
         Row: {
           costo_unitario: number | null
@@ -624,21 +702,27 @@ export type Database = {
       }
       cuentas_financieras: {
         Row: {
+          clase: string | null
           id: string
           id_entidad: string | null
           nombre: string
+          solo_egresos: boolean
           tipo_fiscalidad: string
         }
         Insert: {
+          clase?: string | null
           id?: string
           id_entidad?: string | null
           nombre: string
+          solo_egresos?: boolean
           tipo_fiscalidad: string
         }
         Update: {
+          clase?: string | null
           id?: string
           id_entidad?: string | null
           nombre?: string
+          solo_egresos?: boolean
           tipo_fiscalidad?: string
         }
         Relationships: [
@@ -1513,6 +1597,22 @@ export type Database = {
       }
     }
     Views: {
+      v_transferencias_resumen: {
+        Row: {
+          comision_monto: number | null
+          conversiones_n: number | null
+          convertido_monto: number | null
+          cuenta: string | null
+          id_cuenta: string | null
+          neto_a_efectivo: number | null
+          pendiente_monto: number | null
+          pendientes_n: number | null
+          recibido_monto: number | null
+          recibidas_n: number | null
+          saldo_cuenta: number | null
+        }
+        Relationships: []
+      }
       v_cartera: {
         Row: {
           abonado: number | null
@@ -1976,6 +2076,20 @@ export type Database = {
       }
     }
     Functions: {
+      convertir_transferencias: {
+        Args: {
+          p_fecha?: string
+          p_monto: number
+          p_nota?: string
+        }
+        Returns: Json
+      }
+      saldo_cuenta: {
+        Args: {
+          p_id_cuenta: string
+        }
+        Returns: number
+      }
       anular_ticket_atomica: {
         Args: {
           p_ticket_id: string

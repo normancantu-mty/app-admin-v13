@@ -119,8 +119,11 @@ export default function NuevoMiembroPage() {
       })
 
       alert('Miembro registrado exitosamente en la red.')
+      // v2 (2026-10-29, Socio ejecutor): sin router.refresh() junto al push. El refresh del
+      // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
+      // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
+      // staleTimes.dynamic = 0 (default de Next 15+) el push ya trae datos frescos.
       router.push('/dashboard/distribuidores')
-      router.refresh()
     } catch (error: unknown) {
       console.error('Error registrando miembro:', error)
       const msg = error instanceof Error ? error.message : 'Error al registrar el miembro.'

@@ -265,6 +265,9 @@ export default function POSPage() {
         .from('cuentas_financieras')
         .select('id, nombre, tipo_fiscalidad, id_entidad')
         .eq('id_entidad', vendedorActual.id)
+        // v2: una cuenta de solo egresos (Cuenta personal) no recibe ventas; la base
+        // las rechaza (trg_cuenta_solo_egresos), asi que ni se ofrece.
+        .eq('solo_egresos', false)
         .order('nombre', { ascending: true })
 
       if (error) {
@@ -503,7 +506,10 @@ export default function POSPage() {
         return
       }
 
-      router.refresh()
+      // v2 (2026-10-29, Socio ejecutor): sin router.refresh() junto al push. El refresh del
+      // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
+      // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
+      // staleTimes.dynamic = 0 (default de Next 15+) el push ya trae datos frescos.
       router.push(`/ticket/${result.ticketId}`)
     } catch (error) {
       console.error('Error in handleGenerarTicket:', error)

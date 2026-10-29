@@ -117,6 +117,13 @@ export default async function CarteraPage() {
             {formateaMoneda(totales.deuda)}
           </p>
           <p className="mt-1 text-xs text-gray-500">{filas.length} nodos con mercancia recibida</p>
+          {totales.deudaConDistribuidor > 0.005 && (
+            <p className="mt-1 text-xs text-gray-500" data-prueba="deuda-con-distribuidor">
+              No suma {formateaMoneda(totales.deudaConDistribuidor)} que {totales.nodosConDistribuidor}{' '}
+              {totales.nodosConDistribuidor === 1 ? 'local le debe' : 'locales le deben'} a su distribuidor:
+              esa deuda no es con la matriz.
+            </p>
+          )}
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
           <p className="text-xs font-medium uppercase text-gray-500">El libro dice que hay fuera</p>

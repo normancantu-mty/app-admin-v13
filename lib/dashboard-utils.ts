@@ -14,6 +14,8 @@ import { fetchTodasLasFilas, type ConsultaPaginable } from './paginacion'
 // alla volveria server-only tambien la lectura de las vistas. Aqui, al reves,
 // no cuesta nada: este modulo ya lo es.
 import { leerSaldosEntidad } from './vistas'
+import { diasDesde } from './actividad'
+import { leerUltimaActividadRed } from './actividad-servidor'
 
 // Re-exportado a propósito: las pantallas piden el rango a dashboard-utils, y la
 // única implementación vive en date-format.ts junto con los límites del rango.
@@ -169,6 +171,8 @@ export interface LiquidezPorCuenta {
   EFECTIVO: number
   CUENTA_PERSONAL: number
   CUENTA_FRESNILLO: number
+  /** v2: cuenta Transferencias del ADMIN (cobros por transferencia pendientes de convertir). */
+  TRANSFERENCIAS: number
 }
 
 export interface PasivosFiscalesAdmin {
@@ -335,7 +339,7 @@ export function calcularPasivosFiscalesAdmin(
 }
 
 /** Cuentas financieras del ADMIN (ids + nombre para buckets de liquidez). */
-async function fetchAdminCuentasRows(): Promise<{ id: string; nombre: string }[]> {
+async function fetchAdminCuentasRows(): Promise<{ id: string; nombre: string; clase: string | null }[]> {
   const supabase = await getSupabaseServer()
   const { data: adminEntity, error: adminErr } = await supabase
     .from('entidades')
@@ -351,7 +355,7 @@ async function fetchAdminCuentasRows(): Promise<{ id: string; nombre: string }[]
 
   const { data: cuentas, error: cuentasErr } = await supabase
     .from('cuentas_financieras')
-    .select('id, nombre')
+    .select('id, nombre, clase')
     .eq('id_entidad', adminEntity.id)
 
   if (cuentasErr || !cuentas) {
@@ -359,7 +363,7 @@ async function fetchAdminCuentasRows(): Promise<{ id: string; nombre: string }[]
     return []
   }
 
-  return cuentas.map((c) => ({ id: c.id, nombre: c.nombre ?? '' }))
+  return cuentas.map((c) => ({ id: c.id, nombre: c.nombre ?? '', clase: c.clase ?? null }))
 }
 
 /**
@@ -369,8 +373,26 @@ async function fetchAdminCuentasRows(): Promise<{ id: string; nombre: string }[]
  * tarjetas con ESTA funcion y no con una copia suya: una copia se desincroniza
  * en silencio y la prueba pasaria comparando dos errores distintos.
  */
-export function clasificarCuentaLiquidezPorNombre(nombre: string): keyof LiquidezPorCuenta | null {
+export function clasificarCuentaLiquidezPorNombre(
+  nombre: string,
+  /**
+   * v2: `cuentas_financieras.clase`. Si viene, MANDA sobre el nombre: la cuenta
+   * PERSONAL se llama "Cuenta Gilberto" desde el 2026-10-29 y su nombre ya no dice
+   * "personal". Sin clase (base vieja) se clasifica por nombre como antes.
+   */
+  clase?: string | null
+): keyof LiquidezPorCuenta | null {
+  const porClase: Record<string, keyof LiquidezPorCuenta> = {
+    EFECTIVO: 'EFECTIVO',
+    PERSONAL: 'CUENTA_PERSONAL',
+    FISCAL: 'CUENTA_FRESNILLO',
+    TRANSFERENCIAS: 'TRANSFERENCIAS'
+  }
+  if (clase && porClase[clase]) return porClase[clase]
   const cuentaUpper = String(nombre).toUpperCase()
+  // v2: va primero; "Transferencias" no contiene ninguna otra subcadena, pero el
+  // orden deja claro que una cuenta de transferencias nunca cae en EFECTIVO.
+  if (cuentaUpper.includes('TRANSFERENCIA')) return 'TRANSFERENCIAS'
   if (cuentaUpper.includes('EFECTIVO') || cuentaUpper.includes('CAJA')) return 'EFECTIVO'
   if (cuentaUpper.includes('PERSONAL')) return 'CUENTA_PERSONAL'
   if (cuentaUpper.includes('FRESNILLO') || cuentaUpper.includes('EMPRESA')) return 'CUENTA_FRESNILLO'
@@ -466,7 +488,8 @@ export async function getLiquidezPorCuenta(
   const resultado: LiquidezPorCuenta = {
     EFECTIVO: 0,
     CUENTA_PERSONAL: 0,
-    CUENTA_FRESNILLO: 0
+    CUENTA_FRESNILLO: 0,
+    TRANSFERENCIAS: 0
   }
 
   try {
@@ -486,11 +509,13 @@ export async function getLiquidezPorCuenta(
 
     const cuentaIdABucket = new Map<string, keyof LiquidezPorCuenta>()
     for (const row of adminRows) {
-      const bucket = clasificarCuentaLiquidezPorNombre(row.nombre)
+      const bucket = clasificarCuentaLiquidezPorNombre(row.nombre, row.clase)
       if (bucket) cuentaIdABucket.set(row.id, bucket)
     }
 
-    const tiposIngreso = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO'])
+    // v2: SALDO_INICIAL es el saldo de arranque de la cuenta (misma regla que
+    // public.saldo_cuenta en SQL). No es ingreso del periodo: solo liquidez.
+    const tiposIngreso = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO', 'SALDO_INICIAL'])
     const tiposEgreso = new Set([
       'GASTO_OPERATIVO',
       'CARGO_DEUDA',
@@ -548,7 +573,7 @@ export async function getLiderazgoRed(): Promise<LiderazgoRed> {
     const supabase = await getSupabaseServer()
     const { data: entidades, error: entidadesError } = await supabase
       .from('entidades')
-      .select('id, nombre, rol, id_padre, id_nodo_padre')
+      .select('id, nombre, rol, id_padre, id_nodo_padre, fecha_ultimo_seguimiento, ultimo_seguimiento')
       .neq('rol', 'ADMIN')
 
     if (entidadesError || !entidades) {
@@ -556,7 +581,7 @@ export async function getLiderazgoRed(): Promise<LiderazgoRed> {
       return { nodosAlfa: [], subNodos: [] }
     }
 
-    const [tickets, saldos] = await Promise.all([
+    const [tickets, saldos, actividadPorNodo] = await Promise.all([
       fetchTodasLasFilas<TicketLiderazgo>(
         () =>
           supabase
@@ -566,7 +591,9 @@ export async function getLiderazgoRed(): Promise<LiderazgoRed> {
             ),
         'getLiderazgoRed tickets'
       ),
-      leerSaldosEntidad(supabase)
+      leerSaldosEntidad(supabase),
+      // Ronda 2 (auditoria 2026-10-29): la MISMA regla que el directorio (lib/actividad.ts).
+      leerUltimaActividadRed(supabase, entidades)
     ])
 
     const saldoPorEntidad = new Map(saldos.map((fila) => [fila.id_entidad, fila]))
@@ -584,31 +611,12 @@ export async function getLiderazgoRed(): Promise<LiderazgoRed> {
       // aprobados. Antes se rehacia aqui con `calcularSaldoPendienteInventarioConsignacion`.
       const saldoPendiente = Number(saldo?.saldo_pendiente_consignacion ?? 0)
 
-      const ultimaActividadTicket = ticketsVivos.length > 0
-        ? new Date(Math.max(...ticketsVivos.map(t => new Date(t.fecha_transaccion).getTime())))
-        : null
-
-      // `ultimo_abono` de la vista excluye los abonos con categoria
-      // ABONO_PENDIENTE; el bucle que estaba aqui no los excluia. Hoy da lo
-      // mismo —el unico ABONO_PENDIENTE de la base esta ANULADO y ya se caia
-      // del universo ACTIVO/APPROVED—, y lo comprueba
-      // `tests/cableado-pantallas.spec.ts`. El dia que nazca un abono pendiente
-      // vivo, la vista NO lo contara como actividad, que es lo que corresponde:
-      // un abono sin aprobar no es un pago.
-      const ultimaActividadLedger = saldo?.ultimo_abono ? new Date(saldo.ultimo_abono) : null
-
-      let ultimaActividad: Date | null = null
-      if (ultimaActividadTicket && ultimaActividadLedger) {
-        ultimaActividad = ultimaActividadTicket > ultimaActividadLedger ? ultimaActividadTicket : ultimaActividadLedger
-      } else if (ultimaActividadTicket) {
-        ultimaActividad = ultimaActividadTicket
-      } else if (ultimaActividadLedger) {
-        ultimaActividad = ultimaActividadLedger
-      }
-
-      const diasSinActividad = ultimaActividad
-        ? Math.floor((Date.now() - ultimaActividad.getTime()) / (1000 * 60 * 60 * 24))
-        : 999
+      // v2, ronda 2 (auditoria 2026-10-29): la actividad y los dias salen de la regla
+      // unica de `lib/actividad.ts` (la misma del directorio): movimientos vivos donde el
+      // nodo es parte, sus tickets vivos, su seguimiento manual y el corte de arranque;
+      // dias de calendario en hora de Mexico. 999 = nunca hubo nada.
+      const ultimaActividad = actividadPorNodo.get(entidad.id) ?? null
+      const diasSinActividad = diasDesde(ultimaActividad) ?? 999
 
       const parentId = entidad.id_nodo_padre ?? entidad.id_padre
       const padre = entidades.find(e => e.id === parentId)
@@ -828,5 +836,53 @@ export async function getDesgloseCategorias(
   } catch (error) {
     console.error('Error in getDesgloseCategorias:', error)
     return []
+  }
+}
+
+/**
+ * v2: metrica de transferencias (vista `v_transferencias_resumen`, una fila por
+ * cuenta con clase TRANSFERENCIAS). Recibido / convertido / pendiente, en conteo
+ * y en dinero. El conteo pendiente es FIFO: ver la migracion 20261028120300.
+ */
+export interface TransferenciasResumen {
+  recibidasN: number
+  recibidoMonto: number
+  conversionesN: number
+  convertidoMonto: number
+  comisionMonto: number
+  netoAEfectivo: number
+  pendientesN: number
+  pendienteMonto: number
+}
+
+export async function getTransferenciasResumen(): Promise<TransferenciasResumen | null> {
+  try {
+    const supabase = await getSupabaseServer()
+    const { data, error } = await supabase.from('v_transferencias_resumen').select('*')
+    if (error) {
+      console.error('Error in getTransferenciasResumen:', error.message, error.details, error.hint)
+      return null
+    }
+    if (!data || data.length === 0) return null
+    const n = (v: number | null | undefined) => Number(v) || 0
+    return data.reduce<TransferenciasResumen>(
+      (acc, r) => ({
+        recibidasN: acc.recibidasN + n(r.recibidas_n),
+        recibidoMonto: acc.recibidoMonto + n(r.recibido_monto),
+        conversionesN: acc.conversionesN + n(r.conversiones_n),
+        convertidoMonto: acc.convertidoMonto + n(r.convertido_monto),
+        comisionMonto: acc.comisionMonto + n(r.comision_monto),
+        netoAEfectivo: acc.netoAEfectivo + n(r.neto_a_efectivo),
+        pendientesN: acc.pendientesN + n(r.pendientes_n),
+        pendienteMonto: acc.pendienteMonto + n(r.pendiente_monto)
+      }),
+      {
+        recibidasN: 0, recibidoMonto: 0, conversionesN: 0, convertidoMonto: 0,
+        comisionMonto: 0, netoAEfectivo: 0, pendientesN: 0, pendienteMonto: 0
+      }
+    )
+  } catch (error: unknown) {
+    console.error('Error in getTransferenciasResumen:', error instanceof Error ? error.message : error)
+    return null
   }
 }

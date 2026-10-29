@@ -62,6 +62,23 @@ export default async function NuevoMovimientoPage() {
 
   const cuentas: CuentaFinancieraFormOption[] = cuentasData ?? []
 
+  // v2: lista cerrada de categorias de egreso (la llena scripts/cargar_arranque.py).
+  const { data: categoriasData, error: categoriasError } = await supabase
+    .from('categorias_movimiento')
+    .select('categoria, subcategoria')
+    .eq('tipo', 'EGRESO')
+    .eq('activa', true)
+    .order('orden', { ascending: true })
+
+  if (categoriasError) {
+    console.error('🚨 [ERROR FETCH CATEGORIAS]:', JSON.stringify(categoriasError, null, 2))
+  }
+
+  const categoriasEgreso: Record<string, string[]> = {}
+  for (const fila of (categoriasData ?? []) as { categoria: string; subcategoria: string }[]) {
+    ;(categoriasEgreso[fila.categoria] ??= []).push(fila.subcategoria)
+  }
+
   return (
     <div className="p-8">
       <div className="max-w-2xl mx-auto">
@@ -78,7 +95,7 @@ export default async function NuevoMovimientoPage() {
 
         {/* Form Card */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 p-6">
-          <FinanzaForm cuentas={cuentas} />
+          <FinanzaForm cuentas={cuentas} categoriasEgreso={categoriasEgreso} />
         </div>
       </div>
     </div>

@@ -6,10 +6,12 @@ import {
   getAspectosUrgentes,
   calcularFechasPorRango,
   getLiquidezPorCuenta,
+  getTransferenciasResumen,
   DIAS_SEMAFORO_AMARILLO,
   DIAS_SEMAFORO_ROJO
 } from '@/lib/dashboard-utils'
 import { getCurrentUser } from '@/lib/auth-utils'
+import TransferenciasCard from '@/components/dashboard/TransferenciasCard'
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('es-MX', {
@@ -43,12 +45,13 @@ export default async function DashboardGeneralPage() {
   // Se le pasa la PROMESA, no el resultado: sus propias lecturas arrancan ya,
   // en paralelo con las demas, en lugar de esperar al liderazgo.
   const liderazgoPromesa = getLiderazgoRed()
-  const [finanzasPeriodo, liderazgoHistorico, currentUser, liquidezHistorica, urgentes] = await Promise.all([
+  const [finanzasPeriodo, liderazgoHistorico, currentUser, liquidezHistorica, urgentes, transferencias] = await Promise.all([
     getFinanzasDashboard(fechaInicio, fechaFin),
     liderazgoPromesa,
     getCurrentUser(),
     getLiquidezPorCuenta(),
-    getAspectosUrgentes(liderazgoPromesa)
+    getAspectosUrgentes(liderazgoPromesa),
+    getTransferenciasResumen()
   ])
 
   const canMutate = currentUser?.rol !== 'SOCIO'
@@ -87,23 +90,30 @@ export default async function DashboardGeneralPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
           <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Efectivo</p>
           <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.EFECTIVO)}</p>
           <p className="text-xs text-gray-500 mt-1">Cuenta: EFECTIVO</p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
-          <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Personal</p>
+          <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Cuenta Gilberto</p>
           <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.CUENTA_PERSONAL)}</p>
-          <p className="text-xs text-gray-500 mt-1">Cuenta: CUENTA_PERSONAL</p>
+          <p className="text-xs text-gray-500 mt-1">Cuenta: Cuenta Gilberto</p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
           <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Fresnillo</p>
           <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.CUENTA_FRESNILLO)}</p>
           <p className="text-xs text-gray-500 mt-1">Cuenta: CUENTA_FRESNILLO</p>
         </div>
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
+          <p className="text-xs uppercase tracking-wide font-semibold text-gray-500">Liquidez Transferencias</p>
+          <p className="text-2xl font-bold text-gray-900 mt-2">{formatCurrency(liquidezHistorica.TRANSFERENCIAS)}</p>
+          <p className="text-xs text-gray-500 mt-1">Cuenta: TRANSFERENCIAS</p>
+        </div>
       </div>
+
+      {transferencias && <TransferenciasCard resumen={transferencias} canMutate={canMutate} />}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {/* COLUMNA IZQUIERDA - 75% (3 de 4 columnas) */}

@@ -13,9 +13,14 @@ interface CuentaFinancieraFormOption {
 
 interface FinanzaFormProps {
   cuentas: CuentaFinancieraFormOption[]
+  /** v2: lista cerrada categoria -> subcategorias (tabla categorias_movimiento). */
+  categoriasEgreso?: Record<string, string[]>
 }
 
-export default function FinanzaForm({ cuentas }: FinanzaFormProps) {
+export default function FinanzaForm({ cuentas, categoriasEgreso = {} }: FinanzaFormProps) {
+  const categoriasCerradas = Object.keys(categoriasEgreso)
+  const usaListaCerrada = categoriasCerradas.length > 0
+  const categoriaEgresoInicial = usaListaCerrada ? categoriasCerradas[0] : 'Compra_Insumos'
   const [tipoMovimiento, setTipoMovimiento] = useState<'INGRESO_VENTA' | 'GASTO_OPERATIVO' | 'TRANSFERENCIA'>('INGRESO_VENTA')
   const [categoria, setCategoria] = useState('Venta_Directa')
   const [cuentaOrigen, setCuentaOrigen] = useState(cuentas[0]?.id ?? '')
@@ -63,14 +68,21 @@ export default function FinanzaForm({ cuentas }: FinanzaFormProps) {
     }
   }
 
-  const categoriasActuales = tipoMovimiento === 'INGRESO_VENTA' ? CATEGORIAS_INGRESOS : CATEGORIAS_EGRESOS
+  const egresoCerrado = tipoMovimiento === 'GASTO_OPERATIVO' && usaListaCerrada
+  const categoriasActuales = egresoCerrado
+    ? categoriasCerradas.map((c) => ({ value: c, label: c }))
+    : tipoMovimiento === 'INGRESO_VENTA'
+      ? CATEGORIAS_INGRESOS
+      : CATEGORIAS_EGRESOS
   const categoriaToSubcategoriaKey: Record<string, keyof typeof SUBCATEGORIAS> = {
     Compra_Insumos: 'Compra_Insumos',
     Venta_Directa: 'Venta_Directa',
     Logistica_Envios: 'Logistica_Envios',
   }
   const subcategoriaKey = categoriaToSubcategoriaKey[categoria] ?? (categoria as keyof typeof SUBCATEGORIAS)
-  const subcategoriasActuales = SUBCATEGORIAS[subcategoriaKey] || []
+  const subcategoriasActuales: readonly string[] = egresoCerrado
+    ? categoriasEgreso[categoria] ?? []
+    : SUBCATEGORIAS[subcategoriaKey] || []
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -89,7 +101,7 @@ export default function FinanzaForm({ cuentas }: FinanzaFormProps) {
             if (nuevoTipo === 'INGRESO_VENTA') {
               setCategoria('Venta_Directa')
             } else if (nuevoTipo === 'GASTO_OPERATIVO') {
-              setCategoria('Compra_Insumos')
+              setCategoria(categoriaEgresoInicial)
             } else {
               setCategoria('Transferencia')
             }
@@ -211,8 +223,10 @@ export default function FinanzaForm({ cuentas }: FinanzaFormProps) {
             Subcategoría
           </label>
           <select
+            key={categoria}
             id="subcategoria"
             name="subcategoria"
+            required={egresoCerrado}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           >
             {subcategoriasActuales.map(sub => (

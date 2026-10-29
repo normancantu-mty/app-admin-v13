@@ -80,8 +80,11 @@ export default function CompraInsumosPage() {
       }
 
       alert('✅ Compra registrada exitosamente. Inventario y finanzas actualizados.')
+      // v2 (2026-10-29, Socio ejecutor): sin router.refresh() junto al push. El refresh del
+      // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
+      // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
+      // staleTimes.dynamic = 0 (default de Next 15+) el push ya trae datos frescos.
       router.push('/dashboard/inventario')
-      router.refresh()
     } catch (error) {
       console.error('Error in handleRegistrarCompra:', error)
       alert('Error al registrar la compra. Inténtalo de nuevo.')

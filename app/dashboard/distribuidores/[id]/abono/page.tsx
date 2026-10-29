@@ -247,8 +247,11 @@ export default function RegistrarAbonoPage({ params }: { params: Promise<{ id: s
             : 'Abono registrado y enviado a la cola de aprobación del Admin.'
           : 'Transferencia registrada correctamente.'
       )
+      // v2 (2026-10-29, Socio ejecutor): sin router.refresh() junto al push. El refresh del
+      // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
+      // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
+      // staleTimes.dynamic = 0 (default de Next 15+) el push ya trae datos frescos.
       router.push(`/dashboard/distribuidores/${resolvedParams.id}`)
-      router.refresh()
     } catch (error) {
       console.error('Error registrando transferencia:', error)
       setFormError('No se pudo registrar la transferencia.')

@@ -123,6 +123,31 @@ export async function POST(request: Request) {
       return Boolean(cuentaPropia?.id)
     }
 
+    // v2 · categorias cerradas (tabla categorias_movimiento, 2026-10-28). Un egreso
+    // con categoria tiene que traer una pareja categoria/subcategoria de la lista;
+    // uno sin categoria sigue entrando como SIN_CATEGORIZAR (ERP-59, arriba).
+    if (tipoMovimiento === 'GASTO_OPERATIVO' && !faltabaCategoria) {
+      const { data: lista, error: listaError } = await supabase
+        .from('categorias_movimiento')
+        .select('categoria, subcategoria')
+        .eq('tipo', 'EGRESO')
+        .eq('activa', true)
+      if (listaError) {
+        return NextResponse.json({ error: 'No se pudo leer la lista de categorias.' }, { status: 500 })
+      }
+      if ((lista ?? []).length > 0) {
+        const existe = (lista ?? []).some(
+          (fila) => fila.categoria === categoriaResuelta && fila.subcategoria === subcategoria
+        )
+        if (!existe) {
+          return NextResponse.json(
+            { error: 'Categoria y subcategoria tienen que ser de la lista cerrada.' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
     const cuentaDestinoValida = await validarCuentaPropia(cuentaDestino)
     if (!cuentaDestinoValida) {
       return NextResponse.json({ error: 'Cuenta destino fuera de tu alcance operativo.' }, { status: 403 })
@@ -171,6 +196,7 @@ export async function POST(request: Request) {
     const insertPayload: FinanzaInsert = {
       tipo_movimiento: tipoMovimiento,
       categoria: categoriaResuelta,
+      subcategoria,
       categoria_gasto: descripcion ?? subcategoria,
       monto,
       id_cuenta_destino: cuentaDestino,

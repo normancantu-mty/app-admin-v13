@@ -176,6 +176,23 @@ export function filtrarCartera<T extends { nombre: string }>(
   })
 }
 
+/**
+ * v2: la linea que explica lo que NO se sumo al total: deuda de locales con su
+ * distribuidor (`id_acreedor` no nulo). `null` si no hay ninguna. **Pura.**
+ */
+function conLaMatriz(f: Pick<FilaCarteraVista, 'id_acreedor'>): boolean {
+  // Misma regla que `esDeudaConLaMatriz` de lib/vistas (aqui sin importar valores:
+  // este modulo es puro y solo toma TIPOS de vistas).
+  return !f.id_acreedor
+}
+
+export function lineaDeudaConDistribuidor(filas: readonly FilaCarteraVista[]): string | null {
+  const suyas = filas.filter((f) => !conLaMatriz(f) && Number(f.deuda) > 0.005)
+  if (suyas.length === 0) return null
+  const suma = suyas.reduce((s, f) => s + Number(f.deuda), 0)
+  return `(no suma ${pesos(suma)} que ${suyas.length} local(es) le deben a su distribuidor: esa deuda no es con la matriz)`
+}
+
 export function textoCartera(filas: readonly FilaCarteraVista[], filtro?: string | null): string {
   const deben = filas.filter((f) => Number(f.deuda) > 0.005)
   if (filtro && filas.length === 0) {
@@ -186,9 +203,14 @@ export function textoCartera(filas: readonly FilaCarteraVista[], filtro?: string
   }
   if (deben.length === 0) return sinDatos('cartera con deuda')
 
-  const total = deben.reduce((s, f) => s + Number(f.deuda), 0)
+  // v2: el total es lo que se le debe A LA MATRIZ. La deuda de un local con su
+  // distribuidor se lista, pero no se suma (ya esta en el renglon del DST).
+  const total = deben.filter(conLaMatriz).reduce((s, f) => s + Number(f.deuda), 0)
   const ordenadas = [...deben].sort((a, b) => Number(b.deuda) - Number(a.deuda))
-  const lineas: string[] = [`CARTERA — ${pesos(total)} por cobrar, ${deben.length} deudor(es)`, '']
+  const lineas: string[] = [`CARTERA — ${pesos(total)} por cobrar, ${deben.length} deudor(es)`]
+  const aparte = lineaDeudaConDistribuidor(deben)
+  if (aparte) lineas.push(aparte)
+  lineas.push('')
 
   for (const f of ordenadas.slice(0, TOPE_RENGLONES)) {
     const dias =
@@ -277,8 +299,11 @@ export function textoQuienDebe(
       ? `${filas.map((f) => f.nombre).join(', ')}: no te debe nada de concesion hoy.\n${cierre}`
       : sinDatos('cartera con deuda') + (cierre === NOTA_EFECTIVO_NO_SEPARABLE ? '' : '\n\n' + cierre)
   }
-  const totalDeuda = renglones.reduce((s, r) => s + r.deuda, 0)
-  const lineas: string[] = [`QUIEN DEBE — ${pesos(totalDeuda)} de concesion`, '']
+  const totalDeuda = renglones.filter((r) => conLaMatriz(r.f)).reduce((s, r) => s + r.deuda, 0)
+  const lineas: string[] = [`QUIEN DEBE — ${pesos(totalDeuda)} de concesion`]
+  const aparte = lineaDeudaConDistribuidor(renglones.map((r) => r.f))
+  if (aparte) lineas.push(aparte)
+  lineas.push('')
   const ordenadas = [...renglones].sort((a, b) => b.deuda - a.deuda)
   for (const r of ordenadas.slice(0, TOPE_RENGLONES)) {
     lineas.push(`${r.f.nombre} (${r.f.rol}) — debe ${pesos(r.deuda)} de concesion`)

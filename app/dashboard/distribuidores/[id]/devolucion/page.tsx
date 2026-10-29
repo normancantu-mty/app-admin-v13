@@ -91,8 +91,11 @@ export default function DevolucionPage({ params }: { params: Promise<{ id: strin
       }
 
       alert('✅ Devolución procesada exitosamente. Stock restaurado y deuda cancelada.')
+      // v2 (2026-10-29, Socio ejecutor): sin router.refresh() junto al push. El refresh del
+      // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
+      // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
+      // staleTimes.dynamic = 0 (default de Next 15+) el push ya trae datos frescos.
       router.push(`/dashboard/distribuidores/${resolvedParams.id}`)
-      router.refresh()
     } catch (error) {
       console.error('Error al procesar la devolución:', error)
       alert('Error al procesar la devolución. Inténtalo de nuevo.')

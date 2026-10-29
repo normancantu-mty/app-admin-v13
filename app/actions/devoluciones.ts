@@ -22,6 +22,8 @@
 import { revalidatePath } from 'next/cache'
 import type { TablesInsert } from '@/types/database'
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
+import { deudaPorEntrega } from '@/lib/reglas-comerciales'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
 import {
   getServerSupabaseClient,
   resolverSesionOperador,
@@ -125,6 +127,152 @@ async function cargarPreciosZona(
 }
 
 /**
+ * v2 (2026-10-29, Socio ejecutor, T5): el precio UNITARIO que se le abona al nodo por
+ * cada pieza devuelta. Antes era el precio de LISTA de su zona ($599 la 750), pero la
+ * deuda de una consignacion nace con la comision ya descontada (REGLAS_COMERCIALES.md,
+ * "la deuda nace con la comision del distribuidor ya descontada del precio";
+ * `deudaPorEntrega`, lib/reglas-comerciales.ts). Medido en la base local: DST con 20%,
+ * consignacion 3 x $480 = $1,440; la devolucion de 1 abonaba $599 y le borraba $119
+ * de deuda legitima por pieza.
+ *
+ * Regla: se abona el precio con que NACIO la deuda, incluida la del arranque.
+ *  1. Lo mas reciente entre:
+ *     a. el `precio_unitario` de la consignacion ACTIVA (ticket) de ESE producto a ESA
+ *        entidad (asi sale bien tambien si se consigno con Cuenta Fresnillo), y
+ *     b. el `costo_unitario_movimiento` de su ENTRADA_CONCESION de arranque: la carga
+ *        conciliada escribe ahi el `precio_neto` de la conciliacion (precio al que se
+ *        valuo su deuda de arranque).
+ *  2. Si no hay ninguno: la regla en efectivo, `ceil(PP x (1 - comision propia))`:
+ *     `comision_base` si es DST, `comision_base_local` si es LOC. **Sin** la comision de
+ *     red del padre: la deuda de un LOC es con su acreedor directo (el DST o la matriz)
+ *     y nace al precio que ese acreedor le cobra (el POS cobra 153 = ceil(180 x 0.85) a
+ *     un local de David). Ronda 2 (auditoria 2026-10-29): con la red restada, Al son
+ *     abonaba 420 por una 750 cuya deuda nacio a 510.
+ *  3. Si la entidad no es DST ni LOC: el precio de lista, como antes.
+ */
+async function preciosDeAbono(
+  supabase: ClienteServidor,
+  idEntidad: string,
+  preciosLista: Map<string, number>
+): Promise<{ ok: true; porProducto: Map<string, number> } | { ok: false; error: string }> {
+  const porProducto = new Map<string, number>()
+
+  const { data: ent, error: errEnt } = await supabase
+    .from('entidades')
+    .select('rol, comision_base, comision_base_local, aplica_redondeo_costo')
+    .eq('id', idEntidad)
+    .maybeSingle()
+  if (errEnt || !ent) return { ok: false, error: `No se pudo leer la entidad: ${errEnt?.message ?? 'no existe'}` }
+
+  const rol = String(ent.rol || '')
+  if (rol !== 'DST' && rol !== 'LOC') {
+    for (const [id, pp] of preciosLista) porProducto.set(id, pp)
+    return { ok: true, porProducto }
+  }
+
+  // ERP-25: ledger paginado (`tests/paginacion-ledger.spec.ts`). Un ledger truncado
+  // no da error: daria el precio de una consignacion vieja.
+  let tickets: { id: string; fecha_transaccion: string | null }[]
+  try {
+    tickets = await fetchTodasLasFilas(
+      () =>
+        supabase
+          .from('transacciones_tickets')
+          .select('id, fecha_transaccion')
+          .eq('id_comprador', idEntidad)
+          .eq('condicion_pago', 'CONCESION')
+          .eq('status', 'ACTIVO')
+          .order('id'),
+      'preciosDeAbono tickets'
+    )
+  } catch (e) {
+    return { ok: false, error: `No se pudieron leer sus consignaciones: ${e instanceof Error ? e.message : String(e)}` }
+  }
+
+  const ms = (f: string | null | undefined) => {
+    const n = Date.parse(String(f ?? ''))
+    return Number.isFinite(n) ? n : 0
+  }
+  const fechaDe = new Map(tickets.map((t) => [t.id, ms(t.fecha_transaccion)]))
+  // producto -> el precio de origen mas reciente (ticket o arranque)
+  const delTicket = new Map<string, { fecha: number; precio: number }>()
+  if (fechaDe.size > 0) {
+    let detalles: { id_ticket: string | null; id_producto: string | null; precio_unitario: number | null }[]
+    try {
+      detalles = await fetchTodasLasFilas(
+        () =>
+          supabase
+            .from('ticket_detalles')
+            .select('id_ticket, id_producto, precio_unitario')
+            .in('id_ticket', [...fechaDe.keys()])
+            .order('id'),
+        'preciosDeAbono detalles'
+      )
+    } catch (e) {
+      return { ok: false, error: `No se pudo leer el detalle de sus consignaciones: ${e instanceof Error ? e.message : String(e)}` }
+    }
+    for (const d of detalles) {
+      if (!d.id_producto || !d.id_ticket) continue
+      const fecha = fechaDe.get(d.id_ticket) ?? 0
+      const previo = delTicket.get(d.id_producto)
+      if (!previo || fecha > previo.fecha) {
+        delTicket.set(d.id_producto, { fecha, precio: Number(d.precio_unitario) })
+      }
+    }
+  }
+
+  // 1b. La consignacion de arranque (sin ticket): su precio de origen lo dejo la carga.
+  let deArranque: { id_producto: string; costo_unitario_movimiento: number | null; fecha_movimiento: string | null }[]
+  try {
+    deArranque = await fetchTodasLasFilas(
+      () =>
+        supabase
+          .from('inventario_ledger')
+          .select('id_producto, costo_unitario_movimiento, fecha_movimiento')
+          .eq('id_entidad_destino', idEntidad)
+          .eq('tipo_movimiento', 'ENTRADA_CONCESION')
+          .eq('status', 'ACTIVO')
+          .gt('costo_unitario_movimiento', 0)
+          .order('id'),
+      'preciosDeAbono arranque'
+    )
+  } catch (e) {
+    return { ok: false, error: `No se pudo leer su consignacion de arranque: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  for (const r of deArranque) {
+    const fecha = ms(r.fecha_movimiento)
+    const previo = delTicket.get(r.id_producto)
+    if (!previo || fecha > previo.fecha) {
+      delTicket.set(r.id_producto, { fecha, precio: Number(r.costo_unitario_movimiento) })
+    }
+  }
+
+  for (const [id, pp] of preciosLista) {
+    const deTicket = delTicket.get(id)
+    if (deTicket && Number.isFinite(deTicket.precio) && deTicket.precio > 0) {
+      porProducto.set(id, deTicket.precio)
+      continue
+    }
+    porProducto.set(
+      id,
+      deudaPorEntrega({
+        pp,
+        cantidad: 1,
+        rolComprador: rol,
+        porcentajes: {
+          base: Number(ent.comision_base ?? 0),
+          local: Number(ent.comision_base_local ?? 0),
+          red: 0
+        },
+        esCuentaFiscal: false,
+        aplicaRedondeo: ent.aplica_redondeo_costo ?? true
+      }).precioUnitario
+    )
+  }
+  return { ok: true, porProducto }
+}
+
+/**
  * Catalogo de terminados con el precio de la zona ya resuelto. El formulario
  * pinta la vista previa con estos numeros, que son EXACTAMENTE los que se
  * escribiran: preview y ledger no pueden discrepar porque salen del mismo sitio.
@@ -158,6 +306,9 @@ export async function getProductosDevolucionAction(
     const ids = (productos ?? []).map((producto) => producto.id)
     const precios = await cargarPreciosZona(supabase, ids, zona)
     if (!precios.ok) return { success: false, error: precios.error }
+    // v2 (T5): la vista previa usa el MISMO precio de abono que se escribe.
+    const abono = await preciosDeAbono(supabase, entidadId, precios.porProducto)
+    if (!abono.ok) return { success: false, error: abono.error }
 
     return {
       success: true,
@@ -167,7 +318,7 @@ export async function getProductosDevolucionAction(
           id: producto.id,
           sku: producto.sku,
           nombre: producto.nombre,
-          precio_final: precios.porProducto.get(producto.id) ?? 0
+          precio_final: abono.porProducto.get(producto.id) ?? 0
         }))
       }
     }
@@ -220,15 +371,19 @@ export async function registrarDevolucionAction(
     const precios = await cargarPreciosZona(supabase, [idProducto], zonaResult.zona)
     if (!precios.ok) return { success: false, error: precios.error }
 
-    const precioFinal = precios.porProducto.get(idProducto) ?? 0
-    if (precioFinal <= 0) {
+    const precioLista = precios.porProducto.get(idProducto) ?? 0
+    if (precioLista <= 0) {
       return {
         success: false,
         error: `${producto.nombre} no tiene precio de lista en la zona ${zonaResult.zona}. No se registro nada.`
       }
     }
 
-    const monto = precioFinal * cantidad
+    // v2 (T5): se abona lo que se cobro al consignar, no el precio de lista.
+    const abono = await preciosDeAbono(supabase, idEntidad, new Map([[idProducto, precioLista]]))
+    if (!abono.ok) return { success: false, error: abono.error }
+    const precioFinal = abono.porProducto.get(idProducto) ?? precioLista
+    const monto = Math.round(precioFinal * cantidad * 100) / 100
 
     // --- PASO A: el producto vuelve al almacen.
     //
@@ -261,6 +416,11 @@ export async function registrarDevolucionAction(
       cantidad,
       id_entidad_origen: idEntidad,
       id_entidad_destino: sesion.entidadId,
+      // v2 (T5): lo que se abona a la deuda sale de su cubeta CONSIGNADO. Sin esto la
+      // fila caia en PAGADO (el default): al nodo le quedaba -1 en PAGADO (la vista lo
+      // esconde, HAVING > 0) y su CONSIGNADO no bajaba. Del lado de la matriz la vista
+      // lo cuenta en PAGADO (migracion 20261029120100).
+      cubeta: 'CONSIGNADO',
       notas: 'Devolución de Distribuidor',
       usuario_creador: sesion.email, // de la sesion, NUNCA del cliente
       status: 'ACTIVO'

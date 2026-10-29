@@ -133,7 +133,7 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     crudo = db as unknown as LectorSuelto
 
     entidades = await traerTodo('entidades', 'id, nombre, rol')
-    cuentas = await traerTodo('cuentas_financieras', 'id, id_entidad, nombre')
+    cuentas = await traerTodo('cuentas_financieras', 'id, id_entidad, nombre, clase')
 
     const idsAdmin = new Set(entidades.filter((e) => e.rol === 'ADMIN').map((e) => e.id))
     cuentasAdmin = cuentas.filter((c) => c.id_entidad && idsAdmin.has(c.id_entidad)).map((c) => c.id)
@@ -218,11 +218,11 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     const cuentaIdABucket = new Map<string, keyof LiquidezPorCuenta>()
     for (const c of cuentas) {
       if (!c.id_entidad || !cuentasAdmin.includes(c.id)) continue
-      const bucket = clasificarCuentaLiquidezPorNombre(c.nombre ?? '')
+      const bucket = clasificarCuentaLiquidezPorNombre(c.nombre ?? '', (c as { clase?: string | null }).clase)
       if (bucket) cuentaIdABucket.set(c.id, bucket)
     }
 
-    const TIPOS_INGRESO = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO'])
+    const TIPOS_INGRESO = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO', 'SALDO_INICIAL'])
     const TIPOS_EGRESO = new Set([
       'GASTO_OPERATIVO',
       'CARGO_DEUDA',
@@ -240,7 +240,7 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
         id_cuenta_destino: string | null
       }[]
     ): LiquidezPorCuenta => {
-      const total: LiquidezPorCuenta = { EFECTIVO: 0, CUENTA_PERSONAL: 0, CUENTA_FRESNILLO: 0 }
+      const total: LiquidezPorCuenta = { EFECTIVO: 0, CUENTA_PERSONAL: 0, CUENTA_FRESNILLO: 0, TRANSFERENCIAS: 0 }
       for (const mov of filas) {
         const monto = Number(mov.monto) || 0
         if (TIPOS_INGRESO.has(mov.tipo_movimiento ?? '') && mov.id_cuenta_destino) {

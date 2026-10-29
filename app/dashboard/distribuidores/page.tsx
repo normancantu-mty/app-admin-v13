@@ -4,12 +4,9 @@ import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import Link from 'next/link'
 import { cookies } from 'next/headers'
-import {
-  getMovimientosFinanzas,
-  getMovimientosInventario,
-  calcularUltimoMovimiento,
-  getSemaforoMovimiento
-} from '@/lib/risk-utils'
+import { getSemaforoMovimiento } from '@/lib/risk-utils'
+import { diasDesde } from '@/lib/actividad'
+import { leerUltimaActividadRed } from '@/lib/actividad-servidor'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { leerSaldosEntidad } from '@/lib/vistas'
 import DirectoryTableClient, { type DirectoryRow } from './DirectoryTableClient'
@@ -171,31 +168,6 @@ async function getEntidades(
   }
 }
 
-function getFechaActividadComercial(
-  ultimoMovimientoFinanciero: Date | null,
-  fechaUltimoSeguimiento?: string | null
-): Date | null {
-  const fechaSeguimiento = fechaUltimoSeguimiento ? new Date(fechaUltimoSeguimiento) : null
-
-  if (ultimoMovimientoFinanciero && fechaSeguimiento) {
-    return ultimoMovimientoFinanciero.getTime() >= fechaSeguimiento.getTime()
-      ? ultimoMovimientoFinanciero
-      : fechaSeguimiento
-  }
-
-  return ultimoMovimientoFinanciero || fechaSeguimiento
-}
-
-function calcularDiasDesde(fecha: Date | null): number | null {
-  if (!fecha) return null
-  const hoy = new Date()
-  const inicioHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())
-  const inicioFecha = new Date(fecha.getFullYear(), fecha.getMonth(), fecha.getDate())
-  const diferenciaMs = inicioHoy.getTime() - inicioFecha.getTime()
-  const dias = Math.floor(diferenciaMs / (1000 * 60 * 60 * 24))
-  return Math.max(dias, 0)
-}
-
 function getSeguimientoTexto(diasSinSeguimiento: number | null): string {
   if (diasSinSeguimiento === null) {
     return 'Sin contacto'
@@ -230,7 +202,7 @@ export default async function DistribuidoresPage() {
   const currentUserEntityId = currentUser?.id ?? null
   const entidades = await getEntidades(supabaseClient, sessionRole, currentUserEntityId)
 
-  const [saldos, movimientosFinanzas, movimientosInventario] = await Promise.all([
+  const [saldos, actividadPorNodo] = await Promise.all([
     // Con el cliente de la SESION: la vista es `security_invoker` y recorta
     // sola. Con service role devolveria la red entera.
     leerSaldosEntidad(supabaseClient),
@@ -238,8 +210,9 @@ export default async function DistribuidoresPage() {
     // semaforo, no el dinero. Antes construian por su cuenta el cliente de
     // NAVEGADOR y respondian `permission denied` en silencio: los semaforos
     // salian todos rojos.
-    getMovimientosFinanzas(serviceRoleClient),
-    getMovimientosInventario(serviceRoleClient)
+    // Ronda 2 (auditoria 2026-10-29): la MISMA lectura y regla que el Dashboard
+    // General (`lib/actividad.ts`). Antes: otra regla, otro numero.
+    leerUltimaActividadRed(serviceRoleClient, entidades)
   ])
 
   const saldoPorEntidad = new Map(saldos.map((fila) => [fila.id_entidad, fila]))
@@ -256,17 +229,8 @@ export default async function DistribuidoresPage() {
     const saldoPendiente = Number(saldo?.saldo_pendiente_consignacion ?? 0)
     const saldoPorPagar = Number(saldo?.saldo_por_pagar_efectivo ?? 0)
 
-    const ultimoMovimiento = calcularUltimoMovimiento(
-      entidad.id,
-      movimientosFinanzas,
-      movimientosInventario
-    )
-    const ultimaActividadComercial = getFechaActividadComercial(
-      ultimoMovimiento,
-      entidad.fecha_ultimo_seguimiento ?? entidad.ultimo_seguimiento
-    )
-    const diasSinSeguimiento = calcularDiasDesde(ultimaActividadComercial)
-    const semaforo = diasSinSeguimiento === null ? '⚪' : getSemaforoMovimiento(ultimaActividadComercial)
+    const diasSinSeguimiento = diasDesde(actividadPorNodo.get(entidad.id) ?? null)
+    const semaforo = getSemaforoMovimiento(diasSinSeguimiento)
 
     return {
       id: entidad.id,

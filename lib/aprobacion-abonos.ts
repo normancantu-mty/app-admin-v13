@@ -45,6 +45,42 @@ export function calcularDesgloseFiscal(
   }
 }
 
+/**
+ * v2, ronda 3 (2026-10-29, Socio ejecutor): el desglose que ve el Admin en la cola de
+ * aprobaciones sale de la FISCALIDAD de la cuenta destino (columna `tipo_fiscalidad`) y de su
+ * `clase`, nunca de una clave fija por nombre. Antes `PendingApprovalsPanel` tenia
+ * `case 'CUENTA_PERSONAL'` = IVA incluido; en v2 la cuenta personal (hoy "Cuenta Gilberto")
+ * es LIBRE y su abono no lleva IVA. Usa el MISMO calculo que la aprobacion que escribe
+ * (`calcularDesgloseFiscal`), asi la pantalla no puede decir otra cosa que el ledger.
+ * - `gastoOperativo` (el IVA que absorbe la empresa al cobrar en efectivo) solo aplica a la
+ *   cuenta de clase EFECTIVO: es lo que hacia el `case 'EFECTIVO'` anterior.
+ * - Fiscalidad desconocida: lanza. Suponer LIBRE seria la falla silenciosa de ERP-21.
+ */
+export interface CuentaParaDesglose {
+  tipo_fiscalidad: string | null
+  clase?: string | null
+}
+
+export interface FugaFiscal {
+  montoBase: number
+  ieps: number
+  iva: number
+  gastoOperativo: number
+}
+
+export function calcularFugaFiscal(monto: number, cuenta: CuentaParaDesglose): FugaFiscal {
+  const tipo = (cuenta.tipo_fiscalidad ?? '').toUpperCase()
+  if (tipo !== 'FULL_TAX' && tipo !== 'IVA_ONLY' && tipo !== 'LIBRE') {
+    throw new Error(
+      `La cuenta no tiene tipo_fiscalidad valido (${cuenta.tipo_fiscalidad ?? 'null'}): no adivino el impuesto.`
+    )
+  }
+  const d = calcularDesgloseFiscal(monto, tipo)
+  const esEfectivoPropio = tipo === 'LIBRE' && (cuenta.clase ?? '').toUpperCase() === 'EFECTIVO'
+  const gastoOperativo = esEfectivoPropio ? Math.round(((monto * 0.16) / 1.16) * 100) / 100 : 0
+  return { montoBase: d.base, ieps: d.ieps, iva: d.iva, gastoOperativo }
+}
+
 export type ResultadoAprobacion = { ok: true } | { ok: false; status: number; error: string }
 
 const YA_PROCESADO: ResultadoAprobacion = {
