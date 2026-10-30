@@ -254,7 +254,44 @@ async function getFinanzasLedger(
     // Paginado y sin `.limit(1000)`: de estas filas salen los saldos del perfil.
     const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
 
-    const data = await fetchTodasLasFilas<FinanzaLedgerQueryRow>(() => {
+    // Perf 2026-10-30: la consulta legacy sale EN PARALELO con la principal y
+    // solo se usa bajo la misma condicion de antes (sin movimientos a cuenta
+    // propia). Antes esperaba a la principal: un viaje mas en serie.
+    const pideLegacy = accountIds.length > 0 && Boolean(adminLegacyAccountId)
+    const legacyP: Promise<FinanzaLedgerQueryRow[]> = pideLegacy
+      ? fetchTodasLasFilas<FinanzaLedgerQueryRow>(() => {
+          let legacyQuery = serviceRoleClient
+            .from('finanzas_ledger')
+            .select(`
+              id,
+              id_entidad_relacionada,
+              id_cuenta_origen,
+              id_cuenta_destino,
+              id_ticket,
+              fecha_movimiento,
+              status,
+              tipo_movimiento,
+              monto,
+              categoria_gasto,
+              categoria,
+              usuario_creador,
+              cuenta_origen:cuentas_financieras!finanzas_ledger_id_cuenta_origen_fkey(nombre),
+              cuenta_destino:cuentas_financieras!finanzas_ledger_id_cuenta_destino_fkey(nombre)
+            `)
+            .in('status', ['ACTIVO', 'APPROVED', 'ANULADO'])
+            .in('id_entidad_relacionada', entityIds)
+            .eq('id_cuenta_destino', adminLegacyAccountId as string)
+            .order('fecha_movimiento', { ascending: false })
+
+          if (desde && hastaExclusivo) {
+            legacyQuery = legacyQuery.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
+          }
+
+          return legacyQuery
+        }, 'perfil getFinanzasLedger legacy')
+      : Promise.resolve([])
+    legacyP.catch(() => {})
+    const dataP = fetchTodasLasFilas<FinanzaLedgerQueryRow>(() => {
       let query = serviceRoleClient
         .from('finanzas_ledger')
         .select(`
@@ -296,6 +333,7 @@ async function getFinanzasLedger(
 
       return query
     }, 'perfil getFinanzasLedger')
+    const data = await dataP
 
     const finanzas = data.map((row) => ({
       ...row,
@@ -314,36 +352,7 @@ async function getFinanzasLedger(
       return finanzas
     }
 
-    const legacyData = await fetchTodasLasFilas<FinanzaLedgerQueryRow>(() => {
-      let legacyQuery = serviceRoleClient
-        .from('finanzas_ledger')
-        .select(`
-          id,
-          id_entidad_relacionada,
-          id_cuenta_origen,
-          id_cuenta_destino,
-          id_ticket,
-          fecha_movimiento,
-          status,
-          tipo_movimiento,
-          monto,
-          categoria_gasto,
-          categoria,
-          usuario_creador,
-          cuenta_origen:cuentas_financieras!finanzas_ledger_id_cuenta_origen_fkey(nombre),
-          cuenta_destino:cuentas_financieras!finanzas_ledger_id_cuenta_destino_fkey(nombre)
-        `)
-        .in('status', ['ACTIVO', 'APPROVED', 'ANULADO'])
-        .in('id_entidad_relacionada', entityIds)
-        .eq('id_cuenta_destino', adminLegacyAccountId)
-        .order('fecha_movimiento', { ascending: false })
-
-      if (desde && hastaExclusivo) {
-        legacyQuery = legacyQuery.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
-      }
-
-      return legacyQuery
-    }, 'perfil getFinanzasLedger legacy')
+    const legacyData = await legacyP
 
     const legacyFinanzas = legacyData.map((row) => ({
       ...row,
