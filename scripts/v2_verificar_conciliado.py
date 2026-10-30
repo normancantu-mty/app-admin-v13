@@ -3,29 +3,50 @@
 Escrito el 2026-10-29 por el Socio (ejecutor). Solo lee la base LOCAL (docker exec).
 
   python scripts/v2_verificar_conciliado.py <conciliacion.json>
+  python scripts/v2_verificar_conciliado.py <conciliacion.json> --dsn postgresql://...   (2026-10-30)
+
+--dsn: lee otra base (la copia del ensayo del corte, o produccion despues del corte) con el psql
+local y la sesion en SOLO LECTURA (PGOPTIONS default_transaction_read_only=on): no puede escribir.
+Sin --dsn, igual que siempre: docker exec al contenedor local.
 
 Por entidad: deuda esperada (JSON `deuda`) vs `v_saldo_entidad.saldo_pendiente_consignacion`,
 y consignacion esperada (JSON `consignacion` 750/250/50/pasta) vs `v_stock_por_cubeta`
 cubeta CONSIGNADO. Lee la base, no el script de carga: si la carga se equivoca, aqui sale.
 Sirve tal cual despues de la carga real, ANTES de cualquier movimiento nuevo.
 """
+import argparse
 import json
+import os
 import subprocess
 import sys
 
 CONT = 'supabase_db_app-admin-v2'
+PSQL_LOCAL = os.environ.get('PSQL', r'C:\Program Files\PostgreSQL\16\bin\psql.exe')
+ap = argparse.ArgumentParser()
+ap.add_argument('conciliacion')
+ap.add_argument('--dsn', help='postgresql://... (sesion de solo lectura)')
+ARGS = ap.parse_args()
 SKU = {'750': 'plata-750ml', '250': 'plata-250ml', '50': 'plata-50ml', 'pasta': 'pasta'}
 
 
 def filas(sql):
-    r = subprocess.run(['docker', 'exec', '-i', CONT, 'psql', '-U', 'postgres', '-X', '-At', '-F', '\t', '-c', sql],
-                       capture_output=True, text=True, encoding='utf-8')
+    if ARGS.dsn:
+        # psql de Windows no reordena argumentos: la base va con -d y las opciones antes del SQL.
+        env = dict(os.environ, PGOPTIONS='-c default_transaction_read_only=on', PGCLIENTENCODING='UTF8')
+        r = subprocess.run([PSQL_LOCAL, '-X', '-At', '-F', '\t', '-d', ARGS.dsn, '-c', sql],
+                           capture_output=True, text=True, encoding='utf-8', errors='replace', env=env,
+                           stdin=subprocess.DEVNULL)
+    else:
+        r = subprocess.run(['docker', 'exec', '-i', CONT, 'psql', '-U', 'postgres', '-X', '-At', '-F', '\t', '-c', sql],
+                           capture_output=True, text=True, encoding='utf-8')
     if r.returncode:
         sys.exit(r.stderr)
     return [l.split('\t') for l in r.stdout.splitlines() if l]
 
 
-conc = json.load(open(sys.argv[1], encoding='utf-8'))
+if ARGS.dsn and filas('SHOW default_transaction_read_only') != [['on']]:
+    sys.exit('la sesion --dsn no quedo en solo lectura: no sigo')
+conc = json.load(open(ARGS.conciliacion, encoding='utf-8'))
 conc = conc.get('entidades', conc)
 deuda = {n: float(v) for n, v in filas('SELECT nombre, coalesce(saldo_pendiente_consignacion, 0) FROM v_saldo_entidad')}
 stock = {}
