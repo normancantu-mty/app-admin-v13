@@ -163,23 +163,20 @@ async function getEntidad(
   id: string
 ): Promise<Entidad | null> {
   try {
-    const { data, error } = await supabaseClient
-      .from('entidades')
-      .select('id, nombre, rol, zona, telefono, id_nodo_padre, id_padre')
-      .eq('id', id)
-      .single()
+    // Las dos por `id`, en paralelo (perf 2026-10-30: eran dos viajes en serie).
+    const [{ data, error }, { data: cuentaData, error: cuentaError }] = await Promise.all([
+      supabaseClient
+        .from('entidades')
+        .select('id, nombre, rol, zona, telefono, id_nodo_padre, id_padre')
+        .eq('id', id)
+        .single(),
+      supabaseClient.from('cuentas_financieras').select('id').eq('id_entidad', id).limit(1).maybeSingle()
+    ])
 
     if (error) {
       console.error('Error fetching entidad:', error)
       return null
     }
-
-    const { data: cuentaData, error: cuentaError } = await supabaseClient
-      .from('cuentas_financieras')
-      .select('id')
-      .eq('id_entidad', id)
-      .limit(1)
-      .maybeSingle()
 
     if (cuentaError) {
       console.error('Error fetching cuenta for entidad:', cuentaError)
@@ -787,6 +784,13 @@ export async function leerFichaNodo(id: string, usuario: CurrentUser): Promise<F
   const serviceRoleClient = getServiceRoleSupabaseClient()
   const sessionRole = usuario.rol as SessionRole
   const currentUserEntityId = usuario.id
+  // Perf 2026-10-30: sin cascadas evitables. La cuenta legacy de la matriz no
+  // depende del nodo y arranca junto con la entidad (su resultado se descarta si
+  // la sesion no puede ver el nodo). Todo lo que solo necesita la entidad sale en
+  // la misma tanda que el alcance consolidado, y el desglose arranca en cuanto
+  // llegan los tickets, sin esperar al resto.
+  const adminLegacyP = getAdminLegacyAccountId(serviceRoleClient)
+  adminLegacyP.catch(() => {})
   const entidad = await getEntidad(supabaseClient, id)
   if (!entidad) return null
   if (!canReadTargetEntity(sessionRole, currentUserEntityId, entidad)) return null
@@ -794,22 +798,26 @@ export async function leerFichaNodo(id: string, usuario: CurrentUser): Promise<F
   const cookieStore = await cookies()
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
-  const [adminLegacyAccountId, consolidationScope] = await Promise.all([
-    getAdminLegacyAccountId(serviceRoleClient),
-    getConsolidationScope(serviceRoleClient, entidad)
-  ])
+  const scopeP = getConsolidationScope(serviceRoleClient, entidad)
+  const ticketsP = scopeP.then((scope) => getTransaccionesTickets(serviceRoleClient, scope.entityIds))
+  const desgloseP = ticketsP.then((tickets) =>
+    fetchDesgloseTextoPorTicketId(serviceRoleClient, Array.from(new Set(tickets.map((t) => t.id))))
+  )
+  const finanzasP = Promise.all([scopeP, adminLegacyP]).then(([scope, adminLegacyAccountId]) =>
+    getFinanzasLedger(serviceRoleClient, scope.entityIds, scope.accountIds, entidad.id, adminLegacyAccountId)
+  )
 
-  const [ticketsHistoricosSaldo, finanzasHistoricasSaldo, totalMermas, saldoDelNodo, filasStock, dstAnnulScopeOk] = await Promise.all([
-    getTransaccionesTickets(serviceRoleClient, consolidationScope.entityIds),
-    getFinanzasLedger(serviceRoleClient, consolidationScope.entityIds, consolidationScope.accountIds, entidad.id, adminLegacyAccountId),
-    getTotalMermasEntidad(serviceRoleClient, sessionRole, currentUserEntityId, entidad, id),
-    leerSaldoEntidad(supabaseClient, entidad.id),
-    leerStockPorCubeta(supabaseClient, id).catch(() => []),
-    sessionRole === 'DST' ? dstPuedeOperarPerfilDetallePage(supabaseClient, currentUserEntityId, id) : Promise.resolve(false)
-  ])
-
-  const ticketIds = Array.from(new Set(ticketsHistoricosSaldo.map((t) => t.id)))
-  const desglosePorTicketId = await fetchDesgloseTextoPorTicketId(serviceRoleClient, ticketIds)
+  const [consolidationScope, ticketsHistoricosSaldo, desglosePorTicketId, finanzasHistoricasSaldo, totalMermas, saldoDelNodo, filasStock, dstAnnulScopeOk] =
+    await Promise.all([
+      scopeP,
+      ticketsP,
+      desgloseP,
+      finanzasP,
+      getTotalMermasEntidad(serviceRoleClient, sessionRole, currentUserEntityId, entidad, id),
+      leerSaldoEntidad(supabaseClient, entidad.id),
+      leerStockPorCubeta(supabaseClient, id).catch(() => []),
+      sessionRole === 'DST' ? dstPuedeOperarPerfilDetallePage(supabaseClient, currentUserEntityId, id) : Promise.resolve(false)
+    ])
   const totalGanado = calcularTotalGanadoPeriodo(finanzasHistoricasSaldo, entidad, consolidationScope, { fechaInicio, fechaFin })
   const actividades = enrichActividadesAnulacionUi(
     unificarActividades(ticketsHistoricosSaldo, finanzasHistoricasSaldo, id, entidad.rol, desglosePorTicketId),

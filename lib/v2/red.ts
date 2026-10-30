@@ -12,8 +12,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import type { CurrentUser } from '@/lib/auth-utils'
 import { getSemaforoMovimiento } from '@/lib/risk-utils'
-import { diasDesde } from '@/lib/actividad'
-import { leerUltimaActividadRed } from '@/lib/actividad-servidor'
+import { diasDesde, ultimaActividadPorNodo } from '@/lib/actividad'
+import { leerFuentesActividad } from '@/lib/actividad-servidor'
 import { leerSaldosEntidad } from '@/lib/vistas'
 
 type Cliente = SupabaseClient<Database>
@@ -40,11 +40,18 @@ async function leerEntidadesVisibles(client: Cliente, usuario: CurrentUser): Pro
 }
 
 export async function leerRed(client: Cliente, usuario: CurrentUser): Promise<FilaRed[]> {
-  const entidades = await leerEntidadesVisibles(client, usuario)
-  const [saldos, actividad] = await Promise.all([
+  // Ni los saldos ni las fuentes de actividad dependen de la lista de entidades:
+  // salen las tres a la vez (perf 2026-10-30; antes eran dos tandas en serie). La
+  // regla es la misma de `leerUltimaActividadRed`: fuentes + seguimiento de cada nodo.
+  const [entidades, saldos, fuentes] = await Promise.all([
+    leerEntidadesVisibles(client, usuario),
     leerSaldosEntidad(client),
-    leerUltimaActividadRed(clienteServicioV2(), entidades)
+    leerFuentesActividad(clienteServicioV2())
   ])
+  const actividad = ultimaActividadPorNodo(
+    entidades.map((e) => e.id),
+    { ...fuentes, seguimiento: new Map(entidades.map((e) => [e.id, e.fecha_ultimo_seguimiento ?? e.ultimo_seguimiento ?? null])) }
+  )
   const saldoPor = new Map(saldos.map((s) => [s.id_entidad, s]))
   return entidades.map((e) => {
     const padreId = (e.id_nodo_padre ?? e.id_padre ?? '').trim() || null

@@ -59,25 +59,45 @@ export function slugDeClase(clase: ClaseCuenta | null): string {
   return Object.entries(SLUG_CLASE).find(([, c]) => c === clase)?.[0] ?? 'efectivo'
 }
 
-/** Las cuentas de las entidades ADMIN, con su saldo de `saldo_cuenta()`. */
-export async function leerCuentasMatriz(client: Cliente): Promise<CuentaMatriz[]> {
+type CuentaSinSaldo = Omit<CuentaMatriz, 'saldo'>
+
+/**
+ * Las cuentas de las entidades ADMIN, SIN saldo, en UN viaje: el filtro de rol
+ * va embebido (`entidades!inner`) en vez de leer primero los ids ADMIN y luego
+ * sus cuentas (eran dos viajes en serie; perf 2026-10-30). Mismo RLS: si la
+ * sesion no ve la entidad, no ve su cuenta, igual que antes.
+ */
+export async function leerListaCuentasMatriz(client: Cliente): Promise<CuentaSinSaldo[]> {
   const db = libre(client)
-  const { data: admins, error: e1 } = await db.from('entidades').select('id').eq('rol', 'ADMIN')
-  if (e1) throw new Error(`entidades ADMIN: ${e1.message}`)
-  const ids = (admins ?? []).map((a: { id: string }) => a.id)
-  if (ids.length === 0) throw new Error('No hay entidad ADMIN: el tablero no tiene a quien leer')
-
-  const { data: cuentas, error: e2 } = await db
+  const { data, error } = await db
     .from('cuentas_financieras')
-    .select('id, nombre, clase, tipo_fiscalidad, solo_egresos')
-    .in('id_entidad', ids)
-  if (e2) throw new Error(`cuentas_financieras: ${e2.message}`)
+    .select('id, nombre, clase, tipo_fiscalidad, solo_egresos, entidades!inner(rol)')
+    .eq('entidades.rol', 'ADMIN')
+  if (error) throw new Error(`cuentas_financieras: ${error.message}`)
+  if (!data || data.length === 0) {
+    // Camino raro: el mismo error de antes si de plano no hay entidad ADMIN.
+    const { data: admins, error: e1 } = await db.from('entidades').select('id').eq('rol', 'ADMIN').limit(1)
+    if (e1) throw new Error(`entidades ADMIN: ${e1.message}`)
+    if (!admins || admins.length === 0) throw new Error('No hay entidad ADMIN: el tablero no tiene a quien leer')
+    return []
+  }
+  return data.map(({ id, nombre, clase, tipo_fiscalidad, solo_egresos }: CuentaSinSaldo & { entidades: unknown }) => ({
+    id,
+    nombre,
+    clase,
+    tipo_fiscalidad,
+    solo_egresos: Boolean(solo_egresos)
+  }))
+}
 
+/** Saldo de cada cuenta con `saldo_cuenta()` (en paralelo), en el orden fijo de las tarjetas. */
+export async function conSaldos(client: Cliente, cuentas: CuentaSinSaldo[]): Promise<CuentaMatriz[]> {
+  const db = libre(client)
   const conSaldo = await Promise.all(
-    (cuentas ?? []).map(async (c: Omit<CuentaMatriz, 'saldo'>) => {
+    cuentas.map(async (c) => {
       const { data, error } = await db.rpc('saldo_cuenta', { p_id_cuenta: c.id })
       if (error) throw new Error(`saldo_cuenta(${c.nombre}): ${error.message}`)
-      return { ...c, solo_egresos: Boolean(c.solo_egresos), saldo: Number(data) || 0 }
+      return { ...c, saldo: Number(data) || 0 }
     })
   )
   return conSaldo.sort((a, b) => {
@@ -85,6 +105,26 @@ export async function leerCuentasMatriz(client: Cliente): Promise<CuentaMatriz[]
     const ib = b.clase ? ORDEN_CLASES.indexOf(b.clase) : 99
     return ia - ib || a.nombre.localeCompare(b.nombre, 'es')
   })
+}
+
+/** Las cuentas de las entidades ADMIN, con su saldo de `saldo_cuenta()`. */
+export async function leerCuentasMatriz(client: Cliente): Promise<CuentaMatriz[]> {
+  return conSaldos(client, await leerListaCuentasMatriz(client))
+}
+
+/**
+ * Cuentas (con saldo) y sus movimientos, sin cascada: los movimientos salen en
+ * cuanto llega la LISTA de cuentas, en paralelo con los saldos (antes esperaban
+ * a que terminaran los `saldo_cuenta()`). Para quien necesita las dos cosas.
+ */
+export function leerCuentasYMovimientos(client: Cliente): { cuentas: Promise<CuentaMatriz[]>; movimientos: Promise<MovimientoDinero[]> } {
+  const lista = leerListaCuentasMatriz(client)
+  const cuentas = lista.then((cs) => conSaldos(client, cs))
+  const movimientos = lista.then((cs) => leerMovimientosDeCuentas(client, cs.map((c) => c.id)))
+  // Si una falla y nadie espera a la otra, que no quede un rechazo suelto.
+  cuentas.catch(() => {})
+  movimientos.catch(() => {})
+  return { cuentas, movimientos }
 }
 
 /** Movimientos de dinero que tocan alguna de las cuentas dadas (todas las filas, paginado). */
@@ -207,10 +247,9 @@ export interface DatosTablero {
 
 /** Todo lo que pinta `/v2`, en paralelo. */
 export async function leerTablero(client: Cliente): Promise<DatosTablero> {
-  // A4 (paridad v2): una sola tanda. Los movimientos salen en cuanto llegan las
-  // cuentas, en paralelo con todo lo demas (antes esperaban a que terminara la tanda).
-  const cuentasP = leerCuentasMatriz(client)
-  const movimientosP = cuentasP.then((cs) => leerMovimientosDeCuentas(client, cs.map((c) => c.id)))
+  // A4 (paridad v2): una sola tanda. Los movimientos salen en cuanto llega la
+  // lista de cuentas, en paralelo con los saldos y con todo lo demas.
+  const { cuentas: cuentasP, movimientos: movimientosP } = leerCuentasYMovimientos(client)
   const [cuentas, movimientos, admins, transferencias, pasivo, cartera, stock, ventasPorMes, envasado, insumosEnNegativo, conteosFisicos, lotes, categorias] =
     await Promise.all([
       cuentasP,
