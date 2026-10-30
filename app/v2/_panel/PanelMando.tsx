@@ -332,6 +332,7 @@ export async function PanelMando() {
         <VerTodo href="/v2/red">Red y cartera →</VerTodo>
         <VerTodo href="/v2/catalogo">Catálogo →</VerTodo>
         <VerTodo href="/v2/inventario">Inventario →</VerTodo>
+        <VerTodo href="/v2/lotes">Lotes →</VerTodo>
       </div>
 
       <div className="grid g336">
