@@ -28,8 +28,7 @@ import { exigirMandoV2 } from '@/lib/v2/puerta'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import {
   leerCategoriasEgreso,
-  leerCuentasMatriz,
-  leerMovimientosDeCuentas,
+  leerCuentasYMovimientos,
   leerNombresEntidades,
   leerResumenTransferencias,
   slugDeClase,
@@ -82,17 +81,17 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
   const filas = filasPedidas(sp.filas)
 
   const client = await getServerSupabaseClient()
-  const [cuentas, nombres, transferencias, categorias, pasivo] = await Promise.all([
-    leerCuentasMatriz(client),
+  // Perf 2026-10-30: los movimientos salen con la lista de cuentas, en la misma
+  // tanda que los saldos y lo demas (antes esperaban a que llegaran los saldos).
+  const { cuentas: cuentasP, movimientos: movimientosP } = leerCuentasYMovimientos(client)
+  const [cuentas, todos, nombres, transferencias, categorias, pasivo] = await Promise.all([
+    cuentasP,
+    movimientosP,
     leerNombresEntidades(client),
     leerResumenTransferencias(client),
     leerCategoriasEgreso(client),
     leerPasivoFiscal(client)
   ])
-  const todos = await leerMovimientosDeCuentas(
-    client,
-    cuentas.map((c) => c.id)
-  )
   const idxCat = indiceCategorias(categorias)
   const cuenta = slug === 'todas' ? null : cuentas.find((c) => c.clase === SLUG_CLASE[slug]) ?? null
   const ids = cuenta ? [cuenta.id] : cuentas.map((c) => c.id)

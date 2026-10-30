@@ -41,8 +41,7 @@ import { getServerSupabaseClient } from '@/lib/server-session'
 import { exigirMandoV2 } from '@/lib/v2/puerta'
 import {
   leerCategoriasEgreso,
-  leerCuentasMatriz,
-  leerMovimientosDeCuentas,
+  leerCuentasYMovimientos,
   leerNombresEntidades,
   leerResumenTransferencias,
   slugDeClase,
@@ -95,8 +94,14 @@ export default async function CuentaV2({
   if (!clase) notFound()
 
   const client = await getServerSupabaseClient()
-  const [cuentas, nombres, transferencias, categorias] = await Promise.all([
-    leerCuentasMatriz(client),
+  // Perf 2026-10-30: una sola lectura de las cuentas de la matriz y sus movimientos,
+  // sin cascada (los movimientos salen con la lista de cuentas, junto con los saldos).
+  // La cuenta se filtra aqui (mismas filas que pedir solo esa cuenta) y la vista
+  // Sumado usa todas.
+  const { cuentas: cuentasP, movimientos: movimientosP } = leerCuentasYMovimientos(client)
+  const [cuentas, todos, nombres, transferencias, categorias] = await Promise.all([
+    cuentasP,
+    movimientosP,
     leerNombresEntidades(client),
     leerResumenTransferencias(client),
     leerCategoriasEgreso(client)
@@ -105,12 +110,6 @@ export default async function CuentaV2({
   const cuenta = cuentas.find((c) => c.clase === clase)
   if (!cuenta) notFound()
 
-  // Una sola lectura de las cuentas de la matriz: la cuenta se filtra aqui (mismas
-  // filas que pedir solo esa cuenta) y la vista Sumado usa todas.
-  const todos = await leerMovimientosDeCuentas(
-    client,
-    cuentas.map((c) => c.id)
-  )
   const movs = todos
     .filter((m) => m.id_cuenta_origen === cuenta.id || m.id_cuenta_destino === cuenta.id)
     .map((m) => ({ ...m, efecto: efectoEnCuenta(m, cuenta.id) }))
