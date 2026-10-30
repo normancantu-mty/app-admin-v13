@@ -4,8 +4,8 @@
  * Paridad v2 — estado de los modales del panel unico. Escrito el 2026-10-29 por el
  * ejecutor del Socio.
  *
- * /v2 es UNA pagina: todo lo demas se abre como modal en el slot `@modal`
- * (rutas `/v2/m/...`). Navegar a un modal es navegacion suave: el panel NO se
+ * /panel es UNA pagina: todo lo demas se abre como modal en el slot `@modal`
+ * (rutas `/panel/m/...`). Navegar a un modal es navegacion suave: el panel NO se
  * vuelve a pintar. Este proveedor recuerda dos cosas:
  *  - `pila`: cuantos modales se abrieron desde el panel (para cerrar con `back()`
  *    y que el boton Atras del navegador siga funcionando);
@@ -14,16 +14,17 @@
  *    panel sale de la cache del router sin pedir nada.
  *
  * Paginas v2 (2026-10-29, ejecutor del Socio): ademas del panel hay paginas
- * completas (`/v2/finanzas`, `/v2/red`, `/v2/red/<id>`, `/v2/catalogo`,
- * `/v2/inventario`) y sus capturas se abren como modal ENCIMA de la pagina. Por
+ * completas (`/panel/finanzas`, `/panel/red`, `/panel/red/<id>`, `/panel/catalogo`,
+ * `/panel/inventario`) y sus capturas se abren como modal ENCIMA de la pagina. Por
  * eso el proveedor recuerda la `base`: la ultima ruta que no es modal (con su
- * query). «Volver al panel» (`/v2` o sin destino) significa volver a la base.
+ * query). «Volver al panel» (`/panel` o sin destino) significa volver a la base.
  * Si se abrio el modal desde una pagina, un destino de modal que el usuario no
- * recorrio (p. ej. Compra -> `/v2/m/inventario`) tambien vuelve a la base: el
+ * recorrio (p. ej. Compra -> `/panel/m/inventario`) tambien vuelve a la base: el
  * usuario ya esta viendo el apartado completo. El ticket tras una venta se
  * respeta. Desde el panel el comportamiento es el de siempre.
  */
 
+import { PREFIJO_MODAL, RUTA_BASE } from '@/lib/v2/rutas'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 
@@ -49,7 +50,6 @@ type EstadoModal = {
 
 const Ctx = createContext<EstadoModal | null>(null)
 
-const PREFIJO_MODAL = '/v2/m/'
 const esModal = (ruta: string) => ruta.startsWith(PREFIJO_MODAL)
 const sinQuery = (ruta: string) => ruta.split('?')[0]
 
@@ -73,7 +73,7 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
   const cambio = useRef(false)
   const esqueletoVisto = useRef(false)
   /** Ultima ruta que no es modal: el panel o una pagina completa. */
-  const base = useRef('/v2')
+  const base = useRef(RUTA_BASE)
   /** Rutas de modal recorridas desde la base (padres reales de un modal anidado). */
   const visitados = useRef(new Set<string>())
 
@@ -90,9 +90,9 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
 
   /** A donde se va de verdad cuando un modal pide `destino`. */
   const resolver = useCallback((destino?: string): string => {
-    if (!destino || destino === '/v2') return base.current
-    if (base.current === '/v2' || !esModal(destino)) return destino
-    if (destino.startsWith('/v2/m/ticket/') || visitados.current.has(sinQuery(destino))) return destino
+    if (!destino || destino === RUTA_BASE) return base.current
+    if (base.current === RUTA_BASE || !esModal(destino)) return destino
+    if (destino.startsWith(`${PREFIJO_MODAL}ticket/`) || visitados.current.has(sinQuery(destino))) return destino
     return base.current
   }, [])
 

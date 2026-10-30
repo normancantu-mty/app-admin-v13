@@ -1,5 +1,5 @@
 /**
- * Front v2 — lecturas de la base para las pantallas `/v2`. Escrito el 2026-10-29
+ * Front v2 — lecturas de la base para las pantallas `/panel`. Escrito el 2026-10-29
  * por el ejecutor del Front v2 (lanzado por el Socio).
  *
  * Reusa lo que ya existe: `lib/vistas.ts` (v_cartera, v_stock_por_cubeta,
@@ -245,7 +245,7 @@ export interface DatosTablero {
   categorias: CategoriaLista[]
 }
 
-/** Todo lo que pinta `/v2`, en paralelo. */
+/** Todo lo que pinta `/panel`, en paralelo. */
 export async function leerTablero(client: Cliente): Promise<DatosTablero> {
   // A4 (paridad v2): una sola tanda. Los movimientos salen en cuanto llega la
   // lista de cuentas, en paralelo con los saldos y con todo lo demas.

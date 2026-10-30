@@ -4,10 +4,11 @@
  * los movimientos con «Cargar más», «Creado por» y «Anular». El conteo fisico
  * vive aqui (Q14), no en «Capturar». Escrito el 2026-10-29 por el ejecutor del Socio.
  *
- * Componente de servidor: lo usan el modal `/v2/m/nodo/[id]` y el panel de un
+ * Componente de servidor: lo usan el modal `/panel/m/nodo/[id]` y el panel de un
  * DST/LOC (su propia ficha).
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import type { CurrentUser } from '@/lib/auth-utils'
 import type { FichaNodo } from '@/lib/v2/nodo'
 import { mxn, num } from '@/lib/v2/formato'
@@ -39,19 +40,19 @@ export function FichaVista({ ficha, usuario, propia = false }: { ficha: FichaNod
 
       {opera && (
         <div className="acciones">
-          <AbrirModal className="btn p" href={`/v2/m/venta?vendedor=${id}`} titulo="Nueva venta" tam="xl" data-testid="ficha-venta">
+          <AbrirModal className="btn p" href={`${RUTA_BASE}/m/venta?vendedor=${id}`} titulo="Nueva venta" tam="xl" data-testid="ficha-venta">
             📦 Nueva venta
           </AbrirModal>
-          <AbrirModal className="btn" href={`/v2/m/nodo/${id}/cobranza`} titulo="Cobrar, contar inventario" data-testid="ficha-cobranza">
+          <AbrirModal className="btn" href={`${RUTA_BASE}/m/nodo/${id}/cobranza`} titulo="Cobrar, contar inventario" data-testid="ficha-cobranza">
             Cobrar, contar inventario
           </AbrirModal>
-          <AbrirModal className="btn p" href={`/v2/m/nodo/${id}/abono`} titulo="Registrar abono" tam="md" data-testid="ficha-abono">
+          <AbrirModal className="btn p" href={`${RUTA_BASE}/m/nodo/${id}/abono`} titulo="Registrar abono" tam="md" data-testid="ficha-abono">
             💵 Registrar abono
           </AbrirModal>
-          <AbrirModal className="btn" href={`/v2/m/nodo/${id}/devolucion`} titulo="Devolución" tam="md" data-testid="ficha-devolucion">
+          <AbrirModal className="btn" href={`${RUTA_BASE}/m/nodo/${id}/devolucion`} titulo="Devolución" tam="md" data-testid="ficha-devolucion">
             🔄 Devolución
           </AbrirModal>
-          <AbrirModal className="btn" href={`/v2/m/nodo/${id}/conteo`} titulo="Conteo físico" tam="md" data-testid="ficha-conteo">
+          <AbrirModal className="btn" href={`${RUTA_BASE}/m/nodo/${id}/conteo`} titulo="Conteo físico" tam="md" data-testid="ficha-conteo">
             Conteo físico
           </AbrirModal>
           <div className="v1">

@@ -1,5 +1,5 @@
 /**
- * Paginas v2 — el encabezado de una pagina completa de `/v2` (Finanzas, Red,
+ * Paginas v2 — el encabezado de una pagina completa de `/panel` (Finanzas, Red,
  * Catalogo, Inventario). Escrito el 2026-10-29 por el ejecutor del Socio.
  *
  * Regla de Norman (2026-10-29): MODAL = accion rapida o vista general desde el
@@ -9,6 +9,7 @@
  * de una pagina se siguen abriendo como modal encima de ella (slot `@modal`).
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 
@@ -27,7 +28,7 @@ export function EncabezadoPagina({
   return (
     <div className="pg-hd" data-testid="encabezado-pagina">
       <nav className="pg-migas" aria-label="Ruta">
-        <Link href="/v2" className="volver" data-testid="volver-panel">
+        <Link href={RUTA_BASE} className="volver" data-testid="volver-panel">
           ← Panel
         </Link>
         {migas?.map((m) => (

@@ -5,7 +5,7 @@
  * 2026-10-30 por el ejecutor de saldos (lanzado por el Socio).
  *
  * COMO CAMBIA SIN IR AL SERVIDOR: las pantallas de saldos pintan las DOS vistas
- * (`.vs-ind` y `.vs-sum`) y el CSS de `app/v2/v2.css` esconde una u otra segun el
+ * (`.vs-ind` y `.vs-sum`) y el CSS de `app/panel/v2.css` esconde una u otra segun el
  * `data-vista` de esta pildora (`.v2:has(.vs-sel[data-vista="sumado"])`). El clic
  * solo cambia ese atributo: instantaneo, y vale igual dentro de los modales,
  * porque el slot `@modal` y `#v2-portal` viven dentro de `.v2`.

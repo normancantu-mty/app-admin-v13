@@ -2,7 +2,7 @@
  * Front v2 — la vista «Sumado» de los saldos: todo junto. Escrito el 2026-10-30
  * por el ejecutor de saldos (lanzado por el Socio). Componente de SERVIDOR, solo
  * presenta: las cifras llegan ya calculadas por quien lo pinta (panel, modal de
- * cuenta, /v2/finanzas).
+ * cuenta, /panel/finanzas).
  *
  * QUE SUMA EL TOTAL Y QUE NO (la regla, no una opinion):
  *  - ENTRA: el `saldo_cuenta()` de TODAS las cuentas de las entidades ADMIN
@@ -18,6 +18,7 @@
  *    (botellas en la matriz y concesion en piso: producto, sin valorizar aqui).
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import type { ReactNode } from 'react'
 import { AbrirModal, CambiarModal } from '@/components/v2/modal/AbrirModal'
 import { redondear } from '@/lib/v2/dinero'
@@ -119,7 +120,7 @@ export function TodoJunto({
       <div className="vs-desglose">
         {filas.map((f) => {
           const p = pct(f.saldo, total)
-          // Con una cuenta marcada (modal de cuenta, /v2/finanzas?cuenta=x) esa fila es
+          // Con una cuenta marcada (modal de cuenta, /panel/finanzas?cuenta=x) esa fila es
           // la protagonista y las demas van chicas y atenuadas.
           const foco = marcada ? (marcada === f.id ? ' on' : ' otra') : ''
           return (
@@ -160,7 +161,7 @@ export function TodoJunto({
       {foto && (
         <>
           <div className="vs-foto">
-            <AbrirModal href="/v2/m/cartera" titulo="Cartera completa" className="kpi">
+            <AbrirModal href={`${RUTA_BASE}/m/cartera`} titulo="Cartera completa" className="kpi">
               <span className="t">
                 + Por cobrar (matriz) <span>›</span>
               </span>

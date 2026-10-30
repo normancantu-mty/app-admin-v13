@@ -1,4 +1,5 @@
 // Paridad v2: copia de app/dashboard/avisos/page.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { listarAvisosAction } from '@/app/actions/avisos'
 import { CATALOGO_AVISOS, resumenDiarioAvisos, type TipoAviso } from '@/lib/avisos'
@@ -22,10 +23,10 @@ function diasAbierto(iso: string, ahora: Date): number {
 /** A donde lleva "Ir al movimiento". Solo el ticket tiene pantalla propia. */
 function enlaceAlMovimiento(tabla: string | null, idRegistro: string | null, esMando: boolean): string | null {
   if (!tabla || !idRegistro) return null
-  if (tabla === 'transacciones_tickets') return `/v2/m/ticket/${idRegistro}`
+  if (tabla === 'transacciones_tickets') return `${RUTA_BASE}/m/ticket/${idRegistro}`
   if (!esMando) return null
-  if (tabla === 'finanzas_ledger') return '/v2/m/cuenta/efectivo'
-  if (tabla === 'inventario_ledger') return '/v2/m/inventario'
+  if (tabla === 'finanzas_ledger') return `${RUTA_BASE}/m/cuenta/efectivo`
+  if (tabla === 'inventario_ledger') return `${RUTA_BASE}/m/inventario`
   return null
 }
 

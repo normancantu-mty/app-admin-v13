@@ -1,5 +1,5 @@
 /**
- * Front v2 — la aritmetica del dinero que pintan las pantallas `/v2`.
+ * Front v2 — la aritmetica del dinero que pintan las pantallas `/panel`.
  * Escrito el 2026-10-29 por el ejecutor del Front v2 (lanzado por el Socio).
  * Proyecto `puras`: sin base ni red.
  *
@@ -7,6 +7,7 @@
  * `public.saldo_cuenta(uuid)`. Si divergen, la pantalla pinta un saldo y el
  * libro dice otro.
  */
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { test, expect } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -315,7 +316,7 @@ function exigeMandoAntesDeLeer(fuente: string): boolean {
 }
 
 /**
- * Panel unico (2026-10-29): DST y LOC tambien entran a /v2, asi que no toda pagina
+ * Panel unico (2026-10-29): DST y LOC tambien entran a /panel, asi que no toda pagina
  * usa `exigirMandoV2()`. La que usa `exigirSesionV2()` tiene que filtrar por rol
  * justo despues -- un `if (... rol ...) notFound()/redirect(...)` -- y ANTES de
  * abrir el cliente de la base. Las unicas sin filtro por rol son las de
@@ -347,7 +348,7 @@ function noLeeNada(fuente: string): boolean {
   return !/^\s*import\s/m.test(codigoVivo(fuente))
 }
 
-/** Abiertas a todo rol con sesion, a proposito. Ruta relativa a app/v2, con '/'. */
+/** Abiertas a todo rol con sesion, a proposito. Ruta relativa a app/panel, con '/'. */
 const PAGINAS_ABIERTAS = new Set([
   'layout.tsx', // marco comun; cada pagina vuelve a filtrar
   'page.tsx', // el panel unico: Panel.tsx elige PanelMando o PanelNodo por rol
@@ -381,8 +382,8 @@ test.describe('Front v2 · rol ADMIN/SOCIO en el layout y en cada pagina', () =>
     for (const r of ['DST', 'LOC', 'SUB-ADMIN', '', null, undefined]) expect(esRolDeMandoV2(r), String(r)).toBe(false)
   })
 
-  test('cada page.tsx, layout.tsx y default.tsx de app/v2 pasa por una puerta con chequeo de rol antes de leer la base', () => {
-    const raiz = path.join(process.cwd(), 'app', 'v2')
+  test('cada page.tsx, layout.tsx y default.tsx de app/panel pasa por una puerta con chequeo de rol antes de leer la base', () => {
+    const raiz = path.join(process.cwd(), 'app', 'panel')
     const archivos = archivosDeV2(raiz)
     expect(archivos.filter((a) => a.endsWith('page.tsx')).length).toBeGreaterThanOrEqual(3)
     const relativas = new Set<string>()
@@ -415,10 +416,11 @@ test.describe('Front v2 · rol ADMIN/SOCIO en el layout y en cada pagina', () =>
   })
 })
 
-test.describe('Front v2 · la puerta cubre /v2', () => {
-  test('/v2 y sus subrutas son protegidas, /v2x no', () => {
-    expect(esRutaProtegida('/v2')).toBe(true)
-    expect(esRutaProtegida('/v2/cartera')).toBe(true)
-    expect(esRutaProtegida('/v2x')).toBe(false)
+test.describe('Front v2 · la puerta cubre /panel', () => {
+  test('/panel y sus subrutas son protegidas, /panelx no', () => {
+    expect(RUTA_BASE).toBe('/panel')
+    expect(esRutaProtegida(RUTA_BASE)).toBe(true)
+    expect(esRutaProtegida(`${RUTA_BASE}/cartera`)).toBe(true)
+    expect(esRutaProtegida(`${RUTA_BASE}x`)).toBe(false)
   })
 })

@@ -2,6 +2,7 @@
 
 /** Paridad v2 — selector del catálogo: cobro simulado y, para la matriz, Distribuidor/Local (Q7). Escrito el 2026-10-29 por el ejecutor del Socio. */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 
@@ -13,7 +14,7 @@ export function SelectorPrecios({
   entidadId,
   opciones,
   conTipo,
-  ruta = '/v2/m/precios'
+  ruta = `${RUTA_BASE}/m/precios`
 }: {
   fiscalidad: string
   tipo: 'DST' | 'LOC'
@@ -21,7 +22,7 @@ export function SelectorPrecios({
   opciones: Opcion[]
   /** La matriz elige Distribuidor o Local; el DST solo ve sus locales. */
   conTipo: boolean
-  /** A donde se aplica: el modal (por defecto) o la pagina `/v2/catalogo` (Paginas v2, 2026-10-29). */
+  /** A donde se aplica: el modal (por defecto) o la pagina `/panel/catalogo` (Paginas v2, 2026-10-29). */
   ruta?: string
 }) {
   const router = useRouter()

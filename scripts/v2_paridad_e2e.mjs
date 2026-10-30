@@ -1,4 +1,4 @@
-// Paridad v2 — E2E de las funciones de /v2 (panel unico con modales) como ADMIN, DST, LOC
+// Paridad v2 — E2E de las funciones de /panel (panel unico con modales) como ADMIN, DST, LOC
 // y SOCIO, comprobando el EFECTO EN LA BASE. Escrito el 2026-10-29 por el ejecutor del Socio.
 //
 //   E2E_BASE_URL=http://localhost:3122 SUPABASE_URL=http://127.0.0.1:56321 \
@@ -12,6 +12,7 @@ import { chromium } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 
+const RUTA_BASE = '/panel'
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:3122'
 const SB = process.env.SUPABASE_URL || ''
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
@@ -68,7 +69,7 @@ async function entrar(quien) {
   await page.fill('input[type=email]', U[quien].email)
   await page.fill('input[type=password]', U[quien].clave)
   await page.click('button[type=submit]')
-  await page.waitForURL((u) => u.pathname === '/v2', { timeout: 60000 })
+  await page.waitForURL((u) => u.pathname === RUTA_BASE, { timeout: 60000 })
   await page.waitForSelector('.panel', { timeout: 60000 })
 }
 
@@ -89,7 +90,7 @@ async function paso(nombre, fn) {
     console.log(`PASO ${n} FALLA [${rol}] ${nombre}: ${String(e?.message || e).split('\n')[0]}${d}`)
     resultados.push({ n, rol, nombre, ok: false, nota: String(e?.message || e).split('\n')[0] })
     // Vuelve a un estado limpio para el siguiente paso.
-    await page.goto(`${BASE}/v2`).catch(() => {})
+    await page.goto(`${BASE}${RUTA_BASE}`).catch(() => {})
     await page.waitForSelector('.panel', { timeout: 60000 }).catch(() => {})
   }
 }
@@ -105,7 +106,7 @@ async function cerrarTodo() {
     await modal().locator('.m-cerrar').click()
     await page.waitForTimeout(400)
   }
-  await page.waitForURL((u) => u.pathname === '/v2', { timeout: 30000 })
+  await page.waitForURL((u) => u.pathname === RUTA_BASE, { timeout: 30000 })
   await page.waitForFunction(() => !document.querySelector('[data-modal-v2]'), null, { timeout: 30000 })
 }
 async function elegirPorTexto(sel, texto) {
@@ -116,7 +117,7 @@ async function elegirPorTexto(sel, texto) {
   await loc.selectOption(valor)
 }
 async function venta({ vendedor, comprador = '', condicion = 'CONTADO', cuenta, producto, cantidad }) {
-  await abrir(rol === 'ADMIN' ? '/v2/m/venta' : `/v2/m/venta?vendedor=${vendedor}`)
+  await abrir(rol === 'ADMIN' ? `${RUTA_BASE}/m/venta` : `${RUTA_BASE}/m/venta?vendedor=${vendedor}`)
   if (rol === 'ADMIN') {
     await page.waitForFunction(() => document.querySelectorAll('#vendedor option').length > 1, null, { timeout: 30000 })
     await page.selectOption('#vendedor', vendedor)
@@ -132,7 +133,7 @@ async function venta({ vendedor, comprador = '', condicion = 'CONTADO', cuenta, 
   await page.fill('#cantidad', String(cantidad))
   await page.click('text=+ Añadir al Carrito')
   await page.click('text=Generar Ticket')
-  await page.waitForURL(/\/v2\/m\/ticket\//, { timeout: 60000 })
+  await page.waitForURL(new RegExp(`${RUTA_BASE}/m/ticket/`), { timeout: 60000 })
   await modal().locator('text=Imprimir').waitFor({ timeout: 60000 })
   const id = new URL(page.url()).pathname.split('/').pop()
   const [t] = await q('transacciones_tickets', `id=eq.${id}&select=id,id_vendedor,id_comprador,condicion_pago,status,total_cobrado_real`)
@@ -142,9 +143,9 @@ async function venta({ vendedor, comprador = '', condicion = 'CONTADO', cuenta, 
   return { id, nota: `ticket ${id.slice(0, 8)} ${condicion} total ${t.total_cobrado_real}` }
 }
 async function fichaDesdeCartera(id) {
-  await abrir('/v2/m/cartera')
-  await modal().locator(`a[href="/v2/m/nodo/${id}"]`).first().click()
-  await page.waitForURL((u) => u.pathname === `/v2/m/nodo/${id}`, { timeout: 60000 })
+  await abrir(`${RUTA_BASE}/m/cartera`)
+  await modal().locator(`a[href="${RUTA_BASE}/m/nodo/${id}"]`).first().click()
+  await page.waitForURL((u) => u.pathname === `${RUTA_BASE}/m/nodo/${id}`, { timeout: 60000 })
   await page.locator('[data-testid=ficha-nodo]').waitFor({ timeout: 60000 })
 }
 
@@ -152,7 +153,7 @@ async function fichaDesdeCartera(id) {
 await entrar('ADMIN')
 
 await paso('gasto', async () => {
-  await abrir('/v2/m/gasto')
+  await abrir(`${RUTA_BASE}/m/gasto`)
   exigir((await page.inputValue('#tipo_movimiento')) === 'GASTO_OPERATIVO', 'el gasto no abre en Egreso')
   await page.waitForFunction(() => document.querySelectorAll('#subcategoria option').length > 1)
   const sub = await page.locator('#subcategoria option').nth(1).getAttribute('value')
@@ -161,14 +162,14 @@ await paso('gasto', async () => {
   await page.fill('#monto', '123.45')
   await page.fill('#descripcion', `E2E gasto ${RUN}`)
   await page.click('text=Guardar Movimiento')
-  await page.waitForURL((u) => u.pathname === '/v2', { timeout: 60000 })
+  await page.waitForURL((u) => u.pathname === RUTA_BASE, { timeout: 60000 })
   const f = await q('finanzas_ledger', `categoria_gasto=eq.${encodeURIComponent(`E2E gasto ${RUN}`)}&select=id,monto,status,tipo_movimiento,subcategoria`)
   exigir(f.length === 1 && Number(f[0].monto) === 123.45 && f[0].status === 'ACTIVO', `base: ${JSON.stringify(f)}`)
   return `finanzas_ledger 1 fila ${f[0].tipo_movimiento} ${f[0].monto} ${f[0].subcategoria}`
 })
 
 await paso('compra_insumos', async () => {
-  await abrir('/v2/m/compra')
+  await abrir(`${RUTA_BASE}/m/compra`)
   await page.waitForFunction(() => document.querySelectorAll('#insumo option').length > 1)
   const insumo = await page.locator('#insumo option').nth(1).getAttribute('value')
   await page.selectOption('#insumo', insumo)
@@ -177,7 +178,7 @@ await paso('compra_insumos', async () => {
   await page.waitForFunction(() => document.querySelectorAll('#cuenta option').length > 1)
   await elegirPorTexto('#cuenta', 'Efectivo')
   await page.click('button:has-text("Registrar Compra")')
-  await page.waitForURL((u) => u.pathname === '/v2/m/inventario', { timeout: 60000 })
+  await page.waitForURL((u) => u.pathname === `${RUTA_BASE}/m/inventario`, { timeout: 60000 })
   await modal().waitFor()
   const inv = await q('inventario_ledger', `${desde}&id_producto=eq.${insumo}&cantidad=eq.3&select=id,tipo_movimiento,status`)
   const fin = await q('finanzas_ledger', `${desde}&monto=eq.271.5&select=id,status`)
@@ -188,7 +189,7 @@ await paso('compra_insumos', async () => {
 
 let idEnvasado = null
 await paso('envasado', async () => {
-  await abrir('/v2/m/envasado')
+  await abrir(`${RUTA_BASE}/m/envasado`)
   await page.waitForFunction(() => document.querySelectorAll('#producto option').length > 1)
   await page.selectOption('#producto', P750)
   await page.fill('#cantidad', '11')
@@ -203,7 +204,7 @@ await paso('envasado', async () => {
 
 await paso('anular_inventario', async () => {
   exigir(idEnvasado, 'sin envasado previo')
-  await abrir('/v2/m/inventario')
+  await abrir(`${RUTA_BASE}/m/inventario`)
   const fila = modal().locator('table tbody tr').filter({ hasText: 'Destilado Plata 750ml' }).filter({ hasText: 'PRODUCCION' }).first()
   await fila.locator('button:has-text("Anular")').click()
   await page.waitForFunction(async () => true)
@@ -234,7 +235,7 @@ await paso('abono_sin_solo_egresos', async () => {
   await page.fill('#monto', '217')
   await page.selectOption('#metodoPago', 'EFECTIVO')
   await page.click('text=Guardar Transferencia')
-  await page.waitForURL((u) => u.pathname === `/v2/m/nodo/${AEROPUERTO}`, { timeout: 60000 })
+  await page.waitForURL((u) => u.pathname === `${RUTA_BASE}/m/nodo/${AEROPUERTO}`, { timeout: 60000 })
   const f = await q('finanzas_ledger', `${desde}&monto=eq.217&select=id,status,categoria`)
   exigir(f.length === 1 && f[0].status === 'ACTIVO', `base: ${JSON.stringify(f)}`)
   await cerrarTodo()
@@ -256,7 +257,7 @@ await paso('cobranza_corte_concesion', async () => {
     await tr.locator('input[type=number]').fill(String(/750ml/.test(txt) ? esperado - 1 : esperado))
   }
   await page.click('button:has-text("Procesar Cobranza")')
-  await page.waitForURL(/\/v2\/m\/ticket\//, { timeout: 60000 })
+  await page.waitForURL(new RegExp(`${RUTA_BASE}/m/ticket/`), { timeout: 60000 })
   const id = new URL(page.url()).pathname.split('/').pop()
   const [t] = await q('transacciones_tickets', `id=eq.${id}&select=id,status,id_comprador,id_vendedor,total_cobrado_real`)
   exigir(t && t.status === 'ACTIVO', `ticket de cobranza: ${JSON.stringify(t)}`)
@@ -289,7 +290,7 @@ await paso('devolucion', async () => {
   await page.selectOption('#producto', P50)
   await page.fill('#cantidad', '1')
   await page.click('button:has-text("Procesar Devolución")')
-  await page.waitForURL((u) => u.pathname === `/v2/m/nodo/${AEROPUERTO}`, { timeout: 60000 })
+  await page.waitForURL((u) => u.pathname === `${RUTA_BASE}/m/nodo/${AEROPUERTO}`, { timeout: 60000 })
   const inv = await q('inventario_ledger', `${desde}&id_producto=eq.${P50}&select=id,tipo_movimiento,status`)
   exigir(inv.some((r) => /DEVOLUCION/.test(r.tipo_movimiento)), `base: ${JSON.stringify(inv)}`)
   await cerrarTodo()
@@ -312,7 +313,7 @@ await paso('merma', async () => {
 await paso('anular_finanzas_desde_cuenta', async () => {
   const [g] = await q('finanzas_ledger', `categoria_gasto=eq.${encodeURIComponent(`E2E gasto ${RUN}`)}&select=id`)
   exigir(g, 'no hay gasto previo')
-  await abrir('/v2/m/cuenta/efectivo')
+  await abrir(`${RUTA_BASE}/m/cuenta/efectivo`)
   const fila = modal().locator('tr').filter({ hasText: '123.45' }).first()
   await fila.locator('button:has-text("Anular")').click()
   for (let i = 0; i < 30; i++) {
@@ -324,7 +325,7 @@ await paso('anular_finanzas_desde_cuenta', async () => {
 })
 
 await paso('precios_selector_dst_local', async () => {
-  await abrir('/v2/m/precios')
+  await abrir(`${RUTA_BASE}/m/precios`)
   exigir(!(await modal().innerText()).includes('Foráneo'), 'aparece Foráneo')
   await page.click('[data-testid=precios-tipo-DST]')
   await elegirPorTexto('[data-testid=precios-entidad]', 'David Flores')
@@ -339,7 +340,7 @@ await paso('precios_selector_dst_local', async () => {
 })
 
 await paso('red_seguimiento_y_editar', async () => {
-  await abrir('/v2/m/red')
+  await abrir(`${RUTA_BASE}/m/red`)
   const id = 'be763698-bfa4-4a57-994a-7280199caca9' // Luis Rodriguez (DST)
   await modal().locator(`[data-testid=seguimiento-${id}]`).first().click()
   let ok = false
@@ -364,14 +365,14 @@ await paso('red_seguimiento_y_editar', async () => {
 })
 
 await paso('alta_dst', async () => {
-  await abrir('/v2/m/red')
+  await abrir(`${RUTA_BASE}/m/red`)
   await page.click('[data-testid=red-alta]')
-  await page.waitForURL((u) => u.pathname === '/v2/m/red/nuevo', { timeout: 60000 })
+  await page.waitForURL((u) => u.pathname === `${RUTA_BASE}/m/red/nuevo`, { timeout: 60000 })
   await page.fill('#nombre', `E2E DST ${RUN}`)
   await page.fill('#email', `e2e.dst.${RUN}@v2.local`)
   await page.fill('#password', `clave-${RUN}-x`)
   await page.click('button:has-text("Registrar Miembro")')
-  await page.waitForURL((u) => u.pathname === '/v2/m/red', { timeout: 60000 })
+  await page.waitForURL((u) => u.pathname === `${RUTA_BASE}/m/red`, { timeout: 60000 })
   const e = await q('entidades', `nombre=eq.${encodeURIComponent(`E2E DST ${RUN}`)}&select=id,rol,auth_id`)
   exigir(e.length === 1 && e[0].rol === 'DST' && e[0].auth_id, `base: ${JSON.stringify(e)}`)
   await cerrarTodo()
@@ -391,17 +392,17 @@ await paso('panel_dst', async () => {
 
 await paso('dst_sin_alta', async () => {
   // lib/entidad-servidor.ts (assertPuedeDarDeAlta) + RLS entidades_ins_admin: solo ADMIN da de alta.
-  exigir(!(await page.locator('a[href="/v2/m/red/nuevo"]').count()), 'el DST ve el alta')
-  await page.goto(`${BASE}/v2/m/red`)
+  exigir(!(await page.locator(`a[href="${RUTA_BASE}/m/red/nuevo"]`).count()), 'el DST ve el alta')
+  await page.goto(`${BASE}${RUTA_BASE}/m/red`)
   await modal().waitFor({ timeout: 60000 })
   exigir(!(await modal().locator('[data-testid=red-alta]').count()), 'el DST ve «+ Nuevo miembro» en el modal Red')
-  await page.goto(`${BASE}/v2/red`)
+  await page.goto(`${BASE}${RUTA_BASE}/red`)
   await page.waitForLoadState('networkidle')
-  exigir(!(await page.locator('[data-testid=red-pagina-alta]').count()), 'el DST ve «+ Nuevo miembro» en /v2/red')
-  const r = await page.goto(`${BASE}/v2/m/red/nuevo`)
+  exigir(!(await page.locator('[data-testid=red-pagina-alta]').count()), `el DST ve «+ Nuevo miembro» en ${RUTA_BASE}/red`)
+  const r = await page.goto(`${BASE}${RUTA_BASE}/m/red/nuevo`)
   exigir(r.status() === 404, `DST abre el alta: HTTP ${r.status()}`)
-  await page.goto(`${BASE}/v2`)
-  return 'sin boton de alta (panel, modal Red, /v2/red); /v2/m/red/nuevo -> 404'
+  await page.goto(`${BASE}${RUTA_BASE}`)
+  return `sin boton de alta (panel, modal Red, ${RUTA_BASE}/red); ${RUTA_BASE}/m/red/nuevo -> 404`
 })
 
 let ticketLoc = null
@@ -424,7 +425,7 @@ await paso('abono_dst_pendiente', async () => {
   await page.fill('#monto', '131')
   await page.selectOption('#metodoPago', 'EFECTIVO').catch(() => {})
   await page.click('text=Guardar Transferencia')
-  await page.waitForURL((u) => u.pathname === '/v2', { timeout: 60000 })
+  await page.waitForURL((u) => u.pathname === RUTA_BASE, { timeout: 60000 })
   const f = await q('finanzas_ledger', `${desde}&monto=eq.131&select=id,status,categoria`)
   exigir(f.length === 1, `base: ${JSON.stringify(f)}`)
   return `finanzas 131 categoria ${f[0].categoria}`
@@ -432,8 +433,8 @@ await paso('abono_dst_pendiente', async () => {
 
 await paso('conteo_local_dst', async () => {
   const antes = await q('conteos_fisicos', `id_entidad=eq.${LOC_ID}&select=id`)
-  await page.locator('[data-testid=mis-locales]').locator(`a[href="/v2/m/nodo/${LOC_ID}"]`).click()
-  await page.waitForURL((u) => u.pathname === `/v2/m/nodo/${LOC_ID}`, { timeout: 60000 })
+  await page.locator('[data-testid=mis-locales]').locator(`a[href="${RUTA_BASE}/m/nodo/${LOC_ID}"]`).click()
+  await page.waitForURL((u) => u.pathname === `${RUTA_BASE}/m/nodo/${LOC_ID}`, { timeout: 60000 })
   await modal().locator('[data-testid=ficha-conteo]').click()
   await page.waitForURL((u) => u.pathname.endsWith('/conteo'), { timeout: 60000 })
   const inp = modal().locator('table input[type=number]').first()
@@ -460,21 +461,21 @@ await paso('panel_loc', async () => {
 
 await paso('loc_sin_venta', async () => {
   // RLS: transacciones_tickets no tiene INSERT para LOC (la v1 le ofrecia el POS y fallaba).
-  exigir(!(await page.locator('a[href="/v2/m/venta"], a[href^="/v2/m/venta?"]').count()), 'el LOC ve Nueva venta')
-  const r = await page.goto(`${BASE}/v2/m/venta`)
+  exigir(!(await page.locator(`a[href="${RUTA_BASE}/m/venta"], a[href^="${RUTA_BASE}/m/venta?"]`).count()), 'el LOC ve Nueva venta')
+  const r = await page.goto(`${BASE}${RUTA_BASE}/m/venta`)
   exigir(r.status() === 404, `LOC abre la venta: HTTP ${r.status()}`)
-  await page.goto(`${BASE}/v2`)
-  return 'sin Nueva venta; /v2/m/venta -> 404'
+  await page.goto(`${BASE}${RUTA_BASE}`)
+  return `sin Nueva venta; ${RUTA_BASE}/m/venta -> 404`
 })
 
 await paso('loc_sin_modales_de_operacion', async () => {
   // El RLS de estas escrituras solo deja a ADMIN y DST: la puerta de la pagina da 404.
   const codigos = []
   for (const k of ['abono', 'cobranza', 'conteo', 'devolucion']) {
-    const r = await page.goto(`${BASE}/v2/m/nodo/${LOC_ID}/${k}`)
+    const r = await page.goto(`${BASE}${RUTA_BASE}/m/nodo/${LOC_ID}/${k}`)
     codigos.push(`${k}=${r.status()}`)
   }
-  await page.goto(`${BASE}/v2`)
+  await page.goto(`${BASE}${RUTA_BASE}`)
   exigir(codigos.every((c) => c.endsWith('=404')), codigos.join(' '))
   return codigos.join(' ')
 })
@@ -485,7 +486,7 @@ await entrar('ADMIN')
 await paso('aprobar_abono_dst', async () => {
   const [p] = await q('finanzas_ledger', `${desde}&monto=eq.131&select=id,categoria`)
   exigir(p, 'no hay abono del DST')
-  await abrir('/v2/m/aprobaciones')
+  await abrir(`${RUTA_BASE}/m/aprobaciones`)
   await modal().locator('button:has-text("Aprobar")').first().waitFor({ timeout: 60000 })
   await modal().locator('tr').filter({ hasText: '131' }).locator('button:has-text("Aprobar")').first().click()
   for (let i = 0; i < 40; i++) {
@@ -498,9 +499,9 @@ await paso('aprobar_abono_dst', async () => {
 
 await paso('anular_ticket_desde_ficha', async () => {
   exigir(ticketLoc, 'sin ticket DST -> LOC')
-  await abrir('/v2/m/red')
-  await modal().locator(`a[href="/v2/m/nodo/${LOC_ID}"]`).first().click()
-  await page.waitForURL((u) => u.pathname === `/v2/m/nodo/${LOC_ID}`, { timeout: 60000 })
+  await abrir(`${RUTA_BASE}/m/red`)
+  await modal().locator(`a[href="${RUTA_BASE}/m/nodo/${LOC_ID}"]`).first().click()
+  await page.waitForURL((u) => u.pathname === `${RUTA_BASE}/m/nodo/${LOC_ID}`, { timeout: 60000 })
   await page.locator('[data-testid=ficha-nodo]').waitFor()
   const botones = modal().locator('button[aria-label="Anular movimiento"]:visible')
   await botones.first().waitFor({ timeout: 60000 })
@@ -515,12 +516,12 @@ await paso('anular_ticket_desde_ficha', async () => {
 })
 
 await paso('lotes_y_actividad', async () => {
-  await abrir('/v2/m/lotes')
+  await abrir(`${RUTA_BASE}/m/lotes`)
   exigir((await modal().locator('[data-testid=lotes-vacio], [data-testid=tabla-lotes]').count()) > 0, 'el modal de lotes no pinta')
   await cerrarTodo()
-  await abrir('/v2/m/actividad')
+  await abrir(`${RUTA_BASE}/m/actividad`)
   await cerrarTodo()
-  await abrir('/v2/m/avisos')
+  await abrir(`${RUTA_BASE}/m/avisos`)
   await cerrarTodo()
   return 'lotes, actividad y avisos abren'
 })
@@ -532,7 +533,7 @@ await paso('abono_de_su_local_a_su_cuenta', async () => {
   // D8: «los locales de David le pagan a David». Destino = cuenta propia del DST; la matriz no aparece.
   const [cuentaDst] = await q('cuentas_financieras', `id_entidad=eq.${DST_ID}&select=id,nombre`)
   exigir(cuentaDst, 'el DST no tiene cuenta propia en la copia')
-  await page.goto(`${BASE}/v2/m/nodo/${LOC_ID}/abono`)
+  await page.goto(`${BASE}${RUTA_BASE}/m/nodo/${LOC_ID}/abono`)
   await modal().waitFor({ timeout: 60000 })
   await page.waitForFunction(() => document.querySelectorAll('#destino option').length > 1, null, { timeout: 60000 })
   const ids = await page.locator('#destino option').evaluateAll((os) => os.map((o) => o.value).filter(Boolean))
@@ -551,7 +552,7 @@ await paso('abono_de_su_local_a_su_cuenta', async () => {
   exigir(Math.abs(suma - 137) < 0.005, `base: ${JSON.stringify(f)}`)
   exigir(f.every((x) => x.id_cuenta_destino === cuentaDst.id), `destino en la base: ${JSON.stringify(f)}`)
   exigir(f.every((x) => x.categoria === 'ABONO_REAL'), `categoria: ${JSON.stringify(f)}`)
-  await page.goto(`${BASE}/v2`)
+  await page.goto(`${BASE}${RUTA_BASE}`)
   return `${f.length} fila(s), 137 a ${cuentaDst.nombre}, ABONO_REAL`
 })
 
@@ -560,13 +561,13 @@ await entrar('SOCIO')
 
 await paso('socio_solo_lectura', async () => {
   exigir((await page.locator('text=CAPTURAR').count()) === 0, 'SOCIO ve Capturar')
-  await abrir('/v2/m/cuenta/efectivo')
+  await abrir(`${RUTA_BASE}/m/cuenta/efectivo`)
   exigir((await modal().locator('button:has-text("Anular")').count()) === 0, 'SOCIO ve Anular')
   await cerrarTodo()
-  const r = await page.goto(`${BASE}/v2/m/gasto`)
+  const r = await page.goto(`${BASE}${RUTA_BASE}/m/gasto`)
   exigir(r.status() === 404, `SOCIO abre gasto: HTTP ${r.status()}`)
-  await page.goto(`${BASE}/v2`)
-  return 'sin Capturar ni Anular; /v2/m/gasto -> 404'
+  await page.goto(`${BASE}${RUTA_BASE}`)
+  return `sin Capturar ni Anular; ${RUTA_BASE}/m/gasto -> 404`
 })
 
 await ctx.close()

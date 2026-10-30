@@ -6,6 +6,7 @@
  * Filtra en el cliente: las filas ya vienen completas y ordenadas del servidor.
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useMemo, useState } from 'react'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { BotonEditar, BotonSeguimiento, DiasSeguimiento } from '@/components/v2/red/AccionesNodo'
@@ -134,7 +135,7 @@ export default function TablaCobranza({
                 <tr key={f.id} className={f.banda}>
                   <td className="mono">{i + 1}</td>
                   <td className="cob-nombre">
-                    <AbrirModal href={`/v2/m/nodo/${f.id}`} titulo={f.nombre}>
+                    <AbrirModal href={`${RUTA_BASE}/m/nodo/${f.id}`} titulo={f.nombre}>
                       {f.nombre}
                     </AbrirModal>{' '}
                     <span className="chip">{f.rol === 'DST' ? 'Distribuidor' : 'Local'}</span>
@@ -181,11 +182,11 @@ export default function TablaCobranza({
                   </td>
                   <td>
                     <div className="cob-acc">
-                      <AbrirModal className="btn mini" href={`/v2/m/nodo/${f.id}`} titulo={f.nombre}>
+                      <AbrirModal className="btn mini" href={`${RUTA_BASE}/m/nodo/${f.id}`} titulo={f.nombre}>
                         Ficha
                       </AbrirModal>
                       {puedeOperar && (
-                        <AbrirModal className="btn mini p" href={`/v2/m/nodo/${f.id}/abono`} titulo="Registrar abono" tam="md" data-testid={`cob-abono-${f.id}`}>
+                        <AbrirModal className="btn mini p" href={`${RUTA_BASE}/m/nodo/${f.id}/abono`} titulo="Registrar abono" tam="md" data-testid={`cob-abono-${f.id}`}>
                           Abono
                         </AbrirModal>
                       )}

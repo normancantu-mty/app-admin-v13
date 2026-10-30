@@ -1,6 +1,7 @@
 'use client'
 // Paridad v2: copia de app/pos/page.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useState, useEffect, useCallback } from 'react'
 import { useModalV2 } from '@/components/v2/modal/ProveedorModal'
 import { supabase } from '@/lib/supabase'
@@ -510,7 +511,7 @@ export default function Venta({ vendedor }: { vendedor?: string | null }) {
       // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
       // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
       // staleTimes.dynamic = 0 (default de Next 15+) el push ya trae datos frescos.
-      irTrasGuardar(`/v2/m/ticket/${result.ticketId}`)
+      irTrasGuardar(`${RUTA_BASE}/m/ticket/${result.ticketId}`)
     } catch (error) {
       console.error('Error in handleGenerarTicket:', error)
       alert('Error al guardar el ticket')

@@ -1,12 +1,13 @@
 'use client'
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import AgregarUsuario from './AgregarUsuario'
 
-// `?cambiar=1` lo pone el menu de sesion de /v2 ("Cambiar de usuario"): correo
-// vacio y enfocado, y sin rebote automatico a /v2. Se lee de `location` y no con
+// `?cambiar=1` lo pone el menu de sesion de /panel ("Cambiar de usuario"): correo
+// vacio y enfocado, y sin rebote automatico a /panel. Se lee de `location` y no con
 // useSearchParams para no exigir un <Suspense> alrededor de toda la pagina.
 const sinSuscripcion = () => () => {}
 const leerCambiar = () => new URLSearchParams(window.location.search).get('cambiar') === '1'
@@ -37,13 +38,8 @@ export default function LoginPage() {
           .single()
         
         if (entidad) {
-          if (entidad.rol === 'ADMIN') {
-            router.push('/v2')
-          } else if (entidad.rol === 'SOCIO') {
-            router.push('/v2')
-          } else if (entidad.rol === 'DST' || entidad.rol === 'LOC') {
-            router.push('/v2')
-          }
+          // Todos los roles entran al panel unico (A1, 2026-10-30): /panel decide que ve cada uno.
+          router.push(RUTA_BASE)
         }
       }
     }
@@ -71,13 +67,8 @@ export default function LoginPage() {
           .single()
         
         if (entidad) {
-          if (entidad.rol === 'ADMIN') {
-            router.push('/v2')
-          } else if (entidad.rol === 'SOCIO') {
-            router.push('/v2')
-          } else if (entidad.rol === 'DST' || entidad.rol === 'LOC') {
-            router.push('/v2')
-          }
+          // Todos los roles entran al panel unico (A1, 2026-10-30): /panel decide que ve cada uno.
+          router.push(RUTA_BASE)
         } else {
           throw new Error('Usuario no encontrado en el sistema')
         }

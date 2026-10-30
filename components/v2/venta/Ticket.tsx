@@ -10,6 +10,7 @@
  * el cliente tendria dos comprobantes que no cuadran. Por eso el dato es uno.
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useState, useEffect } from 'react'
 import { useModalV2 } from '@/components/v2/modal/ProveedorModal'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
@@ -120,7 +121,7 @@ export default function Ticket({ id }: { id: string }) {
           {/* La imagen PNG (/api/documento/[id]/imagen) es del bot: pide su token y
               responde 401 a una sesion de navegador. Aqui: imprimir y WhatsApp, como la v1. */}
           <AbrirModal
-            href="/v2/m/venta"
+            href={`${RUTA_BASE}/m/venta`}
             titulo="Nueva venta"
             tam="xl"
             className="flex-1 bg-gray-200 text-gray-900 px-4 py-2 rounded text-center font-medium hover:bg-gray-300"

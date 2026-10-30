@@ -1,6 +1,6 @@
 /**
  * Front v2 — la tarjeta "Semáforo" del panel de la matriz. Extraida de
- * `app/v2/_panel/PanelMando.tsx` el 2026-10-30 por un ejecutor del Socio (Norman:
+ * `app/panel/_panel/PanelMando.tsx` el 2026-10-30 por un ejecutor del Socio (Norman:
  * "que muestre un poquito más de detalle, y que si está en números rojos también
  * lo muestre, que resalte más").
  *

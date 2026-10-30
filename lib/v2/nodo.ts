@@ -1,5 +1,5 @@
 /**
- * Paridad v2 — la ficha de un nodo (DST o LOC) para el modal `/v2/m/nodo/[id]` y
+ * Paridad v2 — la ficha de un nodo (DST o LOC) para el modal `/panel/m/nodo/[id]` y
  * para el panel de un DST/LOC. Escrito el 2026-10-29 por el ejecutor del Socio.
  *
  * Las funciones de lectura son COPIA LITERAL de
@@ -9,6 +9,7 @@
  * se borre /dashboard esto sigue funcionando solo.
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { createServerClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
@@ -866,5 +867,5 @@ export async function leerNodoVisible(id: string, usuario: CurrentUser): Promise
 
 /** A donde vuelve un modal anidado: al panel si es la ficha propia, si no a la ficha. */
 export function padreDeNodo(id: string, usuario: CurrentUser): string {
-  return id === usuario.id ? '/v2' : `/v2/m/nodo/${id}`
+  return id === usuario.id ? RUTA_BASE : `${RUTA_BASE}/m/nodo/${id}`
 }

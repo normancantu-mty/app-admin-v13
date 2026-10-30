@@ -1,5 +1,5 @@
 /**
- * Front v2 — quien puede ver y hacer que en `/v2`. Escrito el 2026-10-29 por el
+ * Front v2 — quien puede ver y hacer que en `/panel`. Escrito el 2026-10-29 por el
  * ejecutor de las correcciones del Front v2; ampliado el 2026-10-29 por el
  * ejecutor de la paridad v2. PURO: se prueba en `tests/v2-front-dinero.spec.ts`.
  * Las puertas de servidor que lo usan viven en `lib/v2/puerta.ts`.

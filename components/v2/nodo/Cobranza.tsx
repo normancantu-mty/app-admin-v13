@@ -1,6 +1,7 @@
 'use client'
 // Paridad v2: copia de app/dashboard/distribuidores/[id]/cobranza/CobranzaClient.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useMemo, useState, useTransition } from 'react'
 import { useModalV2 } from '@/components/v2/modal/ProveedorModal'
 import { procesarCorteInventarioAction } from '@/app/actions/auditoria'
@@ -112,7 +113,7 @@ export default function CobranzaClient({
         setTimeout(() => {
           setShowToast(false)
           if (result.ticketId) {
-            irTrasGuardar(`/v2/m/ticket/${result.ticketId}`)
+            irTrasGuardar(`${RUTA_BASE}/m/ticket/${result.ticketId}`)
             return
           }
           irTrasGuardar(padre)

@@ -11,6 +11,7 @@
  * es diario y va por «Envasar».
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useState } from 'react'
 import { useModalV2 } from '@/components/v2/modal/ProveedorModal'
 import { guardarLoteAction } from '@/app/actions/lotes-v2'
@@ -94,7 +95,7 @@ export default function FormLote({ inicial, insumos, hoy }: { inicial: LoteInici
         setError(r.error ?? 'No se pudo guardar el lote.')
         return
       }
-      irTrasGuardar(`/v2/m/lote/${r.id}`)
+      irTrasGuardar(`${RUTA_BASE}/m/lote/${r.id}`)
     } catch {
       setError('No se pudo guardar el lote (error de red o del servidor).')
     } finally {

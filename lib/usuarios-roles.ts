@@ -38,7 +38,7 @@ export const ROLES_DE_USUARIO: readonly OpcionDeRol[] = [
     rol: 'DST',
     nombre: 'Distribuidor',
     // lib/v2/roles.ts: puedeVender (ADMIN y DST), puedeOperarNodo ("el DST, solo en su red");
-    // app/v2/@modal/m/nodo/[id]/{abono,cobranza,conteo,devolucion}: "solo deja a ADMIN y DST".
+    // app/panel/@modal/m/nodo/[id]/{abono,cobranza,conteo,devolucion}: "solo deja a ADMIN y DST".
     descripcion: 'Vende por el POS y opera los nodos de su red: abonos, cobranza, conteos y devoluciones.',
     disponible: true
   },

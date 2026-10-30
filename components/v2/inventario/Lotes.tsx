@@ -1,15 +1,16 @@
 /**
  * Paginas v2 — tabla de lotes (rendimiento por lote, v_lote_rendimiento). Sacada
- * del modal `/v2/m/lotes` el 2026-10-29 por el ejecutor del Socio: la comparten
- * ese modal y la pagina `/v2/inventario`.
+ * del modal `/panel/m/lotes` el 2026-10-29 por el ejecutor del Socio: la comparten
+ * ese modal y la pagina `/panel/inventario`.
  *
  * Lotes v2 (2026-10-30, ejecutor del Socio): resumen compacto. Estado de cada lote
  * (en fermentacion / terminado / envasado), clic en el codigo abre su detalle
- * (`/v2/m/lote/<id>`), y el apartado completo con alta y edicion vive en
- * `/v2/lotes`. Las lecturas son de `components/v2/lotes/datos.ts`.
+ * (`/panel/m/lote/<id>`), y el apartado completo con alta y edicion vive en
+ * `/panel/lotes`. Las lecturas son de `components/v2/lotes/datos.ts`.
  * Exige mando (el RLS de `lotes` deja ver a ADMIN y SOCIO).
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { exigirMandoV2 } from '@/lib/v2/puerta'
 import { fechaParaPersona } from '@/lib/fechas'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
@@ -57,7 +58,7 @@ export async function LotesVista({ limite }: { limite?: number } = {}) {
                 {visibles.map((l) => (
                   <tr key={l.id}>
                     <td>
-                      <AbrirModal href={`/v2/m/lote/${l.id}`} titulo={`Lote ${l.codigo_lote}`} className="enlace-pg">
+                      <AbrirModal href={`${RUTA_BASE}/m/lote/${l.id}`} titulo={`Lote ${l.codigo_lote}`} className="enlace-pg">
                         <b>{l.codigo_lote}</b>
                       </AbrirModal>
                       <div className="inv-sub">Inicio {fechaParaPersona(l.fecha_inicio)}</div>
@@ -84,7 +85,7 @@ export async function LotesVista({ limite }: { limite?: number } = {}) {
         <span>
           {limite && lotes.length > visibles.length ? `Mostrando ${visibles.length} de ${lotes.length} · ` : ''}v_lote_rendimiento
         </span>
-        <VerTodo href="/v2/lotes" className="btn mini">
+        <VerTodo href={`${RUTA_BASE}/lotes`} className="btn mini">
           Apartado de lotes →
         </VerTodo>
       </div>

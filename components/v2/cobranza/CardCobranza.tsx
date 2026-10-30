@@ -23,6 +23,7 @@
  * contaria dos veces, ver `esDeudaConLaMatriz`).
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { esDeudaConLaMatriz, type FilaCarteraVista } from '@/lib/vistas'
 import { fechaMx, mxn0, num } from '@/lib/v2/formato'
@@ -59,7 +60,7 @@ export function CardCobranza({ cartera, crudo }: { cartera: FilaCarteraVista[]; 
         {hayRojo && (
           <AbrirModal
             className="cob-alerta"
-            href="/v2/m/cobranza?banda=rojo"
+            href={`${RUTA_BASE}/m/cobranza?banda=rojo`}
             titulo="Cobranza"
             tam="xl"
             title={`${NOMBRE_BANDA.rojo} sin abonar`}
@@ -93,7 +94,7 @@ export function CardCobranza({ cartera, crudo }: { cartera: FilaCarteraVista[]; 
         {bandas.map((b) => (
           <AbrirModal
             key={b}
-            href={`/v2/m/cobranza?banda=${b}`}
+            href={`${RUTA_BASE}/m/cobranza?banda=${b}`}
             titulo="Cobranza"
             tam="xl"
             className={`cob-banda ${b}${tot[b].n === 0 ? ' vacia' : ''}${b === 'rojo' && tot[b].n > 0 ? ' alerta' : ''}`}
@@ -182,7 +183,7 @@ export function CardCobranza({ cartera, crudo }: { cartera: FilaCarteraVista[]; 
                     </dd>
                   </div>
                 </dl>
-                <AbrirModal className="cob-ficha-l" href={`/v2/m/nodo/${f.id}`} titulo={f.nombre}>
+                <AbrirModal className="cob-ficha-l" href={`${RUTA_BASE}/m/nodo/${f.id}`} titulo={f.nombre}>
                   Abrir ficha de {f.nombre} ›
                 </AbrirModal>
               </div>
@@ -192,11 +193,11 @@ export function CardCobranza({ cartera, crudo }: { cartera: FilaCarteraVista[]; 
       )}
 
       {conDst.length > 0 && (
-        <AbrirModal className="cob-dst" href="/v2/m/cobranza?alcance=dst" titulo="Cobranza" tam="xl">
+        <AbrirModal className="cob-dst" href={`${RUTA_BASE}/m/cobranza?alcance=dst`} titulo="Cobranza" tam="xl">
           + {conDst.length} {conDst.length === 1 ? 'local le debe' : 'locales le deben'} {mxn0(deudaConDst)} a su distribuidor (no se suma) ›
         </AbrirModal>
       )}
-      <AbrirModal className="vermas" href="/v2/m/cobranza" titulo="Cobranza" tam="xl" data-testid="cob-ver-todo">
+      <AbrirModal className="vermas" href={`${RUTA_BASE}/m/cobranza`} titulo="Cobranza" tam="xl" data-testid="cob-ver-todo">
         Cobranza completa: filtros y abonos →
       </AbrirModal>
       <div className="fuente">v_cartera (id_acreedor = matriz) · último abono: finanzas_ledger ABONO_DEUDA · última entrega: inventario_ledger ENTRADA_CONCESION</div>

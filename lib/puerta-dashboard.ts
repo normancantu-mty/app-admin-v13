@@ -23,6 +23,8 @@
  * y probado— quien dice que se protege.
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
+
 /** A donde se manda a quien no trae sesion. */
 export const RUTA_LOGIN = '/login'
 
@@ -40,7 +42,7 @@ export const CABECERA_RUTA = 'x-ruta-actual'
 
 /**
  * Las cuatro zonas que hoy exigen sesion: las tres que envolvian su layout en
- * `<ProtectedRoute>` (`/dashboard`, `/pos` y `/ticket`) y `/v2`, el Front v2
+ * `<ProtectedRoute>` (`/dashboard`, `/pos` y `/ticket`) y `/panel`, el Front v2
  * (2026-10-29). No se agrega ni se quita ninguna aqui sin mirar
  * `tests/puerta-servidor.spec.ts`.
  *
@@ -48,7 +50,7 @@ export const CABECERA_RUTA = 'x-ruta-actual'
  * `app/api/bot/**` con su propio sello (`lib/bot-sello.ts`), no con cookies de
  * navegador. Meterlo aqui lo dejaria mudo.
  */
-export const RUTAS_PROTEGIDAS = ['/dashboard', '/pos', '/ticket', '/v2'] as const
+export const RUTAS_PROTEGIDAS = ['/dashboard', '/pos', '/ticket', RUTA_BASE] as const
 
 /**
  * Las areas de mando: lo que un rol de consulta (DST, LOC, SUB-ADMIN) no abre.

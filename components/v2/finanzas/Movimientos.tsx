@@ -1,6 +1,6 @@
 /**
  * Paginas v2 — piezas de dinero compartidas por el modal de cuenta
- * (`/v2/m/cuenta/<clase>`) y la pagina completa `/v2/finanzas`. Escrito el
+ * (`/panel/m/cuenta/<clase>`) y la pagina completa `/panel/finanzas`. Escrito el
  * 2026-10-29 por el ejecutor del Socio: se sacaron tal cual del modal de cuenta
  * para no duplicar la tabla de movimientos ni el desglose de egresos.
  *

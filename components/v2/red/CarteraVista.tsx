@@ -1,11 +1,12 @@
 /**
  * Paginas v2 — el cuerpo de la «Cartera completa»: quien debe, cuanto y desde
  * cuando, con «Seguimiento» y «Editar» por nodo. Sacado tal cual del modal
- * `/v2/m/cartera` el 2026-10-29 por el ejecutor del Socio para que la pagina
- * `/v2/red` lo muestre sin duplicarlo. Ver la cabecera de ese modal (T6: la
+ * `/panel/m/cartera` el 2026-10-29 por el ejecutor del Socio para que la pagina
+ * `/panel/red` lo muestre sin duplicarlo. Ver la cabecera de ese modal (T6: la
  * cartera de la matriz no suma la deuda de un local con su distribuidor).
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import Link from 'next/link'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { BotonEditar, BotonSeguimiento, DiasSeguimiento } from '@/components/v2/red/AccionesNodo'
@@ -28,7 +29,7 @@ function Dias({ f }: { f: FilaCarteraVista }) {
   )
 }
 
-/** Cartera completa (cuerpo). La usan el modal `/v2/m/cartera` y la pagina `/v2/red`. Exige mando. */
+/** Cartera completa (cuerpo). La usan el modal `/panel/m/cartera` y la pagina `/panel/red`. Exige mando. */
 export async function CarteraVista({ fichaEnPagina = false }: { fichaEnPagina?: boolean } = {}) {
   const usuario = await exigirMandoV2()
   const client = await getServerSupabaseClient()
@@ -217,14 +218,14 @@ export async function CarteraVista({ fichaEnPagina = false }: { fichaEnPagina?: 
     </>
   )
 
-  /** En el modal, el nombre abre la ficha en otro modal; en la pagina `/v2/red`, lleva a la ficha completa. */
+  /** En el modal, el nombre abre la ficha en otro modal; en la pagina `/panel/red`, lleva a la ficha completa. */
   function Nombre({ id, nombre }: { id: string; nombre: string }) {
     return fichaEnPagina ? (
-      <Link href={`/v2/red/${id}`} className="enlace-pg">
+      <Link href={`${RUTA_BASE}/red/${id}`} className="enlace-pg">
         {nombre}
       </Link>
     ) : (
-      <AbrirModal href={`/v2/m/nodo/${id}`} titulo={nombre}>
+      <AbrirModal href={`${RUTA_BASE}/m/nodo/${id}`} titulo={nombre}>
         {nombre}
       </AbrirModal>
     )

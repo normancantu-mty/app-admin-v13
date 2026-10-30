@@ -7,6 +7,7 @@
  * `app/actions/compras.ts`, que ademas compensa si la segunda falla.
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useState, useEffect } from 'react'
 import { useModalV2 } from '@/components/v2/modal/ProveedorModal'
 import {
@@ -84,7 +85,7 @@ export default function Compra() {
       // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
       // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
       // staleTimes.dynamic = 0 (default de Next 15+) el push ya trae datos frescos.
-      irTrasGuardar('/v2/m/inventario')
+      irTrasGuardar(`${RUTA_BASE}/m/inventario`)
     } catch (error) {
       console.error('Error in handleRegistrarCompra:', error)
       alert('Error al registrar la compra. Inténtalo de nuevo.')

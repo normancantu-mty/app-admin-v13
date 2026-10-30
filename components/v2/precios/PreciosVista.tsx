@@ -1,8 +1,8 @@
 /**
  * Paginas v2 — el cuerpo de «Catálogo y precios» (waterfall de la v1 con
  * selector Distribuidor/Local, Q7; para el DST, sus locales, Q16). Sacado tal
- * cual del modal `/v2/m/precios` el 2026-10-29 por el ejecutor del Socio para
- * que la pagina `/v2/catalogo` lo muestre sin duplicarlo. `ruta` es a donde
+ * cual del modal `/panel/m/precios` el 2026-10-29 por el ejecutor del Socio para
+ * que la pagina `/panel/catalogo` lo muestre sin duplicarlo. `ruta` es a donde
  * vuelve el selector al aplicar (el modal o la pagina).
  */
 

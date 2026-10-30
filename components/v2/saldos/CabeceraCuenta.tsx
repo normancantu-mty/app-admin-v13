@@ -9,7 +9,7 @@
  * Solo presenta: las cifras llegan ya calculadas.
  *
  * El color de cada clase sale de `data-clase` (CSS `.vs-` al final de
- * `app/v2/v2.css`): Efectivo verde, Fresnillo azul, Gilberto ambar,
+ * `app/panel/v2.css`): Efectivo verde, Fresnillo azul, Gilberto ambar,
  * Transferencias chile.
  */
 
@@ -66,7 +66,7 @@ export interface OtraCuenta {
 /**
  * «Las demás cuentas»: una linea chica y atenuada para saltar a otra cuenta. La
  * cuenta abierta no se repite (ya es la cabecera). `como='cambiar'` dentro de un
- * modal; `'pagina'` en `/v2/finanzas` (Link con replace, sin scroll).
+ * modal; `'pagina'` en `/panel/finanzas` (Link con replace, sin scroll).
  */
 export function OtrasCuentas({ cuentas, como }: { cuentas: OtraCuenta[]; como: 'cambiar' | 'pagina' }) {
   if (!cuentas.length) return null

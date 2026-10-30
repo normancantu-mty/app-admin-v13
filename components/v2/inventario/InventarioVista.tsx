@@ -1,4 +1,5 @@
 // Paridad v2: copia de app/dashboard/inventario/page.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { createServerClient } from '@supabase/ssr'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { getCurrentUser } from '@/lib/auth-utils'
@@ -313,7 +314,7 @@ function formatCurrency(amount: number): string {
 }
 
 /**
- * `sinAcciones`: la pagina `/v2/inventario` ya pone Envasar y Comprar en su encabezado (Paginas v2, 2026-10-29).
+ * `sinAcciones`: la pagina `/panel/inventario` ya pone Envasar y Comprar en su encabezado (Paginas v2, 2026-10-29).
  * Inventario compacto (2026-10-30, ejecutor del Socio): KPIs arriba y el detalle en pestañas
  * (Stock, Movimientos y las `extras` que mande la pagina: compras y envasados, lotes). `ver`
  * es la pestaña inicial (`?ver=` de la pagina); `enUrl` escribe la pestaña elegida en la URL.
@@ -477,10 +478,10 @@ export default async function InventarioVista({
           <div className="fila-acc">
             {!sinAcciones && (
               <>
-                <AbrirModal href="/v2/m/envasado" titulo="Registrar envasado" tam="md" className="btn p">
+                <AbrirModal href={`${RUTA_BASE}/m/envasado`} titulo="Registrar envasado" tam="md" className="btn p">
                   Producción (Envasar)
                 </AbrirModal>
-                <AbrirModal href="/v2/m/compra" titulo="Comprar insumos" tam="md" className="btn">
+                <AbrirModal href={`${RUTA_BASE}/m/compra`} titulo="Comprar insumos" tam="md" className="btn">
                   Comprar Insumos
                 </AbrirModal>
               </>

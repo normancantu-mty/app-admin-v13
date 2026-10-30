@@ -6,6 +6,7 @@
  * envasado, etapas) sale de sus tablas.
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { fechaHoraParaPersona, fechaParaPersona } from '@/lib/fechas'
 import { mxn } from '@/lib/v2/formato'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
@@ -58,7 +59,7 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
           </span>
         </div>
         {puedeEditar ? (
-          <AbrirModal href={`/v2/m/lote/${c.id}/editar`} titulo={`Editar ${c.codigo_lote}`} tam="lg" className="btn p" data-testid="lote-editar">
+          <AbrirModal href={`${RUTA_BASE}/m/lote/${c.id}/editar`} titulo={`Editar ${c.codigo_lote}`} tam="lg" className="btn p" data-testid="lote-editar">
             Editar lote
           </AbrirModal>
         ) : null}

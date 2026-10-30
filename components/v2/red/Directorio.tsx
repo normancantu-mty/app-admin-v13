@@ -1,7 +1,8 @@
 'use client'
 // Paridad v2: copia de app/dashboard/distribuidores/DirectoryTableClient.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
-// Paginas v2 (2026-10-29, ejecutor del Socio): prop `fichaEnPagina` (enlace a /v2/red/<id>).
+// Paginas v2 (2026-10-29, ejecutor del Socio): prop `fichaEnPagina` (enlace a /panel/red/<id>).
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
@@ -20,7 +21,7 @@ interface DirectoryTableClientProps {
   canDeleteEntity?: boolean
   /** Solo ADMIN ve la columna Zona (DST u otros roles: columna omitida del DOM). */
   showZonaColumn?: boolean
-  /** Paginas v2: en `/v2/red` cada fila lleva tambien a la ficha completa (`/v2/red/<id>`). */
+  /** Paginas v2: en `/panel/red` cada fila lleva tambien a la ficha completa (`/panel/red/<id>`). */
   fichaEnPagina?: boolean
 }
 
@@ -199,14 +200,14 @@ export default function DirectoryTableClient({
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-col gap-1">
                       <AbrirModal
-                        href={`/v2/m/nodo/${row.id}`}
+                        href={`${RUTA_BASE}/m/nodo/${row.id}`}
                         titulo={row.nombre}
                         className="px-2 py-1 text-xs font-medium bg-blue-50 text-blue-600 rounded-md border border-blue-200 hover:bg-blue-100 transition-colors inline-block mb-1"
                       >
                         Ver estado
                       </AbrirModal>
                       {fichaEnPagina && (
-                        <Link href={`/v2/red/${row.id}`} className="enlace-pg" style={{ fontSize: 12 }}>
+                        <Link href={`${RUTA_BASE}/red/${row.id}`} className="enlace-pg" style={{ fontSize: 12 }}>
                           Ficha completa →
                         </Link>
                       )}
@@ -300,14 +301,14 @@ export default function DirectoryTableClient({
                   </div>
                 </div>
                 <AbrirModal
-                  href={`/v2/m/nodo/${row.id}`}
+                  href={`${RUTA_BASE}/m/nodo/${row.id}`}
                   titulo={row.nombre}
                   className="shrink-0 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100"
                 >
                   Ver estado
                 </AbrirModal>
                 {fichaEnPagina && (
-                  <Link href={`/v2/red/${row.id}`} className="enlace-pg shrink-0" style={{ fontSize: 12 }}>
+                  <Link href={`${RUTA_BASE}/red/${row.id}`} className="enlace-pg shrink-0" style={{ fontSize: 12 }}>
                     Ficha →
                   </Link>
                 )}

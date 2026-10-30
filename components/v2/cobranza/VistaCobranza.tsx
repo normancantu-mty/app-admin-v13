@@ -1,6 +1,6 @@
 /**
  * Cobranza v2 — la vista completa de "a quién falta cobrarle" (cuerpo). La usan el
- * modal `/v2/m/cobranza` y la pagina `/v2/cobranza`. Escrito el 2026-10-30 por un
+ * modal `/panel/m/cobranza` y la pagina `/panel/cobranza`. Escrito el 2026-10-30 por un
  * ejecutor del Socio. Solo lectura: lo unico que escribe es lo que ya escribian
  * «Registrar abono», «Seguimiento» y «Editar», que se abren desde cada fila.
  *

@@ -67,7 +67,7 @@ export function Salir() {
 /**
  * El apartado de sesion del encabezado: "nombre · rol" abre un menu con
  * "Cambiar de usuario" y "Cerrar sesion". Escrito el 2026-10-30 por el ejecutor
- * del Socio; sustituye al boton `Salir` suelto en `app/v2/layout.tsx`.
+ * del Socio; sustituye al boton `Salir` suelto en `app/panel/layout.tsx`.
  *
  * - `data-testid="v2-usuario"` sigue en el texto del nombre (lo usan los E2E).
  * - "Saliendo…" se pinta en el mismo clic, antes de esperar a Supabase.

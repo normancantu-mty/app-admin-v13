@@ -37,6 +37,7 @@
  * sentencia es atomica. Si una falla se dice cual quedo y cual no.
  */
 
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { revalidatePath } from 'next/cache'
 import { getServerSupabaseClient, resolverSesionOperador } from '@/lib/server-session'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
@@ -129,7 +130,7 @@ export async function guardarLoteAction(form: LoteForm): Promise<GuardarLoteResu
           return { success: false, error: `No pude escribir las tandas (${error.message}). Deshice el lote entero.` }
         }
       }
-      revalidatePath('/v2/lotes')
+      revalidatePath(`${RUTA_BASE}/lotes`)
       return { success: true, id, avisos: v.avisos }
     }
 
@@ -178,7 +179,7 @@ export async function guardarLoteAction(form: LoteForm): Promise<GuardarLoteResu
       if (error) return { success: false, error: `Guardé la cabecera y los insumos, pero NO las tandas: ${error.message}` }
     }
 
-    revalidatePath('/v2/lotes')
+    revalidatePath(`${RUTA_BASE}/lotes`)
     return { success: true, id: idLote, avisos: v.avisos }
   } catch (e) {
     console.error('[lotes-v2] guardarLoteAction:', e)
