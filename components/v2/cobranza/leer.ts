@@ -23,7 +23,7 @@ type Cliente = SupabaseClient<Database>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const libre = (c: Cliente) => c as unknown as SupabaseClient<any>
 
-interface FilaAbono {
+export interface FilaAbono {
   id_entidad_relacionada: string | null
   monto: number
   fecha_movimiento: string | null
@@ -85,38 +85,64 @@ export async function leerCarteraDeNodo(client: Cliente, id: string): Promise<Fi
   return ordenarCartera(filas)
 }
 
-interface FilaEntrega {
+export interface FilaEntrega {
   id_entidad_destino: string | null
   fecha_movimiento: string | null
   status: string | null
 }
 
 /**
- * Fecha de la ultima entrega a concesion por nodo. La misma regla que
- * `v_cartera.ultima_entrega` (migracion 20261029120000, CTE `piso`):
- * ENTRADA_CONCESION hacia el nodo, sin las ANULADO. Solo lectura; el panel la
- * pide en paralelo con el monto del ultimo abono.
+ * Todas las filas ENTRADA_CONCESION. Sin filtro por nodo a proposito: asi no
+ * depende de `v_cartera` y el panel la pide en la misma tanda que el tablero
+ * (perf 2026-10-30). `v_cartera` calcula `ultima_entrega` en su CTE `piso` pero
+ * NO la expone en su SELECT final (migracion 20261029120000; columnas verificadas
+ * en la base local el 2026-10-30), por eso esta lectura sigue existiendo.
  */
-export async function leerUltimasEntregas(client: Cliente, ids: string[]): Promise<Map<string, string>> {
-  const ultima = new Map<string, string>()
-  if (ids.length === 0) return ultima
-  const filas = await fetchTodasLasFilas<FilaEntrega>(
+async function leerEntregasConcesion(client: Cliente): Promise<FilaEntrega[]> {
+  return fetchTodasLasFilas<FilaEntrega>(
     () =>
       libre(client)
         .from('inventario_ledger')
         .select('id_entidad_destino, fecha_movimiento, status')
         .eq('tipo_movimiento', 'ENTRADA_CONCESION')
-        .in('id_entidad_destino', ids)
         .order('id'),
     'inventario_ledger (entregas a concesion)'
   )
+}
+
+/**
+ * Fecha de la ultima entrega a concesion de cada nodo de `ids`. La misma regla que
+ * `piso.ultima_entrega` de `v_cartera` (migracion 20261029120000):
+ * ENTRADA_CONCESION hacia el nodo, sin las ANULADO. Leer ya hecho: no consulta.
+ */
+export function ultimasEntregas(filas: FilaEntrega[], ids: string[]): Map<string, string> {
+  const pedidos = new Set(ids)
+  const ultima = new Map<string, string>()
   for (const e of filas) {
     if (!e.id_entidad_destino || !e.fecha_movimiento) continue
+    if (!pedidos.has(e.id_entidad_destino)) continue
     if ((e.status ?? 'ACTIVO') === 'ANULADO') continue
     const previa = ultima.get(e.id_entidad_destino)
     if (!previa || new Date(e.fecha_movimiento).getTime() > new Date(previa).getTime()) ultima.set(e.id_entidad_destino, e.fecha_movimiento)
   }
   return ultima
+}
+
+/** Lo que la card «A quién cobrar» lee aparte de `v_cartera`, crudo y sin esperarla. */
+export interface CrudoCobranzaPanel {
+  abonos: FilaAbono[]
+  entregas: FilaEntrega[]
+}
+
+/**
+ * Abonos y entregas a concesion de toda la red, en paralelo. El panel lo pide en
+ * el MISMO `Promise.all` que `leerTablero` (antes salia despues, cuando la card
+ * ya tenia `v_cartera`: un viaje mas en serie). El recorte por nodo lo hacen
+ * `montosUltimoAbono` y `ultimasEntregas`: mismas cifras.
+ */
+export async function leerCrudoCobranzaPanel(client: Cliente): Promise<CrudoCobranzaPanel> {
+  const [abonos, entregas] = await Promise.all([leerAbonos(client), leerEntregasConcesion(client)])
+  return { abonos, entregas }
 }
 
 /**

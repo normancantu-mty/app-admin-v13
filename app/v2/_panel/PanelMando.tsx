@@ -28,6 +28,7 @@ import { esDeudaConLaMatriz, totalesCarteraVista } from '@/lib/vistas'
 import { diasDesde } from '@/lib/actividad'
 import { BarrasMes, Cascada, Leyenda } from '@/components/v2/graficas'
 import { CardCobranza } from '@/components/v2/cobranza/CardCobranza'
+import { leerCrudoCobranzaPanel } from '@/components/v2/cobranza/leer'
 import { DIAS_ROJO } from '@/components/v2/cobranza/semaforo'
 import { CardSemaforo, type IndicadorSemaforo } from '@/components/v2/panel/CardSemaforo'
 import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
@@ -56,7 +57,7 @@ export async function PanelMando() {
   const usuario = await exigirMandoV2()
   const client = await getServerSupabaseClient()
   // La tarjeta de ventas y cobros lee aparte, en la MISMA tanda (sin viaje en serie).
-  const [d, crudoVC] = await Promise.all([leerTablero(client), leerVentasCobros(client)])
+  const [d, crudoVC, crudoCob] = await Promise.all([leerTablero(client), leerVentasCobros(client), leerCrudoCobranzaPanel(client)])
   const puedeCapturar = usuario.rol === 'ADMIN'
   const ahora = new Date()
 
@@ -414,7 +415,7 @@ export async function PanelMando() {
       </div>
 
       <div className="grid g363">
-        <CardCobranza cartera={d.cartera} />
+        <CardCobranza cartera={d.cartera} crudo={crudoCob} />
 
         <section className="card">
           <div className="hd">

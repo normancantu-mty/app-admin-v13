@@ -13,8 +13,9 @@
  * Bandas, umbrales y orden: sin cambio.
  *
  * Componente de servidor. Recibe `v_cartera` ya leida por el panel (no la vuelve
- * a pedir) y lee aparte, EN PARALELO, el monto del ultimo abono y la fecha de la
- * ultima entrega.
+ * a pedir) y, tambien del panel, los abonos y las entregas a concesion crudos
+ * (`leerCrudoCobranzaPanel`, en la misma tanda que el tablero; perf 2026-10-30):
+ * aqui solo se recortan por nodo. No consulta la base.
  *
  * Decidido: la lista es la deuda CON LA MATRIZ (igual que "Por cobrar (matriz)").
  * La deuda de un local con su distribuidor no se suma ni se lista aqui: va en una
@@ -23,10 +24,9 @@
  */
 
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
-import { getServerSupabaseClient } from '@/lib/server-session'
 import { esDeudaConLaMatriz, type FilaCarteraVista } from '@/lib/vistas'
 import { fechaMx, mxn0, num } from '@/lib/v2/formato'
-import { armarFilasCobranza, leerMontosUltimoAbono, leerUltimasEntregas } from './leer'
+import { armarFilasCobranza, montosUltimoAbono, ultimasEntregas, type CrudoCobranzaPanel } from './leer'
 import { BANDAS, CHIP_BANDA, NOMBRE_BANDA, pctPorBanda, textoDias, totalesPorBanda } from './semaforo'
 
 const ETIQUETA: Record<string, string> = { rojo: 'Rojo', amarillo: 'Amarillo', verde: 'Verde', gris: 'Sin fecha' }
@@ -36,12 +36,10 @@ const neg = (n: number | null | undefined) => (n !== null && n !== undefined && 
 
 const deudores = (n: number) => `${n} ${n === 1 ? 'deudor' : 'deudores'}`
 
-export async function CardCobranza({ cartera }: { cartera: FilaCarteraVista[] }) {
-  const client = await getServerSupabaseClient()
+export function CardCobranza({ cartera, crudo }: { cartera: FilaCarteraVista[]; crudo: CrudoCobranzaPanel }) {
   const matriz = cartera.filter((f) => esDeudaConLaMatriz(f))
   const ids = matriz.filter((f) => Number(f.deuda) > 0).map((f) => f.id_entidad)
-  const [montos, entregas] = await Promise.all([leerMontosUltimoAbono(client, matriz), leerUltimasEntregas(client, ids)])
-  const filas = armarFilasCobranza(matriz, montos, undefined, entregas)
+  const filas = armarFilasCobranza(matriz, montosUltimoAbono(matriz, crudo.abonos), undefined, ultimasEntregas(crudo.entregas, ids))
   const tot = totalesPorBanda(filas)
   const pct = pctPorBanda(tot)
   const total = filas.reduce((a, f) => a + f.deuda, 0)
