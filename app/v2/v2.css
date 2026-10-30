@@ -503,3 +503,40 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
 .v2 .vs-fuera { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); padding: 8px 12px; border: 1px dashed var(--line-2); border-radius: var(--r-sm); }
 .v2 .vs-fuera b { color: var(--ink); }
 .v2 .vs-cuenta { margin-bottom: 14px; }
+
+/* Inventario compacto (2026-10-30, ejecutor del Socio): KPIs arriba, detalle en pestañas,
+   tablas densas con altura maxima y columnas secundarias plegadas en pantallas chicas. */
+.v2 .inv-barra { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 12px; }
+.v2 .inv-barra p { margin: 0; }
+.v2 .inv-sub { color: var(--muted); font-size: 12px; }
+.v2 .kpis.inv-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; }
+@media (min-width: 900px) { .v2 .kpis.inv-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.v2 .inv-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line-2); margin-bottom: 12px; }
+.v2 .inv-tabs button { border: 0; border-bottom: 2px solid transparent; background: none; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--ink-2); padding: 8px 12px; margin-bottom: -1px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: color .15s ease, border-color .15s ease; }
+.v2 .inv-tabs button:hover:not(.on) { color: var(--ink); }
+.v2 .inv-tabs button.on { color: var(--chile); border-bottom-color: var(--chile); }
+.v2 .inv-cuenta { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-size: 11px; font-weight: 700; color: var(--ink-2); text-align: center; line-height: 16px; }
+.v2 .seg button.on .inv-cuenta { background: transparent; color: inherit; border-color: currentColor; }
+.v2 .inv-filtros { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.v2 .inv-busca { padding: 6px 10px; font-size: 13px; width: 220px; max-width: 100%; }
+.v2 .inv-scroll { max-height: 440px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); }
+.v2 .inv-scroll table.t thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+.v2 table.t.inv-t { font-size: 12.5px; }
+.v2 table.t.inv-t td { padding: 6px 8px; }
+.v2 table.t.inv-t th { padding: 7px 8px; }
+.v2 table.t.inv-t tbody tr:last-child td { border-bottom: 0; }
+.v2 .inv-fecha { white-space: nowrap; color: var(--ink-2); }
+.v2 .inv-pie { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 8px; font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+.v2 .inv-pie .btn { font-family: var(--f-body); }
+.v2 .inv-solo-chico, .v2 .inv-solo-chico-lg { display: none; }
+@media (max-width: 999px) {
+  .v2 .inv-opc-lg { display: none; }
+  .v2 .inv-solo-chico-lg { display: block; }
+}
+@media (max-width: 699px) {
+  .v2 .inv-opc { display: none; }
+  .v2 .inv-solo-chico { display: block; }
+  .v2 span.inv-solo-chico { display: inline; }
+  .v2 .inv-scroll { max-height: 60vh; }
+  .v2 .inv-busca { width: 100%; }
+}

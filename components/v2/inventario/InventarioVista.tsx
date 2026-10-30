@@ -7,6 +7,9 @@ import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/li
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
 import LogisticaInversaModal from './LogisticaInversa'
 import MovimientosTable from './MovimientosInventario'
+import { PestanasInv, type Pestana } from './Pestanas'
+import { TablaStock } from './TablaStock'
+import { cant } from './formato-inv'
 
 // Cliente por request con la sesion del usuario. NUNCA el cliente browser de
 // '@/lib/supabase' aqui: en un Server Component viaja sin sesion, o sea como
@@ -309,18 +312,18 @@ function formatCurrency(amount: number): string {
   }).format(amount)
 }
 
-function EmptyState() {
-  return (
-    <div className="text-center py-12">
-      <div className="text-gray-400 text-6xl mb-4">📦</div>
-      <h3 className="text-lg font-medium text-gray-900 mb-2">No hay productos en el catálogo</h3>
-      <p className="text-gray-500">Comienza agregando productos a tu inventario.</p>
-    </div>
-  )
-}
-
-/** `sinAcciones`: la pagina `/v2/inventario` ya pone Envasar y Comprar en su encabezado (Paginas v2, 2026-10-29). */
-export default async function InventarioVista({ sinAcciones = false }: { sinAcciones?: boolean } = {}) {
+/**
+ * `sinAcciones`: la pagina `/v2/inventario` ya pone Envasar y Comprar en su encabezado (Paginas v2, 2026-10-29).
+ * Inventario compacto (2026-10-30, ejecutor del Socio): KPIs arriba y el detalle en pestañas
+ * (Stock, Movimientos y las `extras` que mande la pagina: compras y envasados, lotes). `ver`
+ * es la pestaña inicial (`?ver=` de la pagina); `enUrl` escribe la pestaña elegida en la URL.
+ */
+export default async function InventarioVista({
+  sinAcciones = false,
+  extras = [],
+  ver,
+  enUrl = false
+}: { sinAcciones?: boolean; extras?: Pestana[]; ver?: string; enUrl?: boolean } = {}) {
   const cookieStore = await cookies()
   const rango = cookieStore.get('global_rango')?.value || 'ESTE_MES'
   const { fechaInicio, fechaFin } = calcularFechasPorRango(rango)
@@ -401,206 +404,135 @@ export default async function InventarioVista({ sinAcciones = false }: { sinAcci
     }
   })
 
+  const piezasConcesion = inventarioConcesion.reduce((s, p) => s + Number(p.stock_consignado), 0)
+  const terminados = productosConStock.filter((p) => p.tipo === 'TERMINADO')
+  const piezasTerminadas = terminados.reduce((s, p) => s + Math.max(0, p.stock_actual), 0)
+  const stockBajo = productosConStock.filter((p) => p.stock_actual <= 10).length
+  const filasStock = productosConStockOrdenados.map((p) => ({
+    id: p.id,
+    sku: p.sku,
+    nombre: p.nombre,
+    tipo: p.tipo,
+    unidad_medida: p.unidad_medida,
+    stock_actual: p.stock_actual
+  }))
+
+  const pestanas: Pestana[] = [
+    { id: 'stock', titulo: 'Stock', cuenta: productosConStock.length, contenido: <TablaStock productos={filasStock} /> },
+    {
+      id: 'movimientos',
+      titulo: 'Movimientos',
+      cuenta: ultimosMovimientos.length,
+      contenido: (
+        <MovimientosTable
+          movimientos={ultimosMovimientos}
+          sessionEmail={currentUser?.email ?? null}
+          sessionRole={currentUser?.rol ?? null}
+          canMutate={Boolean(canMutate)}
+        />
+      )
+    },
+    ...(inventarioConcesion.length > 0
+      ? [
+          {
+            id: 'concesion',
+            titulo: 'En concesión',
+            cuenta: inventarioConcesion.length,
+            contenido: (
+              <div className="inv-scroll">
+                <table className="t inv-t">
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th className="r">Piezas</th>
+                      <th className="r">Valor comercial</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inventarioConcesion.map((p) => (
+                      <tr key={p.id}>
+                        <td>
+                          <b>{p.nombre}</b>
+                          <div className="inv-sub mono">{p.sku}</div>
+                        </td>
+                        <td className="r">{Number(p.stock_consignado).toFixed(0)} pz</td>
+                        <td className="r">{formatCurrency(p.valor_consignado)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
+        ]
+      : []),
+    ...extras
+  ]
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <p className="text-sm text-gray-600">Stock de la matriz contra todo el ledger; KPIs y movimientos del rango global.</p>
+    <div className="inv">
+      <div className="inv-barra">
+        <p className="inv-sub">Stock de la matriz contra todo el ledger; KPIs y movimientos del rango global.</p>
         {canMutate && (
-          <div className="flex w-full flex-wrap gap-2 md:w-auto md:justify-end md:gap-3">
-            {!sinAcciones && (<>
-            <AbrirModal
-              href="/v2/m/envasado"
-              titulo="Registrar envasado"
-              tam="md"
-              className="inline-flex w-full min-w-[9rem] flex-1 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 sm:w-auto sm:flex-none"
-            >
-              Producción (Envasar)
-            </AbrirModal>
-            <AbrirModal
-              href="/v2/m/compra"
-              titulo="Comprar insumos"
-              tam="md"
-              className="inline-flex w-full min-w-[9rem] flex-1 items-center justify-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 sm:w-auto sm:flex-none"
-            >
-              Comprar Insumos
-            </AbrirModal>
-            </>)}
-            <div className="w-full min-w-[9rem] flex-1 sm:w-auto sm:flex-none">
-              <LogisticaInversaModal
-                productos={productos.map((p) => ({ id: p.id, nombre: p.nombre, sku: p.sku }))}
-                distribuidores={distribuidores}
-              />
-            </div>
+          <div className="fila-acc">
+            {!sinAcciones && (
+              <>
+                <AbrirModal href="/v2/m/envasado" titulo="Registrar envasado" tam="md" className="btn p">
+                  Producción (Envasar)
+                </AbrirModal>
+                <AbrirModal href="/v2/m/compra" titulo="Comprar insumos" tam="md" className="btn">
+                  Comprar Insumos
+                </AbrirModal>
+              </>
+            )}
+            <LogisticaInversaModal productos={productos.map((p) => ({ id: p.id, nombre: p.nombre, sku: p.sku }))} distribuidores={distribuidores} />
           </div>
         )}
       </div>
 
       {productosConStock.length === 0 ? (
-        <EmptyState />
+        <div className="vacio">
+          <b>No hay productos en el catálogo</b>
+          Comienza agregando productos a tu inventario.
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Valor Comercial del Inventario</p>
-                  <p className="text-3xl font-bold text-emerald-600 mt-2">{formatCurrency(kpis.valorComercialInventario)}</p>
-                </div>
-                <div className="bg-emerald-100 p-3 rounded-full">
-                  <span className="text-2xl">🏦</span>
-                </div>
-              </div>
+          <div className="kpis inv-kpis" data-testid="inv-kpis">
+            <div className="kpi fuerte">
+              <span className="t">Valor comercial</span>
+              <span className="v pos">{formatCurrency(kpis.valorComercialInventario)}</span>
+              <span className="d">
+                <b>{cant(piezasTerminadas)}</b> pz terminadas · precio Zacatecas
+              </span>
             </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Valor Comercial en Concesión</p>
-                    <p className="text-3xl font-bold text-amber-600 mt-2">
-                      {new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(valorTotalConcesion)}
-                    </p>
-                  </div>
-                  <div className="p-3 bg-amber-50 rounded-full text-xl">📦</div>
-                </div>
-              </div>
-              
-              <div className="mt-4 pt-4 border-t border-gray-100">
-                <p className="text-xs font-semibold text-gray-500 mb-2">DESGLOSE FÍSICO (PIEZAS)</p>
+            <div className="kpi">
+              <span className="t">En concesión</span>
+              <span className="v">{formatCurrency(valorTotalConcesion)}</span>
+              <span className="d">
                 {inventarioConcesion.length === 0 ? (
-                  <p className="text-sm text-gray-400">No hay stock en concesión.</p>
+                  'No hay stock en concesión'
                 ) : (
-                  <ul className="space-y-1">
-                    {inventarioConcesion.map(p => (
-                      <li key={p.id} className="flex justify-between text-sm">
-                        <span className="text-gray-600 truncate mr-2">{p.nombre}</span>
-                        <span className="font-semibold text-gray-900">{Number(p.stock_consignado).toFixed(0)} pz</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <>
+                    <b>{cant(piezasConcesion)}</b> pz en {inventarioConcesion.length} producto{inventarioConcesion.length === 1 ? '' : 's'}
+                  </>
                 )}
-              </div>
+              </span>
             </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Mermas</p>
-                  <p className="text-3xl font-bold text-orange-600 mt-2">{Number(kpis.totalMermas).toFixed(2)}</p>
-                </div>
-                <div className="bg-orange-100 p-3 rounded-full">
-                  <span className="text-2xl">⚠️</span>
-                </div>
-              </div>
+            <div className="kpi">
+              <span className="t">Mermas del rango</span>
+              <span className="v">{Number(kpis.totalMermas).toFixed(2)}</span>
+              <span className="d">unidades mermadas (no anuladas)</span>
             </div>
-
-          </div>
-
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-800">Stock Actual por Producto</h2>
-            </div>
-            <div className="hidden w-full overflow-x-auto md:block">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      SKU
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Nombre
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Tipo
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Unidad de Medida
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Stock Actual
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {productosConStockOrdenados.map((producto: ProductoConStock) => (
-                    <tr key={producto.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {producto.sku}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {producto.nombre}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                          producto.tipo === 'INSUMO' 
-                            ? 'bg-gray-100 text-gray-800' 
-                            : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {producto.tipo}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {producto.unidad_medida}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <span className={producto.stock_actual <= 10 ? 'text-red-600' : 'text-gray-900'}>
-                          {Number(producto.stock_actual).toFixed(4)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 p-4 md:hidden">
-              {productosConStockOrdenados.map((producto: ProductoConStock) => (
-                <div key={producto.id} className="space-y-3 rounded-lg bg-white p-4 shadow">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-medium text-gray-500">Nombre</p>
-                      <p className="text-base font-semibold text-gray-900">{producto.nombre}</p>
-                    </div>
-                    <span
-                      className={`inline-flex shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
-                        producto.tipo === 'INSUMO' ? 'bg-gray-100 text-gray-800' : 'bg-blue-100 text-blue-800'
-                      }`}
-                    >
-                      {producto.tipo}
-                    </span>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <p className="flex justify-between gap-2">
-                      <span className="font-medium text-gray-500">SKU:</span>
-                      <span className="text-gray-900">{producto.sku}</span>
-                    </p>
-                    <p className="flex justify-between gap-2">
-                      <span className="font-medium text-gray-500">Unidad de Medida:</span>
-                      <span className="text-gray-900">{producto.unidad_medida}</span>
-                    </p>
-                    <p className="flex justify-between gap-2">
-                      <span className="font-medium text-gray-500">Stock Actual:</span>
-                      <span className={`font-semibold ${producto.stock_actual <= 10 ? 'text-red-600' : 'text-gray-900'}`}>
-                        {Number(producto.stock_actual).toFixed(4)}
-                      </span>
-                    </p>
-                  </div>
-                </div>
-              ))}
+            <div className="kpi">
+              <span className="t">Stock bajo</span>
+              <span className={`v ${stockBajo > 0 ? 'neg' : ''}`}>{stockBajo}</span>
+              <span className="d">
+                productos con 10 o menos de {productosConStock.length}
+              </span>
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-800">Últimos Movimientos</h2>
-            </div>
-            <MovimientosTable
-              movimientos={ultimosMovimientos}
-              sessionEmail={currentUser?.email ?? null}
-              sessionRole={currentUser?.rol ?? null}
-              canMutate={Boolean(canMutate)}
-            />
-          </div>
+          <PestanasInv pestanas={pestanas} inicial={ver} enUrl={enUrl} />
         </>
       )}
     </div>

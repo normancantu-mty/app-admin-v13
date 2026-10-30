@@ -1,91 +1,93 @@
 /**
- * Paginas v2 — tabla de lotes (rendimiento por lote, v_lote_rendimiento; los
- * registra el bot). Sacada tal cual del modal `/v2/m/lotes` el 2026-10-29 por el
- * ejecutor del Socio: la comparten ese modal y la pagina `/v2/inventario`.
+ * Paginas v2 — tabla de lotes (rendimiento por lote, v_lote_rendimiento). Sacada
+ * del modal `/v2/m/lotes` el 2026-10-29 por el ejecutor del Socio: la comparten
+ * ese modal y la pagina `/v2/inventario`.
+ *
+ * Lotes v2 (2026-10-30, ejecutor del Socio): resumen compacto. Estado de cada lote
+ * (en fermentacion / terminado / envasado), clic en el codigo abre su detalle
+ * (`/v2/m/lote/<id>`), y el apartado completo con alta y edicion vive en
+ * `/v2/lotes`. Las lecturas son de `components/v2/lotes/datos.ts`.
  * Exige mando (el RLS de `lotes` deja ver a ADMIN y SOCIO).
  */
 
 import { exigirMandoV2 } from '@/lib/v2/puerta'
-import { getServerSupabaseClient } from '@/lib/server-session'
-import { fechaMx, mxn, num } from '@/lib/v2/formato'
+import { fechaParaPersona } from '@/lib/fechas'
+import { AbrirModal } from '@/components/v2/modal/AbrirModal'
+import { VerTodo } from '@/components/v2/pagina/Encabezado'
+import { leerLotes } from '@/components/v2/lotes/datos'
+import { CHIP_ESTADO, ESTADOS_LOTE, ETIQUETA_ESTADO } from '@/components/v2/lotes/estado'
+import { cant2 } from './formato-inv'
 
-type FilaLote = {
-  id: string
-  codigo_lote: string
-  fecha_inicio: string
-  fecha_fin_fermentacion: string | null
-  kg_chile: number | null
-  litros_producidos: number | null
-  tandas: number | null
-  grado_ponderado: number | null
-  botellas: number | null
-  litros_por_kg_chile: number | null
-  costo_insumos_conocido: number | null
-  costo_por_ml: number | null
-  faltan_costo: string | null
-}
-
-const n = (v: number | null) => (v === null || v === undefined ? '—' : num(Number(v)))
-
-export async function LotesVista() {
+export async function LotesVista({ limite }: { limite?: number } = {}) {
   await exigirMandoV2()
-  const supabase = await getServerSupabaseClient()
-  // Solo lectura de la vista que ya usa el bot (/api/bot/consulta).
-  const { data, error } = await supabase
-    .from('v_lote_rendimiento')
-    .select('id, codigo_lote, fecha_inicio, fecha_fin_fermentacion, kg_chile, litros_producidos, tandas, grado_ponderado, botellas, litros_por_kg_chile, costo_insumos_conocido, costo_por_ml, faltan_costo')
-    .order('fecha_inicio', { ascending: false })
-  const lotes = (data ?? []) as FilaLote[]
+  const { lotes, error } = await leerLotes()
+  const visibles = limite ? lotes.slice(0, limite) : lotes
   return (
     <>
       {error ? (
-        <div className="msg mal">No se pudieron leer los lotes: {error.message}</div>
+        <div className="msg mal">No se pudieron leer los lotes: {error}</div>
       ) : lotes.length === 0 ? (
         <div className="vacio" data-testid="lotes-vacio">
           <b>Aún no hay lotes registrados</b>
-          Cuando el bot registre el primer lote (entradas, tandas y envasado), aparece aquí con su rendimiento y su costo.
+          Se registran por el bot o con «Nuevo lote» en el apartado de lotes; aquí aparecen con su estado, rendimiento y costo.
         </div>
       ) : (
-        <div className="tabla-w">
-          <table className="t" data-testid="tabla-lotes">
-            <thead>
-              <tr>
-                <th>Lote</th>
-                <th>Inicio</th>
-                <th>Fin fermentación</th>
-                <th className="r">Kg chile</th>
-                <th className="r">Litros</th>
-                <th className="r">Tandas</th>
-                <th className="r">Grado</th>
-                <th className="r">Botellas</th>
-                <th className="r">L/kg</th>
-                <th className="r">Costo insumos</th>
-                <th className="r">$/ml</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lotes.map((l) => (
-                <tr key={l.id}>
-                  <td>
-                    <b>{l.codigo_lote}</b>
-                    {l.faltan_costo ? <div className="muted" style={{ fontSize: 11 }}>Sin costo: {l.faltan_costo}</div> : null}
-                  </td>
-                  <td>{fechaMx(l.fecha_inicio)}</td>
-                  <td>{fechaMx(l.fecha_fin_fermentacion)}</td>
-                  <td className="r">{n(l.kg_chile)}</td>
-                  <td className="r">{n(l.litros_producidos)}</td>
-                  <td className="r">{n(l.tandas)}</td>
-                  <td className="r">{l.grado_ponderado === null ? '—' : `${Number(l.grado_ponderado).toFixed(1)}°`}</td>
-                  <td className="r">{n(l.botellas)}</td>
-                  <td className="r">{l.litros_por_kg_chile === null ? '—' : Number(l.litros_por_kg_chile).toFixed(3)}</td>
-                  <td className="r">{l.costo_insumos_conocido === null ? '—' : mxn(Number(l.costo_insumos_conocido))}</td>
-                  <td className="r">{l.costo_por_ml === null ? '—' : `$${Number(l.costo_por_ml).toFixed(4)}`}</td>
+        <>
+          <div className="inv-filtros">
+            {ESTADOS_LOTE.map((e) => (
+              <span key={e} className={`chip ${CHIP_ESTADO[e]}`}>
+                {lotes.filter((l) => l.estado === e).length} {ETIQUETA_ESTADO[e].toLowerCase()}
+              </span>
+            ))}
+          </div>
+          <div className="inv-scroll">
+            <table className="t inv-t" data-testid="tabla-lotes">
+              <thead>
+                <tr>
+                  <th>Lote</th>
+                  <th>Estado</th>
+                  <th className="r">Días</th>
+                  <th className="r">Litros</th>
+                  <th className="r inv-opc">Grado</th>
+                  <th className="r inv-opc">Botellas</th>
+                  <th className="r inv-opc-lg">$/ml</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {visibles.map((l) => (
+                  <tr key={l.id}>
+                    <td>
+                      <AbrirModal href={`/v2/m/lote/${l.id}`} titulo={`Lote ${l.codigo_lote}`} className="enlace-pg">
+                        <b>{l.codigo_lote}</b>
+                      </AbrirModal>
+                      <div className="inv-sub">Inicio {fechaParaPersona(l.fecha_inicio)}</div>
+                    </td>
+                    <td>
+                      <span className={`chip ${CHIP_ESTADO[l.estado]}`}>{ETIQUETA_ESTADO[l.estado]}</span>
+                    </td>
+                    <td className="r">
+                      {l.dias}
+                      {l.diasEnCurso ? <span className="inv-sub"> en curso</span> : null}
+                    </td>
+                    <td className="r">{cant2(l.litros_producidos)}</td>
+                    <td className="r inv-opc">{l.grado_ponderado === null ? '—' : `${Number(l.grado_ponderado).toFixed(1)}°`}</td>
+                    <td className="r inv-opc">{cant2(l.botellas)}</td>
+                    <td className="r inv-opc-lg">{l.costo_por_ml === null ? '—' : `$${Number(l.costo_por_ml).toFixed(4)}`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
+      <div className="inv-pie">
+        <span>
+          {limite && lotes.length > visibles.length ? `Mostrando ${visibles.length} de ${lotes.length} · ` : ''}v_lote_rendimiento
+        </span>
+        <VerTodo href="/v2/lotes" className="btn mini">
+          Apartado de lotes →
+        </VerTodo>
+      </div>
     </>
   )
 }
