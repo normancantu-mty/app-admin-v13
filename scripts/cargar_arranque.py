@@ -41,6 +41,12 @@ Uso (desde la raiz del worktree):
   --ejemplo    permite una captura sin `listo: true` (pruebas)
 
 Se niega a correr dos veces sobre la misma base (busca filas con categoria ARRANQUE).
+
+Corte a produccion (2026-10-30): el SQL de la carga lo arma `construir()`, que tambien usa
+scripts/corte_produccion.py para GENERAR el archivo del corte (no conecta a produccion). Este
+script, por si solo, sigue hablando SOLO con la base local. La cuenta Transferencias nace con un
+UUID FIJO (TRANSFERENCIAS_ID) en los dos caminos, para que ERP_AGENTE_CUENTA_TRANSFERENCIA se
+pueda fijar antes de cargar.
 """
 import argparse
 import json
@@ -54,6 +60,11 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONT = 'supabase_db_app-admin-v2'
 PUERTO_LOCAL = '55322'
 ADMIN = 'e0000000-0000-0000-0000-000000000001'
+# UUID fijo de la cuenta Transferencias del CEO Admin (plan de corte S7): LucIA la recibe en
+# ERP_AGENTE_CUENTA_TRANSFERENCIA. Fijo en local y en produccion.
+TRANSFERENCIAS_ID = 'e0000000-0000-0000-0000-0000000000f1'
+# Autor de las filas de la carga. En el corte a produccion lo cambia construir(usuario=...).
+USUARIO_LOCAL = 'arranque@v2.local'
 LIBRO = os.path.join(RAIZ, 'scripts', 'arranque_datos', 'libro_produccion.json')
 # Presentaciones de la consignacion: indice del artefacto (j), clave de la conciliacion, producto.
 PRESENTACIONES = [
@@ -116,34 +127,21 @@ def id_producto(clave, ids):
     return hits[0] if len(hits) == 1 else None
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--captura', required=True)
-    ap.add_argument('--consig', choices=['cero', 'libro', 'capturo', 'conciliado'], default='cero')
-    ap.add_argument('--conciliacion')
-    ap.add_argument('--seco', action='store_true')
-    ap.add_argument('--ejemplo', action='store_true')
-    a = ap.parse_args()
+def construir(cap, a, filas, usuario=USUARIO_LOCAL, corte_prod=False):
+    """Arma el SQL de la carga de arranque (sin BEGIN ni COMMIT).
 
-    cap = json.load(open(a.captura, encoding='utf-8'))
-    cap = cap.get('data', cap)
-    if not cap.get('listo') and not a.ejemplo:
-        sys.exit('La captura no esta marcada como lista (listo != true). Usa --ejemplo para probar.')
-
-    p = subprocess.run(['docker', 'port', CONT], capture_output=True, text=True)
-    if PUERTO_LOCAL not in p.stdout:
-        sys.exit('El contenedor %s no publica %s: no es la base local v2. No corro.' % (CONT, PUERTO_LOCAL))
-
-    if filas("SELECT 1 FROM finanzas_ledger WHERE categoria = 'ARRANQUE' LIMIT 1"):
-        sys.exit('Esta base ya tiene una carga de arranque (finanzas_ledger.categoria = ARRANQUE). '
-                 'Para repetirla: python scripts/v2_local_reset.py y vuelve a correr esto.')
-
+    `filas(sql)` lee la base de ORIGEN (local, o la copia restaurada del respaldo en el corte).
+    corte_prod=True: inventario_ledger y ticket_detalles se vacian ANTES en la misma transaccion
+    (scripts/corte_produccion.py), asi que sus referencias a un producto no impiden quitarlo.
+    Devuelve (sentencias, reporte, esperado), con esperado = lo que la base debe decir despues.
+    """
     corte = cap.get('corte') or sys.exit('La captura no trae fecha de corte')
     fecha = '%s 23:59:00-06' % corte          # cierre del dia del corte, hora de Zacatecas
     nota_arranque = 'ARRANQUE %s: ' % corte
     reporte = []
-    sql = ['BEGIN;']
-
+    sql = []
+    esperado = {'saldos': {}, 'cargo_deuda': 0.0, 'abono_deuda': 0.0, 'n_saldo_inicial': 0,
+                'n_deuda': 0, 'n_bodega': 0, 'n_consignacion': 0, 'fecha': fecha}
     productos = {r[0]: r for r in filas('SELECT id, sku, nombre, unidad_medida, costo_unitario::text FROM catalogo_productos')}
     entidades = {r[0]: r for r in filas('SELECT id, nombre, rol, coalesce(id_padre::text, \'\') FROM entidades')}
 
@@ -166,7 +164,10 @@ def main():
             UNION ALL SELECT 'inventario_ledger', count(*) FROM inventario_ledger WHERE id_producto = %(u)s
             UNION ALL SELECT 'ticket_detalles', count(*) FROM ticket_detalles WHERE id_producto = %(u)s""" % {'u': q(uid)})
         con = {t: int(n) for t, n in refs if int(n)}
-        if con.get('inventario_ledger') or con.get('ticket_detalles'):
+        if corte_prod:
+            con.pop('inventario_ledger', None)
+            con.pop('ticket_detalles', None)
+        elif con.get('inventario_ledger') or con.get('ticket_detalles'):
             sys.exit('El producto %s tiene movimientos (%s): no se quita.' % (productos[uid][2], con))
         reporte.append('quita producto %s (%s)%s' % (productos[uid][2], productos[uid][1],
                        (' -- tambien sale de ' + ', '.join('%s:%d' % kv for kv in con.items())) if con else ''))
@@ -217,10 +218,10 @@ def main():
     cuentas = cap.get('cuentas', {})
     t_fis = cap.get('t_fis') or 'LIBRE'
     t_pct = float(cap.get('t_pct') if cap.get('t_pct') not in (None, '') else 5)
-    sql.append("""INSERT INTO cuentas_financieras (id_entidad, nombre, tipo_fiscalidad, clase)
-        SELECT %s, 'Transferencias', %s, 'TRANSFERENCIAS'
+    sql.append("""INSERT INTO cuentas_financieras (id, id_entidad, nombre, tipo_fiscalidad, clase)
+        SELECT %s, %s, 'Transferencias', %s, 'TRANSFERENCIAS'
         WHERE NOT EXISTS (SELECT 1 FROM cuentas_financieras WHERE id_entidad = %s AND nombre = 'Transferencias');"""
-               % (q(ADMIN), q(t_fis), q(ADMIN)))
+               % (q(TRANSFERENCIAS_ID), q(ADMIN), q(t_fis), q(ADMIN)))
     viejas = filas("SELECT count(*) FROM cuentas_financieras WHERE id_entidad = %s AND nombre IN (%s, %s)"
                    % (q(ADMIN), q(NOMBRE_VIEJO_PERSONAL), q(NOMBRE_CUENTA['personal'])))
     if int(viejas[0][0]) != 1:
@@ -239,6 +240,7 @@ def main():
     reporte.append('Transferencias: %s, comision %s%%; %s LIBRE, solo egresos, saldo 0' % (t_fis, t_pct, NOMBRE_CUENTA['personal']))
     for k in ('efectivo', 'fresnillo', 'transferencias', 'personal'):
         monto = float(cuentas.get(k) or 0)
+        esperado['saldos'][CLASE[k]] = round(monto, 2)
         if k == 'personal' and monto:
             sys.exit('La %s arranca en 0 (solo egresos) y la captura trae %s' % (NOMBRE_CUENTA['personal'], monto))
         if monto == 0:
@@ -250,6 +252,7 @@ def main():
             FROM cuentas_financieras WHERE id_entidad = %s AND clase = %s;"""
                    % (q(monto), q(nota_arranque + 'saldo contado por Norman'), q(fecha), q(ADMIN), q(CLASE[k])))
         reporte.append('saldo inicial %s = %.2f' % (NOMBRE_CUENTA[k], monto))
+        esperado['n_saldo_inicial'] += 1
 
     # ---------------------------------------------------------------- 4. inventario de bodega
     def entrada_bodega(uid_sql, cant, costo_sql, nombre):
@@ -259,6 +262,7 @@ def main():
             FROM catalogo_productos WHERE %s;"""
                    % (q(cant), q(ADMIN), costo_sql, q(nota_arranque + 'inventario contado (sin dinero)'), q(fecha), uid_sql))
         reporte.append('bodega %s = %s' % (nombre, cant))
+        esperado['n_bodega'] += 1
 
     for uid, cant in sorted(contado.items(), key=lambda kv: productos[kv[0]][1]):
         if cant > 0:
@@ -342,6 +346,7 @@ def main():
                     VALUES (%s, 'ENTRADA_CONCESION', %s, 'CONSIGNADO', %s, %s, %s, %s, 'arranque@v2.local', 'ACTIVO');"""
                            % (q(p), q(c), q(uid), q(precio_origen.get(uid, {}).get(p, 0)),
                               q(nota_arranque + 'consignacion inicial (' + a.consig + ')'), q(fecha)))
+                esperado['n_consignacion'] += 1
         reporte.append('consignacion %s: %s' % (entidades[uid][1], {productos[p][1]: c for p, c in pres.items() if c}))
     for uid, monto in sorted(deuda.items()):
         if uid in quitar_ent or uid not in entidades or not monto:
@@ -353,6 +358,8 @@ def main():
                    % (q(tipo), q(abs(monto)), q(nota_arranque + 'deuda inicial (' + a.consig + ')' +
                                                  ((' ' + notas[uid]) if uid in notas else '')), q(uid), q(fecha)))
         reporte.append('deuda inicial %s: %.2f (%s)' % (entidades[uid][1], monto, tipo))
+        esperado['n_deuda'] += 1
+        esperado['cargo_deuda' if monto > 0 else 'abono_deuda'] += round(abs(monto), 2)
 
     # ---------------------------------------------------------------- 6. categorias
     orden = 0
@@ -362,6 +369,43 @@ def main():
             sql.append("INSERT INTO categorias_movimiento (tipo, categoria, subcategoria, orden) VALUES (%s, %s, %s, %d) "
                        "ON CONFLICT (tipo, categoria, subcategoria) DO NOTHING;" % (q(cat['t']), q(cat['n'].strip()), q(sub.strip()), orden))
     reporte.append('categorias: %d categorias, %d subcategorias' % (len(cap.get('cats', [])), orden))
+    esperado['categorias'] = orden
+    esperado['cargo_deuda'] = round(esperado['cargo_deuda'], 2)
+    esperado['abono_deuda'] = round(esperado['abono_deuda'], 2)
+    esperado['quitar_ent'] = list(quitar_ent)
+    esperado['quitar_prod'] = list(quitar_prod)
+    if usuario != USUARIO_LOCAL:
+        lit = q(USUARIO_LOCAL)
+        sql = [x.replace(lit, q(usuario)) for x in sql]
+    return sql, reporte, esperado
+
+
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--captura', required=True)
+    ap.add_argument('--consig', choices=['cero', 'libro', 'capturo', 'conciliado'], default='cero')
+    ap.add_argument('--conciliacion')
+    ap.add_argument('--seco', action='store_true')
+    ap.add_argument('--ejemplo', action='store_true')
+    a = ap.parse_args()
+
+    cap = json.load(open(a.captura, encoding='utf-8'))
+    cap = cap.get('data', cap)
+    if not cap.get('listo') and not a.ejemplo:
+        sys.exit('La captura no esta marcada como lista (listo != true). Usa --ejemplo para probar.')
+
+    p = subprocess.run(['docker', 'port', CONT], capture_output=True, text=True)
+    if PUERTO_LOCAL not in p.stdout:
+        sys.exit('El contenedor %s no publica %s: no es la base local v2. No corro.' % (CONT, PUERTO_LOCAL))
+
+    if filas("SELECT 1 FROM finanzas_ledger WHERE categoria = 'ARRANQUE' LIMIT 1"):
+        sys.exit('Esta base ya tiene una carga de arranque (finanzas_ledger.categoria = ARRANQUE). '
+                 'Para repetirla: python scripts/v2_local_reset.py y vuelve a correr esto.')
+
+    sql, reporte, _ = construir(cap, a, filas)
+    sql.insert(0, 'BEGIN;')
 
     # La sesion corre como postgres: los triggers de autor ponen usuario_creador desde el JWT
     # (no hay) y dejan lo que mandamos. Se verifica dentro de la misma transaccion.
