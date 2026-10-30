@@ -564,3 +564,38 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
   .v2 .lote-fila-hd > :nth-child(5) { display: none; }
   .v2 .lote-scroll { max-height: 65vh; }
 }
+
+/* Cobranza con mas detalle y el rojo resaltado (2026-10-30, ejecutor del Socio): aviso en la
+   cabecera, barra apilada por banda, fila expandible con el detalle del deudor. */
+.v2 .cob-alerta { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: var(--crit-bg); color: var(--crit); border: 1px solid var(--crit); font-size: 12.5px; font-weight: 800; white-space: nowrap; text-decoration: none; }
+.v2 .cob-alerta:hover { background: var(--crit); color: #fff; }
+.v2 .cob-card.cob-hay-rojo { border-top: 3px solid var(--crit); }
+.v2 .cob-reparto { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface-2); margin: 0 0 10px; gap: 2px; }
+.v2 .cob-reparto i { display: block; height: 100%; min-width: 3px; }
+.v2 .cob-reparto i.rojo { background: var(--crit); }
+.v2 .cob-reparto i.amarillo { background: var(--warn); }
+.v2 .cob-reparto i.verde { background: var(--good); }
+.v2 .cob-reparto i.gris { background: var(--muted); }
+.v2 .cob-banda-p { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2 .cob-banda.alerta { background: var(--crit-bg); border-color: var(--crit); border-top-width: 4px; grid-column: span 2; }
+.v2 .cob-banda.alerta .cob-banda-t, .v2 .cob-banda.alerta .cob-banda-n, .v2 .cob-banda.alerta .cob-banda-m, .v2 .cob-banda.alerta .cob-banda-p { color: var(--crit); }
+.v2 .cob-banda.alerta .cob-banda-n { font-size: 24px; }
+.v2 .cob-banda.alerta .cob-banda-m { font-weight: 800; font-size: 13px; }
+.v2 .cob-banda.alerta:hover { background: var(--crit-bg); filter: brightness(.97); }
+.v2 .cob-fila { border-bottom: 1px solid var(--line); }
+.v2 .cob-fila > summary { list-style: none; cursor: pointer; border-bottom: 0; }
+.v2 .cob-fila > summary::-webkit-details-marker { display: none; }
+.v2 .cob-fila > summary .cob-n::after { content: ' ▸'; font-size: 10px; color: var(--muted); }
+.v2 .cob-fila[open] > summary .cob-n::after { content: ' ▾'; }
+.v2 .cob-fila[open] > summary { background: var(--surface-2); }
+.v2 .cob-fila.rojo { background: var(--crit-bg); border: 1px solid var(--crit); border-radius: var(--r-sm); margin: 4px 0; }
+.v2 .cob-fila.rojo > summary, .v2 .cob-fila.rojo[open] > summary { background: transparent; }
+.v2 .cob-fila.rojo > summary:hover { background: transparent; filter: brightness(.98); }
+.v2 .cob-fila.rojo .cob-m { color: var(--crit); font-size: 16px; }
+.v2 .cob-fila.rojo .cob-nom b { color: var(--crit); }
+.v2 .cob-det { padding: 2px 10px 10px 30px; font-size: 12px; }
+.v2 .cob-det dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); gap: 6px 12px; margin: 0 0 8px; }
+.v2 .cob-det dt { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); font-weight: 700; }
+.v2 .cob-det dd { margin: 1px 0 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.v2 .cob-ficha-l { font-size: 12px; font-weight: 700; color: var(--chile); }
+.v2 .cob-ficha-l:hover { text-decoration: underline; }

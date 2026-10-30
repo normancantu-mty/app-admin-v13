@@ -59,6 +59,40 @@ export async function leerMontosUltimoAbono(client: Cliente, cartera: FilaCarter
   return montos
 }
 
+interface FilaEntrega {
+  id_entidad_destino: string | null
+  fecha_movimiento: string | null
+  status: string | null
+}
+
+/**
+ * Fecha de la ultima entrega a concesion por nodo. La misma regla que
+ * `v_cartera.ultima_entrega` (migracion 20261029120000, CTE `piso`):
+ * ENTRADA_CONCESION hacia el nodo, sin las ANULADO. Solo lectura; el panel la
+ * pide en paralelo con el monto del ultimo abono.
+ */
+export async function leerUltimasEntregas(client: Cliente, ids: string[]): Promise<Map<string, string>> {
+  const ultima = new Map<string, string>()
+  if (ids.length === 0) return ultima
+  const filas = await fetchTodasLasFilas<FilaEntrega>(
+    () =>
+      libre(client)
+        .from('inventario_ledger')
+        .select('id_entidad_destino, fecha_movimiento, status')
+        .eq('tipo_movimiento', 'ENTRADA_CONCESION')
+        .in('id_entidad_destino', ids)
+        .order('id'),
+    'inventario_ledger (entregas a concesion)'
+  )
+  for (const e of filas) {
+    if (!e.id_entidad_destino || !e.fecha_movimiento) continue
+    if ((e.status ?? 'ACTIVO') === 'ANULADO') continue
+    const previa = ultima.get(e.id_entidad_destino)
+    if (!previa || new Date(e.fecha_movimiento).getTime() > new Date(previa).getTime()) ultima.set(e.id_entidad_destino, e.fecha_movimiento)
+  }
+  return ultima
+}
+
 /**
  * Las filas con deuda > 0, en el orden del ERP (`v_cartera` ya viene ordenada por
  * `ordenarCartera`: deuda x dias, deuda, nombre).
@@ -66,7 +100,8 @@ export async function leerMontosUltimoAbono(client: Cliente, cartera: FilaCarter
 export function armarFilasCobranza(
   cartera: FilaCarteraVista[],
   montos: Map<string, number>,
-  nombres?: Map<string, { nombre: string }>
+  nombres?: Map<string, { nombre: string }>,
+  entregas?: Map<string, string>
 ): FilaCobranza[] {
   return cartera
     .filter((f) => Number(f.deuda) > 0)
@@ -86,6 +121,7 @@ export function armarFilasCobranza(
         referencia: f.referencia_dias,
         ultimoAbono: f.ultimo_abono,
         ultimoAbonoMonto: f.ultimo_abono ? montos.get(f.id_entidad) ?? null : null,
+        ultimaEntrega: entregas?.get(f.id_entidad) ?? null,
         enPiso: Number(f.estimado_en_piso),
         recibidas: Number(f.recibidas),
         prioridad: Number(f.prioridad),

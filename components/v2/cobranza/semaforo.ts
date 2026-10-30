@@ -52,6 +52,8 @@ export interface FilaCobranza {
   ultimoAbono: string | null
   /** Suma de los abonos con la fecha del ultimo (un abono puede venir en varias filas). */
   ultimoAbonoMonto: number | null
+  /** Fecha de la ultima ENTRADA_CONCESION; `null` si no se leyo o nunca recibio. */
+  ultimaEntrega: string | null
   enPiso: number
   recibidas: number
   prioridad: number
@@ -70,6 +72,18 @@ export function totalesPorBanda(filas: FilaCobranza[]): Totales {
   }
   for (const b of BANDAS) t[b].monto = Math.round(t[b].monto * 100) / 100
   return t
+}
+
+/**
+ * Porcentaje (0-100, sin redondear) del total pendiente que cae en cada banda.
+ * Con total 0 todas dan 0: no hay reparto que mostrar.
+ */
+export function pctPorBanda(t: Totales): Record<Banda, number> {
+  const total = BANDAS.reduce((a, b) => a + t[b].monto, 0)
+  const pct = { rojo: 0, amarillo: 0, verde: 0, gris: 0 } as Record<Banda, number>
+  if (total <= 0) return pct
+  for (const b of BANDAS) pct[b] = (t[b].monto / total) * 100
+  return pct
 }
 
 /** "12 d" / "12 d · desde entrega" / "sin referencia". */
