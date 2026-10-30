@@ -12,8 +12,11 @@ catalogo ya viene en los datos copiados de produccion.
 Pasos:
   1. `npx supabase db reset --local` con [db.migrations] y [db.seed] desactivados en config.toml
      (deja la base de Supabase limpia, sin nada nuestro).
-  2. Aplica supabase/migrations/*.sql en orden, una transaccion por archivo, con ON_ERROR_STOP;
-     salta SALTAR. Cada una aplicada se anota en supabase_migrations.schema_migrations, para que
+  2. Aplica supabase/local_compat/*.sql y supabase/migrations/*.sql, una transaccion por archivo,
+     con ON_ERROR_STOP; salta SALTAR. Las dos carpetas se MEZCLAN y se ordenan por version (nombre
+     de archivo): es exactamente el orden de antes del 2026-10-30, cuando las dos de local_compat
+     vivian en migrations/. Salieron de ahi para que la prueba de sincronia (ERP-73) no las exija en
+     produccion; aqui se siguen aplicando y anotando igual, asi que la base local queda identica. Cada una aplicada se anota en supabase_migrations.schema_migrations, para que
      `npx supabase migration list --local` la vea.
   3. Corre supabase/seed_local/*.sql en orden (00 apaga cron, 50 datos de produccion si existe --
      ese archivo esta en .gitignore--, 60 usuarios de prueba).
@@ -29,6 +32,9 @@ import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIG = os.path.join(RAIZ, 'supabase', 'migrations')
+# Solo local: esquema previo a la primera migracion y el cascaron de pg_net. NUNCA a produccion
+# (el generador del corte, scripts/corte_produccion.py, rechaza cualquier ruta de esta carpeta).
+LOCAL_COMPAT = os.path.join(RAIZ, 'supabase', 'local_compat')
 SEED = os.path.join(RAIZ, 'supabase', 'seed_local')
 CONT = 'supabase_db_app-admin-v2'   # project_id = "app-admin-v2" en config.toml
 PUERTO_LOCAL = '55322'
@@ -82,12 +88,21 @@ def main():
          b"(version text PRIMARY KEY, statements text[], name text);")
 
     fallas, saltadas, aplicadas = [], [], 0
-    for f in sorted(x for x in os.listdir(MIG) if x.endswith('.sql')):
+    archivos = {}
+    for carpeta in (LOCAL_COMPAT, MIG):
+        if not os.path.isdir(carpeta):
+            continue
+        for x in os.listdir(carpeta):
+            if x.endswith('.sql'):
+                if x in archivos:
+                    sys.exit('migracion repetida en local_compat/ y migrations/: %s' % x)
+                archivos[x] = os.path.join(carpeta, x)
+    for f in sorted(archivos):
         if f in SALTAR:
             saltadas.append(f)
             print('SALTA', f, '--', SALTAR[f])
             continue
-        sql = open(os.path.join(MIG, f), 'rb').read()
+        sql = open(archivos[f], 'rb').read()
         ver, nombre = f[:-4].split('_', 1)
         reg = ("\nINSERT INTO supabase_migrations.schema_migrations(version, name) "
                "VALUES ('%s', '%s') ON CONFLICT DO NOTHING;\n" % (ver, nombre)).encode()
