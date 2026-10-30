@@ -115,12 +115,15 @@ def main():
         if n_esp.get(t, 0) and t not in por_tabla:
             sys.exit('el volcado no trae datos de %s y --conteos dice %s filas' % (t, n_esp[t]))
 
-    out = ['-- ROLLBACK del corte v2. GENERADO por scripts/corte_rollback.py; trae datos: no se versiona.',
+    # client_encoding primero: el volcado trae texto UTF-8 y un psql de Windows sin PGCLIENTENCODING
+    # lo leeria como WIN1252 (mojibake en cada acento). Auditoria 2026-10-30, punto 1.
+    out = ["SET client_encoding = 'UTF8';",
+           '-- ROLLBACK del corte v2. GENERADO por scripts/corte_rollback.py; trae datos: no se versiona.',
            'BEGIN;', "SET LOCAL lock_timeout = '10s';", "SET LOCAL statement_timeout = '10min';",
            "SET LOCAL TimeZone = 'UTC';", "SET LOCAL DateStyle = 'ISO, MDY';",
            "SET LOCAL IntervalStyle = 'postgres';", "SET LOCAL extra_float_digits = 1;",
            "SET LOCAL bytea_output = 'hex';",
-           "DO $pre$ BEGIN IF (SELECT count(*) FROM supabase_migrations.schema_migrations WHERE version IN (%s)) <> 6 THEN "
+           "DO $pre$ BEGIN IF (SELECT count(*) FROM supabase_migrations.schema_migrations WHERE version IN (%s)) IS DISTINCT FROM 6 THEN "
            "RAISE EXCEPTION 'rollback: las 6 migraciones v2 no estan aplicadas; no hay corte que deshacer'; END IF; END $pre$;"
            % ', '.join("'%s'" % v for v in VERSIONES_V2),
            open(a.down, encoding='utf-8').read()]
@@ -132,7 +135,7 @@ def main():
     out += ['ALTER TABLE public.%s ENABLE TRIGGER USER;' % t for t in RECARGA]
     v = []
     for t in RECARGA:
-        v.append("  IF (SELECT count(*) FROM public.%s) <> %d OR %s <> '%s' THEN\n"
+        v.append("  IF (SELECT count(*) FROM public.%s) IS DISTINCT FROM %d OR %s IS DISTINCT FROM '%s' THEN\n"
                  "    RAISE EXCEPTION 'rollback: %s no quedo igual al respaldo (%% filas)', (SELECT count(*) FROM public.%s);\n  END IF;"
                  % (t, int(n_esp.get(t, 0)), md5_sql(t), md5_esp[t], t, t))
     v.append("  IF EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations WHERE version IN (%s)) THEN\n"
@@ -145,6 +148,9 @@ def main():
     salida = a.salida or os.path.join(RAIZ, 'supabase', '_corte', 'rollback_%s.sql' % cont.get('fecha', 'x'))
     os.makedirs(os.path.dirname(salida), exist_ok=True)
     open(salida, 'w', encoding='utf-8', newline='\n').write(sql)
+    # El sidecar que exige scripts/corte_rollback_aplicar.ps1 (mismo formato que el del corte).
+    with open(salida + '.sha256', 'w', encoding='ascii', newline='\n') as f:
+        f.write('%s  %s\n' % (hashlib.sha256(sql.encode()).hexdigest(), os.path.basename(salida)))
     print('generado %s (%d bytes, sha256 %s); secuencias: %s'
           % (salida, len(sql.encode()), hashlib.sha256(sql.encode()).hexdigest(), sorted(seqs)))
     if a.solo_generar:
