@@ -28,9 +28,9 @@ import { esDeudaConLaMatriz, totalesCarteraVista } from '@/lib/vistas'
 import { diasDesde } from '@/lib/actividad'
 import { BarrasMes, Cascada, Leyenda } from '@/components/v2/graficas'
 import { CardCobranza } from '@/components/v2/cobranza/CardCobranza'
+import { DIAS_ROJO } from '@/components/v2/cobranza/semaforo'
+import { CardSemaforo, type IndicadorSemaforo } from '@/components/v2/panel/CardSemaforo'
 import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
-
-type Luz = 'rojo' | 'ambar' | 'verde' | 'gris'
 
 const NOMBRE_CLASE: Record<string, string> = {
   EFECTIVO: 'Efectivo',
@@ -128,56 +128,98 @@ export async function PanelMando() {
   const productos = [...new Set(d.envasado.map((e) => nombreProd.get(e.id_producto) ?? 'Otro'))]
 
   // ── Semáforo ──
-  const vencida = deudoresMatriz.filter((f) => (f.dias_sin_abono ?? 0) > 60)
+  const vencida = deudoresMatriz.filter((f) => (f.dias_sin_abono ?? 0) > DIAS_ROJO)
   const montoVencido = vencida.reduce((a, f) => a + Number(f.deuda), 0)
   const enPiso = d.cartera.reduce((a, f) => a + Number(f.estimado_en_piso), 0)
   // Desde el corte y con el filtro de saldo_cuenta (ACTIVO/APPROVED, sin ABONO_PENDIENTE).
   const gastosCorte = corte ? gastosDesdeCorte(d.movimientos, corte) : null
   // Dias de calendario en hora de Mexico: la misma regla que `v_cartera` y `lib/actividad.ts`.
   const diasDesdeCorte = corte ? diasDesde(corte, ahora) : null
-  const semaforo: { luz: Luz; titulo: string; detalle: string; estado: string }[] = [
+  const semaforo: IndicadorSemaforo[] = [
     {
       luz: vencida.length ? 'rojo' : 'verde',
       titulo: 'Cobranza vencida',
-      detalle: vencida.length ? `${mxn0(montoVencido)} con +60 días (${vencida.length})` : 'Nadie con +60 días sin abonar',
-      estado: vencida.length ? 'Atender' : 'Bien'
+      cifra: mxn0(montoVencido),
+      valor: montoVencido,
+      detalle: vencida.length
+        ? `${vencida.length} ${vencida.length === 1 ? 'deudor' : 'deudores'}: ${vencida
+            .slice(0, 3)
+            .map((f) => `${f.nombre} ${f.dias_sin_abono} d`)
+            .join(' · ')}${vencida.length > 3 ? ` y ${vencida.length - 3} más` : ''}`
+        : `Nadie con +${DIAS_ROJO} días sin abonar (${deudoresMatriz.length} deudores de la matriz)`,
+      regla: `rojo si alguien le debe a la matriz y lleva más de ${DIAS_ROJO} días sin abonar`,
+      estado: vencida.length ? 'Atender' : 'Bien',
+      href: vencida.length ? '/v2/m/cobranza?banda=rojo' : '/v2/m/cobranza',
+      tituloModal: 'Cobranza',
+      tam: 'xl',
+      accion: vencida.length ? 'Cobrar' : 'Cobranza'
     },
     {
       luz: d.insumosEnNegativo ? 'rojo' : 'verde',
       titulo: 'Insumos en negativo',
-      detalle: d.insumosEnNegativo ? `${d.insumosEnNegativo} insumos` : 'Ninguno',
-      estado: d.insumosEnNegativo ? 'Atender' : 'Bien'
+      cifra: `${num(d.insumosEnNegativo)} ${d.insumosEnNegativo === 1 ? 'insumo' : 'insumos'}`,
+      detalle: d.insumosEnNegativo ? 'Se consumió más de lo que entró: falta capturar una compra o hay un consumo de más' : 'Ningún insumo con existencia menor que 0',
+      regla: 'rojo si algún insumo tiene existencia menor que 0',
+      estado: d.insumosEnNegativo ? 'Atender' : 'Bien',
+      href: '/v2/m/inventario',
+      tituloModal: 'Inventario',
+      accion: 'Inventario'
     },
     {
       luz: hayVentas ? 'verde' : 'gris',
       titulo: 'Producto para vender',
-      detalle: hayVentas ? `${num(totalBotellas)} pzas en la matriz` : `${num(totalBotellas)} pzas · sin ventas para calcular meses`,
-      estado: hayVentas ? 'Bien' : 'Sin dato'
+      cifra: `${num(totalBotellas)} pzas`,
+      valor: totalBotellas,
+      detalle: `${[...botellas.entries()].map(([p, n]) => `${p.replace('Destilado Plata ', '')} ${num(n)}`).join(' · ') || 'Sin producto en la matriz'}${hayVentas ? '' : ' · sin ventas para calcular meses'}`,
+      regla: 'sin dato mientras no haya ventas para calcular cuántos meses alcanza',
+      estado: hayVentas ? 'Bien' : 'Sin dato',
+      href: '/v2/m/inventario',
+      tituloModal: 'Inventario',
+      accion: 'Inventario'
     },
     gastosCorte === null
       ? {
           luz: 'gris',
           titulo: 'Gastos capturados',
+          cifra: 'Sin dato',
           detalle: 'Sin fecha de corte: la base no trae SALDO_INICIAL',
+          regla: 'ámbar si no hay ningún gasto capturado desde el corte',
           estado: 'Sin dato'
         }
       : {
           luz: gastosCorte ? 'verde' : 'ambar',
           titulo: 'Gastos capturados',
-          detalle: `${gastosCorte} desde el corte (${diasDesdeCorte} d)`,
-          estado: gastosCorte ? 'Bien' : 'Revisar'
+          cifra: `${num(gastosCorte)} ${gastosCorte === 1 ? 'gasto' : 'gastos'}`,
+          detalle: `desde el corte, hace ${diasDesdeCorte} d`,
+          regla: 'ámbar si no hay ningún gasto capturado desde el corte',
+          estado: gastosCorte ? 'Bien' : 'Revisar',
+          ...(puedeCapturar
+            ? { href: '/v2/m/gasto', tituloModal: 'Registrar gasto', tam: 'md' as const, accion: '+ Gasto' }
+            : { href: '/v2/m/cuenta/efectivo', tituloModal: 'Movimientos de dinero', accion: 'Movimientos' })
         },
     {
       luz: 'gris',
       titulo: 'Caja sin conciliar',
-      detalle: `${mxn0(totalCuentas)} según el sistema · el ERP aún no guarda conciliaciones`,
-      estado: 'Sin dato'
+      cifra: mxn0(totalCuentas),
+      valor: totalCuentas,
+      detalle: `según el sistema, en ${cuentas.length} cuentas · el ERP aún no guarda conciliaciones`,
+      regla: 'sin dato hasta que el ERP guarde conciliaciones contra el banco y la caja',
+      estado: 'Sin dato',
+      href: '/v2/m/cuenta/efectivo',
+      tituloModal: 'Movimientos de dinero',
+      accion: 'Movimientos'
     },
     {
       luz: d.conteosFisicos ? 'verde' : 'ambar',
       titulo: 'Concesión sin conteo',
-      detalle: d.conteosFisicos ? `${d.conteosFisicos} conteos` : `${num(enPiso)} pzas en la red, 0 conteos`,
-      estado: d.conteosFisicos ? 'Bien' : 'Revisar'
+      cifra: d.conteosFisicos ? `${num(d.conteosFisicos)} conteos` : `${num(enPiso)} pzas sin contar`,
+      valor: d.conteosFisicos ? d.conteosFisicos : enPiso,
+      detalle: d.conteosFisicos ? `${num(enPiso)} pzas en la red` : `en ${d.cartera.length} nodos, 0 conteos físicos`,
+      regla: 'ámbar si no hay ningún conteo físico de la concesión',
+      estado: d.conteosFisicos ? 'Bien' : 'Revisar',
+      href: '/v2/m/cartera',
+      tituloModal: 'Cartera completa',
+      accion: 'Cartera'
     }
   ]
 
@@ -336,34 +378,10 @@ export async function PanelMando() {
       </div>
 
       <div className="grid g336">
-        <section className="card">
-          <div className="hd">
-            <div>
-              <h2>Semáforo</h2>
-              <div className="sub">
-                {semaforo.filter((s) => s.luz === 'rojo').length} en rojo · {semaforo.filter((s) => s.luz === 'ambar').length} en ámbar ·{' '}
-                {semaforo.filter((s) => s.luz === 'gris').length} sin dato
-              </div>
-            </div>
-          </div>
-          <div className="sem">
-            {semaforo.map((s) => (
-              <div className="fila" key={s.titulo}>
-                <span className={`luz ${s.luz}`}>
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <span className="tx">
-                  <b>{s.titulo}</b>
-                  <span>{s.detalle}</span>
-                </span>
-                <span className={`chip ${s.luz === 'rojo' ? 'crit' : s.luz === 'ambar' ? 'warn' : s.luz === 'verde' ? 'good' : ''}`}>{s.estado}</span>
-              </div>
-            ))}
-          </div>
-          <div className="fuente">v_cartera · v_insumos_en_negativo · conteos_fisicos · finanzas_ledger · v_stock_por_cubeta</div>
-        </section>
+        <CardSemaforo
+          indicadores={semaforo}
+          fuente="v_cartera · v_insumos_en_negativo · conteos_fisicos · finanzas_ledger · v_stock_por_cubeta"
+        />
 
         <section className="card">
           <div className="hd">

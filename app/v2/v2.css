@@ -599,3 +599,100 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
 .v2 .cob-det dd { margin: 1px 0 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .v2 .cob-ficha-l { font-size: 12px; font-weight: 700; color: var(--chile); }
 .v2 .cob-ficha-l:hover { text-decoration: underline; }
+
+/* Vendido y cobrado (2026-10-30, ejecutor del Socio): controles, totales y nota de la tarjeta dinamica del panel. */
+.v2 .vc-ctls { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 10px; }
+.v2 .vc-fila { display: flex; gap: 6px; flex-wrap: wrap; }
+.v2 .seg.vc-seg { flex-wrap: wrap; max-width: 100%; }
+.v2 .seg.vc-seg button { padding: 4px 9px; font-size: 12px; }
+.v2 .seg.vc-seg button:hover:not(.on) { background: var(--surface-2); }
+.v2 .vc-tot { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 2px 0 8px; }
+.v2 .vc-tot > div { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 8px; min-width: 0; }
+.v2 .vc-t { font-size: 11px; color: var(--muted); }
+.v2 .vc-v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2 .vc-nota { font-size: 11.5px; color: var(--muted); margin: -2px 0 8px; }
+
+/* Saldos con ENFOQUE en la cuenta abierta (components/v2/saldos/CabeceraCuenta.tsx). 2026-10-30, ejecutor de saldos del Socio.
+   La cuenta abierta es la protagonista (color de su clase, saldo grande); las demas y el total van chicos y atenuados.
+   Color por clase: data-clase -> --vs-c. Texto mezclado con --ink para que el ambar y el verde se lean en claro y oscuro. */
+.v2 [data-clase] { --vs-c: var(--chile); }
+.v2 [data-clase="EFECTIVO"] { --vs-c: var(--s4); }
+.v2 [data-clase="FISCAL"] { --vs-c: var(--s2); }
+.v2 [data-clase="PERSONAL"] { --vs-c: var(--s3); }
+.v2 [data-clase="TRANSFERENCIAS"] { --vs-c: var(--chile); }
+.v2 .vs-tit { display: inline-flex; align-items: center; gap: 9px; color: color-mix(in srgb, var(--vs-c) 82%, var(--ink)); }
+.v2 .vs-tit i { width: 11px; height: 11px; border-radius: 50%; background: var(--vs-c); flex: none; }
+.v2 .vs-heroe { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 24px; padding: 14px 18px; margin: 0 0 10px; border: 1px solid color-mix(in srgb, var(--vs-c) 35%, var(--line)); border-left: 5px solid var(--vs-c); border-radius: var(--r-sm); background: color-mix(in srgb, var(--vs-c) 8%, var(--surface)); }
+.v2 .vs-heroe-izq { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.v2 .vs-heroe-t { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; color: color-mix(in srgb, var(--vs-c) 75%, var(--ink)); }
+.v2 .vs-heroe-v { font-family: var(--f-display); font-weight: 800; font-size: 40px; line-height: 1.02; color: var(--ink); white-space: nowrap; }
+.v2 .vs-heroe-v.neg { color: var(--texto-neg, var(--s1)); }
+.v2 .vs-heroe-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.v2 .vs-heroe-der { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: right; }
+.v2 .vs-heroe .cifras { margin: 0; justify-content: flex-end; }
+.v2 .cifras.vs-chicas { gap: 16px; font-size: 12px; }
+.v2 .cifras.vs-chicas b { font-size: 15px; }
+.v2 .vs-aporta { font-size: 12.5px; color: var(--ink-2); }
+.v2 .vs-aporta b { color: var(--ink); }
+@media (max-width: 600px) {
+  .v2 .vs-heroe-v { font-size: 32px; }
+  .v2 .vs-heroe-der { align-items: flex-start; text-align: left; }
+  .v2 .vs-heroe .cifras { justify-content: flex-start; }
+}
+/* Las demas cuentas: una linea chica y atenuada; al pasar el mouse se lee completa. */
+.v2 .vs-otras { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0 0 12px; font-size: 12px; color: var(--ink-2); opacity: .78; transition: opacity .15s ease; }
+.v2 .vs-otras:hover, .v2 .vs-otras:focus-within { opacity: 1; }
+.v2 .vs-otras-t { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; font-weight: 700; color: var(--muted); }
+.v2 .vs-otra a { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); text-decoration: none; padding: 2px 0; border-bottom: 1px dashed transparent; }
+.v2 .vs-otra a:hover { color: var(--ink); border-bottom-color: var(--line-2); }
+.v2 .vs-otra i { width: 7px; height: 7px; border-radius: 50%; background: var(--vs-c); opacity: .8; }
+.v2 .vs-otra b { font-weight: 700; color: var(--ink-2); }
+/* Sumado con una cuenta marcada: el total es una franja de contexto y las demas filas van chicas. */
+.v2 .vs-foco .vs-total { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 8px 12px; border-left-width: 3px; border-left-color: var(--line-2); background: var(--surface-2); }
+.v2 .vs-foco .vs-total .v { font-size: 20px; color: var(--ink-2); }
+.v2 .vs-foco .vs-total .d { flex-basis: 100%; font-size: 11px; }
+.v2 .vs-foco .vs-suma { display: none; }
+.v2 .vs-foco .vs-fila.otra { padding: 5px 0; opacity: .62; transition: opacity .15s ease; }
+.v2 .vs-foco .vs-fila.otra:hover { opacity: 1; }
+.v2 .vs-foco .vs-fila.otra .vs-nom b { font-weight: 600; font-size: 13px; }
+.v2 .vs-foco .vs-fila.otra .vs-nom small, .v2 .vs-foco .vs-fila.otra .chip { display: none; }
+.v2 .vs-foco .vs-fila.otra .vs-m b { font-size: 13.5px; font-weight: 700; }
+.v2 .vs-foco .vs-fila.otra .vs-m .barra { height: 3px; }
+.v2 .vs-foco .vs-fila.on { margin: 4px -12px; padding: 12px 12px; width: calc(100% + 24px); background: color-mix(in srgb, var(--vs-c, var(--chile)) 6%, var(--surface)); border-bottom-color: transparent; border-radius: var(--r-sm); }
+.v2 .vs-foco .vs-fila.on .vs-nom { border-left: 4px solid var(--vs-c); padding-left: 10px; }
+.v2 .vs-foco .vs-fila.on .vs-nom b, .v2 .vs-foco .vs-nom.on b { color: color-mix(in srgb, var(--vs-c) 82%, var(--ink)); font-size: 17px; }
+.v2 .vs-foco .vs-fila.on .vs-m b { font-size: 24px; }
+.v2 .vs-foco .vs-fila.on .vs-m .barra i { background: var(--vs-c); }
+.v2 .vs-contexto { margin-bottom: 14px; }
+.v2 .vs-plegable { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 12px; background: var(--surface); }
+.v2 .vs-plegable > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.v2 .vs-plegable > summary .muted { font-weight: 500; font-size: 12px; }
+.v2 .vs-plegable[open] > summary { margin-bottom: 4px; color: var(--ink); }
+.v2 table.t tr.vs-mov-on td:first-child { box-shadow: inset 3px 0 0 var(--vs-c, var(--chile)); }
+/* /v2/finanzas?cuenta=x: la cuenta elegida arriba; las tarjetas de las demas, chicas y atenuadas. */
+.v2 .vs-foco-fin { margin: 4px 0 12px; }
+.v2 .vs-foco-nom { margin: 0 0 8px; font-family: var(--f-display); font-size: 22px; font-weight: 800; }
+.v2 .kpis.vs-kpis-foco .kpi:not(.on) { opacity: .62; padding: 7px 10px; transition: opacity .15s ease; }
+.v2 .kpis.vs-kpis-foco .kpi:not(.on):hover { opacity: 1; }
+.v2 .kpis.vs-kpis-foco .kpi:not(.on) .v { font-size: 16px; }
+.v2 .kpis.vs-kpis-foco .kpi.on { border-color: var(--vs-c, var(--chile)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-c, var(--chile)) 22%, transparent); }
+
+/* Semaforo del panel con mas detalle (2026-10-30, ejecutor del Socio): cifra, regla y enlace
+   por indicador; los rojos arriba con fondo y borde; conteo de alertas rojas en la cabecera. */
+.v2 .sem-card.sem-hay-rojo { border-top: 3px solid var(--crit); }
+.v2 .sem-conteo { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--good-bg); color: var(--good); white-space: nowrap; }
+.v2 .sem-conteo.rojo { background: var(--crit); color: #fff; font-weight: 800; font-size: 12.5px; }
+.v2 .sem .sem-fila { align-items: flex-start; }
+.v2 .sem .sem-fila .luz { margin-top: 3px; }
+.v2 .sem .sem-fila.rojo { background: var(--crit-bg); border: 1px solid var(--crit); border-left-width: 4px; border-radius: var(--r-sm); padding: 10px 10px; margin: 4px 0; }
+.v2 .sem .sem-fila.rojo .tx b, .v2 .sem .sem-fila.rojo .sem-cifra { color: var(--crit); }
+.v2 .sem .sem-fila.rojo .tx b { font-weight: 800; }
+.v2 .sem .sem-fila.rojo .tx span { color: var(--ink); }
+.v2 .sem .tx .sem-cifra { display: block; font-family: var(--f-display); font-weight: 800; font-size: 16px; line-height: 1.2; color: var(--ink); }
+.v2 .sem .tx .sem-cifra.neg { color: var(--crit); }
+.v2 .sem .sem-fila.rojo .tx .sem-cifra { font-size: 18px; color: var(--crit); }
+.v2 .sem .tx .sem-regla { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.v2 .sem-der { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+.v2 .sem-ir { font-size: 12px; font-weight: 700; color: var(--chile); white-space: nowrap; }
+.v2 .sem-ir:hover { text-decoration: underline; }
+.v2 .sem-fila.rojo .sem-ir { color: var(--crit); }
