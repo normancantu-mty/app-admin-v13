@@ -36,11 +36,18 @@ for (const [k, d] of Object.entries(ents)) {
   else if (deuda > 0.005) { conDst += deuda; nDst += 1 }
 }
 
+// La clave del ADMIN local no vive en el repo (2026-10-30): se lee del entorno.
+const CLAVE_ADMIN = process.env.E2E_ADMIN_PASSWORD
+if (!CLAVE_ADMIN) {
+  console.error('Falta E2E_ADMIN_PASSWORD (clave del usuario ADMIN local; ver docs/V2_LOCAL.md). No corro.')
+  process.exit(2)
+}
+
 const br = await chromium.launch()
 const pg = await br.newPage({ viewport: { width: 1400, height: 1000 } })
 await pg.goto(B + '/login')
 await pg.fill('input[type=email]', 'normancantu@gmail.com')
-await pg.fill('input[type=password]', 'v2-local-admin')
+await pg.fill('input[type=password]', CLAVE_ADMIN)
 await pg.click('button[type=submit]')
 await pg.waitForURL((u) => !u.pathname.startsWith('/login'))
 

@@ -70,3 +70,10 @@ supabase/_respaldos/
 # v2 local: datos copiados de produccion (PII de clientes); nunca al repo
 /supabase/seed_local/50_*.sql
 /scripts/arranque_datos/*.json
+
+# cache de python de los scripts
+scripts/__pycache__/
+# SQL generado del corte a produccion y su rollback: traen datos del negocio (2026-10-30)
+supabase/_corte/*
+# ...salvo el rollback: es solo DDL, sin datos, y tiene que vivir versionado
+!supabase/_corte/down_v2.sql
