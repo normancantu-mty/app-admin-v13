@@ -127,10 +127,19 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
   // (`SELECT ... FROM transacciones_tickets ORDER BY fecha_transaccion DESC`)
   // ANTES de actualizarlas. Subirlas sin mirar convierte esta prueba en un
   // sello de goma.
-  const PISO_FINANZAS_FILAS = 120
-  const PISO_INVENTARIO_FILAS = 474
-  const PISO_TICKETS_FILAS = 62
-  const PISO_VENTAS_ACUMULADAS = 395_033
+  //
+  // RE-ANCLADO AL CORTE 2026-10-30. El corte a v2 borro los movimientos v1 y
+  // cargo el arranque (saldos iniciales + un CARGO_DEUDA por nodo, 0 tickets).
+  // No es un decremento del ledger: es OTRO ledger, que empieza aqui. Los
+  // valores de abajo son los conteos medidos en produccion
+  // (gnnqxtsdrbvmlkhfemjw) justo despues del corte: 14 filas de finanzas
+  // (3 SALDO_INICIAL + 11 CARGO_DEUDA), 46 de inventario, 0 tickets, $0 de
+  // ventas. Siguen siendo PISOS: desde hoy, si bajan, algo borro filas.
+  // Los de v1 eran 120 / 474 / 62 / 395_033.
+  const PISO_FINANZAS_FILAS = 14
+  const PISO_INVENTARIO_FILAS = 46
+  const PISO_TICKETS_FILAS = 0
+  const PISO_VENTAS_ACUMULADAS = 0
 
   // ─── Casos con nombre y apellido ──────────────────────────────────────────
   const DELIRIO_85 = 'Delirio 85'
@@ -326,14 +335,22 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       expect(fila, 'no aparece Delirio 85').toBeTruthy()
 
       const generada = Number(fila!.deuda_generada_tickets)
+      const cargos = Number(fila!.cargos_deuda)
 
       // Fase 7, D58: era `generada - abonos = saldo`, sin CARGO_DEUDA. Un cargo
       // (evento normal: `app/actions/abonos.ts:569`) la tumbaba. La resta
       // completa vive en `violacionesSaldo`.
       expect(violacionesSaldo([fila!]), 'generada + cargos - abonos = saldo').toEqual([])
-      expect(centavos(generada), 'lo generado no puede decrecer').toBeGreaterThanOrEqual(
-        centavos(19_476)
-      )
+
+      // RE-ANCLADO AL CORTE 2026-10-30. El piso v1 era lo generado en tickets
+      // ($19,476). En v2 no hay tickets: la deuda de arranque de Delirio entro
+      // como CARGO_DEUDA de $7,992.00 (medido). El piso va sobre lo BRUTO
+      // completo -tickets + cargos-, que solo crece con pedidos o cargos
+      // nuevos; un abono no lo toca. Si baja, se perdio deuda sin cobrarla.
+      expect(
+        centavos(generada + cargos),
+        'lo generado (tickets + cargos) no puede decrecer'
+      ).toBeGreaterThanOrEqual(centavos(7_992))
     })
 
     /**
@@ -355,6 +372,7 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       expect(fila, 'no aparece David Flores').toBeTruthy()
 
       const generada = Number(fila!.deuda_generada_tickets)
+      const cargos = Number(fila!.cargos_deuda)
       const abonos = Number(fila!.abonos_aprobados)
 
       // Lo que NO se pudre: la relacion entre las columnas — con CARGO_DEUDA
@@ -364,11 +382,19 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       // Los literales del caso quedan como piso. El 2026-09-07 le entro un
       // ticket de concesion de $3,552.00 (`5dd65509`), y con la igualdad vieja
       // eso rompia el push: una venta real tumbando la red del repo.
-      expect(centavos(generada), 'lo generado por tickets no decrece').toBeGreaterThanOrEqual(
-        centavos(58_000)
-      )
+      //
+      // RE-ANCLADO AL CORTE 2026-10-30. Los pisos v1 eran $58,000.00 generados
+      // en tickets y $52,539.07 de abonos. En v2 el arranque de David es un
+      // CARGO_DEUDA de $6,812.93 (medido) y 0 abonos. El bruto es tickets +
+      // cargos; el neto es `saldo_pendiente_consignacion`. Hoy coinciden porque
+      // no hay abonos: la igualdad de arriba es la que impide confundirlos el
+      // dia que entre el primero.
+      expect(
+        centavos(generada + cargos),
+        'lo generado (tickets + cargos) no decrece'
+      ).toBeGreaterThanOrEqual(centavos(6_812.93))
       expect(centavos(abonos), 'los abonos aprobados no decrecen').toBeGreaterThanOrEqual(
-        centavos(52_539.07)
+        centavos(0)
       )
     })
 
@@ -415,7 +441,49 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       const vista = await leerSaldosEntidad(db)
       const fila = vista.find((f) => f.nombre === MARTIN_REYES)
       expect(fila, 'no aparece Martin Reyes').toBeTruthy()
-      expect(fila!.ultimo_abono, 'Martin Reyes tiene que tener un abono').toBeTruthy()
+
+      // RE-ANCLADO AL CORTE 2026-10-30. El v1 exigia que Martin tuviera un abono
+      // (el del 2026-06-16). El corte dejo su deuda como CARGO_DEUDA y ningun
+      // abono en toda la base, asi que la asercion pasa a ser CONDICIONAL -sin
+      // saltarse-: mientras no abone, la vista y el TypeScript (`construirCartera`)
+      // tienen que decir LO MISMO: sin fecha de abono, sin dias, abonos en 0.
+      // El dia que abone, corre la comprobacion de la conversion a hora de Mexico.
+      const vistaCartera = await leerCartera(db)
+      expect(vistaCartera.length, 'v_cartera vino vacia').toBeGreaterThan(0)
+      const hoy = new Date(vistaCartera[0].calculado_en).toISOString()
+      const carteraTs = construirCartera({
+        entidades: entidades.map((e) => ({ id: e.id, nombre: e.nombre, rol: e.rol })),
+        inventario: inventarioTodo,
+        tickets: ticketsTodos,
+        finanzas: finanzasTodas.map((f) => ({
+          tipo_movimiento: f.tipo_movimiento,
+          monto: Number(f.monto),
+          id_entidad_relacionada: f.id_entidad_relacionada,
+          categoria: f.categoria,
+          status: f.status,
+          fecha_movimiento: f.fecha_movimiento ?? undefined
+        })),
+        hoy
+      })
+      const martinTs = carteraTs.find((f) => f.id === fila!.id_entidad)
+      expect(martinTs, 'construirCartera no lista a Martin Reyes').toBeTruthy()
+
+      if (!fila!.ultimo_abono) {
+        expect(
+          martinTs!.ultimoAbono,
+          'la vista dice "sin abono"; el TypeScript tiene que decir lo mismo'
+        ).toBeNull()
+        expect(centavos(Number(fila!.abonos_aprobados)), 'sin fecha de abono, abonos en 0').toBe(0)
+        expect(fila!.dias_sin_abonar, 'sin abono no hay dias sin abonar').toBeNull()
+        avisar(
+          test.info(),
+          'Martin Reyes no tiene abonos desde el corte 2026-10-30: la conversion de dias a hora de ' +
+            'Mexico NO se ejercita contra la vista hasta que entre uno. Hoy solo se comprueba que ' +
+            'vista y TypeScript coinciden en "sin abono".'
+        )
+      } else {
+        expect(martinTs!.ultimoAbono, 'la vista tiene abono y el TypeScript no').toBeTruthy()
+      }
 
       // ERP-78: la fecha del ultimo abono era un literal ('2026-06-16'), o sea
       // que el dia que Martin abone, esta prueba tumba el push por una cobranza
@@ -428,6 +496,12 @@ test.describe('Vistas canonicas: equivalencia con el TypeScript', () => {
       // solo Martin: toda fila con abono.
       expect(violacionesDiasSinAbonar([fila!]), 'Martin Reyes · dias en hora de Mexico').toEqual([])
       expect(violacionesDiasSinAbonar(vista), 'toda fila con abono').toEqual([])
+      if (vista.every((f) => !f.ultimo_abono)) {
+        avisar(
+          test.info(),
+          'dias sin abonar: ninguna fila de v_saldo_entidad tiene abono; la comprobacion cubrio 0 filas.'
+        )
+      }
     })
   })
 

@@ -481,7 +481,7 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     // y que cuadran entre si. Las cifras del 2026-09-02 quedan como piso: el
     // 2026-09-07 entro un ticket de concesion de David por $3,552.00, y con la
     // igualdad vieja una venta real tumbaba el push.
-    const generadaDavid = Number(david!.deuda_generada_tickets)
+    const generadaDavid = Number(david!.deuda_generada_tickets) + Number(david!.cargos_deuda)
 
     // Fase 7, D58: era `generada - abonos = saldo` y `bruto > neto`. Las dos
     // ignoraban CARGO_DEUDA (evento normal, `app/actions/abonos.ts:569`): un cargo
@@ -489,7 +489,12 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     // (generada + cargos - abonos = neto) vive en `violacionesSaldo`; que el
     // bruto no se confunda con el neto queda amarrado por esa igualdad.
     expect(violacionesSaldo([david!]), 'David: generada + cargos - abonos = neto').toEqual([])
-    expect(centavos(generadaDavid), 'lo generado no decrece').toBeGreaterThanOrEqual(centavos(58_000))
+    // RE-ANCLADO AL CORTE 2026-10-30: el piso v1 era $58,000.00 en tickets. En
+    // v2 no hay tickets y el arranque de David es un CARGO_DEUDA de $6,812.93
+    // (medido), asi que el BRUTO es tickets + cargos y el piso es ese.
+    expect(centavos(generadaDavid), 'lo generado (tickets + cargos) no decrece').toBeGreaterThanOrEqual(
+      centavos(6_812.93)
+    )
     // ─── 2026-09-12: esta asercion se cayo, y la tumbo un COBRO DE VERDAD ────
     // Decia `saldo_pendiente_consignacion >= 19,476` — "no baja de su piso sin
     // abonos"—, y el 2026-09-12 Norman registro por Telegram el primer abono de
@@ -502,13 +507,15 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
     // escrita.** El piso va sobre lo BRUTO (`deuda_generada_tickets`), que solo
     // crece cuando entra un pedido, y la relacion entre las tres columnas se
     // comprueba con una igualdad, igual que en David.
-    const generadaDelirio = Number(delirio!.deuda_generada_tickets)
+    const generadaDelirio = Number(delirio!.deuda_generada_tickets) + Number(delirio!.cargos_deuda)
 
     expect(violacionesSaldo([delirio!]), 'Delirio: generada + cargos - abonos = saldo').toEqual([])
     expect(
       centavos(generadaDelirio),
-      'Delirio 85: lo generado en pedidos no decrece'
-    ).toBeGreaterThanOrEqual(centavos(80_192))
+      'Delirio 85: lo generado (pedidos + cargos) no decrece'
+      // RE-ANCLADO AL CORTE 2026-10-30: el piso v1 era $80,192 en tickets; en v2
+      // el arranque de Delirio es un CARGO_DEUDA de $7,992.00 (medido), 0 tickets.
+    ).toBeGreaterThanOrEqual(centavos(7_992))
   })
 
   // ══════════════════════════════════════════════════════════════════════════
