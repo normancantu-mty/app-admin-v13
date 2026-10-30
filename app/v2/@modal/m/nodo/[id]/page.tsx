@@ -3,6 +3,8 @@
 import { notFound } from 'next/navigation'
 import { exigirSesionV2 } from '@/lib/v2/puerta'
 import { leerFichaNodo } from '@/lib/v2/nodo'
+import { esRolDeMandoV2 } from '@/lib/v2/roles'
+import { precargarCobranzaNodo } from '@/components/v2/cobranza/ResumenCobranzaNodo'
 import { Modal } from '@/components/v2/modal/Modal'
 import { FichaVista } from '@/components/v2/nodo/FichaVista'
 import { VerTodo } from '@/components/v2/pagina/Encabezado'
@@ -10,6 +12,8 @@ import { VerTodo } from '@/components/v2/pagina/Encabezado'
 export default async function ModalNodo({ params }: { params: Promise<{ id: string }> }) {
   const usuario = await exigirSesionV2()
   const { id } = await params
+  // La franja de cobranza (solo mando) arranca junto con la ficha, no despues.
+  if (esRolDeMandoV2(usuario.rol)) precargarCobranzaNodo(id)
   const ficha = await leerFichaNodo(id, usuario)
   if (!ficha) notFound()
   return (

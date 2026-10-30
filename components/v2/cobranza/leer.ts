@@ -15,7 +15,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
-import { esDeudaConLaMatriz, type FilaCarteraVista } from '@/lib/vistas'
+import { esDeudaConLaMatriz, ordenarCartera, type FilaCarteraVista } from '@/lib/vistas'
 import { bandaDe, type FilaCobranza } from './semaforo'
 
 type Cliente = SupabaseClient<Database>
@@ -32,22 +32,29 @@ interface FilaAbono {
   es_entrega_efectivo: boolean | null
 }
 
-/** Monto del ultimo abono por nodo, con la fecha que ya dio `v_cartera`. */
-export async function leerMontosUltimoAbono(client: Cliente, cartera: FilaCarteraVista[]): Promise<Map<string, number>> {
+/**
+ * Las filas ABONO_DEUDA de los nodos dados, o de TODOS si no se dan ids: sin ids
+ * la lectura no depende de `v_cartera` y sale en la misma tanda (perf 2026-10-30).
+ * El filtro fino (fecha del ultimo abono, ANULADO, pendiente, D112) lo hace
+ * `montosUltimoAbono`, igual en los dos casos.
+ */
+export async function leerAbonos(client: Cliente, ids?: string[]): Promise<FilaAbono[]> {
+  if (ids && ids.length === 0) return []
+  return fetchTodasLasFilas<FilaAbono>(() => {
+    const q = libre(client)
+      .from('finanzas_ledger')
+      .select('id_entidad_relacionada, monto, fecha_movimiento, categoria, status, es_entrega_efectivo')
+      .eq('tipo_movimiento', 'ABONO_DEUDA')
+    return (ids ? q.in('id_entidad_relacionada', ids) : q).order('id')
+  }, 'finanzas_ledger (abonos)')
+}
+
+/** Monto del ultimo abono por nodo, con la fecha que ya dio `v_cartera`. Leer ya hecho: no consulta. */
+export function montosUltimoAbono(cartera: FilaCarteraVista[], filas: FilaAbono[]): Map<string, number> {
   const fechaPorNodo = new Map<string, number>()
   for (const f of cartera) if (f.ultimo_abono) fechaPorNodo.set(f.id_entidad, new Date(f.ultimo_abono).getTime())
   const montos = new Map<string, number>()
   if (fechaPorNodo.size === 0) return montos
-  const filas = await fetchTodasLasFilas<FilaAbono>(
-    () =>
-      libre(client)
-        .from('finanzas_ledger')
-        .select('id_entidad_relacionada, monto, fecha_movimiento, categoria, status, es_entrega_efectivo')
-        .eq('tipo_movimiento', 'ABONO_DEUDA')
-        .in('id_entidad_relacionada', [...fechaPorNodo.keys()])
-        .order('id'),
-    'finanzas_ledger (abonos)'
-  )
   for (const a of filas) {
     if (!a.id_entidad_relacionada || !a.fecha_movimiento) continue
     if ((a.status ?? 'ACTIVO') === 'ANULADO') continue
@@ -57,6 +64,25 @@ export async function leerMontosUltimoAbono(client: Cliente, cartera: FilaCarter
     montos.set(a.id_entidad_relacionada, (montos.get(a.id_entidad_relacionada) ?? 0) + Number(a.monto))
   }
   return montos
+}
+
+/** Monto del ultimo abono por nodo: lee solo los abonos de los nodos que tienen fecha de ultimo abono. */
+export async function leerMontosUltimoAbono(client: Cliente, cartera: FilaCarteraVista[]): Promise<Map<string, number>> {
+  const ids = [...new Set(cartera.filter((f) => f.ultimo_abono).map((f) => f.id_entidad))]
+  if (ids.length === 0) return new Map()
+  return montosUltimoAbono(cartera, await leerAbonos(client, ids))
+}
+
+/**
+ * El renglon (o renglones) de `v_cartera` de UN nodo, en el orden de `ordenarCartera`.
+ * Lo mismo que filtrar `leerCartera` por `id_entidad`, sin traer la red entera.
+ */
+export async function leerCarteraDeNodo(client: Cliente, id: string): Promise<FilaCarteraVista[]> {
+  const filas = await fetchTodasLasFilas<FilaCarteraVista>(
+    () => libre(client).from('v_cartera').select('*').eq('id_entidad', id),
+    'v_cartera (nodo)'
+  )
+  return ordenarCartera(filas)
 }
 
 interface FilaEntrega {

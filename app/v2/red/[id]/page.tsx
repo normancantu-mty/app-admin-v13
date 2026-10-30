@@ -15,12 +15,15 @@ import { esRolDeMandoV2 } from '@/lib/v2/roles'
 import { leerFichaNodo } from '@/lib/v2/nodo'
 import { EncabezadoPagina } from '@/components/v2/pagina/Encabezado'
 import { FichaVista } from '@/components/v2/nodo/FichaVista'
+import { precargarCobranzaNodo } from '@/components/v2/cobranza/ResumenCobranzaNodo'
 
 export const dynamic = 'force-dynamic'
 
 export default async function FichaNodoV2({ params }: { params: Promise<{ id: string }> }) {
   const usuario = await exigirSesionV2()
   const { id } = await params
+  // La franja de cobranza (solo mando) arranca junto con la ficha, no despues.
+  if (esRolDeMandoV2(usuario.rol)) precargarCobranzaNodo(id)
   const ficha = await leerFichaNodo(id, usuario)
   if (!ficha) notFound()
   const conRed = esRolDeMandoV2(usuario.rol) || usuario.rol === 'DST'
