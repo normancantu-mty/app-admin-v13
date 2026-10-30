@@ -146,6 +146,11 @@ html.dark .v2 .bg-black\/40, html.dark .v2 .bg-black\/50 { background: rgba(0,0,
 .v2 .tema button { border: 0; background: transparent; color: var(--ink-2); font: inherit; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; cursor: pointer; }
 .v2 .tema button.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 .v2 button.salir { border: 1px solid var(--line-2); padding: 6px 10px; border-radius: 999px; color: var(--ink-2); font-weight: 600; background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
+.v2 button.ojito { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-2); padding: 5px 10px; border-radius: 999px; color: var(--ink-2); font-weight: 600; background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
+.v2 button.ojito.on { border-color: #d97706; color: #b45309; background: rgba(217, 119, 6, .1); }
+@media (max-width: 640px) { .v2 button.ojito span { display: none; } }
+/* Modo privado (2026-10-30): la geometria de las graficas delata las cifras; se difuminan como en la v1. */
+html[data-privado='1'] .v2 svg.graf { filter: blur(6px); }
 
 /* Aviso de origen de datos */
 .v2 .aviso { margin: 16px 0; border: 1px dashed var(--line-2); border-radius: var(--r); padding: 10px 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--surface); font-size: 13px; }
