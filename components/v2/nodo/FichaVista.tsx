@@ -14,6 +14,8 @@ import { mxn, num } from '@/lib/v2/formato'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import BotonReportarMerma from '@/components/v2/inventario/BotonReportarMerma'
 import Historial from './Historial'
+import { ResumenCobranzaNodo } from '@/components/v2/cobranza/ResumenCobranzaNodo'
+import { esRolDeMandoV2 } from '@/lib/v2/roles'
 
 export function FichaVista({ ficha, usuario, propia = false }: { ficha: FichaNodo; usuario: CurrentUser; propia?: boolean }) {
   const { entidad: e } = ficha
@@ -79,6 +81,9 @@ export function FichaVista({ ficha, usuario, propia = false }: { ficha: FichaNod
           <span className="d">Botellas históricas reportadas como merma</span>
         </div>
       </div>
+
+      {/* Cobranza (2026-10-30): deuda, días sin abonar con su color y último abono; solo mando. */}
+      {esRolDeMandoV2(usuario.rol) && !propia && <ResumenCobranzaNodo id={id} />}
 
       <section className="card" style={{ marginBottom: 16 }}>
         <div className="hd">
