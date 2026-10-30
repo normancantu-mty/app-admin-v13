@@ -50,11 +50,5 @@ export function EncabezadoPagina({
   )
 }
 
-/** «Ver todo →»: de un resumen (panel o modal) a la pagina completa del apartado. */
-export function VerTodo({ href, children = 'Ver todo →', className = 'btn vertodo' }: { href: string; children?: ReactNode; className?: string }) {
-  return (
-    <Link href={href} className={className} data-testid={`ver-todo-${href.split('/').filter(Boolean).slice(1).join('-')}`}>
-      {children}
-    </Link>
-  )
-}
+/** «Ver todo →»: vive en `VerTodo.tsx` (componente cliente, prefetch por intencion). */
+export { VerTodo } from './VerTodo'
