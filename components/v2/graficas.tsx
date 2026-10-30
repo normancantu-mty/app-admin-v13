@@ -210,3 +210,52 @@ export function Cascada({ pasos }: { pasos: PasoCascada[] }) {
     </svg>
   )
 }
+
+/**
+ * Ranking horizontal (2026-10-30, tarjeta "Vendido y cobrado"): una fila por
+ * concepto con su nombre, la barra de lo vendido y, si se da, una barra delgada
+ * de lo cobrado debajo. viewBox angosto para que el texto se lea en una tarjeta
+ * de un tercio de ancho. Valores negativos se recortan a 0 en la barra (la cifra
+ * escrita sigue siendo la real).
+ */
+export function BarrasRanking({
+  filas,
+  formato = mxnCorto,
+  color = 'var(--s2)',
+  colorCobrado = 'var(--s4)'
+}: {
+  filas: { clave: string; nombre: string; valor: number; cobrado?: number | null }[]
+  formato?: (n: number) => string
+  color?: string
+  colorCobrado?: string
+}) {
+  const RW = 360
+  const fila = 34
+  const alto = Math.max(1, filas.length) * fila + 4
+  const max = Math.max(1, ...filas.map((f) => Math.max(f.valor, f.cobrado ?? 0)))
+  const ancho = (v: number) => (Math.max(0, v) / max) * (RW - 8)
+  return (
+    <svg className="graf" viewBox={`0 0 ${RW} ${alto}`} role="img">
+      {filas.map((f, i) => {
+        const y0 = i * fila + 2
+        const nombre = f.nombre.length > 30 ? f.nombre.slice(0, 29) + '…' : f.nombre
+        const etiqueta = f.cobrado === undefined || f.cobrado === null ? formato(f.valor) : `${formato(f.valor)} · cobrado ${formato(f.cobrado)}`
+        return (
+          <g key={f.clave}>
+            <text x={4} y={y0 + 11}>
+              {nombre}
+            </text>
+            <text className="val" x={RW - 4} y={y0 + 11} textAnchor="end">
+              {etiqueta}
+            </text>
+            <rect x={4} y={y0 + 15} width={RW - 8} height={9} fill="var(--surface-2)" rx={2} />
+            <rect x={4} y={y0 + 15} width={ancho(f.valor)} height={9} fill={color} rx={2} />
+            {f.cobrado !== undefined && f.cobrado !== null && (
+              <rect x={4} y={y0 + 25} width={ancho(f.cobrado)} height={4} fill={colorCobrado} rx={1} />
+            )}
+          </g>
+        )
+      })}
+    </svg>
+  )
+}

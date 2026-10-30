@@ -31,6 +31,9 @@ import { CardCobranza } from '@/components/v2/cobranza/CardCobranza'
 import { DIAS_ROJO } from '@/components/v2/cobranza/semaforo'
 import { CardSemaforo, type IndicadorSemaforo } from '@/components/v2/panel/CardSemaforo'
 import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
+import { CardVentasCobros } from '@/components/v2/ventas/CardVentasCobros'
+import { leerVentasCobros } from '@/components/v2/ventas/leerVentasCobros'
+import { armarVentasCobros } from '@/lib/v2/ventas-cobros'
 
 const NOMBRE_CLASE: Record<string, string> = {
   EFECTIVO: 'Efectivo',
@@ -52,7 +55,8 @@ function Vacio({ titulo, children }: { titulo: string; children: React.ReactNode
 export async function PanelMando() {
   const usuario = await exigirMandoV2()
   const client = await getServerSupabaseClient()
-  const d = await leerTablero(client)
+  // La tarjeta de ventas y cobros lee aparte, en la MISMA tanda (sin viaje en serie).
+  const [d, crudoVC] = await Promise.all([leerTablero(client), leerVentasCobros(client)])
   const puedeCapturar = usuario.rol === 'ADMIN'
   const ahora = new Date()
 
@@ -78,6 +82,8 @@ export async function PanelMando() {
   const corte = corteDeArranque(d.movimientos)
   const mesHoy = mesMx(ahora)
   const meses = rangoMeses(corte ? mesMx(corte) : mesHoy, mesHoy)
+  // Hechos agregados (mes x producto x cliente x canal) para la tarjeta dinamica; el navegador filtra.
+  const datosVC = armarVentasCobros(crudoVC.tickets, crudoVC.cobros, idsMatriz, d.nombres)
   // Categorias: la lista cerrada de categorias_movimiento; lo que no casa va a «Fuera de la lista».
   const idxCat = indiceCategorias(d.categorias)
   const porMes = dineroPorMes(d.movimientos, idsMatriz, meses, idxCat)
@@ -404,39 +410,7 @@ export async function PanelMando() {
           <div className="fuente">v_cartera · v_transferencias_resumen · conteos_fisicos · finanzas_ledger</div>
         </section>
 
-        <section className="card">
-          <div className="hd">
-            <div>
-              <h2>Vendido y cobrado por mes</h2>
-              <div className="sub">Desde el arranque. La línea es lo que de verdad entró a caja (contado + abonos).</div>
-            </div>
-          </div>
-          {hayVentas || hayCaja ? (
-            <>
-              <Leyenda
-                items={[
-                  { nombre: 'Contado', color: 'var(--s2)' },
-                  { nombre: 'Concesión', color: 'var(--s3)' },
-                  { nombre: 'Entró a caja', color: 'var(--linea-graf)', linea: true }
-                ]}
-              />
-              <BarrasMes
-                meses={meses}
-                enCurso={mesHoy}
-                series={[
-                  { nombre: 'Contado', color: 'var(--s2)', valores: ventas.map((v) => Number(v?.vendido_contado ?? 0)) },
-                  { nombre: 'Concesión', color: 'var(--s3)', valores: ventas.map((v) => Number(v?.vendido_concesion ?? 0)) }
-                ]}
-                linea={{ nombre: 'Entró a caja', valores: porMes.map((m) => m.entro) }}
-              />
-            </>
-          ) : (
-            <Vacio titulo="Sin ventas ni cobros desde el arranque">
-              La base arrancó en limpio{corte ? ` el ${fechaHoraMx(corte)}` : ''}. La gráfica se llena con la primera venta o abono.
-            </Vacio>
-          )}
-          <div className="fuente">v_ventas_por_mes · finanzas_ledger (cuentas de la matriz)</div>
-        </section>
+        <CardVentasCobros datos={datosVC} mesHoy={mesHoy} mesCorte={corte ? mesMx(corte) : null} />
       </div>
 
       <div className="grid g363">
