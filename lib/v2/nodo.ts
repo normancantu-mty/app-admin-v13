@@ -412,44 +412,41 @@ async function getConsolidationScope(
   entidad: Pick<Entidad, 'id' | 'rol'>
 ): Promise<ConsolidationScope> {
   const localIds: string[] = []
-
-  if (entidad.rol === 'DST') {
-    const { data: localRows, error: localsError } = await serviceRoleClient
-      .from('entidades')
-      .select('id')
-      .eq('rol', 'LOC')
-      .or(`id_nodo_padre.eq.${entidad.id},id_padre.eq.${entidad.id}`)
-
-    if (localsError) {
-      console.error('Error fetching locals for DST consolidation:', localsError)
-    } else {
-      localIds.push(...(localRows || []).map((local) => local.id))
-    }
-  }
-
-  const entityIds = Array.from(new Set([entidad.id, ...localIds]))
   let accountIds: string[] = []
   let ownAccountIds: string[] = []
   let localAccountIds: string[] = []
 
-  if (entityIds.length > 0) {
-    const { data: accountRows, error: accountsError } = await serviceRoleClient
-      .from('cuentas_financieras')
-      .select('id, id_entidad')
-      .in('id_entidad', entityIds)
+  // Perf 2026-10-30: UNA consulta en vez de dos en serie (antes: los locales del
+  // DST y luego las cuentas de nodo + locales). Trae el nodo y, si es DST, sus
+  // locales (mismo filtro: rol LOC y padre por id_nodo_padre o id_padre), cada uno
+  // con sus cuentas embebidas. Mismos ids que antes (comparado en los 16 nodos).
+  const filtro =
+    entidad.rol === 'DST'
+      ? `id.eq.${entidad.id},and(rol.eq.LOC,or(id_nodo_padre.eq.${entidad.id},id_padre.eq.${entidad.id}))`
+      : `id.eq.${entidad.id}`
+  // El embebido no esta en `types/database.ts` (parchado a mano): se tipa aqui.
+  const { data: scopeRows, error: scopeError } = await (serviceRoleClient as unknown as SupabaseClient)
+    .from('entidades')
+    .select('id, cuentas_financieras(id)')
+    .or(filtro)
 
-    if (accountsError) {
-      console.error('Error fetching accounts for consolidated scope:', accountsError)
-    } else {
-      accountIds = (accountRows || []).map((account) => account.id)
-      ownAccountIds = (accountRows || [])
-        .filter((account) => account.id_entidad === entidad.id)
-        .map((account) => account.id)
-      localAccountIds = (accountRows || [])
-        .filter((account) => Boolean(account.id_entidad) && localIds.includes(account.id_entidad as string))
-        .map((account) => account.id)
+  if (scopeError) {
+    console.error('Error fetching consolidated scope (locals and accounts):', scopeError)
+  } else {
+    const filas = (scopeRows || []) as { id: string; cuentas_financieras: { id: string }[] | null }[]
+    for (const fila of filas) {
+      const cuentas = (fila.cuentas_financieras || []).map((cuenta) => cuenta.id)
+      if (fila.id === entidad.id) {
+        ownAccountIds = ownAccountIds.concat(cuentas)
+      } else {
+        localIds.push(fila.id)
+        localAccountIds = localAccountIds.concat(cuentas)
+      }
     }
+    accountIds = [...ownAccountIds, ...localAccountIds]
   }
+
+  const entityIds = Array.from(new Set([entidad.id, ...localIds]))
 
   return {
     entityIds,
