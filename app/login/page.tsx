@@ -1,8 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import AgregarUsuario from './AgregarUsuario'
+
+// `?cambiar=1` lo pone el menu de sesion de /v2 ("Cambiar de usuario"): correo
+// vacio y enfocado, y sin rebote automatico a /v2. Se lee de `location` y no con
+// useSearchParams para no exigir un <Suspense> alrededor de toda la pagina.
+const sinSuscripcion = () => () => {}
+const leerCambiar = () => new URLSearchParams(window.location.search).get('cambiar') === '1'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -10,8 +17,16 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [agregando, setAgregando] = useState(false)
+  const cambiar = useSyncExternalStore(sinSuscripcion, leerCambiar, () => false)
+  const campoCorreo = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    if (cambiar) campoCorreo.current?.focus()
+  }, [cambiar])
+
+  useEffect(() => {
+    if (cambiar) return
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (session && session.user.email) {
@@ -33,7 +48,7 @@ export default function LoginPage() {
       }
     }
     checkSession()
-  }, [router])
+  }, [router, cambiar])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -67,8 +82,8 @@ export default function LoginPage() {
           throw new Error('Usuario no encontrado en el sistema')
         }
       }
-    } catch (error: any) {
-      setError(error.message || 'Error al iniciar sesión')
+    } catch (error: unknown) {
+      setError((error instanceof Error && error.message) || 'Error al iniciar sesión')
     } finally {
       setIsLoading(false)
     }
@@ -82,12 +97,22 @@ export default function LoginPage() {
           <p className="text-gray-600">Acceso Operativo</p>
         </div>
 
+        {agregando ? (
+          <AgregarUsuario onCerrar={() => setAgregando(false)} />
+        ) : (
+        <>
+        {cambiar ? (
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4 text-center" data-testid="login-cambiar">
+            Sesión cerrada. Entra con otro usuario.
+          </p>
+        ) : null}
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
               Correo Electrónico
             </label>
             <input
+              ref={campoCorreo}
               id="email"
               type="email"
               value={email}
@@ -127,6 +152,21 @@ export default function LoginPage() {
             {isLoading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
           </button>
         </form>
+        <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 text-center">
+          <button
+            type="button"
+            onClick={() => {
+              setError('')
+              setAgregando(true)
+            }}
+            className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400"
+            data-testid="login-agregar-usuario"
+          >
+            Agregar usuario
+          </button>
+        </div>
+        </>
+        )}
       </div>
     </div>
   )
