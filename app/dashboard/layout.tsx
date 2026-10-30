@@ -23,6 +23,7 @@
  * habria dejado esa prueba midiendo cero etiquetas, y en verde.
  */
 
+import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
 import { ReactNode } from 'react'
@@ -30,12 +31,18 @@ import { getAuthUser, getCurrentUser } from '@/lib/auth-utils'
 import { CABECERA_RUTA, destinoPorRol, RUTA_LOGIN } from '@/lib/puerta-dashboard'
 import type { DashboardNavItem } from '@/components/ui/DashboardSidebar'
 import DashboardShell from '@/components/DashboardShell'
+import { RUTA_BASE } from '@/lib/v2/rutas'
 
 /**
  * La puerta lee cookies: esta pantalla no se puede prerenderizar estatica. Sin
  * esto, Next podria servir un HTML cacheado que nadie vuelve a comprobar.
  */
 export const dynamic = 'force-dynamic'
+
+/** La v1 sigue desplegada pero escondida (A1, 2026-10-30): que ningun buscador la indexe. */
+export const metadata: Metadata = {
+  robots: { index: false, follow: false }
+}
 
 /** El menu de cada rol. El contador de avisos lo pega el cliente (ERP-59). */
 function itemsDeMenu(rol: string | null, entidadId: string | null): DashboardNavItem[] {
@@ -172,6 +179,13 @@ export default async function DashboardLayout({
   const usuario = await getCurrentUser()
   const rol = usuario?.rol ?? null
   const entidadId = usuario?.id ?? null
+
+  // 2b. La v1 queda escondida (A1, 2026-10-30): solo ADMIN entra a `/dashboard`;
+  //     cualquier otro rol -incluido el que no tiene fila en `entidades`- va al
+  //     panel unico. No hay bucle: `/panel` nunca manda de vuelta a `/dashboard`
+  //     (sin sesion -> login, sin entidad -> 404). Por eso `destinoPorRol` ya
+  //     solo se evalua para ADMIN, y para ADMIN devuelve null.
+  if (rol !== 'ADMIN') redirect(RUTA_BASE)
 
   // 3. Reubicacion por rol, tambien en el servidor. La ruta la pone la
   //    puerta (`proxy.ts`) en una cabecera de peticion; un layout no la recibe como

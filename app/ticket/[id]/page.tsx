@@ -11,6 +11,7 @@
 
 import { useState, useEffect, use } from 'react'
 import Link from 'next/link'
+import { RUTA_BASE } from '@/lib/v2/rutas'
 import { supabase } from '@/lib/supabase'
 import { armarDocumentoDeTicket, type DocumentoDatos } from '@/lib/documento'
 import DocumentoTermico, {
@@ -122,10 +123,10 @@ export default function TicketPage({ params }: { params: Promise<{ id: string }>
             ← Nueva Venta
           </Link>
           <Link
-            href="/dashboard/general"
+            href={RUTA_BASE}
             className="flex-1 bg-blue-600 text-white px-4 py-2 rounded text-center font-medium hover:bg-blue-700"
           >
-            ← Volver al Dashboard
+            ← Volver al panel
           </Link>
         </div>
 
