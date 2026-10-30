@@ -29,28 +29,28 @@ export async function PreciosVista({ usuario, sp, ruta }: { usuario: CurrentUser
   const localId = uno(sp.localId) ?? ''
 
   const supabase = await getServerSupabaseClient()
-  const { data: entidadActual } = await supabase
-    .from('entidades')
-    .select('id, rol, comision_base, comision_base_local, comision_hijo_local, aplica_redondeo_costo')
-    .eq('id', usuario.id)
-    .single()
   const rolActual = rolDePrecios(usuario.rol)
-
   const campos = 'id, nombre, rol, comision_base, comision_base_local, aplica_redondeo_costo'
-  const { data: simulables } =
+  // Las tres lecturas son independientes: en paralelo (perf 2026-10-30; eran tres viajes en serie).
+  const [{ data: entidadActual }, { data: simulables }, { data: productos, error }] = await Promise.all([
+    supabase
+      .from('entidades')
+      .select('id, rol, comision_base, comision_base_local, comision_hijo_local, aplica_redondeo_costo')
+      .eq('id', usuario.id)
+      .single(),
     rolActual === 'ADMIN'
-      ? await supabase.from('entidades').select(campos).in('rol', ['DST', 'LOC']).order('nombre', { ascending: true })
+      ? supabase.from('entidades').select(campos).in('rol', ['DST', 'LOC']).order('nombre', { ascending: true })
       : rolActual === 'DST'
-        ? await supabase.from('entidades').select(campos).eq('id_padre', usuario.id).order('nombre', { ascending: true })
-        : { data: [] }
+        ? supabase.from('entidades').select(campos).eq('id_padre', usuario.id).order('nombre', { ascending: true })
+        : Promise.resolve({ data: [] as { id: string; nombre: string; rol: string; comision_base: number | null; comision_base_local: number | null; aplica_redondeo_costo: boolean | null }[] }),
+    supabase
+      .from('catalogo_productos')
+      .select('id, sku, nombre, costo_unitario, listas_precios (precio_final)')
+      .eq('tipo', 'TERMINADO')
+      .order('nombre', { ascending: true })
+  ])
   const opciones = simulables ?? []
   const seleccionada = opciones.find((e) => e.id === localId) ?? null
-
-  const { data: productos, error } = await supabase
-    .from('catalogo_productos')
-    .select('id, sku, nombre, costo_unitario, listas_precios (precio_final)')
-    .eq('tipo', 'TERMINADO')
-    .order('nombre', { ascending: true })
 
   const catalogo = (productos ?? []).map((p) => ({ ...p, w: calculateWaterfall(p, entidadActual || {}, rolActual, fiscalidad, seleccionada) }))
 
