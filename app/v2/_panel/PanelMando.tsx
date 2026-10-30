@@ -27,6 +27,7 @@ import { fechaHoraMx, mesMx, mxn, mxn0, num, rangoMeses } from '@/lib/v2/formato
 import { esDeudaConLaMatriz, totalesCarteraVista } from '@/lib/vistas'
 import { diasDesde } from '@/lib/actividad'
 import { BarrasMes, Cascada, Leyenda } from '@/components/v2/graficas'
+import { CardCobranza } from '@/components/v2/cobranza/CardCobranza'
 
 type Luz = 'rojo' | 'ambar' | 'verde' | 'gris'
 
@@ -197,9 +198,6 @@ export async function PanelMando() {
       texto: `${cart.nodosConDistribuidor} locales deben ${mxn0(cart.deudaConDistribuidor)} a su distribuidor (fuera de la cartera de la matriz)`,
       href: '/v2/m/cartera'
     })
-
-  const top4 = deudoresMatriz.slice(0, 4)
-  const sumaTop4 = top4.reduce((a, f) => a + Number(f.deuda), 0)
 
   return (
     <>
@@ -395,47 +393,7 @@ export async function PanelMando() {
       </div>
 
       <div className="grid g363">
-        <section className="card cobrar">
-          <div className="hd">
-            <div>
-              <h2>A quién cobrar</h2>
-              <div className="sub">Deuda con la matriz · orden del ERP: deuda × días sin abonar</div>
-            </div>
-          </div>
-          <p className="lead">
-            Los <b>{top4.length}</b> primeros suman <b>{mxn0(sumaTop4)}</b>, el{' '}
-            <b>{cart.deuda > 0 ? Math.round((sumaTop4 / cart.deuda) * 100) : 0}%</b> de la cartera de la matriz.
-          </p>
-          {top4.map((f, i) => {
-            const pct = f.porcentaje_pagado === null || f.porcentaje_pagado === undefined ? null : Math.round(Number(f.porcentaje_pagado))
-            const dias = f.dias_sin_abono ?? 0
-            return (
-              <AbrirModal className="it" key={f.id_entidad} href={`/v2/m/nodo/${f.id_entidad}`} titulo={f.nombre}>
-                <span className="n">{i + 1}</span>
-                <span className="nom">
-                  <b>{f.nombre}</b>
-                  <small>{f.rol === 'DST' ? 'Distribuidor' : 'Local'}</small>{' '}
-                  <span className={`chip ${dias > 60 ? 'crit' : dias > 30 ? 'warn' : ''}`}>
-                    {dias} d sin abonar{f.referencia_dias === 'ENTREGA' ? ' (desde entrega)' : ''}
-                  </span>
-                </span>
-                <span className="m">
-                  {mxn0(Number(f.deuda))}
-                  <small>{pct === null ? '% pagado: Sin dato' : `${pct}% pagado`}</small>
-                  {pct !== null && (
-                    <span className="barra">
-                      <i style={{ width: `${Math.min(100, pct)}%` }} />
-                    </span>
-                  )}
-                </span>
-              </AbrirModal>
-            )
-          })}
-          <AbrirModal className="vermas" href="/v2/m/cartera" titulo="Cartera completa">
-            Ver los {deudoresMatriz.length} deudores →
-          </AbrirModal>
-          <div className="fuente">v_cartera (id_acreedor = matriz)</div>
-        </section>
+        <CardCobranza cartera={d.cartera} />
 
         <section className="card">
           <div className="hd">

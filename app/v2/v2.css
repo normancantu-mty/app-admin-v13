@@ -419,3 +419,87 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
    Las pantallas pintan las dos vistas; la pildora del encabezado decide cual se ve, sin ir al servidor. */
 .v2:has(.vs-sel[data-vista="sumado"]) .vs-ind { display: none !important; }
 .v2:not(:has(.vs-sel[data-vista="sumado"])) .vs-sum { display: none !important; }
+
+/* Cobranza con semaforo (components/v2/cobranza/*). 2026-10-30, ejecutor de cobranza del Socio.
+   Bandas: verde <=30 d, amarillo 31-60, rojo >60, gris sin fecha de referencia (umbrales del ERP v2). */
+.v2 .cob-card { --cob-rojo: var(--crit); --cob-amarillo: var(--warn); --cob-verde: var(--good); --cob-gris: var(--muted); }
+.v2 .cob-total { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; font-size: 12.5px; }
+.v2 .cob-total-v { font-family: var(--f-display); font-weight: 800; font-size: 24px; color: var(--ink); }
+.v2 .cob-sem { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 6px; margin-bottom: 10px; }
+.v2 .cob-banda { display: flex; flex-direction: column; gap: 1px; padding: 7px 8px; border-radius: var(--r-sm); border: 1px solid var(--line); border-top: 3px solid var(--line-2); background: var(--surface); text-align: left; cursor: pointer; font: inherit; color: var(--ink); min-width: 0; transition: transform .16s ease, background-color .16s ease, border-color .16s ease; }
+.v2 .cob-banda:hover { background: var(--surface-2); transform: scale(1.02); }
+.v2 .cob-banda.rojo { border-top-color: var(--crit); }
+.v2 .cob-banda.amarillo { border-top-color: var(--warn); }
+.v2 .cob-banda.verde { border-top-color: var(--good); }
+.v2 .cob-banda.gris { border-top-color: var(--muted); }
+.v2 .cob-banda.vacia { opacity: .55; }
+.v2 .cob-banda.on { background: var(--surface-2); border-color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--ink-2); }
+.v2 .cob-banda-t { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); font-weight: 700; display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.v2 .cob-banda-n { font-family: var(--f-display); font-weight: 800; font-size: 20px; line-height: 1.1; }
+.v2 .cob-banda-m { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2 .cob-punto { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; background: var(--muted); }
+.v2 .cob-punto.rojo { background: #ef4b3c; }
+.v2 .cob-punto.amarillo { background: #f2b420; }
+.v2 .cob-punto.verde { background: #3fbf5a; }
+.v2 .cob-lista { max-height: 420px; overflow-y: auto; margin: 0 -6px; padding: 0 6px; border-top: 1px solid var(--line); overscroll-behavior: contain; }
+.v2 .cob-it { display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; padding: 9px 6px 9px 8px; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; align-items: center; transition: background-color .16s ease; }
+.v2 .cob-it:hover { background: var(--surface-2); }
+.v2 .cob-it.rojo { border-left-color: var(--crit); }
+.v2 .cob-it.amarillo { border-left-color: var(--warn); }
+.v2 .cob-it.verde { border-left-color: var(--good); }
+.v2 .cob-n { color: var(--muted); font-weight: 700; font-size: 12px; }
+.v2 .cob-nom { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.v2 .cob-nom b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2 .cob-nom small { font-size: 11px; }
+.v2 .cob-meta { display: flex; gap: 4px; flex-wrap: wrap; }
+.v2 .cob-m { text-align: right; font-family: var(--f-display); font-weight: 800; font-size: 15px; white-space: nowrap; }
+.v2 .cob-m small { display: block; font-family: var(--f-body); font-weight: 500; font-size: 11px; color: var(--muted); }
+.v2 .cob-m .barra { width: 72px; margin-left: auto; }
+.v2 .cob-dst { display: block; font-size: 12px; color: var(--ink-2); padding: 8px 0 0; }
+.v2 .cob-dst:hover { color: var(--chile); }
+/* Vista completa */
+.v2 .cob-filtros { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
+.v2 .cob-filtros .in { flex: 1 1 220px; max-width: 360px; }
+.v2 .cob-filtros .tabs { margin: 0; }
+.v2 .cob-vista .cob-sem { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.v2 .cob-vista .cob-banda { padding: 10px 12px; }
+.v2 .cob-vista .cob-banda-n { font-size: 24px; }
+.v2 .cob-vista .cob-banda-m { font-size: 13px; color: var(--ink); font-weight: 700; }
+.v2 .cob-banda-d { font-size: 11px; color: var(--muted); }
+.v2 .cob-tabla td.cob-nombre { min-width: 180px; }
+.v2 .cob-tabla td .cob-sub { color: var(--muted); font-size: 12px; font-weight: 500; }
+.v2 .cob-tabla tr.rojo td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
+.v2 .cob-tabla tr.amarillo td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.v2 .cob-tabla tr.verde td:first-child { box-shadow: inset 3px 0 0 var(--good); }
+.v2 .cob-tabla .barra { width: 80px; margin-left: auto; }
+.v2 .cob-acc { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+/* Ficha del nodo: resumen de cobranza */
+.v2 .cob-ficha { display: flex; gap: 10px 22px; flex-wrap: wrap; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-left: 4px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface); margin-bottom: 16px; font-size: 13px; }
+.v2 .cob-ficha.rojo { border-left-color: var(--crit); }
+.v2 .cob-ficha.amarillo { border-left-color: var(--warn); }
+.v2 .cob-ficha.verde { border-left-color: var(--good); }
+.v2 .cob-ficha b.cob-ficha-v { font-family: var(--f-display); font-size: 18px; font-weight: 800; }
+.v2 .cob-ficha .cob-ficha-t { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-2); font-weight: 600; display: block; }
+.v2 .vs-junto { display: grid; gap: 10px; }
+.v2 .vs-total { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--chile); border-radius: var(--r-sm); padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.v2 .vs-total .t { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-2); font-weight: 600; }
+.v2 .vs-total .v { font-family: var(--f-display); font-weight: 800; font-size: 34px; line-height: 1.05; }
+.v2 .vs-total .d { font-size: 12px; color: var(--ink-2); }
+.v2 .vs-desglose { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 4px 12px; }
+.v2 .vs-fila { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; font: inherit; width: 100%; background: transparent; border-left: 0; border-right: 0; border-top: 0; text-align: left; cursor: pointer; }
+.v2 .vs-fila:last-child { border-bottom: 0; }
+.v2 a.vs-fila:hover .vs-nom b, .v2 button.vs-fila:hover .vs-nom b { color: var(--chile); }
+.v2 .vs-nom { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.v2 .vs-nom small { flex-basis: 100%; color: var(--ink-2); font-size: 11.5px; }
+.v2 .vs-nom.on b { color: var(--chile); }
+.v2 .vs-m { display: flex; flex-direction: column; align-items: flex-end; min-width: 140px; }
+.v2 .vs-m b { font-family: var(--f-display); font-size: 17px; white-space: nowrap; }
+.v2 .vs-m small { font-size: 11px; color: var(--ink-2); }
+.v2 .vs-m .barra { width: 100%; }
+.v2 .vs-suma { cursor: default; }
+.v2 .vs-suma .vs-m b { font-size: 19px; }
+.v2 .vs-nota { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.v2 .vs-foto { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.v2 .vs-fuera { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); padding: 8px 12px; border: 1px dashed var(--line-2); border-radius: var(--r-sm); }
+.v2 .vs-fuera b { color: var(--ink); }
+.v2 .vs-cuenta { margin-bottom: 14px; }
