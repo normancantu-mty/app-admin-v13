@@ -540,3 +540,27 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
   .v2 .inv-scroll { max-height: 60vh; }
   .v2 .inv-busca { width: 100%; }
 }
+
+/* Lotes v2 (2026-10-30, ejecutor del Socio): formulario de alta/edicion y detalle de un lote. */
+.v2 .lote-seccion { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.v2 .lote-seccion-hd { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.v2 .lote-fila { display: grid; gap: 8px; align-items: center; width: 100%; }
+.v2 .lote-fila .in { padding: 6px 8px; font-size: 13px; min-width: 0; width: 100%; }
+.v2 .lote-fila-insumo { grid-template-columns: minmax(0, 1fr) 110px 70px 40px; }
+.v2 .lote-fila-tanda { grid-template-columns: 28px repeat(3, minmax(0, 90px)) minmax(0, 1fr) 40px; }
+.v2 .lote-fila-hd { font-weight: 700; }
+.v2 .lote-unidad { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2 .lote-form .fila-acc { justify-content: flex-end; margin-top: 4px; }
+.v2 .kpis.lote-kpis { margin: 10px 0 14px; }
+.v2 .lote-tablas { margin-bottom: 14px; gap: 14px; }
+.v2 .lote-h { margin: 0 0 6px; font-size: 13px; font-weight: 700; color: var(--ink-2); letter-spacing: .02em; }
+.v2 .lote-tablas .inv-scroll { max-height: 300px; }
+.v2 .lote-scroll { max-height: 560px; }
+@media (max-width: 699px) {
+  .v2 .lote-fila-insumo { grid-template-columns: minmax(0, 1fr) 90px 40px; }
+  .v2 .lote-fila-insumo .lote-unidad { display: none; }
+  .v2 .lote-fila-tanda { grid-template-columns: 24px repeat(3, minmax(0, 1fr)) 36px; }
+  .v2 .lote-fila-tanda > :nth-child(5) { grid-column: 2 / -2; }
+  .v2 .lote-fila-hd > :nth-child(5) { display: none; }
+  .v2 .lote-scroll { max-height: 65vh; }
+}
