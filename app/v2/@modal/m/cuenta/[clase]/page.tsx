@@ -14,9 +14,17 @@
  * Paginas v2 (2026-10-29): la tabla y el desglose de egresos viven en
  * `components/v2/finanzas/Movimientos.tsx` (los comparte `/v2/finanzas`), y el
  * encabezado lleva «Toda Finanzas →» a la pagina completa.
+ *
+ * Saldos «Individual | Sumado» (2026-10-30, ejecutor de saldos del Socio): el
+ * servidor pinta las DOS vistas y la pildora del encabezado esconde una (CSS
+ * `.vs-ind` / `.vs-sum`, sin ir al servidor). Sumado = el total de las cuentas de
+ * la matriz con lo que aporta cada una, sus cifras juntas y los movimientos de
+ * todas con columna «Cuenta». Se lee UNA vez todo y se filtra la cuenta aqui.
  */
 
 import { CambiarModal } from '@/components/v2/modal/AbrirModal'
+import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
+import { VistaSaldos } from '@/components/v2/VistaSaldos'
 import { Modal } from '@/components/v2/modal/Modal'
 import { EgresosPorCategoria, filasPedidas, TablaMovimientos, TANDA } from '@/components/v2/finanzas/Movimientos'
 import { VerTodo } from '@/components/v2/pagina/Encabezado'
@@ -37,9 +45,11 @@ import {
   dineroPorMes,
   cuentaParaSaldo,
   efectoEnCuenta,
+  efectoEnCuentas,
   egresosPorCategoria,
   FUERA_DE_LISTA,
   indiceCategorias,
+  redondear,
   saldoDesdeMovimientos
 } from '@/lib/v2/dinero'
 import { mesMx, mxn, rangoMeses } from '@/lib/v2/formato'
@@ -87,7 +97,15 @@ export default async function CuentaV2({
   const cuenta = cuentas.find((c) => c.clase === clase)
   if (!cuenta) notFound()
 
-  const movs = (await leerMovimientosDeCuentas(client, [cuenta.id])).map((m) => ({ ...m, efecto: efectoEnCuenta(m, cuenta.id) }))
+  // Una sola lectura de las cuentas de la matriz: la cuenta se filtra aqui (mismas
+  // filas que pedir solo esa cuenta) y la vista Sumado usa todas.
+  const todos = await leerMovimientosDeCuentas(
+    client,
+    cuentas.map((c) => c.id)
+  )
+  const movs = todos
+    .filter((m) => m.id_cuenta_origen === cuenta.id || m.id_cuenta_destino === cuenta.id)
+    .map((m) => ({ ...m, efecto: efectoEnCuenta(m, cuenta.id) }))
   const reconstruido = saldoDesdeMovimientos(movs, cuenta.id)
   const ok = cuadra(reconstruido, cuenta.saldo)
   // El saldo de arranque es el punto de partida, no una entrada: va aparte.
@@ -106,8 +124,29 @@ export default async function CuentaV2({
   const visibles = movs.slice(0, filas)
   const hayMas = movs.length > visibles.length
 
+  // ── Vista Sumado: todas las cuentas de la matriz juntas ──
+  const idsTodas = new Set(cuentas.map((c) => c.id))
+  const nombreCuenta = new Map(cuentas.map((c) => [c.id, (c.clase && NOMBRE[c.clase]) || c.nombre]))
+  const movsTodas = todos.map((m) => ({ ...m, efecto: efectoEnCuentas(m, idsTodas) }))
+  const totalTodas = redondear(cuentas.reduce((a, c) => a + c.saldo, 0))
+  const okTodas = cuadra(redondear(movsTodas.reduce((a, m) => a + m.efecto, 0)), totalTodas)
+  const esTraspaso = (t: string) => t === 'INGRESO_TRASPASO' || t === 'EGRESO_TRASPASO'
+  const sumaSi = (f: (m: (typeof movsTodas)[number]) => boolean) => redondear(movsTodas.reduce((a, m) => a + (f(m) ? m.efecto : 0), 0))
+  const arranqueTodas = sumaSi((m) => m.tipo_movimiento === 'SALDO_INICIAL')
+  const entroTodas = sumaSi((m) => m.efecto > 0 && m.tipo_movimiento !== 'SALDO_INICIAL' && !esTraspaso(m.tipo_movimiento))
+  const salioTodas = -sumaSi((m) => m.efecto < 0 && !esTraspaso(m.tipo_movimiento))
+  const traspasosTodas = sumaSi((m) => esTraspaso(m.tipo_movimiento))
+  const visiblesTodas = movsTodas.slice(0, filas)
+  const hayMasTodas = movsTodas.length > visiblesTodas.length
+
   return (
-    <Modal titulo={NOMBRE[clase] ?? cuenta.nombre} sub={REGLA[clase]} tam="xl" acciones={<VerTodo href={`/v2/finanzas?cuenta=${slug}`}>Toda Finanzas →</VerTodo>}>
+    <Modal titulo={NOMBRE[clase] ?? cuenta.nombre} sub={REGLA[clase]} tam="xl" acciones={
+        <>
+          {/* El modal tapa el encabezado: aqui va la misma pildora (estado compartido). */}
+          <VistaSaldos rol={usuario.rol} />
+          <VerTodo href={`/v2/finanzas?cuenta=${slug}`}>Toda Finanzas →</VerTodo>
+        </>
+      }>
       <div className="tabs" style={{ marginTop: 0 }}>
         {cuentas.map((c) => (
           <CambiarModal key={c.id} href={`/v2/m/cuenta/${slugDeClase(c.clase)}`} className={c.id === cuenta.id ? 'on' : ''}>
@@ -116,6 +155,58 @@ export default async function CuentaV2({
         ))}
       </div>
 
+      <div className="vs-sum vs-cuenta">
+        <TodoJunto
+          enlace="cambiar"
+          marcada={cuenta.id}
+          total={totalTodas}
+          cuadraConMovimientos={okTodas}
+          pendienteTransferencias={transferencias?.pendienteMonto ?? null}
+          filas={cuentas.map((c) => ({
+            id: c.id,
+            nombre: nombreCuenta.get(c.id) ?? c.nombre,
+            saldo: c.saldo,
+            href: `/v2/m/cuenta/${slugDeClase(c.clase)}`,
+            chip: c.solo_egresos ? 'solo egresos' : undefined,
+            nota: c.tipo_fiscalidad ?? undefined
+          }))}
+        />
+        <div className="cifras" style={{ marginTop: 12 }}>
+          <div>
+            Saldo de arranque<b>{mxn(arranqueTodas)}</b>
+          </div>
+          <div>
+            Entró desde el corte<b className="pos">{mxn(entroTodas)}</b>
+          </div>
+          <div>
+            Salió desde el corte<b className="neg">{mxn(salioTodas)}</b>
+          </div>
+          <div>
+            Traspasos entre cuentas (neto)<b>{mxn(traspasosTodas)}</b>
+          </div>
+        </div>
+        <section className="card">
+          <div className="hd">
+            <div>
+              <h2>Movimientos · todas las cuentas</h2>
+              <div className="sub">Los de las {cuentas.length} cuentas juntos, con su cuenta. Un traspaso entre dos cuentas de la matriz sale y entra: junto, se netea. Las filas atenuadas no cuentan para el saldo.</div>
+            </div>
+          </div>
+          <TablaMovimientos movs={visiblesTodas} nombres={nombres} esAdmin={esAdmin} cuentas={nombreCuenta} />
+          <div className="fuente">
+            Mostrando {visiblesTodas.length} de {movsTodas.length} filas · finanzas_ledger (cuentas de la matriz)
+          </div>
+          {hayMasTodas && (
+            <div style={{ marginTop: 10 }}>
+              <CambiarModal className="btn" href={`/v2/m/cuenta/${slug}?filas=${filas + TANDA}`}>
+                Cargar más ({Math.min(TANDA, movsTodas.length - visiblesTodas.length)} de {movsTodas.length - visiblesTodas.length} restantes)
+              </CambiarModal>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <div className="vs-ind">
       <div className="ph">
         <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <span className="chip">{cuenta.tipo_fiscalidad ?? 'fiscalidad sin dato'}</span>
@@ -144,6 +235,7 @@ export default async function CuentaV2({
           ? `Cuadra: la suma de los ${nCuentan} movimientos que cuentan para el saldo (de ${movs.length} filas de la cuenta; la tabla muestra ${visibles.length}) da ${mxn(reconstruido)} = saldo_cuenta() de la base.`
           : `NO cuadra: los ${nCuentan} movimientos que cuentan para el saldo suman ${mxn(reconstruido)} y saldo_cuenta() dice ${mxn(cuenta.saldo)} (diferencia ${mxn(reconstruido - cuenta.saldo)}).`}
       </div>
+      </div>
 
       {clase === 'TRANSFERENCIAS' && transferencias && (
         <div style={{ marginBottom: 16 }}>
@@ -152,6 +244,7 @@ export default async function CuentaV2({
         </div>
       )}
 
+      <div className="vs-ind">
       <div className="grid g2">
         <section className="card">
           <div className="hd">
@@ -217,6 +310,7 @@ export default async function CuentaV2({
           </div>
         )}
       </section>
+      </div>
     </Modal>
   )
 }

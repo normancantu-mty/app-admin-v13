@@ -15,7 +15,7 @@
  * `VistaSaldos` la lee al pintar, asi que el HTML ya llega con la vista buena.
  */
 
-import { useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import { guardarVista, type Vista } from './vista'
 
 const OPCIONES: { v: Vista; l: string; t: string }[] = [
@@ -23,13 +23,23 @@ const OPCIONES: { v: Vista; l: string; t: string }[] = [
   { v: 'sumado', l: 'Sumado', t: 'Todas las cuentas juntas: el total y lo que aporta cada una' }
 ]
 
-export function SelectorVista({ inicial }: { inicial: Vista }) {
-  const [vista, setVista] = useState<Vista>(inicial)
+// Estado COMPARTIDO entre todas las pildoras montadas (la del encabezado y la del
+// modal de cuenta, que tapa el encabezado): null = nadie ha elegido en esta carga.
+let actual: Vista | null = null
+const oyentes = new Set<() => void>()
+function suscribir(fn: () => void) {
+  oyentes.add(fn)
+  return () => oyentes.delete(fn)
+}
+function fijar(v: Vista) {
+  actual = v
+  guardarVista(v) // presentacion, no permisos
+  oyentes.forEach((fn) => fn())
+}
 
-  const elegir = (v: Vista) => {
-    setVista(v)
-    guardarVista(v) // presentacion, no permisos
-  }
+export function SelectorVista({ inicial }: { inicial: Vista }) {
+  const vista = useSyncExternalStore(suscribir, () => actual, () => null) ?? inicial
+
 
   return (
     <div className="tema vs-sel" role="radiogroup" aria-label="Vista de saldos" data-vista={vista} data-testid="vista-saldos">
@@ -41,7 +51,7 @@ export function SelectorVista({ inicial }: { inicial: Vista }) {
           aria-checked={vista === o.v}
           className={vista === o.v ? 'on' : ''}
           title={o.t}
-          onClick={() => elegir(o.v)}
+          onClick={() => fijar(o.v)}
         >
           {o.l}
         </button>

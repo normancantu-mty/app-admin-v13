@@ -11,6 +11,10 @@
  * Solo ADMIN y SOCIO (el dinero de la matriz). SOCIO lee: sin Anular, sin
  * convertir, sin aprobaciones. Reusa las lecturas de `lib/v2` y las piezas de
  * `components/v2/finanzas/Movimientos.tsx` que tambien usa el modal de cuenta.
+ *
+ * Saldos «Individual | Sumado» (2026-10-30, ejecutor de saldos del Socio): en
+ * Sumado, la fila de tarjetas se cambia por «Todo junto» (total de las cuentas y
+ * lo que aporta cada una). Las dos vistas se pintan; el CSS esconde una.
  */
 
 import Form from 'next/form'
@@ -42,6 +46,7 @@ import {
 import { fechaMx, mesMx, mxn, nombreMesCorto, rangoMeses } from '@/lib/v2/formato'
 import { AbrirModal, CambiarModal } from '@/components/v2/modal/AbrirModal'
 import { EncabezadoPagina } from '@/components/v2/pagina/Encabezado'
+import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
 import { EgresosPorCategoria, filasPedidas, TablaMovimientos, TANDA } from '@/components/v2/finanzas/Movimientos'
 import { BarrasMes, Leyenda } from '@/components/v2/graficas'
 import TransferenciasCard from '@/components/v2/cuentas/TransferenciasCard'
@@ -155,7 +160,32 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
             Toca una para ver solo sus movimientos y egresos.
           </span>
         </div>
-        <div className="kpis">
+        <div className="vs-sum">
+          <TodoJunto
+            enlace="cambiar"
+            marcada={cuenta?.id}
+            total={totalCuentas}
+            cuadraConMovimientos={cuenta ? null : ok}
+            pendienteTransferencias={transferencias?.pendienteMonto ?? null}
+            filas={cuentas.map((c) => ({
+              id: c.id,
+              nombre: nombreCuenta.get(c.id) ?? c.nombre,
+              saldo: c.saldo,
+              href: query({ cuenta: slugDeClase(c.clase), filas: null }),
+              chip: c.solo_egresos ? 'solo egresos' : undefined,
+              nota: c.tipo_fiscalidad ?? undefined
+            }))}
+          />
+          {cuenta && (
+            <p className="vs-nota" style={{ marginTop: 8 }}>
+              La tabla de abajo muestra solo {nombreCuenta.get(cuenta.id)}.{' '}
+              <Link href={query({ cuenta: null, filas: null })} replace scroll={false} className="enlace-pg">
+                Ver los movimientos de todas juntas →
+              </Link>
+            </p>
+          )}
+        </div>
+        <div className="kpis vs-ind">
           <Link href={query({ cuenta: null, filas: null })} replace scroll={false} className={`kpi ${slug === 'todas' ? 'on' : ''}`} data-testid="fin-cuenta-todas">
             <span className="t">Todas las cuentas</span>
             <span className="v">{mxn(totalCuentas)}</span>
