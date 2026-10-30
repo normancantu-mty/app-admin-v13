@@ -15,6 +15,7 @@ import { exigirSesionV2 } from '@/lib/v2/puerta'
 import { ProveedorModal } from '@/components/v2/modal/ProveedorModal'
 import { SesionMenu, TemaSelector } from '@/components/v2/Marco'
 import { PrivacidadV2 } from '@/components/v2/Privacidad'
+import { VistaSaldos } from '@/components/v2/VistaSaldos'
 import './v2.css'
 
 export const dynamic = 'force-dynamic'
@@ -38,6 +39,7 @@ export default async function LayoutV2({ children, modal }: { children: ReactNod
             </a>
             <div className="der">
               <SesionMenu nombre={usuario.nombre} rol={usuario.rol} />
+              <VistaSaldos rol={usuario.rol} />
               <PrivacidadV2 />
               <TemaSelector />
             </div>

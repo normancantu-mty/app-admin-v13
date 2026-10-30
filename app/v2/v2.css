@@ -414,3 +414,8 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
 .v2 .sesion-menu button:hover, .v2 .sesion-menu button:focus-visible { background: var(--chile-soft); }
 .v2 .sesion-menu button.peligro { color: var(--texto-neg); }
 @media (max-width: 600px) { .v2 .sesion-menu { left: 0; right: auto; } }
+
+/* Vista de saldos Individual | Sumado (components/v2/VistaSaldos.tsx). 2026-10-30, ejecutor de saldos del Socio.
+   Las pantallas pintan las dos vistas; la pildora del encabezado decide cual se ve, sin ir al servidor. */
+.v2:has(.vs-sel[data-vista="sumado"]) .vs-ind { display: none !important; }
+.v2:not(:has(.vs-sel[data-vista="sumado"])) .vs-sum { display: none !important; }
