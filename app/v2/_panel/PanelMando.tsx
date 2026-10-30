@@ -28,6 +28,7 @@ import { esDeudaConLaMatriz, totalesCarteraVista } from '@/lib/vistas'
 import { diasDesde } from '@/lib/actividad'
 import { BarrasMes, Cascada, Leyenda } from '@/components/v2/graficas'
 import { CardCobranza } from '@/components/v2/cobranza/CardCobranza'
+import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
 
 type Luz = 'rojo' | 'ambar' | 'verde' | 'gris'
 
@@ -216,7 +217,34 @@ export async function PanelMando() {
           </span>
           <VerTodo href="/v2/finanzas" className="vertodo-l">Toda Finanzas →</VerTodo>
         </div>
-        <div className="kpis">
+        {/* Vista «Sumado» (selector del encabezado): todo junto. «Individual» es la fila de KPIs de abajo. */}
+        <div className="vs-sum">
+          <TodoJunto
+            total={totalCuentas}
+            cuadraConMovimientos={cascadaCuadra}
+            pendienteTransferencias={d.transferencias?.pendienteMonto ?? null}
+            filas={cuentas.map((c) => ({
+              id: c.id,
+              nombre: c.clase ? NOMBRE_CLASE[c.clase] ?? c.nombre : c.nombre,
+              saldo: c.saldo,
+              href: `/v2/m/cuenta/${slugDeClase(c.clase)}`,
+              chip: c.clase === 'PERSONAL' ? 'LIBRE · solo egresos' : undefined,
+              nota: c.tipo_fiscalidad ?? undefined
+            }))}
+            foto={{
+              porCobrar: cart.deuda,
+              nodosPorCobrar: deudoresMatriz.length,
+              impuestos,
+              iva,
+              ieps,
+              deudaConDistribuidor: cart.deudaConDistribuidor,
+              nodosConDistribuidor: cart.nodosConDistribuidor,
+              botellasMatriz: totalBotellas,
+              piezasEnPiso: enPiso
+            }}
+          />
+        </div>
+        <div className="kpis vs-ind">
           {cuentas.map((c) => (
             <AbrirModal key={c.id} titulo={c.clase ? NOMBRE_CLASE[c.clase] ?? c.nombre : c.nombre} href={`/v2/m/cuenta/${slugDeClase(c.clase)}`} className={`kpi ${c.clase === 'EFECTIVO' || c.clase === 'FISCAL' ? 'fuerte' : ''}`}>
               <span className="t">
