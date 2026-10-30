@@ -668,6 +668,7 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
 .v2 .vs-plegable > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .v2 .vs-plegable > summary .muted { font-weight: 500; font-size: 12px; }
 .v2 .vs-plegable[open] > summary { margin-bottom: 4px; color: var(--ink); }
+.v2 .vs-plegable .fuente { padding-top: 10px; font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
 .v2 table.t tr.vs-mov-on td:first-child { box-shadow: inset 3px 0 0 var(--vs-c, var(--chile)); }
 /* /v2/finanzas?cuenta=x: la cuenta elegida arriba; las tarjetas de las demas, chicas y atenuadas. */
 .v2 .vs-foco-fin { margin: 4px 0 12px; }

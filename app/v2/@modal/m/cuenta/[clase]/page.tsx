@@ -20,10 +20,18 @@
  * `.vs-ind` / `.vs-sum`, sin ir al servidor). Sumado = el total de las cuentas de
  * la matriz con lo que aporta cada una, sus cifras juntas y los movimientos de
  * todas con columna «Cuenta». Se lee UNA vez todo y se filtra la cuenta aqui.
+ *
+ * Enfoque (2026-10-30, Norman): el modal es de SU cuenta. Cabecera con el color de
+ * la clase y el saldo grande (`CabeceraCuenta`); las demas cuentas en una linea
+ * chica y atenuada (Individual) o como desglose atenuado con la cuenta abierta
+ * resaltada (Sumado). En Sumado el total es una franja de contexto, la cuenta
+ * conserva sus graficas y sus movimientos, y la tabla de todas va plegada.
+ * Solo jerarquia visual: ninguna cifra ni calculo cambio.
  */
 
 import { CambiarModal } from '@/components/v2/modal/AbrirModal'
 import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
+import { CabeceraCuenta, OtrasCuentas, TituloCuenta } from '@/components/v2/saldos/CabeceraCuenta'
 import { VistaSaldos } from '@/components/v2/VistaSaldos'
 import { Modal } from '@/components/v2/modal/Modal'
 import { EgresosPorCategoria, filasPedidas, TablaMovimientos, TANDA } from '@/components/v2/finanzas/Movimientos'
@@ -139,23 +147,77 @@ export default async function CuentaV2({
   const visiblesTodas = movsTodas.slice(0, filas)
   const hayMasTodas = movsTodas.length > visiblesTodas.length
 
+  const nombreActual = NOMBRE[clase] ?? cuenta.nombre
+  // Presentacion: lo que la cuenta abierta aporta al total (misma regla que «Todo junto»).
+  const pctDelTotal = totalTodas > 0 && cuenta.saldo >= 0 ? Math.round((cuenta.saldo / totalTodas) * 1000) / 10 : null
+
   return (
-    <Modal titulo={NOMBRE[clase] ?? cuenta.nombre} sub={REGLA[clase]} tam="xl" acciones={
+    <Modal titulo={<TituloCuenta clase={cuenta.clase}>{nombreActual}</TituloCuenta>} sub={REGLA[clase]} tam="xl" acciones={
         <>
           {/* El modal tapa el encabezado: aqui va la misma pildora (estado compartido). */}
           <VistaSaldos rol={usuario.rol} />
           <VerTodo href={`/v2/finanzas?cuenta=${slug}`}>Toda Finanzas →</VerTodo>
         </>
       }>
-      <div className="tabs" style={{ marginTop: 0 }}>
-        {cuentas.map((c) => (
-          <CambiarModal key={c.id} href={`/v2/m/cuenta/${slugDeClase(c.clase)}`} className={c.id === cuenta.id ? 'on' : ''}>
-            {c.clase ? NOMBRE[c.clase] ?? c.nombre : c.nombre} · {mxn(c.saldo)}
-          </CambiarModal>
-        ))}
+      {/* Enfoque (Norman, 2026-10-30): la cuenta abierta es la protagonista. Las demas
+          cuentas y el total van chicos y atenuados, como contexto. */}
+      <CabeceraCuenta
+        clase={cuenta.clase}
+        saldo={cuenta.saldo}
+        chips={
+          <>
+            <span className="chip">{cuenta.tipo_fiscalidad ?? 'fiscalidad sin dato'}</span>
+            {cuenta.solo_egresos && <span className="chip warn">solo egresos</span>}
+            <span className="chip">clase {cuenta.clase}</span>
+          </>
+        }
+      >
+        <div className="cifras vs-chicas">
+          <div>
+            Saldo de arranque<b>{mxn(arranque)}</b>
+          </div>
+          <div>
+            Entró desde el corte<b className="pos">{mxn(entro)}</b>
+          </div>
+          <div>
+            Salió desde el corte<b className="neg">{mxn(salio)}</b>
+          </div>
+        </div>
+        <div className="vs-sum vs-aporta">
+          {pctDelTotal === null ? (
+            <>de un total de <b>{mxn(totalTodas)}</b> en las {cuentas.length} cuentas</>
+          ) : (
+            <>
+              <b>{pctDelTotal}%</b> de <b>{mxn(totalTodas)}</b>, el total de las {cuentas.length} cuentas
+            </>
+          )}
+        </div>
+      </CabeceraCuenta>
+
+      <div className="vs-ind">
+        <OtrasCuentas
+          como="cambiar"
+          cuentas={cuentas
+            .filter((c) => c.id !== cuenta.id)
+            .map((c) => ({
+              id: c.id,
+              nombre: nombreCuenta.get(c.id) ?? c.nombre,
+              saldo: c.saldo,
+              href: `/v2/m/cuenta/${slugDeClase(c.clase)}`,
+              clase: c.clase
+            }))}
+        />
       </div>
 
-      <div className="vs-sum vs-cuenta">
+      <div className={`check ${ok ? '' : 'mal'}`}>
+        {ok
+          ? `Cuadra: la suma de los ${nCuentan} movimientos que cuentan para el saldo (de ${movs.length} filas de la cuenta; la tabla muestra ${visibles.length}) da ${mxn(reconstruido)} = saldo_cuenta() de la base.`
+          : `NO cuadra: los ${nCuentan} movimientos que cuentan para el saldo suman ${mxn(reconstruido)} y saldo_cuenta() dice ${mxn(cuenta.saldo)} (diferencia ${mxn(reconstruido - cuenta.saldo)}).`}
+      </div>
+
+      {/* Vista Sumado: el total y las demas cuentas como CONTEXTO (franja chica, la
+          cuenta abierta resaltada en el desglose); lo de todas juntas, plegado. */}
+      <div className="vs-sum vs-cuenta vs-contexto" data-clase={cuenta.clase ?? undefined}>
         <TodoJunto
           enlace="cambiar"
           marcada={cuenta.id}
@@ -168,31 +230,32 @@ export default async function CuentaV2({
             saldo: c.saldo,
             href: `/v2/m/cuenta/${slugDeClase(c.clase)}`,
             chip: c.solo_egresos ? 'solo egresos' : undefined,
-            nota: c.tipo_fiscalidad ?? undefined
+            nota: c.tipo_fiscalidad ?? undefined,
+            clase: c.clase
           }))}
         />
-        <div className="cifras" style={{ marginTop: 12 }}>
-          <div>
-            Saldo de arranque<b>{mxn(arranqueTodas)}</b>
-          </div>
-          <div>
-            Entró desde el corte<b className="pos">{mxn(entroTodas)}</b>
-          </div>
-          <div>
-            Salió desde el corte<b className="neg">{mxn(salioTodas)}</b>
-          </div>
-          <div>
-            Traspasos entre cuentas (neto)<b>{mxn(traspasosTodas)}</b>
-          </div>
-        </div>
-        <section className="card">
-          <div className="hd">
+        <details className="vs-plegable">
+          <summary>
+            Movimientos de las {cuentas.length} cuentas juntas <span className="muted">({movsTodas.length} filas · arranque, entró, salió y traspasos de todas)</span>
+          </summary>
+          <div className="cifras vs-chicas" style={{ marginTop: 10 }}>
             <div>
-              <h2>Movimientos · todas las cuentas</h2>
-              <div className="sub">Los de las {cuentas.length} cuentas juntos, con su cuenta. Un traspaso entre dos cuentas de la matriz sale y entra: junto, se netea. Las filas atenuadas no cuentan para el saldo.</div>
+              Saldo de arranque<b>{mxn(arranqueTodas)}</b>
+            </div>
+            <div>
+              Entró desde el corte<b className="pos">{mxn(entroTodas)}</b>
+            </div>
+            <div>
+              Salió desde el corte<b className="neg">{mxn(salioTodas)}</b>
+            </div>
+            <div>
+              Traspasos entre cuentas (neto)<b>{mxn(traspasosTodas)}</b>
             </div>
           </div>
-          <TablaMovimientos movs={visiblesTodas} nombres={nombres} esAdmin={esAdmin} cuentas={nombreCuenta} />
+          <div className="sub muted" style={{ fontSize: 12, marginBottom: 8 }}>
+            Un traspaso entre dos cuentas de la matriz sale y entra: junto, se netea. Las filas de {nombreActual} llevan la marca de color a la izquierda; las atenuadas no cuentan para el saldo.
+          </div>
+          <TablaMovimientos movs={visiblesTodas} nombres={nombres} esAdmin={esAdmin} cuentas={nombreCuenta} marcada={cuenta.id} />
           <div className="fuente">
             Mostrando {visiblesTodas.length} de {movsTodas.length} filas · finanzas_ledger (cuentas de la matriz)
           </div>
@@ -203,38 +266,7 @@ export default async function CuentaV2({
               </CambiarModal>
             </div>
           )}
-        </section>
-      </div>
-
-      <div className="vs-ind">
-      <div className="ph">
-        <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <span className="chip">{cuenta.tipo_fiscalidad ?? 'fiscalidad sin dato'}</span>
-          {cuenta.solo_egresos && <span className="chip warn">solo egresos</span>}
-          <span className="chip">clase {cuenta.clase}</span>
-        </span>
-      </div>
-
-      <div className="cifras">
-        <div>
-          Saldo hoy<b>{mxn(cuenta.saldo)}</b>
-        </div>
-        <div>
-          Saldo de arranque<b>{mxn(arranque)}</b>
-        </div>
-        <div>
-          Entró desde el corte<b className="pos">{mxn(entro)}</b>
-        </div>
-        <div>
-          Salió desde el corte<b className="neg">{mxn(salio)}</b>
-        </div>
-      </div>
-
-      <div className={`check ${ok ? '' : 'mal'}`}>
-        {ok
-          ? `Cuadra: la suma de los ${nCuentan} movimientos que cuentan para el saldo (de ${movs.length} filas de la cuenta; la tabla muestra ${visibles.length}) da ${mxn(reconstruido)} = saldo_cuenta() de la base.`
-          : `NO cuadra: los ${nCuentan} movimientos que cuentan para el saldo suman ${mxn(reconstruido)} y saldo_cuenta() dice ${mxn(cuenta.saldo)} (diferencia ${mxn(reconstruido - cuenta.saldo)}).`}
-      </div>
+        </details>
       </div>
 
       {clase === 'TRANSFERENCIAS' && transferencias && (
@@ -244,7 +276,6 @@ export default async function CuentaV2({
         </div>
       )}
 
-      <div className="vs-ind">
       <div className="grid g2">
         <section className="card">
           <div className="hd">
@@ -294,7 +325,7 @@ export default async function CuentaV2({
       <section className="card">
         <div className="hd">
           <div>
-            <h2>Movimientos</h2>
+            <h2>Movimientos · {nombreActual}</h2>
             <div className="sub">Columnas del ERP (finanzas_ledger). Las filas atenuadas no cuentan para el saldo (anuladas, ABONO_PENDIENTE o que no mueven esta cuenta). Anular marca ANULADO, no borra.</div>
           </div>
         </div>
@@ -310,7 +341,6 @@ export default async function CuentaV2({
           </div>
         )}
       </section>
-      </div>
     </Modal>
   )
 }

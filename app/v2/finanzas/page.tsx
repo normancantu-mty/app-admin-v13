@@ -15,6 +15,11 @@
  * Saldos «Individual | Sumado» (2026-10-30, ejecutor de saldos del Socio): en
  * Sumado, la fila de tarjetas se cambia por «Todo junto» (total de las cuentas y
  * lo que aporta cada una). Las dos vistas se pintan; el CSS esconde una.
+ *
+ * Enfoque (2026-10-30, Norman): con `?cuenta=x` esa cuenta es la protagonista
+ * (cabecera con su color y su saldo grande); las demas tarjetas van chicas y
+ * atenuadas, y en Sumado el total es contexto con la cuenta resaltada. Sin
+ * cuenta elegida, todo queda como estaba. Solo jerarquia: ninguna cifra cambio.
  */
 
 import Form from 'next/form'
@@ -47,6 +52,7 @@ import { fechaMx, mesMx, mxn, nombreMesCorto, rangoMeses } from '@/lib/v2/format
 import { AbrirModal, CambiarModal } from '@/components/v2/modal/AbrirModal'
 import { EncabezadoPagina } from '@/components/v2/pagina/Encabezado'
 import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
+import { CabeceraCuenta, TituloCuenta } from '@/components/v2/saldos/CabeceraCuenta'
 import { EgresosPorCategoria, filasPedidas, TablaMovimientos, TANDA } from '@/components/v2/finanzas/Movimientos'
 import { BarrasMes, Leyenda } from '@/components/v2/graficas'
 import TransferenciasCard from '@/components/v2/cuentas/TransferenciasCard'
@@ -138,6 +144,8 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
   const iva = pasivo ? Number(pasivo.iva_por_pagar) : null
   const ieps = pasivo ? Number(pasivo.ieps_por_pagar) : null
   const totalCuentas = redondear(cuentas.reduce((a, c) => a + c.saldo, 0))
+  // Presentacion: lo que la cuenta elegida aporta al total (misma regla que «Todo junto»).
+  const pctDelTotal = cuenta && totalCuentas > 0 && cuenta.saldo >= 0 ? Math.round((cuenta.saldo / totalCuentas) * 1000) / 10 : null
 
   return (
     <>
@@ -160,7 +168,37 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
             Toca una para ver solo sus movimientos y egresos.
           </span>
         </div>
-        <div className="vs-sum">
+        {cuenta && (
+          <div className="vs-foco-fin">
+            <h3 className="vs-foco-nom">
+              <TituloCuenta clase={cuenta.clase}>{nombreCuenta.get(cuenta.id)}</TituloCuenta>
+            </h3>
+            <CabeceraCuenta
+              clase={cuenta.clase}
+              saldo={cuenta.saldo}
+              chips={
+                <>
+                  <span className="chip">{cuenta.tipo_fiscalidad ?? 'fiscalidad sin dato'}</span>
+                  {cuenta.solo_egresos && <span className="chip warn">solo egresos</span>}
+                  {cuenta.clase === 'TRANSFERENCIAS' && transferencias ? (
+                    <span className="chip">por convertir {mxn(transferencias.pendienteMonto)}</span>
+                  ) : null}
+                </>
+              }
+            >
+              <div className="vs-aporta">
+                {pctDelTotal === null ? (
+                  <>de un total de <b>{mxn(totalCuentas)}</b> en las {cuentas.length} cuentas</>
+                ) : (
+                  <>
+                    <b>{pctDelTotal}%</b> de <b>{mxn(totalCuentas)}</b>, el total de las {cuentas.length} cuentas
+                  </>
+                )}
+              </div>
+            </CabeceraCuenta>
+          </div>
+        )}
+        <div className="vs-sum" data-clase={cuenta?.clase ?? undefined}>
           <TodoJunto
             enlace="cambiar"
             marcada={cuenta?.id}
@@ -173,7 +211,8 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
               saldo: c.saldo,
               href: query({ cuenta: slugDeClase(c.clase), filas: null }),
               chip: c.solo_egresos ? 'solo egresos' : undefined,
-              nota: c.tipo_fiscalidad ?? undefined
+              nota: c.tipo_fiscalidad ?? undefined,
+              clase: c.clase
             }))}
           />
           {cuenta && (
@@ -185,7 +224,7 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
             </p>
           )}
         </div>
-        <div className="kpis vs-ind">
+        <div className={`kpis vs-ind${cuenta ? ' vs-kpis-foco' : ''}`}>
           <Link href={query({ cuenta: null, filas: null })} replace scroll={false} className={`kpi ${slug === 'todas' ? 'on' : ''}`} data-testid="fin-cuenta-todas">
             <span className="t">Todas las cuentas</span>
             <span className="v">{mxn(totalCuentas)}</span>
@@ -194,7 +233,7 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
           {cuentas.map((c) => {
             const s = slugDeClase(c.clase)
             return (
-              <Link key={c.id} href={query({ cuenta: s, filas: null })} replace scroll={false} className={`kpi ${cuenta?.id === c.id ? 'on' : ''}`} data-testid={`fin-cuenta-${s}`}>
+              <Link key={c.id} href={query({ cuenta: s, filas: null })} replace scroll={false} className={`kpi ${cuenta?.id === c.id ? 'on' : ''}`} data-clase={c.clase ?? undefined} data-testid={`fin-cuenta-${s}`}>
                 <span className="t">{nombreCuenta.get(c.id)}</span>
                 <span className="v">{mxn(c.saldo)}</span>
                 <span className="d">

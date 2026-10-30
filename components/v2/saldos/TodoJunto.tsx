@@ -32,6 +32,8 @@ export interface FilaTodoJunto {
   chip?: string
   /** Una linea de detalle bajo el nombre. */
   nota?: ReactNode
+  /** Clase de la cuenta (EFECTIVO, FISCAL...): da el color cuando la fila es la marcada. */
+  clase?: string | null
 }
 
 export interface FotoCompleta {
@@ -52,13 +54,25 @@ function pct(parte: number, total: number): number | null {
   return Math.round((parte / total) * 1000) / 10
 }
 
-function Envolver({ como, href, titulo, children }: { como: 'abrir' | 'cambiar'; href: string; titulo: string; children: ReactNode }) {
+function Envolver({
+  como,
+  href,
+  titulo,
+  className,
+  children
+}: {
+  como: 'abrir' | 'cambiar'
+  href: string
+  titulo: string
+  className: string
+  children: ReactNode
+}) {
   return como === 'abrir' ? (
-    <AbrirModal href={href} titulo={titulo} className="vs-fila">
+    <AbrirModal href={href} titulo={titulo} className={className}>
       {children}
     </AbrirModal>
   ) : (
-    <CambiarModal href={href} className="vs-fila">
+    <CambiarModal href={href} className={className}>
       {children}
     </CambiarModal>
   )
@@ -91,9 +105,9 @@ export function TodoJunto({
   const posicion = foto && foto.impuestos !== null ? redondear(total + foto.porCobrar - foto.impuestos) : null
 
   return (
-    <div className="vs-junto" data-testid="todo-junto">
+    <div className={`vs-junto${marcada ? ' vs-foco' : ''}`} data-testid="todo-junto">
       <div className="vs-total">
-        <span className="t">Todo junto · {filas.length} cuentas de la matriz</span>
+        <span className="t">{marcada ? 'Contexto · ' : ''}Todo junto · {filas.length} cuentas de la matriz</span>
         <span className="v">{mxn(total)}</span>
         <span className="d">
           Suma de saldo_cuenta() de {filas.map((f) => f.nombre).join(' + ')}
@@ -105,14 +119,17 @@ export function TodoJunto({
       <div className="vs-desglose">
         {filas.map((f) => {
           const p = pct(f.saldo, total)
+          // Con una cuenta marcada (modal de cuenta, /v2/finanzas?cuenta=x) esa fila es
+          // la protagonista y las demas van chicas y atenuadas.
+          const foco = marcada ? (marcada === f.id ? ' on' : ' otra') : ''
           return (
-            <Envolver key={f.id} como={enlace} href={f.href} titulo={f.nombre}>
-              <span className={`vs-nom${marcada === f.id ? ' on' : ''}`}>
+            <Envolver key={f.id} como={enlace} href={f.href} titulo={f.nombre} className={`vs-fila${foco}`}>
+              <span className={`vs-nom${marcada === f.id ? ' on' : ''}`} data-clase={f.clase ?? undefined}>
                 <b>{f.nombre}</b>
                 {f.chip && <span className="chip warn">{f.chip}</span>}
                 {f.nota && <small>{f.nota}</small>}
               </span>
-              <span className="vs-m">
+              <span className="vs-m" data-clase={f.clase ?? undefined}>
                 <b className={f.saldo < 0 ? 'neg' : undefined}>{mxn(f.saldo)}</b>
                 <small>{p === null ? (f.saldo < 0 ? 'resta al total' : '—') : `${p}% del total`}</small>
                 <span className="barra">

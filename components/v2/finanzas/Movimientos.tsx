@@ -42,6 +42,7 @@ export function TablaMovimientos({
   nombres,
   esAdmin,
   cuentas,
+  marcada,
   pie
 }: {
   movs: MovimientoConEfecto[]
@@ -49,6 +50,8 @@ export function TablaMovimientos({
   esAdmin: boolean
   /** Con varias cuentas a la vista: id -> nombre, y se pinta la columna «Cuenta». */
   cuentas?: Map<string, string>
+  /** Con varias cuentas: id de la cuenta que se esta viendo; sus filas llevan una marca a la izquierda. */
+  marcada?: string
   pie?: ReactNode
 }) {
   const conCuenta = Boolean(cuentas)
@@ -78,7 +81,11 @@ export function TablaMovimientos({
               const origen = nombreCuenta(m.id_cuenta_origen)
               const destino = nombreCuenta(m.id_cuenta_destino)
               return (
-                <tr key={m.id} style={motivo ? { opacity: 0.5 } : undefined}>
+                <tr
+                  key={m.id}
+                  className={marcada && (m.id_cuenta_origen === marcada || m.id_cuenta_destino === marcada) ? 'vs-mov-on' : undefined}
+                  style={motivo ? { opacity: 0.5 } : undefined}
+                >
                   {esAdmin && <td>{anulable(m) ? <CasillaAnular id={m.id} /> : null}</td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{fechaHoraMx(m.fecha_movimiento)}</td>
                   <td>
