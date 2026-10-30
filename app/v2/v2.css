@@ -401,3 +401,16 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
   .v2 .m-caja { border: 0; box-shadow: none; max-width: none; background: #fff; color: #000; }
   .v2 { background: #fff; min-height: 0; }
 }
+
+/* Apartado de sesion del encabezado (SesionMenu en components/v2/Marco.tsx). 2026-10-30, ejecutor del Socio. */
+.v2 .sesion { position: relative; }
+.v2 .sesion-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; padding: 5px 8px; border-radius: 999px; background: transparent; cursor: pointer; font: inherit; font-size: 12px; color: var(--ink-2); }
+.v2 .sesion-btn:hover:not(:disabled), .v2 .sesion-btn[aria-expanded=true] { border-color: var(--line-2); }
+.v2 .sesion-btn:disabled { cursor: progress; }
+.v2 .sesion-flecha { color: var(--muted); font-size: 10px; }
+.v2 .sesion-estado { color: var(--muted); font-weight: 600; }
+.v2 .sesion-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 190px; display: flex; flex-direction: column; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: var(--shadow-up); }
+.v2 .sesion-menu button { text-align: left; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+.v2 .sesion-menu button:hover, .v2 .sesion-menu button:focus-visible { background: var(--chile-soft); }
+.v2 .sesion-menu button.peligro { color: var(--texto-neg); }
+@media (max-width: 600px) { .v2 .sesion-menu { left: 0; right: auto; } }

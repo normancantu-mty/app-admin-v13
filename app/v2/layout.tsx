@@ -13,7 +13,7 @@
 import type { ReactNode } from 'react'
 import { exigirSesionV2 } from '@/lib/v2/puerta'
 import { ProveedorModal } from '@/components/v2/modal/ProveedorModal'
-import { Salir, TemaSelector } from '@/components/v2/Marco'
+import { SesionMenu, TemaSelector } from '@/components/v2/Marco'
 import { PrivacidadV2 } from '@/components/v2/Privacidad'
 import './v2.css'
 
@@ -37,12 +37,9 @@ export default async function LayoutV2({ children, modal }: { children: ReactNod
               </span>
             </a>
             <div className="der">
-              <span className="quien" data-testid="v2-usuario">
-                {usuario.nombre} · {usuario.rol}
-              </span>
+              <SesionMenu nombre={usuario.nombre} rol={usuario.rol} />
               <PrivacidadV2 />
               <TemaSelector />
-              <Salir />
             </div>
           </div>
         </header>

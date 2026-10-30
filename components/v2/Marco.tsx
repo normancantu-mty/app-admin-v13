@@ -6,7 +6,7 @@
  * de enviar con indicador de carga. Escrito el 2026-10-29 por el ejecutor del Socio.
  */
 
-import { useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { useFormStatus } from 'react-dom'
@@ -61,6 +61,81 @@ export function Salir() {
     >
       {saliendo ? 'Saliendo…' : 'Salir'}
     </button>
+  )
+}
+
+/**
+ * El apartado de sesion del encabezado: "nombre · rol" abre un menu con
+ * "Cambiar de usuario" y "Cerrar sesion". Escrito el 2026-10-30 por el ejecutor
+ * del Socio; sustituye al boton `Salir` suelto en `app/v2/layout.tsx`.
+ *
+ * - `data-testid="v2-usuario"` sigue en el texto del nombre (lo usan los E2E).
+ * - "Saliendo…" se pinta en el mismo clic, antes de esperar a Supabase.
+ * - `signOut({ scope: 'local' })`: cierra la sesion de ESTE navegador. El
+ *   default de supabase-js es `global`, que tambien saca al usuario de su
+ *   celular y de cualquier otra pestana — mal para "cambiar de usuario" en una
+ *   compu compartida.
+ * - "Cambiar de usuario" lleva a `/login?cambiar=1`: correo vacio y enfocado.
+ */
+export function SesionMenu({ nombre, rol }: { nombre: string; rol: string }) {
+  const router = useRouter()
+  const [abierto, setAbierto] = useState(false)
+  const [saliendo, setSaliendo] = useState(false)
+  const caja = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!abierto) return
+    const fuera = (e: MouseEvent) => {
+      if (caja.current && !caja.current.contains(e.target as Node)) setAbierto(false)
+    }
+    const tecla = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAbierto(false)
+    }
+    document.addEventListener('mousedown', fuera)
+    document.addEventListener('keydown', tecla)
+    return () => {
+      document.removeEventListener('mousedown', fuera)
+      document.removeEventListener('keydown', tecla)
+    }
+  }, [abierto])
+
+  const salir = async (destino: '/login' | '/login?cambiar=1') => {
+    setAbierto(false)
+    setSaliendo(true)
+    try {
+      await supabase.auth.signOut({ scope: 'local' })
+    } finally {
+      router.replace(destino)
+      router.refresh()
+    }
+  }
+
+  return (
+    <div className="sesion" ref={caja}>
+      <button
+        type="button"
+        className="sesion-btn"
+        aria-haspopup="menu"
+        aria-expanded={abierto}
+        disabled={saliendo}
+        onClick={() => setAbierto((v) => !v)}
+      >
+        <span className="quien" data-testid="v2-usuario">
+          {nombre} · {rol}
+        </span>
+        {saliendo ? <span className="sesion-estado">Saliendo…</span> : <span aria-hidden className="sesion-flecha">▾</span>}
+      </button>
+      {abierto ? (
+        <div className="sesion-menu" role="menu">
+          <button type="button" role="menuitem" onClick={() => salir('/login?cambiar=1')}>
+            Cambiar de usuario
+          </button>
+          <button type="button" role="menuitem" className="peligro" onClick={() => salir('/login')}>
+            Cerrar sesión
+          </button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
