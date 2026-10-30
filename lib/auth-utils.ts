@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
+import { CABECERA_SESION_VERIFICADA } from './cabecera-sesion'
 
 // ============================================================================
 // SERVER-SIDE AUTH UTILITIES
@@ -69,6 +70,34 @@ export async function getAuthUser(): Promise<{ id: string; email: string } | nul
 }
 
 /**
+ * `sub` y `email` del access token de la sesion, SIN viaje de red y SIN
+ * verificar la firma: solo sirve si lo que sigue es una consulta a PostgREST con
+ * ese mismo cliente (que manda ese mismo JWT y lo verifica). `getSession()`
+ * refresca el token si ya vencio, igual que lo hacia `getUser()` por dentro.
+ */
+async function usuarioDelToken(
+  supabase: Awaited<ReturnType<typeof crearClienteDeLectura>>
+): Promise<{ id: string; email: string } | null> {
+  const {
+    data: { session },
+    error
+  } = await supabase.auth.getSession()
+  if (error || !session?.access_token) return null
+  const partes = session.access_token.split('.')
+  if (partes.length !== 3) return null
+  try {
+    const reclamos = JSON.parse(Buffer.from(partes[1], 'base64url').toString('utf8')) as {
+      sub?: unknown
+      email?: unknown
+    }
+    if (typeof reclamos.sub !== 'string' || typeof reclamos.email !== 'string' || !reclamos.email) return null
+    return { id: reclamos.sub, email: reclamos.email }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Get current logged-in user from server-side
  * Use this in Server Components to fetch user role and apply permissions
  */
@@ -76,12 +105,28 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   try {
     const supabase = await crearClienteDeLectura()
 
-    const {
-      data: { user },
-      error: authError
-    } = await supabase.auth.getUser()
-
-    if (authError || !user?.email) {
+    // PERF (2026-10-30): si `proxy.ts` ya verifico la sesion en ESTA peticion
+    // (cabecera interna con el `sub` verificado, que la puerta borra de toda
+    // peticion entrante), no se repite el viaje de red a Auth: era uno en CADA
+    // render, en serie antes de cualquier lectura. La identidad sale entonces
+    // del `sub` del access token, y aun asi NO se le cree a la cookie: debe
+    // coincidir con el que verifico la puerta, y la consulta a `entidades` de
+    // abajo viaja autenticada con ESE MISMO JWT, que PostgREST verifica (firma
+    // y expiracion; alterado o vencido = 401 = `null`). No se usa `session.user`
+    // (un JSON de la cookie editable sin tocar la firma). Sin la cabecera (una
+    // ruta fuera de la puerta, como `/api/...`), todo sigue como antes: `getUser()`.
+    const verificadoPorLaPuerta = (await headers()).get(CABECERA_SESION_VERIFICADA)
+    const delToken = verificadoPorLaPuerta ? await usuarioDelToken(supabase) : null
+    let user: { id: string; email?: string } | null = delToken && delToken.id === verificadoPorLaPuerta ? delToken : null
+    if (!user) {
+      const {
+        data: { user: deAuth },
+        error: authError
+      } = await supabase.auth.getUser()
+      if (authError) return null
+      user = deAuth
+    }
+    if (!user?.email) {
       return null
     }
 
