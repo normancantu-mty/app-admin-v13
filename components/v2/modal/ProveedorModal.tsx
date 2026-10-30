@@ -182,6 +182,18 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={valor}>{children}</Ctx.Provider>
 }
 
+/**
+ * Dentro de un <Modal>: el mismo estado, pero con `cerrar` envuelto para que el
+ * modal se oculte en el mismo frame (cierre optimista). Asi tambien los botones
+ * «Cancelar» de los formularios, que llaman `useModalV2().cerrar`, cierran al
+ * instante sin tocar cada formulario.
+ */
+export function CerrarLocal({ cerrar, children }: { cerrar: (padre?: string) => void; children: ReactNode }) {
+  const v = useModalV2()
+  const valor = useMemo(() => ({ ...v, cerrar }), [v, cerrar])
+  return <Ctx.Provider value={valor}>{children}</Ctx.Provider>
+}
+
 export function useModalV2(): EstadoModal {
   const v = useContext(Ctx)
   if (!v) throw new Error('useModalV2 fuera de ProveedorModal')

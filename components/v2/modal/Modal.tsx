@@ -6,8 +6,8 @@
  * mientras esta abierto. Si el esqueleto ya se vio, no repite la animacion.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useModalV2 } from './ProveedorModal'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { CerrarLocal, useModalV2 } from './ProveedorModal'
 
 export type TamModal = 'sm' | 'md' | 'lg' | 'xl'
 
@@ -35,12 +35,26 @@ export function Modal({
     olvidarEsqueleto()
   }, [olvidarEsqueleto])
   const caja = useRef<HTMLDivElement>(null)
+  // Cierre optimista (2026-10-30): el modal se oculta en el MISMO frame de la
+  // X/Esc/fondo y la navegacion corre detras. Oculto (no desmontado): si la
+  // navegacion se descarta, el formulario no pierde lo escrito. Una vez oculto ya
+  // no escucha Esc: un segundo Esc no dispara otro `back()`.
+  const [oculto, setOculto] = useState(false)
+  const cerrarOptimista = useCallback(
+    (destino?: string) => {
+      setOculto(true)
+      cerrar(destino)
+    },
+    [cerrar]
+  )
+  const salir = useCallback(() => cerrarOptimista(padre), [cerrarOptimista, padre])
 
   useEffect(() => {
+    if (oculto) return
     const previo = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const alTecla = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cerrar(padre)
+      if (e.key === 'Escape') salir()
     }
     window.addEventListener('keydown', alTecla)
     caja.current?.focus({ preventScroll: true })
@@ -48,36 +62,40 @@ export function Modal({
       document.body.style.overflow = previo
       window.removeEventListener('keydown', alTecla)
     }
-  }, [cerrar, padre])
+  }, [salir, oculto])
 
   return (
-    <div
-      className={`m-fondo${sinAnim ? ' sin-anim' : ''}`}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) cerrar(padre)
-      }}
-    >
+    <CerrarLocal cerrar={cerrarOptimista}>
       <div
-        ref={caja}
-        tabIndex={-1}
-        className={`m-caja ${tam}${sinAnim ? ' sin-anim' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={typeof titulo === 'string' ? titulo : undefined}
-        data-modal-v2
+        className={`m-fondo${sinAnim ? ' sin-anim' : ''}`}
+        hidden={oculto}
+        style={oculto ? { display: 'none' } : undefined}
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) salir()
+        }}
       >
-        <div className="m-hd">
-          <div className="m-tit">
-            <h2>{titulo}</h2>
-            {sub ? <div className="m-sub">{sub}</div> : null}
+        <div
+          ref={caja}
+          tabIndex={-1}
+          className={`m-caja ${tam}${sinAnim ? ' sin-anim' : ''}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label={typeof titulo === 'string' ? titulo : undefined}
+          data-modal-v2
+        >
+          <div className="m-hd">
+            <div className="m-tit">
+              <h2>{titulo}</h2>
+              {sub ? <div className="m-sub">{sub}</div> : null}
+            </div>
+            {acciones ? <div className="m-acc">{acciones}</div> : null}
+            <button type="button" className="m-cerrar" aria-label="Cerrar" onClick={salir}>
+              ×
+            </button>
           </div>
-          {acciones ? <div className="m-acc">{acciones}</div> : null}
-          <button type="button" className="m-cerrar" aria-label="Cerrar" onClick={() => cerrar(padre)}>
-            ×
-          </button>
+          <div className="m-bd">{children}</div>
         </div>
-        <div className="m-bd">{children}</div>
       </div>
-    </div>
+    </CerrarLocal>
   )
 }
