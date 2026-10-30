@@ -29,6 +29,8 @@ import { usePathname, useRouter } from 'next/navigation'
 
 type EstadoModal = {
   alAbrir: () => void
+  /** Cancela una apertura que aun carga (X/Esc/fondo del esqueleto). No pide nada al servidor. */
+  cancelarApertura: () => void
   marcarCambio: () => void
   hayCambio: () => boolean
   /** Cierra el modal. `padre` es a donde se vuelve si hubo cambios (por defecto el panel). */
@@ -107,6 +109,16 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
     if (!esModal(window.location.pathname)) base.current = rutaActualSinAct()
     pila.current += 1
   }, [])
+  const cancelarApertura = useCallback(() => {
+    if (pila.current > 0) pila.current -= 1
+    esqueletoVisto.current = false
+    // 2026-10-30: el router de Next descarta la navegacion pendiente cuando llega
+    // otra navegacion o un RESTORE. `history.replaceState` con la URL ACTUAL es un
+    // RESTORE (Next parcha `history`): descarta la apertura sin pedir nada al
+    // servidor y sin repintar el panel (un `router.replace` a la misma URL volveria
+    // a leer toda la pagina dinamica). Si la respuesta llega despues, se ignora.
+    window.history.replaceState(null, '', window.location.href)
+  }, [])
   const marcarCambio = useCallback(() => {
     cambio.current = true
   }, [])
@@ -155,6 +167,7 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
   const valor = useMemo(
     () => ({
       alAbrir,
+      cancelarApertura,
       marcarCambio,
       hayCambio,
       cerrar,
@@ -164,7 +177,7 @@ export function ProveedorModal({ children }: { children: ReactNode }) {
       leerEsqueletoVisto,
       olvidarEsqueleto
     }),
-    [alAbrir, marcarCambio, hayCambio, cerrar, irTrasGuardar, refrescar, marcarEsqueletoVisto, leerEsqueletoVisto, olvidarEsqueleto]
+    [alAbrir, cancelarApertura, marcarCambio, hayCambio, cerrar, irTrasGuardar, refrescar, marcarEsqueletoVisto, leerEsqueletoVisto, olvidarEsqueleto]
   )
   return <Ctx.Provider value={valor}>{children}</Ctx.Provider>
 }

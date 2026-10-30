@@ -11,7 +11,7 @@
  */
 
 import Link, { useLinkStatus } from 'next/link'
-import { useEffect, useSyncExternalStore, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useModalV2 } from './ProveedorModal'
 import { EsqueletoModal } from './Esqueleto'
@@ -22,15 +22,17 @@ const sinSuscripcion = () => () => {}
 const nodoPortal = () => document.getElementById('v2-portal') ?? document.body
 const sinPortal = () => null
 
-function Pendiente({ titulo, tam }: { titulo?: string; tam?: TamModal }) {
+function Pendiente({ titulo, tam, cancelado, alCancelar }: { titulo?: string; tam?: TamModal; cancelado: boolean; alCancelar: () => void }) {
   const { pending } = useLinkStatus()
   const { marcarEsqueletoVisto } = useModalV2()
   const destino = useSyncExternalStore(sinSuscripcion, nodoPortal, sinPortal)
   useEffect(() => {
-    if (pending) marcarEsqueletoVisto()
-  }, [pending, marcarEsqueletoVisto])
-  if (!pending || !destino) return null
-  return createPortal(<EsqueletoModal titulo={titulo} tam={tam} />, destino)
+    if (pending && !cancelado) marcarEsqueletoVisto()
+  }, [pending, cancelado, marcarEsqueletoVisto])
+  // `cancelado` oculta el esqueleto en el MISMO frame del clic en la X, sin
+  // esperar a que el router suelte `pending`.
+  if (!pending || cancelado || !destino) return null
+  return createPortal(<EsqueletoModal titulo={titulo} tam={tam} alCerrar={alCancelar} />, destino)
 }
 
 export function AbrirModal({
@@ -51,11 +53,23 @@ export function AbrirModal({
   title?: string
   'data-testid'?: string
 }) {
-  const { alAbrir } = useModalV2()
+  const { alAbrir, cancelarApertura } = useModalV2()
+  // Cada clic es un intento; cancelar marca ESE intento. Un clic nuevo vuelve a
+  // mostrar el esqueleto aunque el anterior se haya cancelado.
+  const [intento, setIntento] = useState(0)
+  const [cancelado, setCancelado] = useState(-1)
+  const alClic = () => {
+    setIntento((i) => i + 1)
+    alAbrir()
+  }
+  const alCancelar = useCallback(() => {
+    setCancelado(intento)
+    cancelarApertura()
+  }, [intento, cancelarApertura])
   return (
-    <Link href={href} scroll={false} prefetch={false} className={className} onClick={alAbrir} title={title} data-testid={testId}>
+    <Link href={href} scroll={false} prefetch={false} className={className} onClick={alClic} title={title} data-testid={testId}>
       {children}
-      <Pendiente titulo={titulo} tam={tam} />
+      <Pendiente titulo={titulo} tam={tam} cancelado={cancelado === intento} alCancelar={alCancelar} />
     </Link>
   )
 }
