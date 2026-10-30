@@ -23,7 +23,7 @@ defecto apuntan a produccion. -Patron y -Prefijo los usa corte_rollback_aplicar.
 param(
     [Parameter(Mandatory = $true)][string]$Archivo,
     [Parameter(Mandatory = $true)][string]$Confirmar,
-    [string]$Servidor = 'aws-0-us-west-1.pooler.supabase.com',
+    [string]$Servidor = 'aws-1-us-west-1.pooler.supabase.com',
     [int]$Puerto = 5432,
     [string]$Usuario = 'postgres.gnnqxtsdrbvmlkhfemjw',
     [string]$BaseDatos = 'postgres',
