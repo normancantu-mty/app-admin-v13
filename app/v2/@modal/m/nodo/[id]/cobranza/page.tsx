@@ -20,22 +20,21 @@ export default async function ModalCobranza({ params }: { params: Promise<{ id: 
   if (usuario.rol !== 'ADMIN' && usuario.rol !== 'DST') notFound()
   const { id } = await params
   const supabase = await getServerSupabaseClient()
-  const { data: objetivo } = await supabase
-    .from('entidades')
-    .select('id, nombre, rol, id_nodo_padre, id_padre, comision_base, comision_base_local')
-    .eq('id', id)
-    .single()
+  // 2026-10-30: las dos lecturas no dependen una de otra -> en paralelo (antes, en serie).
+  const [{ data: objetivo }, { data: cuentasDestino }] = await Promise.all([
+    supabase
+      .from('entidades')
+      .select('id, nombre, rol, id_nodo_padre, id_padre, comision_base, comision_base_local')
+      .eq('id', id)
+      .single(),
+    supabase.from('cuentas_financieras').select('id, nombre, tipo_fiscalidad').eq('id_entidad', usuario.id).order('nombre', { ascending: true })
+  ])
   if (!objetivo) notFound()
   const padreId = objetivo.id_nodo_padre ?? objetivo.id_padre
   const puedeAuditar = usuario.rol === 'ADMIN' || usuario.id === objetivo.id || (usuario.rol === 'DST' && padreId === usuario.id)
   if (!puedeAuditar) notFound()
   const padre = padreDeNodo(id, usuario)
 
-  const { data: cuentasDestino } = await supabase
-    .from('cuentas_financieras')
-    .select('id, nombre, tipo_fiscalidad')
-    .eq('id_entidad', usuario.id)
-    .order('nombre', { ascending: true })
   const cuentas = cuentasDestino ?? []
 
   let cuerpo: React.ReactNode
