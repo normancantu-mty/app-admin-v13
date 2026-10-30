@@ -103,7 +103,8 @@ export async function CarteraVista({ fichaEnPagina = false }: { fichaEnPagina?: 
             <tbody>
               {matriz.map((f, i) => {
                 // Ronda 2, A7: sin columna «% pagado»; va en gris debajo de la deuda. Nulo = «Sin dato», no 0.
-                const pct = f.porcentaje_pagado === null || f.porcentaje_pagado === undefined ? null : Math.round(Number(f.porcentaje_pagado))
+                // La vista trae FRACCION 0-1 (E-243): x100 (corregido 2026-10-30, ejecutor de cobranza).
+                const pct = f.porcentaje_pagado === null || f.porcentaje_pagado === undefined ? null : Math.round(Number(f.porcentaje_pagado) * 100)
                 return (
                   <tr key={f.id_entidad}>
                     <td className="mono">{i + 1}</td>
