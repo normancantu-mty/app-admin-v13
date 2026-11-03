@@ -222,7 +222,7 @@ test.describe('Cableado: la pantalla dice lo mismo leyendo de las vistas', () =>
       if (bucket) cuentaIdABucket.set(c.id, bucket)
     }
 
-    const TIPOS_INGRESO = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO', 'SALDO_INICIAL'])
+    const TIPOS_INGRESO = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO', 'SALDO_INICIAL', 'AJUSTE_SALDO'])
     const TIPOS_EGRESO = new Set([
       'GASTO_OPERATIVO',
       'CARGO_DEUDA',

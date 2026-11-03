@@ -98,7 +98,7 @@ export function faltantesDeEmpaque(
  * `v_stock_por_cubeta` y de `stock_de_insumos` (migracion
  * `20260923075244_fase9_d92_envasado_no_deja_negativo.sql`).
  */
-const ENTRA = new Set(['ENTRADA_COMPRA', 'PRODUCCION', 'DEVOLUCION_FISICA', 'INGRESO_TRASPASO', 'ENTRADA_CONCESION'])
+const ENTRA = new Set(['ENTRADA_COMPRA', 'PRODUCCION', 'DEVOLUCION_FISICA', 'INGRESO_TRASPASO', 'ENTRADA_CONCESION', 'AJUSTE_INVENTARIO'])
 const SALE = new Set(['SALIDA_VENTA', 'MERMA', 'TRASPASO', 'EGRESO_TRASPASO', 'SALIDA_CONCESION', 'DEVOLUCION_FISICA'])
 
 export interface FilaLedgerStock {

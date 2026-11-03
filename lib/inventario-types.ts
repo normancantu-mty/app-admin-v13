@@ -10,7 +10,9 @@ export const INVENTARIO_TIPOS_MOVIMIENTO = [
   'ENTRADA_CONCESION',
   'SALIDA_CONCESION',
   'LIQUIDACION_INTERNA',
-  'ANULADO'
+  'ANULADO',
+  // v2 (2026-11-03): correccion del ADMIN, cantidad CON SIGNO hacia `id_entidad_destino`.
+  'AJUSTE_INVENTARIO'
 ] as const
 
 export type TipoMovimientoInventario = (typeof INVENTARIO_TIPOS_MOVIMIENTO)[number]
@@ -23,7 +25,10 @@ export const TIPOS_MOVIMIENTO_ENTRADA: readonly TipoMovimientoInventario[] = [
   'PRODUCCION',
   'DEVOLUCION_FISICA',
   'INGRESO_TRASPASO',
-  'ENTRADA_CONCESION'
+  'ENTRADA_CONCESION',
+  // v2 (2026-11-03, migracion 20261103120000): el ajuste del ADMIN suma en el destino
+  // con su signo (negativo = baja el stock). Misma lista que v_stock_por_cubeta.
+  'AJUSTE_INVENTARIO'
 ]
 
 export const TIPOS_MOVIMIENTO_SALIDA: readonly TipoMovimientoInventario[] = [

@@ -2090,6 +2090,46 @@ export type Database = {
         }
         Returns: number
       }
+      // v2 (2026-11-03, migracion 20261103120000): correcciones del ADMIN.
+      stock_ajustable: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          id_entidad: string
+          entidad: string
+          rol: string
+          id_producto: string
+          producto: string
+          sku: string | null
+          tipo_producto: string
+          unidad_medida: string | null
+          cubeta: string
+          stock: number
+        }[]
+      }
+      stock_en_cubeta: {
+        Args: { p_id_entidad: string; p_id_producto: string; p_cubeta: string }
+        Returns: number
+      }
+      ajustar_inventario: {
+        Args: {
+          p_id_entidad: string
+          p_id_producto: string
+          p_cubeta: string
+          p_valor_visto: number
+          p_valor_nuevo: number
+          p_motivo: string
+        }
+        Returns: Json
+      }
+      ajustar_saldo_cuenta: {
+        Args: {
+          p_id_cuenta: string
+          p_saldo_visto: number
+          p_saldo_nuevo: number
+          p_motivo: string
+        }
+        Returns: Json
+      }
       anular_ticket_atomica: {
         Args: {
           p_ticket_id: string

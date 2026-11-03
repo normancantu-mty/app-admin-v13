@@ -25,6 +25,7 @@ ON CONFLICT (id) DO NOTHING;
 DO $u$
 DECLARE
   r record;
+  v_existente uuid;
 BEGIN
   FOR r IN SELECT * FROM (VALUES
       ('a0000000-0000-4000-a000-0000000000a1'::uuid, 'normancantu@gmail.com', 'v2-local-admin',
@@ -35,6 +36,16 @@ BEGIN
   LOOP
     IF NOT EXISTS (SELECT 1 FROM public.entidades WHERE id = r.entidad) THEN
       RAISE NOTICE 'sin entidad % (falta 50_datos_produccion.sql): usuario % no se liga', r.entidad, r.correo;
+      CONTINUE;
+    END IF;
+
+    -- Si 50_datos_produccion.sql ya creo el usuario de produccion con ese correo (mismo UUID que
+    -- entidades.auth_id), se reutiliza: solo se le pone la clave de prueba (2026-11-03).
+    SELECT id INTO v_existente FROM auth.users WHERE email = r.correo AND id <> r.uid;
+    IF v_existente IS NOT NULL THEN
+      UPDATE auth.users SET encrypted_password = extensions.crypt(r.clave, extensions.gen_salt('bf')),
+        email_confirmed_at = coalesce(email_confirmed_at, now()) WHERE id = v_existente;
+      UPDATE public.entidades SET auth_id = v_existente, email = r.correo WHERE id = r.entidad;
       CONTINUE;
     END IF;
 

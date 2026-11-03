@@ -13,7 +13,8 @@
 
 import { mesMx } from './formato'
 
-export const TIPOS_INGRESO = ['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO', 'SALDO_INICIAL'] as const
+/** AJUSTE_SALDO (2026-11-03, migracion 20261103120000): correccion del ADMIN, monto CON SIGNO hacia el destino. */
+export const TIPOS_INGRESO = ['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO', 'SALDO_INICIAL', 'AJUSTE_SALDO'] as const
 export const TIPOS_EGRESO = [
   'GASTO_OPERATIVO',
   'CARGO_DEUDA',
@@ -199,7 +200,8 @@ export function dineroPorMes(
     meses.map((mes) => [mes, { mes, entro: 0, salio: 0, egresoPorCategoria: {} }])
   )
   for (const m of movs) {
-    if (!m.fecha_movimiento || m.tipo_movimiento === 'SALDO_INICIAL' || esTraspaso(m.tipo_movimiento)) continue
+    // AJUSTE_SALDO tampoco: corrige el saldo, no es dinero que entro ni salio en el mes.
+    if (!m.fecha_movimiento || m.tipo_movimiento === 'SALDO_INICIAL' || m.tipo_movimiento === 'AJUSTE_SALDO' || esTraspaso(m.tipo_movimiento)) continue
     const fila = porMes.get(mesMx(m.fecha_movimiento))
     if (!fila) continue
     const e = efectoEnCuentas(m, cuentas)
@@ -223,6 +225,8 @@ function etiquetaCascada(m: MovimientoDinero, idx: IndiceCategorias): string {
   switch (m.tipo_movimiento) {
     case 'SALDO_INICIAL':
       return 'Saldo de arranque'
+    case 'AJUSTE_SALDO':
+      return 'Ajustes de saldo'
     case 'INGRESO_VENTA':
       return 'Ventas'
     case 'ABONO_DEUDA':

@@ -442,6 +442,8 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
 .v2 .cob-punto.amarillo { background: #f2b420; }
 .v2 .cob-punto.verde { background: #3fbf5a; }
 .v2 .cob-lista { max-height: 420px; overflow-y: auto; margin: 0 -6px; padding: 0 6px; border-top: 1px solid var(--line); overscroll-behavior: contain; }
+/* Listas largas del panel principal: solo scroll, sin cambiar el acomodo. */
+.v2 .sem, .v2 .alertas, .v2 [data-testid="mis-locales"] .tabla-w { max-height: 420px; overflow-y: auto; overscroll-behavior: contain; }
 .v2 .cob-it { display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; padding: 9px 6px 9px 8px; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; align-items: center; transition: background-color .16s ease; }
 .v2 .cob-it:hover { background: var(--surface-2); }
 .v2 .cob-it.rojo { border-left-color: var(--crit); }

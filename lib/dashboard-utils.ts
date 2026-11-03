@@ -515,7 +515,8 @@ export async function getLiquidezPorCuenta(
 
     // v2: SALDO_INICIAL es el saldo de arranque de la cuenta (misma regla que
     // public.saldo_cuenta en SQL). No es ingreso del periodo: solo liquidez.
-    const tiposIngreso = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO', 'SALDO_INICIAL'])
+    // AJUSTE_SALDO (2026-11-03): correccion del ADMIN, monto con signo hacia el destino.
+    const tiposIngreso = new Set(['INGRESO_VENTA', 'ABONO_DEUDA', 'INGRESO_TRASPASO', 'SALDO_INICIAL', 'AJUSTE_SALDO'])
     const tiposEgreso = new Set([
       'GASTO_OPERATIVO',
       'CARGO_DEUDA',

@@ -109,6 +109,8 @@ const TIPOS_LEGIBLES: Record<string, string> = {
   INGRESO_TRASPASO: 'Traspaso recibido',
   EGRESO_TRASPASO: 'Traspaso enviado',
   SALDO_INICIAL: 'Saldo de arranque',
+  AJUSTE_SALDO: 'Ajuste de saldo (ADMIN)',
+  AJUSTE_INVENTARIO: 'Ajuste de inventario (ADMIN)',
   GASTO_OPERATIVO: 'Gasto',
   COMPRA_INSUMOS: 'Compra de insumos',
   SUBSIDIO_FISCAL: 'Subsidio fiscal',

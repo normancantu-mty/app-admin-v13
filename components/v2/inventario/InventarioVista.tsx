@@ -366,7 +366,8 @@ export default async function InventarioVista({
         
         const stockFisicoConsignado = movsConsignado.reduce((acc, mov) => {
           if (mov.status !== 'ACTIVO') return acc;
-          if (mov.tipo_movimiento.startsWith('ENTRADA')) return acc + mov.cantidad;
+          // AJUSTE_INVENTARIO (2026-11-03): correccion del ADMIN sobre la cubeta, cantidad CON SIGNO.
+          if (mov.tipo_movimiento.startsWith('ENTRADA') || mov.tipo_movimiento === 'AJUSTE_INVENTARIO') return acc + mov.cantidad;
           if (mov.tipo_movimiento.startsWith('SALIDA') || mov.tipo_movimiento === 'MERMA') return acc - mov.cantidad;
           return acc;
         }, 0);

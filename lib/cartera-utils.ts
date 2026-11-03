@@ -148,6 +148,9 @@ export function construirCartera({
 
     let recibidas = 0
     let salidas = 0
+    // 2026-11-03 (migracion 20261103120000, v_cartera): AJUSTE_INVENTARIO del ADMIN
+    // hacia el nodo, CON SIGNO. Mueve el libro, no las piezas recibidas.
+    let ajustes = 0
     let ultimaEntrega: string | null = null
 
     for (const mov of movimientosVivos) {
@@ -165,6 +168,10 @@ export function construirCartera({
       // colgadas en el libro que ya no estan ahi.
       if (mov.id_entidad_origen === entidad.id) {
         salidas += cantidad
+      }
+
+      if (mov.id_entidad_destino === entidad.id && mov.tipo_movimiento === 'AJUSTE_INVENTARIO') {
+        ajustes += Number(mov.cantidad) || 0
       }
     }
 
@@ -219,7 +226,7 @@ export function construirCartera({
       rol: entidad.rol,
       recibidas,
       salidas,
-      libroDice: recibidas - salidas,
+      libroDice: recibidas - salidas + ajustes,
       generado,
       abonado,
       porcentajePagado,

@@ -146,7 +146,7 @@ test.describe('Front v2 · saldo por cuenta = regla de saldo_cuenta()', () => {
     // CARGO_DEUDA sale de la lista de egreso y entra a la de ingreso (en memoria).
     const movido = cuerpo
       .replace("'GASTO_OPERATIVO', 'CARGO_DEUDA',", "'GASTO_OPERATIVO',")
-      .replace("'SALDO_INICIAL')", "'SALDO_INICIAL', 'CARGO_DEUDA')")
+      .replace("'AJUSTE_SALDO')", "'AJUSTE_SALDO', 'CARGO_DEUDA')")
     expect(movido).not.toBe(cuerpo)
     const sql = listasDeTipos(movido)
     expect(sql.ingreso).toContain('CARGO_DEUDA')

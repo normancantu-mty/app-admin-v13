@@ -118,8 +118,12 @@ export default async function CuentaV2({
   const ok = cuadra(reconstruido, cuenta.saldo)
   // El saldo de arranque es el punto de partida, no una entrada: va aparte.
   const arranque = movs.reduce((a, m) => a + (m.tipo_movimiento === 'SALDO_INICIAL' ? m.efecto : 0), 0)
-  const entro = movs.reduce((a, m) => a + (m.efecto > 0 && m.tipo_movimiento !== 'SALDO_INICIAL' ? m.efecto : 0), 0)
-  const salio = movs.reduce((a, m) => a + (m.efecto < 0 ? -m.efecto : 0), 0)
+  // AJUSTE_SALDO (2026-11-03): correccion del ADMIN. Tampoco es dinero que entro o salio
+  // (mismo criterio que dineroPorMes): va en su propia linea, solo si existe.
+  const esAjuste = (t: string) => t === 'AJUSTE_SALDO'
+  const ajustes = movs.reduce((a, m) => a + (esAjuste(m.tipo_movimiento) ? m.efecto : 0), 0)
+  const entro = movs.reduce((a, m) => a + (m.efecto > 0 && m.tipo_movimiento !== 'SALDO_INICIAL' && !esAjuste(m.tipo_movimiento) ? m.efecto : 0), 0)
+  const salio = movs.reduce((a, m) => a + (m.efecto < 0 && !esAjuste(m.tipo_movimiento) ? -m.efecto : 0), 0)
   const fechas = movs.map((m) => m.fecha_movimiento).filter((f): f is string => Boolean(f)).sort()
   const mesHoy = mesMx(new Date())
   const meses = rangoMeses(fechas[0] ? mesMx(fechas[0]) : mesHoy, mesHoy)
@@ -141,8 +145,9 @@ export default async function CuentaV2({
   const esTraspaso = (t: string) => t === 'INGRESO_TRASPASO' || t === 'EGRESO_TRASPASO'
   const sumaSi = (f: (m: (typeof movsTodas)[number]) => boolean) => redondear(movsTodas.reduce((a, m) => a + (f(m) ? m.efecto : 0), 0))
   const arranqueTodas = sumaSi((m) => m.tipo_movimiento === 'SALDO_INICIAL')
-  const entroTodas = sumaSi((m) => m.efecto > 0 && m.tipo_movimiento !== 'SALDO_INICIAL' && !esTraspaso(m.tipo_movimiento))
-  const salioTodas = -sumaSi((m) => m.efecto < 0 && !esTraspaso(m.tipo_movimiento))
+  const ajustesTodas = sumaSi((m) => esAjuste(m.tipo_movimiento))
+  const entroTodas = sumaSi((m) => m.efecto > 0 && m.tipo_movimiento !== 'SALDO_INICIAL' && !esTraspaso(m.tipo_movimiento) && !esAjuste(m.tipo_movimiento))
+  const salioTodas = -sumaSi((m) => m.efecto < 0 && !esTraspaso(m.tipo_movimiento) && !esAjuste(m.tipo_movimiento))
   const traspasosTodas = sumaSi((m) => esTraspaso(m.tipo_movimiento))
   const visiblesTodas = movsTodas.slice(0, filas)
   const hayMasTodas = movsTodas.length > visiblesTodas.length
@@ -182,6 +187,11 @@ export default async function CuentaV2({
           <div>
             Salió desde el corte<b className="neg">{mxn(salio)}</b>
           </div>
+          {redondear(ajustes) !== 0 && (
+            <div>
+              Ajustes ADMIN (neto)<b>{mxn(ajustes)}</b>
+            </div>
+          )}
         </div>
         <div className="vs-sum vs-aporta">
           {pctDelTotal === null ? (
@@ -251,6 +261,11 @@ export default async function CuentaV2({
             <div>
               Traspasos entre cuentas (neto)<b>{mxn(traspasosTodas)}</b>
             </div>
+            {ajustesTodas !== 0 && (
+              <div>
+                Ajustes ADMIN (neto)<b>{mxn(ajustesTodas)}</b>
+              </div>
+            )}
           </div>
           <div className="sub muted" style={{ fontSize: 12, marginBottom: 8 }}>
             Un traspaso entre dos cuentas de la matriz sale y entra: junto, se netea. Las filas de {nombreActual} llevan la marca de color a la izquierda; las atenuadas no cuentan para el saldo.
