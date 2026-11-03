@@ -194,8 +194,18 @@ export async function POST(request: Request) {
       }
       const quien = await resolverIdentidad(tipada, telegramId)
       if (!quien) return NextResponse.json({ error: 'No te tengo dado de alta.' }, { status: 403 })
-      if (permisoDeAccion(actorDe(quien), 'lote') === 'no') {
+      // Auditoria 2026-11-03 (hallazgo 6): esto escribe sin borrador ni puerta,
+      // asi que solo con `si` (Norman). `aprobacion` ya no basta: no hay Aprobar
+      // que esperar en un boton suelto.
+      const veredicto = permisoDeAccion(actorDe(quien), 'lote')
+      if (veredicto === 'no') {
         return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['lote'] }, { status: 403 })
+      }
+      if (veredicto !== 'si') {
+        return NextResponse.json(
+          { error: 'La muestra guardada la anota el clic de Norman. Tu clic no escribio nada.' },
+          { status: 403 }
+        )
       }
       const { data: lote } = await tipada.from('lotes').select('id, codigo_lote').eq('id', idLote).maybeSingle()
       if (!lote) return NextResponse.json({ error: 'Ese lote ya no existe.' }, { status: 404 })

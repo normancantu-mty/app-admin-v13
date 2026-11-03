@@ -794,6 +794,10 @@ async def _confirmar_categoria(update, clave):
         await update.effective_message.reply_text(r.get("error", "No pude agregarla."))
         return
     _memoria.pop(clave, None)
+    # La categoria nueva tiene que llegar al extractor YA, no en 10 minutos:
+    # se caduca la lectura del catalogo y la siguiente frase la relee.
+    global _productos_leidos_en
+    _productos_leidos_en = 0.0
     texto = r.get("mensaje") or "Listo. Quedo agregada."
     if r.get("aviso_marca"):
         texto += NL + str(r["aviso_marca"])
@@ -1356,6 +1360,11 @@ def _catalogo_de_productos(chat):
     if _productos and (ahora - _productos_leidos_en) < TTL_PRODUCTOS:
         return _productos
     estado, r = _post("/api/bot/catalogo", {"telegram_id": chat})
+    if estado == 200 and r.get("ok"):
+        # 2026-11-03 - UNA SOLA LISTA: el vocabulario de categorias de gasto
+        # viene de `categorias_movimiento` en la misma lectura. Asi una
+        # subcategoria agregada en el ERP llega al extractor en <= TTL_PRODUCTOS.
+        _refrescar_catalogo(r)
     if estado == 200 and r.get("ok") and r.get("productos"):
         _productos = r["productos"]
         _productos_leidos_en = ahora
@@ -4543,7 +4552,15 @@ async def _boton_de_lote_v2(update, chat, partes, accion):
     elif accion == "ltdes":
         await lote_ciclo.abrir_etapa(update, chat, "destilacion", arg)
     elif accion == "ltmu":
-        await lote_ciclo.muestra_guardada(update, chat, _post, arg)
+        # Auditoria 2026-11-03 (hallazgo 6): este boton escribe (lote_etapas) y
+        # no trae borrador, asi que la guardia de boton ajeno no lo veia. Solo
+        # el clic de Norman lo anota; el servidor lo vuelve a exigir.
+        if int(_persona(chat)) != NORMAN_TELEGRAM_ID:
+            log.info("boton ajeno: %s apreto ltmu (muestra) en %s", _persona(chat), _chat_de(chat))
+            await update.effective_message.reply_text(
+                "La muestra guardada la anota el clic de Norman. Tu clic no escribio nada.")
+        else:
+            await lote_ciclo.muestra_guardada(update, chat, _post, arg)
     else:
         return False
     return True

@@ -223,8 +223,13 @@ def grabada(clave):
     return dict(frases[clave]["salida"])
 
 
-def _productos():
-    """El catalogo real, de la ruta de solo lectura. Con `x-bot-ensayo: 1`."""
+def _catalogo_real():
+    """El catalogo real, de la ruta de solo lectura. Con `x-bot-ensayo: 1`.
+
+    Devuelve (productos, categorias). Las categorias de gasto salen de
+    `categorias_movimiento` (2026-11-03): del mismo `/api/bot/catalogo` si el
+    servidor ya las manda, o de `GRABAR_CATEGORIAS` (un JSON con la lista de
+    etiquetas "Categoria / Subcategoria") si el servidor es anterior."""
     token = os.environ.get("BOT_API_TOKEN", "")
     api = os.environ.get("BOT_API_URL", "http://localhost:3000")
     pet = urllib.request.Request(
@@ -236,7 +241,12 @@ def _productos():
     productos = cuerpo.get("productos") or []
     if not productos:
         raise RuntimeError("el catalogo vino vacio: sin el, las grabaciones no son las del bot")
-    return productos
+    categorias = cuerpo.get("categorias") or []
+    if not categorias and os.environ.get("GRABAR_CATEGORIAS"):
+        categorias = json.loads(io.open(os.environ["GRABAR_CATEGORIAS"], encoding="utf-8").read())
+    if not categorias:
+        raise RuntimeError("sin categorias de gasto: las grabaciones no serian las del bot")
+    return productos, categorias
 
 
 def grabar(solo_faltantes=False):
@@ -245,8 +255,7 @@ def grabar(solo_faltantes=False):
     regrabar las otras."""
     previas = cargar()["frases"] if solo_faltantes else dict()
     pendientes = [f for f in FRASES if f[0] not in previas]
-    productos = _productos()
-    categorias = list(E.CATEGORIAS_SEMILLA)
+    productos, categorias = _catalogo_real()
 
     def una(frase):
         clave, texto, en_pantalla = frase[:3]
@@ -276,8 +285,9 @@ def grabar(solo_faltantes=False):
         "grabado_en": time.strftime("%Y-%m-%d %H:%M:%S"),
         "llamadas": len(pendientes),
         "segundos": round(time.time() - t0, 1),
-        "contexto": "catalogo de productos real (/api/bot/catalogo), CATEGORIAS_SEMILLA, "
-                    "sin deudores, sin borrador a medias",
+        "contexto": ("catalogo de productos real (/api/bot/catalogo), categorias de "
+                     "categorias_movimiento (%d), sin deudores, sin borrador a medias"
+                     % len(categorias)),
         "frases": frases,
     }
     io.open(ARCHIVO, "w", encoding="utf-8", newline="\n").write(

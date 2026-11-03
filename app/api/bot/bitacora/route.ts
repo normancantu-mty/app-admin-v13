@@ -20,6 +20,7 @@
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { clienteDeServicio, tokenValido } from '@/lib/bot-servidor'
+import { NORMAN_TELEGRAM_ID } from '@/lib/bot-permisos'
 import { normalizarFilaBitacora, normalizarEtiquetas, TOPE_FILAS_BITACORA } from '@/lib/bot-bitacora'
 
 export const dynamic = 'force-dynamic'
@@ -121,7 +122,13 @@ export async function POST(request: Request) {
       const ids = (data ?? [])
         .filter((f) => {
           const r = f as unknown as { requiere_aprobacion: boolean; rol_bot: string | null; entidades: { rol: string } }
-          return r.entidades?.rol === 'ADMIN' && !r.requiere_aprobacion && !r.rol_bot
+          // Auditoria 2026-11-03: Norman es ademas SU telegram_id.
+          return (
+            r.entidades?.rol === 'ADMIN' &&
+            !r.requiere_aprobacion &&
+            !r.rol_bot &&
+            Number((f as unknown as { telegram_id: number }).telegram_id) === NORMAN_TELEGRAM_ID
+          )
         })
         .map((f) => Number((f as unknown as { telegram_id: number }).telegram_id))
       return NextResponse.json({ ok: true, telegram_ids: ids })

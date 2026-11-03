@@ -18,6 +18,7 @@
  * `scripts/probar_migracion_efimera.py` + `supabase/pruebas/lote_v2_comprobar.sql` (13-15).
  */
 import { test, expect } from '@playwright/test'
+import { NORMAN_TELEGRAM_ID } from '@/lib/bot-permisos'
 import * as proponer from '@/app/api/bot/lote/proponer/route'
 import * as confirmar from '@/app/api/bot/lote/confirmar/route'
 import { tipoDelPayload } from '@/lib/bot-pendiente'
@@ -39,7 +40,8 @@ const ENTORNO_FALSO: Record<string, string> = {
 }
 const entornoOriginal: Record<string, string | undefined> = {}
 
-const NORMAN = 111
+// Auditoria 2026-11-03 (hallazgo 1): Norman es ADMIN sin marca Y su telegram_id.
+const NORMAN = NORMAN_TELEGRAM_ID
 const PEDRO = 666 // TRABAJADOR: espera el Aprobar
 
 type Fila = Record<string, unknown>

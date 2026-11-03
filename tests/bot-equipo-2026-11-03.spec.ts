@@ -14,7 +14,7 @@ import {
   type PayloadAltaCategoria
 } from '@/lib/categorias-movimiento'
 import { gastosDelMes, textoGastos, type FilaGasto } from '@/lib/bot-consultas'
-import { esAprobador, permisoDeAccion, permisoDeConsulta } from '@/lib/bot-permisos'
+import { esAprobador, NORMAN_TELEGRAM_ID, permisoDeAccion, permisoDeConsulta } from '@/lib/bot-permisos'
 
 const EXISTENTES: FilaCategoria[] = [
   { tipo: 'EGRESO', categoria: 'Logística', subcategoria: 'Gasolina', orden: 4 },
@@ -61,8 +61,14 @@ test.describe('2026-11-03 · alta de categoria (regla unica, pantalla y bot)', (
     expect(validarAltaCategoria({ categoria: 'A<script>', subcategoria: 'B' }, EXISTENTES).ok).toBe(false)
   })
 
-  test('llaveDeNombre quita acentos, mayusculas y espacios de mas', () => {
-    expect(llaveDeNombre('  Logística   y Envíos ')).toBe('logistica y envios')
+  // Auditoria 2026-11-03 (hallazgo 4): tambien el guion bajo y los conectores,
+  // para que "Logistica_Envios" no duplique "Logística y envíos".
+  test('llaveDeNombre quita acentos, mayusculas, espacios de mas, guion bajo y conectores', () => {
+    expect(llaveDeNombre('  Logística   y Envíos ')).toBe('logistica envios')
+    expect(llaveDeNombre('Logistica_Envios')).toBe('logistica envios')
+    expect(llaveDeNombre('Nomina_y_Honorarios')).toBe(llaveDeNombre('Nómina y honorarios'))
+    // CONTROL: dos nombres distintos siguen distintos.
+    expect(llaveDeNombre('Logistica_Envios')).not.toBe(llaveDeNombre('Servicios'))
   })
 
   test('el sello ata los cinco campos: cambiar la subcategoria lo rompe', () => {
@@ -80,7 +86,7 @@ test.describe('2026-11-03 · alta de categoria (regla unica, pantalla y bot)', (
 })
 
 test.describe('2026-11-03 · quien aprueba y quien agrega categorias', () => {
-  const norman = { rol: 'ADMIN', requiereAprobacion: false }
+  const norman = { rol: 'ADMIN', requiereAprobacion: false, telegramId: NORMAN_TELEGRAM_ID }
   const kevin = { rol: 'ADMIN', requiereAprobacion: true }
   const dst = { rol: 'DST', requiereAprobacion: false }
 

@@ -23,6 +23,7 @@ import {
   esAprobador,
   esNorman,
   esGrupo,
+  NORMAN_TELEGRAM_ID,
   puedeAprobar,
   permisoDeAccion,
   permisoDeConsulta,
@@ -36,12 +37,13 @@ import { filasDeAbono, type PayloadAbono } from '@/lib/bot-abonos'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
 import type { FilaCarteraVista } from '@/lib/vistas'
 
-const NORMAN: ActorBot = { rol: 'ADMIN', requiereAprobacion: false }
+// Auditoria 2026-11-03 (hallazgo 1): Norman es ADMIN sin marca Y su telegram_id.
+const NORMAN: ActorBot = { rol: 'ADMIN', requiereAprobacion: false, telegramId: NORMAN_TELEGRAM_ID }
 const KEVIN: ActorBot = { rol: 'ADMIN', requiereAprobacion: true }
 const DST: ActorBot = { rol: 'DST', requiereAprobacion: false }
 const LOC: ActorBot = { rol: 'LOC', requiereAprobacion: false }
 
-const ID_NORMAN = 111
+const ID_NORMAN = NORMAN_TELEGRAM_ID
 const ID_KEVIN = 222
 const ID_GILBERTO = 333
 const GRUPO = -1001234567890
@@ -62,11 +64,13 @@ test.describe('D96 — la tabla de acciones', () => {
     DST: {
       // FASE 10 (D106): convertir SOLO SUS cotizaciones (la propiedad, en la ruta:
       // `tests/bot-rutas-permisos.spec.ts`); alta de clientes, solo Norman.
-      venta: 'si', abono: 'si', cotizacion: 'si', gasto: 'no', lote: 'no',
-      entrada_insumo: 'no', convertir: 'si', entidad: 'no', registrar: 'no',
+      // Auditoria 2026-11-03 (hallazgo 2): lo que el DST hace a su nombre ya no
+      // es `si`: espera el Aprobar de Norman.
+      venta: 'aprobacion', abono: 'aprobacion', cotizacion: 'aprobacion', gasto: 'no', lote: 'no',
+      entrada_insumo: 'no', convertir: 'aprobacion', entidad: 'no', registrar: 'no',
       // FASE 11 (D112): SOLO la suya y siempre espera (`decidirEntrega`,
       // `tests/entrega-efectivo.spec.ts`).
-      entrega_efectivo: 'si', categoria: 'no'
+      entrega_efectivo: 'aprobacion', categoria: 'no'
     },
     LOC: {
       venta: 'no', abono: 'no', cotizacion: 'no', gasto: 'no', lote: 'no',
@@ -107,6 +111,27 @@ test.describe('D96 — la tabla de acciones', () => {
     expect(puedeAprobar(p(DST, ID_GILBERTO), p(KEVIN, ID_KEVIN))).toBe(false)
   })
 
+  // Auditoria 2026-11-03 (hallazgo 1). Fallaba con c2a04db: `esNorman` solo
+  // miraba "ADMIN sin marca".
+  test('hallazgo 1: Norman exige SU telegram_id; otro ADMIN sin marca NO es Norman', () => {
+    const otroAdminSinMarca: ActorBot = { rol: 'ADMIN', requiereAprobacion: false, telegramId: 111 }
+    const sinId: ActorBot = { rol: 'ADMIN', requiereAprobacion: false }
+    expect(esNorman(NORMAN)).toBe(true)
+    expect(esNorman(otroAdminSinMarca)).toBe(false)
+    expect(esNorman(sinId)).toBe(false)
+    expect(esAprobador(otroAdminSinMarca)).toBe(false)
+    expect(permisoDeAccion(otroAdminSinMarca, 'gasto')).toBe('aprobacion')
+    expect(permisoDeAccion(otroAdminSinMarca, 'registrar')).toBe('no')
+    // El VA de ese ADMIN sobre lo suyo ESPERA (con c2a04db escribia directo).
+    expect(
+      decidirPuerta({ estado: 'PENDIENTE', dueno: 111, quien: 111, quienRol: 'ADMIN', quienRequiereAprobacion: false })
+    ).toEqual({ ok: true, modo: 'esperar' })
+    // ...y no aprueba lo de nadie.
+    expect(
+      decidirPuerta({ estado: 'ESPERA_APROBACION', dueno: ID_KEVIN, quien: 111, quienRol: 'ADMIN', quienRequiereAprobacion: false })
+    ).toMatchObject({ ok: false, status: 403 })
+  })
+
   test('registrar sigue siendo solo de Norman (Kevin aprueba, no registra)', () => {
     expect(esNorman(NORMAN)).toBe(true)
     expect(esNorman(KEVIN)).toBe(false)
@@ -115,10 +140,12 @@ test.describe('D96 — la tabla de acciones', () => {
 })
 
 test.describe('D96 — la tabla de consultas, en privado y en grupo', () => {
-  test('ADMIN (Norman y Kevin) ve todo; deuda, ventas y produccion por privado', () => {
+  // Auditoria 2026-11-03 (hallazgo 5): en un grupo TODA respuesta con cifras va
+  // por privado (stock y precios incluidos). Lo que ve cada rol no cambia.
+  test('ADMIN (Norman y Kevin) ve todo; en grupo, todo por privado', () => {
     for (const a of [NORMAN, KEVIN]) {
-      expect(permisoDeConsulta(a, 'inventario')).toEqual({ ok: true, alcance: 'todo', privado: false })
-      expect(permisoDeConsulta(a, 'precios')).toEqual({ ok: true, alcance: 'todo', privado: false })
+      expect(permisoDeConsulta(a, 'inventario')).toEqual({ ok: true, alcance: 'todo', privado: true })
+      expect(permisoDeConsulta(a, 'precios')).toEqual({ ok: true, alcance: 'todo', privado: true })
       expect(permisoDeConsulta(a, 'deuda')).toEqual({ ok: true, alcance: 'todo', privado: true })
       expect(permisoDeConsulta(a, 'ventas')).toEqual({ ok: true, alcance: 'todo', privado: true })
       expect(permisoDeConsulta(a, 'produccion')).toEqual({ ok: true, alcance: 'todo', privado: true })
@@ -126,14 +153,14 @@ test.describe('D96 — la tabla de consultas, en privado y en grupo', () => {
   })
 
   test('DST: su red; ventas y produccion no', () => {
-    expect(permisoDeConsulta(DST, 'inventario')).toEqual({ ok: true, alcance: 'red', privado: false })
-    expect(permisoDeConsulta(DST, 'deuda')).toEqual({ ok: true, alcance: 'red', privado: false })
+    expect(permisoDeConsulta(DST, 'inventario')).toEqual({ ok: true, alcance: 'red', privado: true })
+    expect(permisoDeConsulta(DST, 'deuda')).toEqual({ ok: true, alcance: 'red', privado: true })
     expect(permisoDeConsulta(DST, 'ventas')).toEqual({ ok: false })
     expect(permisoDeConsulta(DST, 'produccion')).toEqual({ ok: false })
   })
 
   test('LOC: lo propio; ventas y produccion no', () => {
-    expect(permisoDeConsulta(LOC, 'precios')).toEqual({ ok: true, alcance: 'propio', privado: false })
+    expect(permisoDeConsulta(LOC, 'precios')).toEqual({ ok: true, alcance: 'propio', privado: true })
     expect(permisoDeConsulta(LOC, 'ventas')).toEqual({ ok: false })
   })
 
@@ -156,8 +183,15 @@ test.describe('D94/D98 — la puerta del VA', () => {
     ...h
   })
 
-  test('CONTROL: el dueno da VA a lo suyo y se escribe directo', () => {
-    expect(decidirPuerta(hechos({}))).toEqual({ ok: true, modo: 'directo' })
+  // Auditoria 2026-11-03 (hallazgo 2): el VA del DST sobre lo suyo ESPERA.
+  test('hallazgo 2: el DST da VA a lo suyo y ESPERA el Aprobar de Norman', () => {
+    expect(decidirPuerta(hechos({}))).toEqual({ ok: true, modo: 'esperar' })
+  })
+
+  test('CONTROL: Norman da VA a lo suyo y se escribe directo', () => {
+    expect(
+      decidirPuerta(hechos({ dueno: ID_NORMAN, quien: ID_NORMAN, quienRol: 'ADMIN', quienRequiereAprobacion: false }))
+    ).toEqual({ ok: true, modo: 'directo' })
   })
 
   test('D94: el VA de B sobre el borrador de A, en el mismo grupo, es 403', () => {
@@ -182,6 +216,10 @@ test.describe('D94/D98 — la puerta del VA', () => {
       hechos({ estado: 'ESPERA_APROBACION', dueno: ID_KEVIN, quien: ID_NORMAN, quienRol: 'ADMIN' })
     )
     expect(d).toEqual({ ok: true, modo: 'aprobar' })
+    // CONTROL: el mismo clic con un ADMIN sin marca que NO es Norman: 403.
+    expect(
+      decidirPuerta(hechos({ estado: 'ESPERA_APROBACION', dueno: ID_KEVIN, quien: 111, quienRol: 'ADMIN' }))
+    ).toMatchObject({ ok: false, status: 403 })
   })
 
   test('D98/D106: Kevin no se aprueba a si mismo (403: nadie aprueba lo suyo)', () => {

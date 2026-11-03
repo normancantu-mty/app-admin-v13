@@ -60,6 +60,11 @@ import * as cancelar from '@/app/api/bot/cancelar/route'
 import * as entregaP from '@/app/api/bot/entrega/proponer/route'
 import * as entregaC from '@/app/api/bot/entrega/confirmar/route'
 import { sellarEntrega, type PayloadEntrega } from '@/lib/bot-entrega'
+import { NORMAN_TELEGRAM_ID } from '@/lib/bot-permisos'
+import * as catP from '@/app/api/bot/categoria/proponer/route'
+import * as catC from '@/app/api/bot/categoria/confirmar/route'
+import * as consultaR from '@/app/api/bot/consulta/route'
+import { validarAltaCategoria } from '@/lib/categorias-movimiento'
 
 type Ruta = { POST: (r: Request) => Promise<Response> }
 const RUTAS: Record<string, Ruta> = {
@@ -75,6 +80,8 @@ const RUTAS: Record<string, Ruta> = {
   'anular/proponer': anuP, 'anular/confirmar': anuC,
   aprobacion: aprL, 'aprobacion/confirmar': aprC,
   'entrega/proponer': entregaP, 'entrega/confirmar': entregaC,
+  'categoria/proponer': catP, 'categoria/confirmar': catC,
+  consulta: consultaR,
   cancelar
 }
 
@@ -92,12 +99,17 @@ const ENTORNO_FALSO: Record<string, string> = {
 const entornoOriginal: Record<string, string | undefined> = {}
 
 // ─── LAS PERSONAS ───────────────────────────────────────────────────────────
-const NORMAN = 111
+// Auditoria 2026-11-03 (hallazgo 1): Norman es SU telegram_id, no "ADMIN sin marca".
+const NORMAN = NORMAN_TELEGRAM_ID
 const KEVIN = 222
 const GIL = 333 // DST
 const LOC = 444
 const SOCIO = 555 // rol que la tabla no conoce
 const DESCONOCIDO = 999 // sin alta
+// Auditoria 2026-11-03 (hallazgo 7): un ADMIN SIN marca que NO es Norman. Con
+// c2a04db escribia directo; ahora propone y espera. Se da de alta solo en las
+// pruebas que lo usan (`conLuis`).
+const LUIS = 666
 
 // ─── EL POSTGREST SIMULADO, CON ESTADO ──────────────────────────────────────
 type Fila = Record<string, unknown>
@@ -1009,5 +1021,307 @@ test.describe('D112 — entrega de efectivo, desde la ruta', () => {
     expect(r.status, JSON.stringify(r.j)).toBe(200)
     expect(escrituras.filter((e) => e === 'POST finanzas_ledger')).toHaveLength(1)
     expect(tablas.finanzas_ledger.at(-1)).toMatchObject({ es_entrega_efectivo: true, monto: 700, usuario_creador: 'telegram:norman' })
+  })
+})
+
+// --- 2026-11-03: UNA SOLA LISTA DE CATEGORIAS ---------------------------------
+// Norman: "quiero poder agregar categorias y subcategorias desde el ERP". Lo que
+// se agrega (pantalla v2 o bot) vive en `categorias_movimiento`; el clasificador
+// de gastos del bot tiene que leer ESA lista. Antes leia `bot_categorias` y una
+// subcategoria nueva no era elegible: esta prueba fallaba (medido en c2a04db).
+test.describe('2026-11-03 - el gasto del bot clasifica contra categorias_movimiento', () => {
+  function conLista() {
+    estadoInicial()
+    tablas.categorias_movimiento = [
+      { id: 'cm-1', tipo: 'EGRESO', categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Gasolina', activa: true, orden: 28 },
+      { id: 'cm-2', tipo: 'EGRESO', categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Diesel', activa: true, orden: 70 },
+      { id: 'cm-3', tipo: 'EGRESO', categoria: 'Servicios', subcategoria: 'Luz', activa: false, orden: 33 },
+      { id: 'cm-4', tipo: 'INGRESO', categoria: 'Ventas', subcategoria: 'Venta directa', activa: true, orden: 56 }
+    ]
+  }
+  // El PostgREST simulado no aplica el DEFAULT de la base (`estado =
+  // 'PENDIENTE'`) a un borrador que crea `proponer`; aqui se emula.
+  function conDefault(id: unknown) {
+    const b = tablas.bot_borradores.find((x) => x.id === id) as Fila
+    if (b && b.estado == null) b.estado = 'PENDIENTE'
+    return b
+  }
+
+  test('una subcategoria NUEVA de categorias_movimiento es elegible y se escribe con su pareja', async () => {
+    conLista()
+    const p = await llamar('gasto/proponer', {
+      telegram_id: NORMAN,
+      propuesta: { monto: 300, descripcion: 'diesel camioneta', categoria: 'Log\u00edstica y env\u00edos / Diesel' }
+    })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    expect(p.j.categorias).toContain('Log\u00edstica y env\u00edos / Diesel')
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    const fila = (b.payload as { fila: Fila }).fila
+    expect(fila).toMatchObject({ categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Diesel', tipo_movimiento: 'GASTO_OPERATIVO' })
+    conDefault(p.j.borrador_id)
+    const c = await llamar('gasto/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(tablas.finanzas_ledger.at(-1)).toMatchObject({ categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Diesel', monto: 300 })
+    expect(escrituras.filter((e) => e === 'POST bot_categorias')).toEqual([])
+  })
+
+  test('sin acentos ni mayusculas, o solo la subcategoria (si es unica), tambien empata', async () => {
+    conLista()
+    for (const dicha of ['logistica y envios / diesel', 'Diesel']) {
+      const p = await llamar('gasto/proponer', {
+        telegram_id: NORMAN,
+        propuesta: { monto: 120, descripcion: 'x', categoria: dicha }
+      })
+      const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+      expect((b.payload as { fila: Fila }).fila, dicha).toMatchObject({ categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Diesel' })
+    }
+  })
+
+  test('CONTROL: una inactiva, una de INGRESO o una inventada NO se eligen ni se crean', async () => {
+    conLista()
+    for (const dicha of ['Servicios / Luz', 'Ventas / Venta directa']) {
+      const p = await llamar('gasto/proponer', { telegram_id: NORMAN, propuesta: { monto: 50, descripcion: 'x', categoria: dicha } })
+      const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+      expect((b.payload as { fila: Fila }).fila.categoria, dicha).toBe('SIN_CATEGORIZAR')
+    }
+    const p = await llamar('gasto/proponer', {
+      telegram_id: NORMAN,
+      propuesta: { monto: 50, descripcion: 'x', categoria: null, categoria_nueva: 'Fumigacion' }
+    })
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    expect((b.payload as { fila: Fila }).fila.categoria).toBe('SIN_CATEGORIZAR')
+    expect(String(p.j.mensaje)).toContain('agrega la subcategoria')
+    conDefault(p.j.borrador_id)
+    const c = await llamar('gasto/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(escrituras.filter((e) => e === 'POST bot_categorias')).toEqual([])
+  })
+
+  test('la subcategoria se desactivo entre el VA y la escritura -> 409, no escribe ni crea', async () => {
+    conLista()
+    const p = await llamar('gasto/proponer', {
+      telegram_id: NORMAN,
+      propuesta: { monto: 300, descripcion: 'diesel', categoria: 'Log\u00edstica y env\u00edos / Diesel' }
+    })
+    tablas.categorias_movimiento.find((f) => f.id === 'cm-2')!.activa = false
+    conDefault(p.j.borrador_id)
+    const c = await llamar('gasto/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(409)
+    expect(escrituras.filter((e) => e === 'POST finanzas_ledger' || e === 'POST bot_categorias')).toEqual([])
+  })
+
+  test('CONTROL: sin categorias_movimiento (la base no contesta) el bot sigue con la lista de respaldo', async () => {
+    estadoInicial()
+    const p = await llamar('gasto/proponer', {
+      telegram_id: NORMAN,
+      propuesta: { monto: 300, descripcion: 'gasolina', categoria: 'Logistica_Envios' }
+    })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    expect((b.payload as { fila: Fila }).fila.categoria).toBe('Logistica_Envios')
+  })
+})
+
+// ─── AUDITORIA 2026-11-03 (hallazgo 7): LOS HANDLERS DE CATEGORIA Y CONSULTA ─
+// Escrito el 2026-11-03 por el ejecutor del Socio. Las rutas de verdad con el
+// PostgREST simulado: quien puede proponer/confirmar una categoria, que la
+// unica escritura sale del clic de Norman, el 23505 y la rama de gastos.
+test.describe('auditoria 2026-11-03 - categoria/{proponer,confirmar}, consulta gastos y la puerta', () => {
+  function conLuis(opts: { kevinConMarca?: boolean; gilConMarca?: boolean } = {}) {
+    estadoInicial(opts)
+    tablas.bot_identidades.push({
+      telegram_id: LUIS, etiqueta: 'luis', id_entidad: 'ent-matriz', id_cuenta_destino: 'c-norman',
+      activo: true, requiere_aprobacion: false, creado_en: '2026-04-01'
+    })
+    tablas.categorias_movimiento = [
+      { id: 'cm-1', tipo: 'EGRESO', categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Gasolina', activa: true, orden: 28 },
+      { id: 'cm-2', tipo: 'EGRESO', categoria: 'Servicios', subcategoria: 'Luz', activa: true, orden: 33 }
+    ]
+  }
+  function conDefault(id: unknown) {
+    const b = tablas.bot_borradores.find((x) => x.id === id) as Fila
+    if (b && b.estado == null) b.estado = 'PENDIENTE'
+    return b
+  }
+  const ALTA = { tipo: 'EGRESO', categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Diesel' }
+  const postsCategoria = () => escrituras.filter((e) => e === 'POST categorias_movimiento')
+
+  test('categoria/proponer: DST, LOC, rol sin tabla y sin alta -> 403, 0 escrituras', async () => {
+    conLuis()
+    for (const id of [GIL, LOC, SOCIO, DESCONOCIDO]) {
+      const r = await llamar('categoria/proponer', { telegram_id: id, ...ALTA })
+      expect(r.status, `${id} ${JSON.stringify(r.j)}`).toBe(403)
+    }
+    expect(escrituras).toEqual([])
+  })
+
+  test('categoria/confirmar: DST y LOC con un borrador sellado de Norman -> 403, 0 escrituras', async () => {
+    conLuis()
+    const p = await llamar('categoria/proponer', { telegram_id: NORMAN, ...ALTA })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    conDefault(p.j.borrador_id)
+    escrituras = []
+    for (const id of [GIL, LOC]) {
+      const r = await llamar('categoria/confirmar', { telegram_id: id, borrador_id: p.j.borrador_id, sello: p.j.sello })
+      expect(r.status, `${id} ${JSON.stringify(r.j)}`).toBe(403)
+    }
+    expect(escrituras).toEqual([])
+  })
+
+  test('LUIS (ADMIN sin marca, no Norman) propone; su VA ESPERA y 0 categorias; el clic de Norman escribe 1', async () => {
+    conLuis()
+    const p = await llamar('categoria/proponer', { telegram_id: LUIS, ...ALTA })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    conDefault(p.j.borrador_id)
+    const va = await llamar('categoria/confirmar', { telegram_id: LUIS, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(va.status, JSON.stringify(va.j)).toBe(200)
+    expect(va.j.espera_aprobacion).toBe(true)
+    expect(postsCategoria()).toEqual([])
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    expect(b.estado).toBe('ESPERA_APROBACION')
+    // Kevin (con marca) no aprueba lo de Luis.
+    const k = await llamar('categoria/confirmar', { telegram_id: KEVIN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(k.status, JSON.stringify(k.j)).toBe(403)
+    expect(postsCategoria()).toEqual([])
+    const n = await llamar('categoria/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(n.status, JSON.stringify(n.j)).toBe(200)
+    expect(postsCategoria()).toHaveLength(1)
+    expect(tablas.categorias_movimiento.at(-1)).toMatchObject({ categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Diesel', activa: true })
+  })
+
+  test('CONTROL: el VA de Norman sobre lo suyo escribe directo, 1 categoria', async () => {
+    conLuis()
+    const p = await llamar('categoria/proponer', { telegram_id: NORMAN, ...ALTA })
+    conDefault(p.j.borrador_id)
+    const c = await llamar('categoria/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(postsCategoria()).toHaveLength(1)
+  })
+
+  test('23505 al escribir (otro la agrego antes) -> 409 "ya existe" y el reclamo se suelta', async () => {
+    conLuis()
+    const p = await llamar('categoria/proponer', { telegram_id: LUIS, ...ALTA })
+    conDefault(p.j.borrador_id)
+    await llamar('categoria/confirmar', { telegram_id: LUIS, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    const f = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input)
+      if ((init?.method ?? 'GET').toUpperCase() === 'POST' && url.includes('/rest/v1/categorias_movimiento')) {
+        return new Response(JSON.stringify({ code: '23505', message: 'duplicate key value', details: '', hint: '' }), {
+          status: 409,
+          headers: { 'content-type': 'application/json' }
+        })
+      }
+      return f(input, init)
+    }) as typeof fetch
+    let n
+    try {
+      n = await llamar('categoria/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    } finally {
+      globalThis.fetch = f
+    }
+    expect(n.status, JSON.stringify(n.j)).toBe(409)
+    expect(String(n.j.error)).toContain('ya existe')
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    expect(b.estado).toBe('ESPERA_APROBACION')
+    expect(b.resuelto_en ?? null).toBeNull()
+    expect(tablas.categorias_movimiento).toHaveLength(2)
+  })
+
+  test('"Logistica_Envios" + "Diesel" cae en la categoria que ya existe, no en una duplicada', async () => {
+    conLuis()
+    const p = await llamar('categoria/proponer', { telegram_id: NORMAN, tipo: 'EGRESO', categoria: 'Logistica_Envios', subcategoria: 'Diesel' })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    const pl = b.payload as { alta: { categoria: string }; meta: { categoria_nueva: boolean } }
+    expect(pl.alta.categoria).toBe('Log\u00edstica y env\u00edos')
+    expect(pl.meta.categoria_nueva).toBe(false)
+  })
+
+  test('regla fiscal tambien en la subcategoria: "Pago IVA" o "Pago"+"IVA x" -> 422 desde la ruta', async () => {
+    conLuis()
+    const filas = tablas.categorias_movimiento as never
+    expect(validarAltaCategoria({ categoria: 'Log\u00edstica', subcategoria: 'Pago IVA' }, filas)).toMatchObject({ ok: false })
+    expect(validarAltaCategoria({ categoria: 'Pago', subcategoria: 'IVA x' }, filas)).toMatchObject({ ok: false })
+    expect(validarAltaCategoria({ categoria: 'Log\u00edstica', subcategoria: 'Pago_IEPS' }, filas)).toMatchObject({ ok: false })
+    // CONTROL: una subcategoria normal pasa.
+    expect(validarAltaCategoria({ categoria: 'Log\u00edstica', subcategoria: 'Diesel' }, filas)).toMatchObject({ ok: true })
+    const r = await llamar('categoria/proponer', { telegram_id: NORMAN, tipo: 'EGRESO', categoria: 'Log\u00edstica', subcategoria: 'Pago IVA' })
+    expect(r.status, JSON.stringify(r.j)).toBe(422)
+    expect(tablas.bot_borradores).toEqual([])
+  })
+
+  test('consulta gastos: ADMIN ve el mes (por privado en grupo); DST y LOC -> 403', async () => {
+    conLuis()
+    const hoy = new Date().toISOString()
+    tablas.finanzas_ledger.push(
+      { id: 'g-1', fecha_movimiento: hoy, tipo_movimiento: 'GASTO_OPERATIVO', monto: 300, categoria: 'Log\u00edstica y env\u00edos', subcategoria: 'Diesel', descripcion: 'diesel', status: 'ACTIVO' },
+      { id: 'g-2', fecha_movimiento: hoy, tipo_movimiento: 'GASTO_OPERATIVO', monto: 70, categoria: 'Servicios', subcategoria: 'Luz', descripcion: 'luz', status: 'ANULADO' }
+    )
+    const grupo = -100123
+    const a = await llamar('consulta', { telegram_id: NORMAN, chat_id: grupo, consulta: 'gastos' })
+    expect(a.status, JSON.stringify(a.j)).toBe(200)
+    expect(a.j.ok).toBe(true)
+    expect(a.j.privado).toBe(true)
+    expect(String(a.j.texto)).toContain('Diesel')
+    expect(String(a.j.texto)).not.toContain('Luz') // el anulado no cuenta
+    const priv = await llamar('consulta', { telegram_id: KEVIN, chat_id: KEVIN, consulta: 'gastos' })
+    expect(priv.status, JSON.stringify(priv.j)).toBe(200)
+    expect(priv.j.privado).toBe(false) // ya es su privado
+    for (const id of [GIL, LOC]) {
+      const r = await llamar('consulta', { telegram_id: id, chat_id: grupo, consulta: 'gastos' })
+      expect(r.status, `${id} ${JSON.stringify(r.j)}`).toBe(403)
+      expect(r.j.ok).toBeUndefined()
+    }
+    expect(escrituras).toEqual([])
+  })
+
+  test('consulta en grupo: precios tambien va por privado (hallazgo 5)', async () => {
+    conLuis()
+    const r = await llamar('consulta', { telegram_id: GIL, chat_id: -100123, consulta: 'precios' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    expect(r.j.privado).toBe(true)
+  })
+
+  test('hallazgo 2: Gil (DST SIN marca) da VA a su cotizacion -> ESPERA, 0 cotizaciones; Norman aprueba -> 1', async () => {
+    estadoInicial() // Gil sin marca: con c2a04db escribia directo
+    const cot: PayloadCotizacion = {
+      id_vendedor: 'dst-a', id_comprador: 'loc-a1', nombre_prospecto: null, zona: 'LOCAL',
+      vigencia_dias: 15, total: 960, notas: '', usuario_creador: 'telegram:gil',
+      items: [{ id_producto: 'p1', cantidad: 2, precio_unitario: 480 }]
+    }
+    const sello = sellarCotizacion(cot)
+    const b = borrador({ telegram_id: GIL, sello, payload: { tipo: 'cotizacion', cotizacion: cot, meta: {} } })
+    const va = await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    expect(va.status, JSON.stringify(va.j)).toBe(200)
+    expect(va.j.espera_aprobacion).toBe(true)
+    expect(escrituras.filter((e) => e === 'POST cotizaciones')).toEqual([])
+    const n = await llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+    expect(n.status, JSON.stringify(n.j)).toBe(200)
+    expect(escrituras.filter((e) => e === 'POST cotizaciones')).toHaveLength(1)
+  })
+
+  test('hallazgo 1: el VA de LUIS sobre su gasto ESPERA; 0 filas en finanzas_ledger', async () => {
+    conLuis()
+    const p = await llamar('gasto/proponer', {
+      telegram_id: LUIS,
+      propuesta: { monto: 300, descripcion: 'gasolina', categoria: 'Log\u00edstica y env\u00edos / Gasolina' }
+    })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    conDefault(p.j.borrador_id)
+    const va = await llamar('gasto/confirmar', { telegram_id: LUIS, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(va.status, JSON.stringify(va.j)).toBe(200)
+    expect(va.j.espera_aprobacion).toBe(true)
+    expect(escrituras.filter((e) => e === 'POST finanzas_ledger')).toEqual([])
+  })
+
+  test('hallazgo 2: el alta de un miembro DST desde el bot nace con requiere_aprobacion = true', async () => {
+    conLuis()
+    const r = await llamar('miembro/proponer', { telegram_id: NORMAN, miembro_telegram_id: 777, texto: 'este es Pepe', id_entidad: 'dst-a' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila
+    const alta = (b.payload as { alta: { requiere_aprobacion: boolean; id_entidad: string } }).alta
+    expect(alta.id_entidad).toBe('dst-a')
+    expect(alta.requiere_aprobacion).toBe(true)
   })
 })

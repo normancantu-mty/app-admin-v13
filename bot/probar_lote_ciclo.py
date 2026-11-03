@@ -284,8 +284,8 @@ B._post_de_verdad = base
 B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
 
 
-def boton(u, accion, arg="x"):
-    asyncio.run(B._manejar_boton(u, CHAT, None, [accion, arg], accion))
+def boton(u, accion, arg="x", chat=None):
+    asyncio.run(B._manejar_boton(u, CHAT if chat is None else chat, None, [accion, arg], accion))
 
 
 def texto(u, t):
@@ -357,9 +357,17 @@ caso("4. a las 24 h: UN segundo aviso", tipos(h), ["muestra_2"])
 caso("4. ... a quien abrio, ADMIN y quien destilo", sorted({c for _l, _t, c in h["enviados"]}), [111, 555])
 reiniciar()
 caso("4. REINICIO y 48 h: nada mas", tipos(latir(base, bot, local(2026, 10, 21, 10))), [])
-u2 = Update(CHAT)
-boton(u2, "ltmu", "lote-a")
-caso("4. 'Ya la guarde': quien y cuando", (base.etapas.get(("lote-a", "muestra")) or {}).get("telegram_id"), CHAT)
+# Auditoria 2026-11-03 (hallazgo 6): el boton escribe, asi que solo el clic de
+# Norman lo anota. El de otro (555) no llega al servidor y se le dice por que.
+u_ajeno = Update(CHAT)
+boton(u_ajeno, "ltmu", "lote-a")
+caso("4. 'Ya la guarde' de alguien que no es Norman: NO se anota", ("lote-a", "muestra") in base.etapas, False)
+caso("4. ... y se le dice por que", u_ajeno.message.dichos[-1],
+     "La muestra guardada la anota el clic de Norman. Tu clic no escribio nada.")
+NORMAN = B.NORMAN_TELEGRAM_ID
+u2 = Update(NORMAN)
+boton(u2, "ltmu", "lote-a", chat=NORMAN)
+caso("4. 'Ya la guarde' de Norman: quien y cuando", (base.etapas.get(("lote-a", "muestra")) or {}).get("telegram_id"), NORMAN)
 caso("4. ... y lo dice", u2.message.dichos[-1], "Anotado: muestra guardada.")
 otro = Ciclo()
 otro.nuevo_lote("lote-c", "L-13-10.1", "2026-10-13")

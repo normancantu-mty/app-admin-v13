@@ -31,7 +31,13 @@
  */
 
 import { NextResponse } from 'next/server'
-import { clienteDeServicio, leerCatalogoDeVenta, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
+import {
+  clienteDeServicio,
+  leerCatalogo,
+  leerCatalogoDeVenta,
+  resolverIdentidad,
+  tokenValido
+} from '@/lib/bot-servidor'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,6 +60,10 @@ export async function POST(request: Request) {
     }
 
     const catalogo = await leerCatalogoDeVenta(supabase)
+    // 2026-11-03 - UNA SOLA LISTA: tambien el vocabulario de categorias de gasto
+    // (`categorias_movimiento`), para que el bot lo tenga ANTES de su primer
+    // gasto y una subcategoria agregada en el ERP le llegue sin reiniciarlo.
+    const categorias = (await leerCatalogo(supabase)).map((c) => c.nombre)
     if (catalogo.length === 0) {
       return NextResponse.json(
         { error: 'No pude leer el catalogo.' },
@@ -63,6 +73,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
+      categorias,
       productos: catalogo.map((p) => ({
         id: p.id,
         sku: p.sku,

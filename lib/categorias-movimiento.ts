@@ -13,7 +13,12 @@
  *     columna que `v_pasivo_fiscal` lee para dar por pagado un impuesto (D-175).
  *     Las existentes (p. ej. "Impuestos y regulatorio") se respetan.
  *
- * PURO (`tests/categorias-movimiento.spec.ts`).
+ *   · Ni la categoria ni la SUBCATEGORIA, ni las dos juntas, pueden traer un
+ *     disparador fiscal (auditoria 2026-11-03, hallazgo 3): la web copia la
+ *     subcategoria a `categoria_gasto` (`app/api/finanzas/nuevo/route.ts`), y
+ *     `v_pasivo_fiscal` lee `categoria || ' ' || categoria_gasto`.
+ *
+ * PURO (`tests/bot-equipo-2026-11-03.spec.ts`).
  */
 
 import { disparadoresFiscalesEn } from '@/lib/bot-gastos'
@@ -30,14 +35,25 @@ export interface FilaCategoria {
 
 export const TOPE_NOMBRE = 60
 
-/** "Logística y Envíos " -> "logistica y envios". */
+/**
+ * Las palabras que no distinguen una categoria de otra. Auditoria 2026-11-03
+ * (hallazgo 4): el modelo, con el vocabulario viejo, dijo "Logistica_Envios"
+ * por "Logística y envíos" y se iba a crear una categoria duplicada.
+ */
+const CONECTORES = new Set(['y', 'e', 'de', 'del', 'la', 'las', 'el', 'los'])
+
+/** "Logística y Envíos " y "Logistica_Envios" -> "logistica envios". */
 export function llaveDeNombre(x: unknown): string {
   return String(x ?? '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+    .split(' ')
+    .filter((p) => p !== '' && !CONECTORES.has(p))
+    .join(' ')
 }
 
 function limpio(x: unknown): string {
@@ -78,6 +94,15 @@ export function validarAltaCategoria(
     if (fiscal.length > 0) {
       return { ok: false, motivo: 'ese nombre de categoria es justo lo que el ERP lee para dar por pagado un impuesto' }
     }
+  }
+  // La subcategoria, sola y pegada a su categoria: "Pago" + "IVA" tambien es
+  // "PAGO IVA" en el texto que arma la vista.
+  const sinGuion = (t: string) => `${t} ${t.replace(/_/g, ' ')}`
+  if (
+    disparadoresFiscalesEn(sinGuion(subcategoria)).length > 0 ||
+    disparadoresFiscalesEn(sinGuion(`${categoria} ${subcategoria}`)).length > 0
+  ) {
+    return { ok: false, motivo: 'esa subcategoria es justo lo que el ERP lee para dar por pagado un impuesto' }
   }
   const repetida = delTipo.find(
     (f) => llaveDeNombre(f.categoria) === llaveDeNombre(categoria) && llaveDeNombre(f.subcategoria) === llaveDeNombre(subcategoria)

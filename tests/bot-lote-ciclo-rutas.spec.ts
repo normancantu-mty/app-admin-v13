@@ -14,6 +14,7 @@
  * Postgres efimero: `scripts/probar_migracion_efimera.py` + `supabase/pruebas/lote_v2_comprobar.sql`.
  */
 import { test, expect } from '@playwright/test'
+import { NORMAN_TELEGRAM_ID } from '@/lib/bot-permisos'
 import * as etapaP from '@/app/api/bot/lote/etapa/proponer/route'
 import * as etapaC from '@/app/api/bot/lote/etapa/confirmar/route'
 import * as ciclo from '@/app/api/bot/lote/ciclo/route'
@@ -30,7 +31,8 @@ const ENTORNO_FALSO: Record<string, string> = {
 }
 const entornoOriginal: Record<string, string | undefined> = {}
 
-const NORMAN = 111
+// Auditoria 2026-11-03 (hallazgo 1): Norman es ADMIN sin marca Y su telegram_id.
+const NORMAN = NORMAN_TELEGRAM_ID
 const KEVIN = 222
 const GIL = 333 // DST: los lotes no le tocan
 const PEDRO = 666 // TRABAJADOR
@@ -354,17 +356,22 @@ test.describe('ciclo: leer, reclamar una vez, temperatura, muestra', () => {
     expect(fuente.status).toBe(400)
   })
 
-  test('muestra: se anota una vez con quien; la segunda dice que ya estaba; DST no', async () => {
+  // Auditoria 2026-11-03 (hallazgo 6): el boton "muestra guardada" escribe sin
+  // borrador ni puerta; ahora solo con el clic de Norman. Antes Pedro la anotaba.
+  test('muestra: solo Norman la anota, una vez; Pedro, Kevin y el DST -> 403 sin escribir', async () => {
     estadoInicial()
-    const a = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: PEDRO, id_lote: 'lote-1' })
+    for (const id of [PEDRO, KEVIN, GIL]) {
+      const x = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: id, id_lote: 'lote-1' })
+      expect(x.status, `${id} ${JSON.stringify(x.j)}`).toBe(403)
+    }
+    expect(tablas.lote_etapas.filter((e) => e.etapa === 'muestra')).toHaveLength(0)
+    const a = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: NORMAN, id_lote: 'lote-1' })
     const b = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: NORMAN, id_lote: 'lote-1' })
-    expect(a.j.nueva).toBe(true)
+    expect(a.j.nueva, JSON.stringify(a.j)).toBe(true)
     expect(b.j.nueva).toBe(false)
     const filas = tablas.lote_etapas.filter((e) => e.etapa === 'muestra')
     expect(filas.length).toBe(1)
-    expect(filas[0].registrado_por).toBe('telegram:pedro')
-    expect(filas[0].telegram_id).toBe(PEDRO)
-    const g = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: GIL, id_lote: 'lote-1' })
-    expect(g.status).toBe(403)
+    expect(filas[0].registrado_por).toBe('telegram:norman')
+    expect(filas[0].telegram_id).toBe(NORMAN)
   })
 })

@@ -185,6 +185,14 @@ def vivos():
     return [d["borrador_id"] for d in B._pendientes_de(CHAT)]
 
 
+def viva_de(tipo):
+    """El borrador vivo de ESE tipo. 2026-11-03: el orden en que el bot propone
+    depende de si el modelo marco faltantes en la venta (sampling): se busca por
+    tipo, no por posicion, para que la prueba mida la plomeria y no el orden."""
+    hallados = [d["borrador_id"] for d in B._pendientes_de(CHAT) if B._tipo_de(d) == tipo]
+    return hallados[0] if len(hallados) == 1 else None
+
+
 def confirmados():
     """Los `/confirmar` que la puerta de ensayo NO dejo salir: (ruta, borrador)."""
     return [(r, c.get("borrador_id")) for r, c in B.no_salieron if r.endswith("/confirmar")]
@@ -217,15 +225,17 @@ salida = g("d80_mensaje_2026_09_19")
 dichos = texto(G.EL_MENSAJE_2026_09_19, salida)
 prop = SERVIDOR[0].proponer()
 caso("D80 - el mensaje del 2026-09-19: DOS propuestas (venta y gasto)",
-     [r for r, _ in prop], ["/api/bot/venta/proponer", "/api/bot/gasto/proponer"],
+     sorted(r for r, _ in prop), ["/api/bot/gasto/proponer", "/api/bot/venta/proponer"],
      str(dichos))
+de_venta = [c for r, c in prop if r.endswith("/venta/proponer")]
+de_gasto = [c for r, c in prop if r.endswith("/gasto/proponer")]
 caso("D80 - las dos quedan vivas, cada una con su VA", len(vivos()), 2)
 caso("D79 - la primera sale como mensaje NUEVO (el servidor cancela lo viejo)",
      "conservar_pendientes" in prop[0][1], False)
 caso("D79 - la segunda CONSERVA la primera", prop[1][1].get("conservar_pendientes"), True)
 caso("D80 - el gasto es el de $45, la venta la de $599",
-     (prop[1][1]["propuesta"]["monto"], prop[0][1]["propuesta"]["monto"]), (45, 599))
-bid_venta, bid_gasto = vivos()
+     (de_gasto[0]["propuesta"]["monto"], de_venta[0]["propuesta"]["monto"]), (45, 599))
+bid_venta, bid_gasto = viva_de("venta"), viva_de("gasto")
 boton("vavt:" + bid_venta)
 boton("va:" + bid_gasto)
 caso("D80 - las DOS llegan a /confirmar (en ensayo: no salen), cada una con su id",
@@ -348,7 +358,7 @@ caso("D74 - ...y el reproponer conserva (no mata otras)", despues.get("conservar
 # Con venta Y gasto en pantalla, "la venta fue a concesion" toca SOLO la venta.
 limpiar()
 texto(G.EL_MENSAJE_2026_09_19, g("d80_mensaje_2026_09_19"))
-bid_venta, bid_gasto = vivos()
+bid_venta, bid_gasto = viva_de("venta"), viva_de("gasto")
 texto("la venta fue a concesion", g("d74_dos_en_pantalla_concesion"))
 caso("D74 - con dos en pantalla, ajusta la venta y deja vivo el gasto",
      (bid_gasto in vivos(), bid_venta in vivos(), len(vivos())), (True, False, 2))
