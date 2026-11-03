@@ -309,7 +309,7 @@ export async function POST(request: Request) {
         filas_escritas: creadas.length,
         avisar_a: await aprobadoresDelBot(supabase, identidad),
         mensaje:
-          `Listo: registre el abono de $${abono.monto.toFixed(2)}. Queda PENDIENTE hasta que Norman o Kevin lo aprueben.`,
+          `Listo: registre el abono de $${abono.monto.toFixed(2)}. Queda PENDIENTE hasta que Norman lo apruebe.`,
         mensaje_aprobador:
           `${autorNombre} registro un abono de $${abono.monto.toFixed(2)} de ${guardado.meta.nombre_deudor}. ¿Lo apruebo?`
       })

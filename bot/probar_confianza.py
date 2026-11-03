@@ -197,6 +197,9 @@ LAS_QUE_ESCRIBEN = [
     ("alta", "da de alta a Dulceria Nueva",
      {"nombre": "Dulceria Nueva"}, None),
     ("convertir", "convierte la cotizacion en venta", {}, None),
+    # 2026-11-03: alta de categoria/subcategoria (propone; escribe el clic de Norman).
+    ("categoria", "agrega la subcategoria Diesel en Logistica_Envios",
+     {"categoria": "Logistica_Envios", "subcategoria": "Diesel"}, None),
     # `confirmar` es la que de verdad aprieta el gatillo, y la que el defecto
     # dejaba pasar: necesita una propuesta sellada en pantalla para despachar.
     # D63 (Fase 7): el texto es un "si" EXPLICITO. Con "sale pues" el bot ya

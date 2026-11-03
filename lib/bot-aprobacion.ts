@@ -87,8 +87,8 @@ export function decidirPuerta(h: HechosDeLaPuerta): DecisionPuerta {
         ok: false,
         status: 403,
         error: esAprobador({ rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
-          ? 'Lo que propone Kevin lo aprueba Norman.'
-          : 'Aprobar lo que propone otro lo hacen Norman y Kevin.'
+          ? 'Lo que propone el equipo lo aprueba Norman.'
+          : 'Aprobar lo que propone otro lo hace solo Norman. Tu clic no escribe nada.'
       }
     }
     return { ok: true, modo: 'aprobar' }

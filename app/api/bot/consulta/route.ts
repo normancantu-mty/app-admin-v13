@@ -13,6 +13,7 @@
  * cliente:** el bot no manda `id_entidad`, y si lo mandara se ignora.
  */
 
+import { fetchTodasLasFilas, type ConsultaPaginable } from '@/lib/paginacion'
 import { NextResponse } from 'next/server'
 import {
   clienteDeServicio,
@@ -46,6 +47,9 @@ import {
   textoQuienDebe,
   textoStock,
   textoVentas,
+  gastosDelMes,
+  textoGastos,
+  type FilaGasto,
   type AlcanceConsulta,
   type TipoConsulta
 } from '@/lib/bot-consultas'
@@ -60,7 +64,8 @@ const CONSULTA_DE_LA_TABLA: Record<TipoConsulta, ConsultaBot> = {
   cartera: 'deuda',
   ventas: 'ventas',
   produccion: 'produccion',
-  precios: 'precios'
+  precios: 'precios',
+  gastos: 'gastos'
 }
 
 /**
@@ -278,6 +283,39 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         texto: texto + pieDeConsulta(periodo.tipo === 'lote' ? 'lote_envasado + v_lote_rendimiento' : 'lote_envasado'),
+        privado
+      })
+    }
+
+    // gastos (2026-11-03) — cifra de la empresa: solo la matriz, por privado en grupo.
+    if (cuerpo.consulta === 'gastos') {
+      if (acotarA) {
+        return NextResponse.json(
+          { error: 'Esa consulta es de la empresa; tu alta solo alcanza a lo tuyo.' },
+          { status: 403 }
+        )
+      }
+      const hoy = fechaLocal(new Date())
+      const mes = hoy.slice(0, 7)
+      // Un dia antes del 1o (UTC) para no perder lo de la noche del 1o en hora de
+      // Mexico; el corte fino al mes lo hace `gastosDelMes` en hora local.
+      const desde = new Date(Date.parse(`${mes}-01T00:00:00Z`) - 86400000).toISOString()
+      const movs = await fetchTodasLasFilas<FilaGasto>(
+        () =>
+          supabase
+            .from('finanzas_ledger')
+            .select('tipo_movimiento, monto, categoria, subcategoria, status, fecha_movimiento, descripcion')
+            .in('tipo_movimiento', ['GASTO_OPERATIVO', 'COMPRA_INSUMOS'])
+            .gte('fecha_movimiento', desde)
+            .order('fecha_movimiento', { ascending: true }) as unknown as ConsultaPaginable<FilaGasto>,
+        'consulta gastos'
+      )
+      const mesDe = (iso: string) => fechaLocal(new Date(iso)).slice(0, 7)
+      const filas = gastosDelMes(movs, mes, mesDe)
+      const mesLegible = new Date(`${mes}-15T12:00:00Z`).toLocaleDateString('es-MX', { year: 'numeric', month: 'long' })
+      return NextResponse.json({
+        ok: true,
+        texto: textoGastos(filas, mesLegible, filtro) + pieDeConsulta('finanzas_ledger'),
         privado
       })
     }

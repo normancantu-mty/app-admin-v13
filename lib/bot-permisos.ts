@@ -32,6 +32,8 @@ export type AccionBot =
   | 'registrar'
   /** FASE 11 (D112): el DST entrega a la matriz el efectivo que cobro de contado. */
   | 'entrega_efectivo'
+  /** 2026-11-03: alta de categoria/subcategoria en `categorias_movimiento`. */
+  | 'categoria'
 
 /**
  * - `si`: escribe con su propio VA.
@@ -59,7 +61,10 @@ export function esNorman(actor: ActorBot): boolean {
  * `puedeAprobar`, que agrega la regla que mas cierra: nadie aprueba lo suyo.
  */
 export function esAprobador(actor: ActorBot): boolean {
-  return actor.rol === 'ADMIN'
+  // 2026-11-03 (Norman: "hace lo que entendio y luego nada mas espera MI
+  // click"): solo Norman aprueba. Kevin (ADMIN con marca) ya no aprueba lo de
+  // terceros, como decia D106. Se revierte volviendo a `actor.rol === 'ADMIN'`.
+  return esNorman(actor)
 }
 
 export interface PersonaBot extends ActorBot {
@@ -75,8 +80,6 @@ export interface PersonaBot extends ActorBot {
 export function puedeAprobar(aprobador: PersonaBot, autor: PersonaBot): boolean {
   if (!esAprobador(aprobador)) return false
   if (aprobador.telegramId === autor.telegramId) return false
-  const autorEsKevin = autor.rol === 'ADMIN' && autor.requiereAprobacion
-  if (autorEsKevin && aprobador.requiereAprobacion) return false
   return true
 }
 
@@ -89,7 +92,8 @@ const DE_LA_MATRIZ: readonly AccionBot[] = [
   'entrada_insumo',
   'convertir',
   'entidad',
-  'entrega_efectivo'
+  'entrega_efectivo',
+  'categoria'
 ]
 
 /**
@@ -140,12 +144,13 @@ export const MENSAJE_NO_PERMITIDO: Record<AccionBot, string> = {
   convertir: 'Convertir una cotizacion en venta por aqui no te toca con tu alta.',
   entidad: 'Dar de alta clientes por aqui no te toca con tu alta.',
   registrar: 'Registrar quien es quien lo hace solo Norman.',
-  entrega_efectivo: 'Registrar entregas de efectivo por aqui no te toca con tu alta.'
+  entrega_efectivo: 'Registrar entregas de efectivo por aqui no te toca con tu alta.',
+  categoria: 'Agregar categorias por aqui no te toca con tu alta.'
 }
 
 // ─── LAS CONSULTAS ──────────────────────────────────────────────────────────
 
-export type ConsultaBot = 'inventario' | 'deuda' | 'precios' | 'ventas' | 'produccion'
+export type ConsultaBot = 'inventario' | 'deuda' | 'precios' | 'ventas' | 'produccion' | 'gastos'
 
 /**
  * - `todo`: todas las entidades.
@@ -165,14 +170,14 @@ export type PermisoDeConsulta =
 export function permisoDeConsulta(actor: ActorBot, consulta: ConsultaBot): PermisoDeConsulta {
   if (actor.rol === 'ADMIN') {
     // Norman y Kevin igual: Kevin "consulta todo lo que consulta Norman".
-    const privado = consulta === 'deuda' || consulta === 'ventas' || consulta === 'produccion'
+    const privado = consulta === 'deuda' || consulta === 'ventas' || consulta === 'produccion' || consulta === 'gastos'
     return { ok: true, alcance: 'todo', privado }
   }
   // WP-6: el trabajador pregunta precios; ninguna cifra agregada.
   if (actor.rol === ROL_TRABAJADOR) {
     return consulta === 'precios' ? { ok: true, alcance: 'propio', privado: false } : { ok: false }
   }
-  if (consulta === 'ventas' || consulta === 'produccion') return { ok: false }
+  if (consulta === 'ventas' || consulta === 'produccion' || consulta === 'gastos') return { ok: false }
   if (actor.rol === 'DST') return { ok: true, alcance: 'red', privado: false }
   if (actor.rol === 'LOC') return { ok: true, alcance: 'propio', privado: false }
   return { ok: false }

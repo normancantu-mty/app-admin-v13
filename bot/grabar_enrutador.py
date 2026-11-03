@@ -185,6 +185,14 @@ FRASES = [
     ("f0_control_nota_con_gasto", "pague 300 de gasolina, por cierto el tambo 2 huele raro", None),
     ("f0_control_nota_con_lote", "revise el lote L-1012, dia 9, grado 3.2, huele bien", None),
     ("f0_control_nota_gracias", "gracias", None),
+    # -- 2026-11-03 (bot para el equipo): la frase de Norman, gastos y categorias.
+    ("e1103_cuantas_botellas_quedan", "cuantas botellas quedan", None),
+    ("e1103_grupo_luis_botellas", "cuantas botellas quedan?", None, {"hablante": "Luis"}),
+    ("e1103_cuanto_gastamos_mes", "cuanto llevamos gastado este mes?", None),
+    ("e1103_agrega_subcategoria", "agrega la subcategoria Diesel en Logistica_Envios", None),
+    ("e1103_categoria_nueva", "crea la categoria Mantenimiento de planta con subcategoria Soldadura", None),
+    # CONTROL: un gasto con monto no es alta de categoria.
+    ("e1103_control_gasto_diesel", "gaste 300 en diesel", None),
 ]
 
 

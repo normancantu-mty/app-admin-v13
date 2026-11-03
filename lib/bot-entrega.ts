@@ -155,7 +155,7 @@ export function mensajeDeConfirmacionEntrega(
     'Es efectivo que cobro de contado. NO es abono de concesion: no le baja la deuda de concesion.'
   ]
   if (payload.nota) lineas.push(`Nota: ${payload.nota}`)
-  if (meta.espera) lineas.push('', 'No cuenta hasta que Norman o Kevin confirmen que lo recibieron.')
+  if (meta.espera) lineas.push('', 'No cuenta hasta que Norman confirme que lo recibio.')
   return lineas.join('\n')
 }
 

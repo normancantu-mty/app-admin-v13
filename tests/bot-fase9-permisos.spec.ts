@@ -51,12 +51,13 @@ test.describe('D96 — la tabla de acciones', () => {
     Norman: {
       venta: 'si', abono: 'si', cotizacion: 'si', gasto: 'si', lote: 'si',
       entrada_insumo: 'si', convertir: 'si', entidad: 'si', registrar: 'si',
-      entrega_efectivo: 'si'
+      entrega_efectivo: 'si', categoria: 'si'
     },
     Kevin: {
       venta: 'aprobacion', abono: 'aprobacion', cotizacion: 'aprobacion', gasto: 'aprobacion',
       lote: 'aprobacion', entrada_insumo: 'aprobacion', convertir: 'aprobacion',
-      entidad: 'aprobacion', registrar: 'no', entrega_efectivo: 'aprobacion'
+      entidad: 'aprobacion', registrar: 'no', entrega_efectivo: 'aprobacion',
+      categoria: 'aprobacion'
     },
     DST: {
       // FASE 10 (D106): convertir SOLO SUS cotizaciones (la propiedad, en la ruta:
@@ -65,12 +66,12 @@ test.describe('D96 — la tabla de acciones', () => {
       entrada_insumo: 'no', convertir: 'si', entidad: 'no', registrar: 'no',
       // FASE 11 (D112): SOLO la suya y siempre espera (`decidirEntrega`,
       // `tests/entrega-efectivo.spec.ts`).
-      entrega_efectivo: 'si'
+      entrega_efectivo: 'si', categoria: 'no'
     },
     LOC: {
       venta: 'no', abono: 'no', cotizacion: 'no', gasto: 'no', lote: 'no',
       entrada_insumo: 'no', convertir: 'no', entidad: 'no', registrar: 'no',
-      entrega_efectivo: 'no'
+      entrega_efectivo: 'no', categoria: 'no'
     }
   }
   const ACTORES: Record<string, ActorBot> = { Norman: NORMAN, Kevin: KEVIN, DST, LOC }
@@ -87,22 +88,22 @@ test.describe('D96 — la tabla de acciones', () => {
     expect(permisoDeAccion({ rol: 'SOCIO', requiereAprobacion: false }, 'venta')).toBe('no')
   })
 
-  // FASE 10 (D106): "Yo, Kevin". Aprueban los dos ADMIN; nadie aprueba lo suyo.
-  test('Norman y Kevin son aprobadores; DST y LOC no', () => {
-    expect([NORMAN, KEVIN, DST, LOC].map(esAprobador)).toEqual([true, true, false, false])
+  // 2026-11-03 (sustituye a D106 "Yo, Kevin"): solo Norman aprueba ("espera MI click").
+  test('solo Norman es aprobador; Kevin, DST y LOC no', () => {
+    expect([NORMAN, KEVIN, DST, LOC].map(esAprobador)).toEqual([true, false, false, false])
   })
 
-  test('D106 maker-checker: nadie aprueba lo suyo; lo de Kevin, solo Norman', () => {
+  test('maker-checker: nadie aprueba lo suyo; lo de todos, solo Norman', () => {
     const p = (a: ActorBot, id: number) => ({ ...a, telegramId: id })
-    expect(puedeAprobar(p(KEVIN, ID_KEVIN), p(DST, ID_GILBERTO))).toBe(true)
+    expect(puedeAprobar(p(KEVIN, ID_KEVIN), p(DST, ID_GILBERTO))).toBe(false)
     expect(puedeAprobar(p(NORMAN, ID_NORMAN), p(DST, ID_GILBERTO))).toBe(true)
     expect(puedeAprobar(p(NORMAN, ID_NORMAN), p(KEVIN, ID_KEVIN))).toBe(true)
     expect(puedeAprobar(p(KEVIN, ID_KEVIN), p(KEVIN, ID_KEVIN))).toBe(false)
     expect(puedeAprobar(p(NORMAN, ID_NORMAN), p(NORMAN, ID_NORMAN))).toBe(false)
     // Otra identidad con marca no aprueba lo de Kevin.
     expect(puedeAprobar(p(KEVIN, 999), p(KEVIN, ID_KEVIN))).toBe(false)
-    // Kevin si aprueba lo que espera de un tercero con marca (un DST).
-    expect(puedeAprobar(p(KEVIN, ID_KEVIN), p({ rol: 'DST', requiereAprobacion: true }, ID_GILBERTO))).toBe(true)
+    // 2026-11-03: Kevin ya NO aprueba lo de un tercero (antes D106 si).
+    expect(puedeAprobar(p(KEVIN, ID_KEVIN), p({ rol: 'DST', requiereAprobacion: true }, ID_GILBERTO))).toBe(false)
     expect(puedeAprobar(p(DST, ID_GILBERTO), p(KEVIN, ID_KEVIN))).toBe(false)
   })
 
@@ -196,7 +197,9 @@ test.describe('D94/D98 — la puerta del VA', () => {
     expect(d).toMatchObject({ ok: false, status: 403 })
   })
 
-  test('D106: Kevin aprueba lo que espera de un tercero', () => {
+  // 2026-11-03 (Norman: "...nada mas espera MI click"): D106 se retira en esto.
+  // Kevin ya no aprueba lo de un tercero; solo Norman. Revertir = esAprobador por rol.
+  test('2026-11-03: Kevin NO aprueba lo que espera de un tercero (solo Norman)', () => {
     const d = decidirPuerta(
       hechos({
         estado: 'ESPERA_APROBACION',
@@ -208,7 +211,7 @@ test.describe('D94/D98 — la puerta del VA', () => {
         quienRequiereAprobacion: true
       })
     )
-    expect(d).toEqual({ ok: true, modo: 'aprobar' })
+    expect(d).toMatchObject({ ok: false, status: 403 })
   })
 
   test('D106: un autor sin dato de marca se trata como Kevin (Kevin no lo aprueba)', () => {

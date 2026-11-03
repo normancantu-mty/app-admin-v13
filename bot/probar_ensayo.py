@@ -105,8 +105,9 @@ confirmar = sorted(set(re.findall(r'_post\("(/api/bot/[a-z_]+/confirmar)"', fuen
 # el Aprobar del abono de un DST) y `miembro` (D95, el alta de una persona).
 # Las tres terminan en `/confirmar` a proposito: en ensayo no salen.
 # FASE 11 (D112): doce, con /api/bot/entrega/confirmar.
-caso("el bot llama hoy doce rutas /confirmar (si cambia, revisa este archivo)",
-     len(confirmar), 12)
+# 2026-11-03: trece, con /api/bot/categoria/confirmar (alta de categoria).
+caso("el bot llama hoy trece rutas /confirmar (si cambia, revisa este archivo)",
+     len(confirmar), 13)
 for ruta in confirmar:
     caso("no sale: " + ruta, B.decision_de_ensayo(ruta), "no_sale")
 

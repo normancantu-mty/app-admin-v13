@@ -459,21 +459,30 @@ test.describe('D106 — maker-checker en el handler', () => {
     })
   }
 
-  test('Kevin aprueba el abono pendiente de un DST -> 1 escritura', async () => {
+  // 2026-11-03 (Norman: "...espera MI click"): el Aprobar es SOLO de Norman.
+  // Antes (D106) Kevin tambien aprobaba; estas pruebas dicen lo nuevo.
+  test('2026-11-03: Kevin NO aprueba el abono pendiente de un DST -> 403, 0 escrituras', async () => {
     estadoInicial()
     const b = abonoPendiente()
     const r = await llamar('aprobacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, accion: 'aprobar' })
-    expect(r.status, JSON.stringify(r.j)).toBe(200)
-    expect(deDinero()).toEqual(['PATCH finanzas_ledger'])
-    expect(String(r.j.mensaje)).toContain('por Kevin')
+    expect(r.status, JSON.stringify(r.j)).toBe(403)
+    expect(deDinero()).toEqual([])
   })
 
-  test('Norman y Kevin aprueban el mismo abono A LA VEZ -> 1 sola escritura', async () => {
+  test('CONTROL: Norman aprueba el abono pendiente de un DST -> 1 escritura', async () => {
+    estadoInicial()
+    const b = abonoPendiente()
+    const r = await llamar('aprobacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, accion: 'aprobar' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    expect(deDinero()).toEqual(['PATCH finanzas_ledger'])
+  })
+
+  test('Norman aprueba el mismo abono DOS VECES A LA VEZ -> 1 sola escritura', async () => {
     estadoInicial()
     const b = abonoPendiente()
     const [a, k] = await Promise.all([
       llamar('aprobacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, accion: 'aprobar' }),
-      llamar('aprobacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, accion: 'aprobar' })
+      llamar('aprobacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, accion: 'aprobar' })
     ])
     expect([a.status, k.status].sort()).toEqual([200, 409])
     const patchesQueTocaron = tablas.finanzas_ledger.filter((f) => f.id === 'm-pend' && f.categoria === 'ABONO_REAL')
@@ -552,22 +561,22 @@ test.describe('D106 — maker-checker en el handler', () => {
     return { b, sello }
   }
 
-  test('Gil con marca: su VA espera y el aviso les llega a Norman y a Kevin', async () => {
+  test('Gil con marca: su VA espera y el aviso le llega SOLO a Norman (2026-11-03)', async () => {
     estadoInicial({ gilConMarca: true })
     const { b, sello } = cotizacionDeGil()
     const va = await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
     expect(va.j.espera_aprobacion, JSON.stringify(va.j)).toBe(true)
-    expect([...(va.j.avisar_a as number[])].sort()).toEqual([NORMAN, KEVIN])
+    expect([...(va.j.avisar_a as number[])].sort()).toEqual([NORMAN])
     expect(deDinero()).toEqual([])
   })
 
-  test('Norman y Kevin aprueban A LA VEZ lo que espera de Gil -> 1 sola cotizacion', async () => {
+  test('Norman aprueba DOS VECES A LA VEZ lo que espera de Gil -> 1 sola cotizacion', async () => {
     estadoInicial({ gilConMarca: true })
     const { b, sello } = cotizacionDeGil()
     await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
     const [n, k] = await Promise.all([
       llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello }),
-      llamar('cotizacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
+      llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
     ])
     expect([n.status, k.status].sort(), JSON.stringify([n.j, k.j])).toEqual([200, 409])
     expect(escrituras.filter((e) => e === 'POST cotizaciones')).toHaveLength(1)
@@ -614,7 +623,7 @@ test.describe('D106 — maker-checker en el handler', () => {
     }
     expect(n.status, JSON.stringify(n.j)).toBe(500)
     expect((b as Fila).resuelto_en ?? null).toBeNull()
-    const k = await llamar('cotizacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
+    const k = await llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
     expect(k.status, JSON.stringify(k.j)).toBe(200)
     expect(escrituras.filter((e) => e === 'POST cotizaciones')).toHaveLength(1)
     expect(b.estado).toBe('CONFIRMADO')
@@ -655,22 +664,29 @@ test.describe('D106 — maker-checker en el handler', () => {
     expect(escrituras.filter((e) => e === 'POST cotizaciones')).toHaveLength(0)
   })
 
-  test('CONTROL: uno solo aprueba lo de Gil -> 1 cotizacion, y el segundo (despues) ve que ya se resolvio', async () => {
+  test('2026-11-03: el clic de Kevin sobre lo de Gil NO escribe; el de Norman si, y el segundo ve que ya se resolvio', async () => {
     estadoInicial({ gilConMarca: true })
     const { b, sello } = cotizacionDeGil()
     await llamar('cotizacion/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
     const k = await llamar('cotizacion/confirmar', { telegram_id: KEVIN, borrador_id: b.id, sello })
-    expect(k.status, JSON.stringify(k.j)).toBe(200)
+    expect(k.status, JSON.stringify(k.j)).toBe(403)
+    expect(escrituras.filter((e) => e === 'POST cotizaciones')).toHaveLength(0)
+    expect(b.estado).toBe('ESPERA_APROBACION')
     const n = await llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
-    expect(n.status).toBe(409)
+    expect(n.status, JSON.stringify(n.j)).toBe(200)
+    const n2 = await llamar('cotizacion/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+    expect(n2.status).toBe(409)
     expect(escrituras.filter((e) => e === 'POST cotizaciones')).toHaveLength(1)
   })
 
-  test('Rechazar: Kevin rechaza lo de Gil (si); lo de Kevin, Kevin no lo "rechaza como aprobador"', async () => {
+  test('Rechazar (2026-11-03): Kevin NO rechaza lo de Gil; Norman si', async () => {
     estadoInicial({ gilConMarca: true })
     const { b } = cotizacionDeGil()
     b.estado = 'ESPERA_APROBACION'
-    const r = await llamar('cancelar', { telegram_id: KEVIN, borrador_id: b.id })
+    const k = await llamar('cancelar', { telegram_id: KEVIN, borrador_id: b.id })
+    expect(k.status, JSON.stringify(k.j)).toBe(403)
+    expect(b.estado).toBe('ESPERA_APROBACION')
+    const r = await llamar('cancelar', { telegram_id: NORMAN, borrador_id: b.id })
     expect(r.status, JSON.stringify(r.j)).toBe(200)
     expect(r.j.rechazado).toBe(true)
   })

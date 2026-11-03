@@ -76,6 +76,9 @@ INTERVALO_LATIDO = 15 * 60
 API = os.environ.get("ERP_API_URL", "http://localhost:3000").rstrip("/")
 TOKEN_API = os.environ.get("BOT_API_TOKEN", "")
 TOKEN_TG = os.environ.get("BOT_GASTOS_TELEGRAM_TOKEN", "")
+# El unico cuyo clic escribe (2026-11-03). Lo que manda es el servidor
+# (`esAprobador` en lib/bot-permisos.ts); aqui solo cambia el texto del aviso.
+NORMAN_TELEGRAM_ID = 6571822622
 
 class _TapaSecretos(logging.Filter):
     """Tapa el token de Telegram en CUALQUIER linea que pase por el log.
@@ -606,6 +609,8 @@ RUTA_CONFIRMAR_DE = {
     # FASE 11 (D112): la entrega de efectivo del DST se aprueba por el camino
     # generico (ESPERA_APROBACION -> Aprobar -> su confirmar con el sello).
     "entrega_efectivo": "/api/bot/entrega/confirmar",
+    # 2026-11-03: alta de categoria/subcategoria.
+    "alta_categoria": "/api/bot/categoria/confirmar",
 }
 
 
@@ -759,6 +764,40 @@ async def _confirmar_miembro(update, clave):
     for k in [k for k, v in _preguntas_de_alta.items() if v == miembro]:
         _preguntas_de_alta.pop(k, None)
     await update.effective_message.reply_text(r.get("mensaje") or "Listo. Quedo registrado.")
+
+
+# ─── 2026-11-03: ALTA DE CATEGORIA / SUBCATEGORIA ───────────────────────────
+async def _proponer_categoria(update, clave, cuerpo):
+    estado, r = _post("/api/bot/categoria/proponer", cuerpo)
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponer la categoria."))
+        return
+    _memoria[clave] = {"tipo": "alta_categoria", "borrador_id": r["borrador_id"], "sello": r["sello"]}
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, agregala", callback_data="vacat:" + r["borrador_id"])],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + r["borrador_id"])],
+    ])
+    await _ensenar_propuesta(update, clave, r["mensaje"], teclado)
+
+
+async def _confirmar_categoria(update, clave):
+    dato = _memoria.get(clave)
+    if not dato or dato.get("tipo") != "alta_categoria":
+        await update.effective_message.reply_text("No tengo ninguna categoria pendiente.")
+        return
+    estado, r = _post("/api/bot/categoria/confirmar", {
+        "telegram_id": clave, "borrador_id": dato["borrador_id"], "sello": dato["sello"]})
+    log.info("alta de categoria: borrador=%s -> %s", dato["borrador_id"], estado)
+    if estado != 200 or not r.get("ok"):
+        # `espera_aprobacion` (alguien del equipo): `_anotar_aprobacion` ya le
+        # puso el texto "se lo mande a Norman" en `error`.
+        await update.effective_message.reply_text(r.get("error", "No pude agregarla."))
+        return
+    _memoria.pop(clave, None)
+    texto = r.get("mensaje") or "Listo. Quedo agregada."
+    if r.get("aviso_marca"):
+        texto += NL + str(r["aviso_marca"])
+    await update.effective_message.reply_text(_rotulo_de_grupo(clave, texto))
 
 
 async def _contestar_texto_de_consulta(update, clave, r):
@@ -1339,6 +1378,8 @@ _COMO_SE_LLAMA = {
     "conversion": "una conversion",
     "entrega_efectivo": "una entrega de efectivo",
     "entrega": "una entrega de efectivo",
+    "categoria": "una categoria nueva",
+    "alta_categoria": "una categoria nueva",
 }
 
 
@@ -2101,7 +2142,8 @@ async def _responder_natural(update, ruta):
     elif intencion == "reporte":
         aviso = "Todavia no tengo el reporte del dia. Por ahora: /ventas, /stock o /cartera."
     elif intencion == "consulta":
-        aviso = "Eso todavia no lo se consultar. Hoy puedo: stock, cartera, ventas y produccion."
+        aviso = ("Eso todavia no lo se consultar. Hoy puedo: inventario (cuantas botellas quedan), "
+                 "gastos del mes, cartera, ventas, produccion y precios.")
     else:
         # Aqui caen `charla` y el "no entendi", que son justo los dos caminos
         # donde una cadena fija se siente un formulario. Si el modelo redacto
@@ -3107,6 +3149,8 @@ INTENCIONES_QUE_ESCRIBEN = (
     "gasto", "abono", "venta", "lote", "cotizacion",
     # Fase 5. Escriben igual que las de arriba, aunque la fila la elija un boton.
     "anular", "corregir", "alta", "convertir",
+    # 2026-11-03: agregar categoria/subcategoria (propone; escribe el clic de Norman).
+    "categoria",
     # Y la que de verdad aprieta el gatillo: `confirmar` es el paso que convierte
     # el borrador sellado en INSERT. El sello protege el CONTENIDO -- el monto es
     # el que Norman vio en pantalla -- pero no protege el DISPARADOR.
@@ -3396,6 +3440,23 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
         if campos.get("telefono"):
             peticion["telefono"] = campos.get("telefono")
         await _proponer_alta(update, chat, peticion)
+        return
+
+    if intencion == "categoria":
+        # 2026-11-03. El modelo solo aporta los dos nombres; la regla (que no
+        # se repita, que una categoria nueva no dispare el pasivo fiscal) la
+        # aplica el servidor, igual que en la pantalla.
+        cat = str(campos.get("categoria") or "").strip()
+        sub = str(campos.get("subcategoria") or "").strip()
+        if not cat or not sub:
+            _recordar_a_medias(chat, "categoria", campos)
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or ("En que categoria, y como se llama la subcategoria nueva?"
+                                         if not cat else "Como se llama la subcategoria nueva?"))
+            return
+        tipo = "INGRESO" if str(campos.get("tipo") or "").upper() == "INGRESO" else "EGRESO"
+        await _proponer_categoria(update, chat, {"telegram_id": chat, "tipo": tipo,
+                                                 "categoria": cat, "subcategoria": sub})
         return
 
     if intencion == "convertir":
@@ -4288,6 +4349,9 @@ async def _confirmar(update, chat, por_boton=False):
     if dato.get("tipo") == "alta_miembro":
         await _confirmar_miembro(update, chat)
         return
+    if dato.get("tipo") == "alta_categoria":
+        await _confirmar_categoria(update, chat)
+        return
     if dato.get("tipo") == "miembro_eligiendo":
         await update.effective_message.reply_text(
             "Primero dime de cual es, con uno de los botones.")
@@ -4391,7 +4455,50 @@ async def _reproponer(update, chat, cambios):
 
 # Los botones que ESCRIBEN. El `borrador_id` que traen es el de la propuesta
 # que Norman vio; si ya no esta viva, NO se confirma lo que haya en el foco.
-ACCIONES_VA = ("va", "vaan", "vaalt", "vacnv", "vaab", "vavt", "valt", "vact", "vaent", "vamb", "vaet")
+ACCIONES_VA = ("va", "vaan", "vaalt", "vacnv", "vaab", "vavt", "valt", "vact", "vaent", "vamb", "vaet",
+               "vacat")
+
+
+_PATRON_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def _dueno_en_el_grupo(clave, borrador_id):
+    """En un grupo, la PERSONA (otra que quien apreta) cuya propuesta viva es
+    `borrador_id`, o None. **Pura salvo por leer la RAM.**"""
+    if not _en_grupo(clave):
+        return None
+    for k, reg in list(_pendientes.items()):
+        if not _en_grupo(k) or _chat_de(k) != _chat_de(clave) or _persona(k) == _persona(clave):
+            continue
+        foco = dict.get(_memoria, k)
+        if borrador_id in (reg or {}) or (isinstance(foco, dict) and foco.get("borrador_id") == borrador_id):
+            return _persona(k)
+    return None
+
+
+def _boton_ajeno(clave, accion, arg):
+    """El texto que se le dice a quien apreta el boton de una propuesta que no
+    es suya, o "" si el boton si es suyo (o no es de una propuesta). **Solo
+    lee la RAM.** Nunca escribe: el clic ajeno no llega al servidor."""
+    if not _en_grupo(clave) or not _PATRON_UUID.match(str(arg or "")):
+        return ""
+    if arg in (_pendientes.get(clave) or {}):
+        return ""
+    foco = dict.get(_memoria, clave)
+    if isinstance(foco, dict) and foco.get("borrador_id") == arg:
+        return ""
+    dueno = _dueno_en_el_grupo(clave, arg)
+    if dueno is None:
+        if accion in ACCIONES_VA or accion == "no":
+            return ("Ese boton no es de una propuesta tuya (o ya caduco). Tu clic no escribio nada. "
+                    "Lo que el bot escribe, lo escribe el clic de Norman.")
+        return ""
+    nombre = _nombre_de(dueno)
+    if int(_persona(clave)) == NORMAN_TELEGRAM_ID:
+        return ("Esa propuesta es de " + nombre + ". Cuando " + nombre + " le de VA, te llega "
+                "por privado el Aprobar; ese clic es el que la escribe. Este no escribio nada.")
+    return ("Esa propuesta es de " + nombre + ": solo " + nombre + " le da VA, y solo el Aprobar "
+            "de Norman la escribe. Tu clic no escribio nada.")
 
 
 async def manejar_boton(update, context):
@@ -4449,6 +4556,14 @@ async def _manejar_boton(update, chat, q, partes, accion):
     if accion in ("apr", "rch", "apa", "rca"):
         await _boton_de_aprobacion(update, chat, q, accion, partes[1] if len(partes) > 1 else "")
         return
+    # 2026-11-03 (equipo en el grupo): el boton de la propuesta de OTRO no hace
+    # nada, y se dice por que. El servidor ya lo cerraba ("Ese borrador no es
+    # tuyo", 403); esto evita que llegue y le explica a quien apreto.
+    aviso_ajeno = _boton_ajeno(chat, accion, partes[1] if len(partes) > 1 else "")
+    if aviso_ajeno:
+        log.info("boton ajeno: %s apreto %s de otra persona en %s", _persona(chat), accion, _chat_de(chat))
+        await update.effective_message.reply_text(aviso_ajeno)
+        return
     if await _boton_de_lote_v2(update, chat, partes, accion):
         return
     bid = partes[1] if len(partes) > 1 else ""
@@ -4463,6 +4578,9 @@ async def _manejar_boton(update, chat, q, partes, accion):
 
     if accion == "vamb":
         await _confirmar_miembro(update, chat)
+        return
+    if accion == "vacat":
+        await _confirmar_categoria(update, chat)
         return
     if accion == "mbe":
         dato = _memoria.get(chat) or {}

@@ -75,6 +75,9 @@ INTENCIONES = (
     # mueve nada: va a la bitacora con etiquetas (lote, persona, cliente).
     # No esta en TIPOS_DE_HECHO a proposito: no escribe ninguna fila del ERP.
     "nota",
+    # --- 2026-11-03. Agregar una categoria/subcategoria a la lista cerrada
+    # (`categorias_movimiento`). Escribe: propone y espera el clic de Norman.
+    "categoria",
     "charla",
 )
 
@@ -99,7 +102,7 @@ MAX_HECHOS = 5
 # Fase 8 (D83): `produccion` -- cuantas botellas se envasaron (hoy, ayer,
 # semana, mes o un lote). `tests/bot-enrutador.spec.ts` compara esta tupla
 # contra `CONSULTAS` de `lib/bot-consultas.ts`.
-CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas", "produccion", "precios")
+CONSULTAS_QUE_CONTESTA = ("stock", "cartera", "ventas", "produccion", "precios", "gastos")
 CONSULTAS = CONSULTAS_QUE_CONTESTA + ("otra",)
 
 # ---------------------------------------------------------------------------
@@ -174,7 +177,7 @@ Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:
 {
   "intencion": una de: <<INTENCIONES>>. Si el mensaje trae hechos (ver "hechos"), la del PRIMERO,
   "consulta": si intencion es consulta, una de: <<CONSULTAS>>. Si no, null,
-  "filtro": SOLO para consulta stock, cartera, produccion o precios. En stock y cartera, el nombre propio que menciono, tal cual lo dijo (en stock, un producto O un punto de venta; en cartera, quien debe). En produccion, el periodo -- "hoy", "ayer", "semana" o "mes" -- o el codigo del lote tal cual lo dijo. En precios, el distribuidor o punto de venta por el que pregunta, tal cual lo dijo. Si no menciona ninguno, o es otra consulta, null,
+  "filtro": SOLO para consulta stock, cartera, produccion, precios o gastos. En gastos, la categoria o concepto por el que pregunta ("gasolina", "insumos"), tal cual lo dijo. En stock y cartera, el nombre propio que menciono, tal cual lo dijo (en stock, un producto O un punto de venta; en cartera, quien debe). En produccion, el periodo -- "hoy", "ayer", "semana" o "mes" -- o el codigo del lote tal cual lo dijo. En precios, el distribuidor o punto de venta por el que pregunta, tal cual lo dijo. Si no menciona ninguno, o es otra consulta, null,
   "entendido": frase MUY corta de lo que si entendiste. **ES TELEMETRIA: va al log, NUNCA a la pantalla.** Nunca vacia,
   "respuesta": QUE DECIRLE A QUIEN TE ESCRIBE (Norman, salvo que el contexto diga otro nombre), en segunda persona, tuteandolo, UNA LINEA. Nunca hables de el en tercera persona. Nunca vacia,
   "campos": objeto con lo que lograste sacar del mensaje. Solo lo que DE VERDAD dijo. Si hay hechos, los del primero,
@@ -224,6 +227,9 @@ QUE ES CADA INTENCION
   "cuantas botellas se hicieron hoy", "cuanto envasamos esta semana", "que salio del lote L-0915" es consulta "produccion".
   "a como le sale a Aeropuerto", "que precio tiene Casa Verde", "precios", "a como damos la grande" es consulta "precios":
   pregunta el PRECIO de lista, sin cantidades. Si trae cantidades o dice "cotizale", es cotizacion, no consulta.
+  "cuantas botellas quedan", "que hay en inventario", "cuanto tenemos de la grande" es consulta "stock".
+  "cuanto llevamos gastado", "gastos del mes", "cuanto se ha ido en gasolina" es consulta "gastos": pregunta,
+  no reporta un gasto. Si dice que GASTO algo ("gaste 300 de gasolina"), es gasto, no consulta.
 - anular: quiere DESHACER algo que ya se escribio. "cancela", "borra", "quitale",
   "ese gasto estuvo mal", "anula la venta de ayer".
   Campos: ninguno. NO intentes decir CUAL: el bot le ensena la lista y el escoge
@@ -258,6 +264,13 @@ QUE ES CADA INTENCION
   Pon solo los que de verdad dijo. **Una nota no escribe nada**: si el mensaje
   trae ademas un gasto, venta, abono o lote, es ESE hecho (va en "hechos"). Un
   "gracias" es charla, no nota.
+- categoria: quiere AGREGAR una categoria o subcategoria a la lista de categorias
+  de gastos (o de ingresos). "agrega la subcategoria Diesel en Logistica",
+  "crea la categoria Mantenimiento de planta con subcategoria Soldadura",
+  "agrega Fumigacion a Servicios". NO es un gasto: no trae monto.
+  Campos: categoria (la de arriba, tal cual la dijo), subcategoria (la nueva,
+  tal cual la dijo), tipo ("INGRESO" solo si dijo que es de ingresos; si no, no
+  pongas el campo). Si falta la subcategoria, pregunta cual.
 - charla: saludo, agradecimiento, o algo que no cae en ninguna de las anteriores.
 
 REGLAS QUE NO SE ROMPEN
@@ -776,7 +789,7 @@ def _normaliza(obj):
     filtro = str(filtro).strip()[:60] if filtro else None
     # D83 (Fase 8): en `produccion` el filtro es el periodo o el lote.
     # D99 (Fase 9): en `precios` el filtro es la entidad.
-    if consulta not in ("stock", "cartera", "produccion", "precios"):
+    if consulta not in ("stock", "cartera", "produccion", "precios", "gastos"):
         filtro = None
 
     campos = _normaliza_campos(obj.get("campos"))

@@ -48,7 +48,7 @@ test('no aprueba; Norman y Kevin si aprueban lo suyo', () => {
   expect(esAprobador(TRABAJADOR)).toBe(false)
   expect(puedeAprobar(t, { telegramId: 9, rol: 'DST', requiereAprobacion: false })).toBe(false)
   expect(puedeAprobar({ telegramId: 111, rol: 'ADMIN', requiereAprobacion: false }, t)).toBe(true)
-  expect(puedeAprobar({ telegramId: 222, ...KEVIN }, t)).toBe(true)
+  expect(puedeAprobar({ telegramId: 222, ...KEVIN }, t)).toBe(false)
 })
 
 test('el aviso de falta de empaque no le ensena el stock', () => {
