@@ -45,7 +45,7 @@ export interface CuentaMatriz {
   saldo: number
 }
 
-/** Orden fijo de las tarjetas: el de la decision de Norman (4 cuentas), mas Cuenta G (2026-11-03). */
+/** Orden fijo de las tarjetas: el de la decision de Norman (4 cuentas), mas Cuenta Spin (2026-11-03). */
 export const ORDEN_CLASES: ClaseCuenta[] = ['EFECTIVO', 'FISCAL', 'PERSONAL', 'CUENTA_G', 'TRANSFERENCIAS']
 
 /** Slug de URL <-> clase. */

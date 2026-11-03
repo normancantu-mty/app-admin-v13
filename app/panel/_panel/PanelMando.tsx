@@ -4,7 +4,7 @@
  * 1cyDAQie7R52SbJnUvTSJg), con las cifras REALES de la base.
  *
  * Lo decidido gana al diseño: 5 cuentas (Efectivo, Cuenta Fresnillo, Cuenta
- * Gilberto LIBRE solo egresos, Cuenta G, Transferencias 95/5) y la cartera de la matriz sin
+ * Gilberto LIBRE solo egresos, Cuenta Spin, Transferencias 95/5) y la cartera de la matriz sin
  * la deuda de los locales con su distribuidor.
  */
 
@@ -41,7 +41,7 @@ const NOMBRE_CLASE: Record<string, string> = {
   EFECTIVO: 'Efectivo',
   FISCAL: 'Cuenta Fresnillo',
   PERSONAL: 'Cuenta Gilberto',
-  CUENTA_G: 'Cuenta G',
+  CUENTA_G: 'Cuenta Spin',
   TRANSFERENCIAS: 'Transferencias'
 }
 

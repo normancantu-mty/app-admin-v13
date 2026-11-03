@@ -64,7 +64,7 @@ const NOMBRE: Record<string, string> = {
   EFECTIVO: 'Efectivo',
   FISCAL: 'Cuenta Fresnillo',
   PERSONAL: 'Cuenta Gilberto',
-  CUENTA_G: 'Cuenta G',
+  CUENTA_G: 'Cuenta Spin',
   TRANSFERENCIAS: 'Transferencias'
 }
 
