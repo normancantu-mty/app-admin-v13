@@ -34,7 +34,7 @@ export default async function PaginaCorrecciones() {
   try {
     const [s, c, e] = await Promise.all([
       supabase.rpc('stock_ajustable'),
-      supabase.from('cuentas_financieras').select('id, nombre, clase, id_entidad').order('nombre'),
+      supabase.from('cuentas_financieras').select('id, nombre, clase, id_entidad').not('clase', 'is', null).order('nombre'),
       supabase.from('entidades').select('id, nombre, rol')
     ])
     if (s.error) throw new Error(`stock_ajustable: ${s.error.message}`)
