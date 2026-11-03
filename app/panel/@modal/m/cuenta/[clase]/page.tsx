@@ -68,6 +68,7 @@ const NOMBRE: Record<string, string> = {
   EFECTIVO: 'Efectivo',
   FISCAL: 'Cuenta Fresnillo',
   PERSONAL: 'Cuenta Gilberto',
+  CUENTA_G: 'Cuenta G',
   TRANSFERENCIAS: 'Transferencias'
 }
 
@@ -76,6 +77,7 @@ const REGLA: Record<string, string> = {
   FISCAL: 'Cuenta bancaria fiscal. FULL_TAX: una venta cobrada aquí desglosa IEPS 53% e IVA 16% (base = total / 1.7748).',
   PERSONAL:
     'LIBRE y SOLO EGRESOS: la base rechaza cualquier ingreso a esta cuenta (trigger trg_cuenta_solo_egresos). Sirve para registrar lo que se paga desde ella.',
+  CUENTA_G: 'Cuenta LIBRE de la matriz: recibe ingresos y egresos, sin desglose de IVA ni IEPS.',
   TRANSFERENCIAS:
     'Aquí caen los cobros por transferencia. Al convertirlos a efectivo, 95% pasa a Efectivo y 5% se registra como gasto «Financieros / Comisión por conversión de transferencias».'
 }

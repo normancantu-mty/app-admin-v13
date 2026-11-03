@@ -34,7 +34,7 @@ type Cliente = SupabaseClient<Database>
 type ClienteLibre = SupabaseClient<any>
 const libre = (c: Cliente) => c as unknown as ClienteLibre
 
-export type ClaseCuenta = 'EFECTIVO' | 'FISCAL' | 'PERSONAL' | 'TRANSFERENCIAS'
+export type ClaseCuenta = 'EFECTIVO' | 'FISCAL' | 'PERSONAL' | 'TRANSFERENCIAS' | 'CUENTA_G'
 
 export interface CuentaMatriz {
   id: string
@@ -45,14 +45,15 @@ export interface CuentaMatriz {
   saldo: number
 }
 
-/** Orden fijo de las tarjetas: el de la decision de Norman (4 cuentas). */
-export const ORDEN_CLASES: ClaseCuenta[] = ['EFECTIVO', 'FISCAL', 'PERSONAL', 'TRANSFERENCIAS']
+/** Orden fijo de las tarjetas: el de la decision de Norman (4 cuentas), mas Cuenta G (2026-11-03). */
+export const ORDEN_CLASES: ClaseCuenta[] = ['EFECTIVO', 'FISCAL', 'PERSONAL', 'CUENTA_G', 'TRANSFERENCIAS']
 
 /** Slug de URL <-> clase. */
 export const SLUG_CLASE: Record<string, ClaseCuenta> = {
   efectivo: 'EFECTIVO',
   fresnillo: 'FISCAL',
   gilberto: 'PERSONAL',
+  'cuenta-g': 'CUENTA_G',
   transferencias: 'TRANSFERENCIAS'
 }
 export function slugDeClase(clase: ClaseCuenta | null): string {

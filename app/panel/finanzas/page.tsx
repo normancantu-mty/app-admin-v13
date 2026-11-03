@@ -3,7 +3,7 @@
  * Escrito el 2026-10-29 por el ejecutor del Socio.
  *
  * Regla de Norman (2026-10-29): el modal de cuenta es la vista rapida desde el
- * panel; esta pagina es para ver el apartado entero: las 4 cuentas, los
+ * panel; esta pagina es para ver el apartado entero: las cuentas, los
  * movimientos de todas (o de una) con filtros, «Cargar más» y Anular, los
  * egresos por categoria, transferencias por convertir, IVA/IEPS y aprobaciones.
  * Las capturas (+ Gasto) se abren como modal encima de esta pagina.
@@ -64,6 +64,7 @@ const NOMBRE: Record<string, string> = {
   EFECTIVO: 'Efectivo',
   FISCAL: 'Cuenta Fresnillo',
   PERSONAL: 'Cuenta Gilberto',
+  CUENTA_G: 'Cuenta G',
   TRANSFERENCIAS: 'Transferencias'
 }
 

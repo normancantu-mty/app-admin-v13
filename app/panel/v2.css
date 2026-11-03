@@ -621,6 +621,7 @@ html.dark .v2 .v1 input:not([type=checkbox]):not([type=radio]), html.dark .v2 .v
 .v2 [data-clase="EFECTIVO"] { --vs-c: var(--s4); }
 .v2 [data-clase="FISCAL"] { --vs-c: var(--s2); }
 .v2 [data-clase="PERSONAL"] { --vs-c: var(--s3); }
+.v2 [data-clase="CUENTA_G"] { --vs-c: var(--s3); }
 .v2 [data-clase="TRANSFERENCIAS"] { --vs-c: var(--chile); }
 .v2 .vs-tit { display: inline-flex; align-items: center; gap: 9px; color: color-mix(in srgb, var(--vs-c) 82%, var(--ink)); }
 .v2 .vs-tit i { width: 11px; height: 11px; border-radius: 50%; background: var(--vs-c); flex: none; }
