@@ -62,6 +62,10 @@ supabase/_respaldos/
 
 # bot de gastos (AG-01): audios recibidos, log y cache de python
 /bot/_audios/
+# fotos de tickets (copia local) y grupos silenciosos: estado de esta maquina
+/bot/comprobantes/
+/bot/grupos_silenciosos.json
+/bot/grupos_silenciosos.tmp
 /bot/*.log
 /bot/__pycache__/
 # El reloj de la espera del vigilante (D23): estado de ejecucion, no codigo.
