@@ -54,7 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # mismo mensaje se podia leer de dos maneras distintas segun por donde entrara,
 # y cual mandaba dependia del orden de unos `if`.
 from enrutador import (  # noqa: E402
-    CATEGORIAS_SEMILLA, FORMAS_DEL_MISMO, MAX_HECHOS, TIPOS_DE_HECHO, enrutar,
+    CATEGORIAS_SEMILLA, CAUSA_LOGIN, FORMAS_DEL_MISMO, MAX_HECHOS, TIPOS_DE_HECHO, enrutar,
     es_afirmacion_explicita)
 # Cazador F0 (2026-10-17): el codigo nuevo vive en modulos nuevos; aqui solo se
 # enchufan. `bitacora` esta APAGADA hasta que `main()` la prende.
@@ -3231,6 +3231,18 @@ async def _en_pausa(update, hasta=None):
     return True
 
 
+def aviso_modelo_caido(error):
+    """Lo que se le dice en el mismo chat cuando el modelo falla. **Pura.**"""
+    comandos = ("Si corre prisa, /stock, /cartera, /ventas y /abono no pasan por el "
+                "modelo y siguen funcionando.")
+    if getattr(error, "causa", None) == CAUSA_LOGIN:
+        return ("No pude leer ese mensaje: se vencio el login de Claude en la PC. "
+                "Norman: hay que correr `claude login` ahi. No escribi nada y el mensaje "
+                "quedo guardado sin procesar; cuando vuelva, dimelo otra vez. " + comandos)
+    return ("No pude leer ese mensaje: se me cayo el modelo. No escribi nada y quedo "
+            "guardado sin procesar. Dimelo otra vez. " + comandos)
+
+
 async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     """Ronda 5 (decision de Norman, 2026-10-19): la gente NO dicta temperatura;
     sale SOLO de Open-Meteo. Ya no hay interceptor de temperatura antes del
@@ -3299,10 +3311,13 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
         return
     if not ok:
         log.warning("el enrutador fallo: %s", ruta)
-        await update.effective_message.reply_text(
-            "No pude leer ese mensaje: se me cayo el modelo. Dimelo otra vez. "
-            "Si corre prisa, /stock, /cartera, /ventas y /abono no pasan por el "
-            "modelo y siguen funcionando.")
+        # 2026-11-04: el fallo NO cuenta como atendido. `procesado` se queda en
+        # false (la misma cola de la pausa) y el aviso dice lo que paso. Antes
+        # `manejar_voz` lo marcaba `true` y la voz de las 10:02 se perdio.
+        clave = bitacora.clave_de_update(update)
+        if clave:
+            bitacora.EN_PAUSA.add(clave)
+        await update.effective_message.reply_text(aviso_modelo_caido(ruta))
         return
 
     # D33: **el texto crudo, junto a su enrutamiento.** Hasta hoy el log

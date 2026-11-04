@@ -31,11 +31,61 @@ import shutil
 import subprocess
 import claude_cli  # auditoria IA E1: minimo privilegio
 import sys
+import time
 import unicodedata
 
 import tope  # Cazador F0 (item 6): el limite de la suscripcion
 
 TIMEOUT = 90
+
+# ---------------------------------------------------------------------------
+# 2026-11-04: EL FALLO DEL MODELO NO SE TIRA
+# ---------------------------------------------------------------------------
+# Ese dia a las 10:02 una voz de abono se perdio con el log
+# `el modelo devolvio error: ` (vacio): aqui se guardaba solo el stderr y el
+# stdout se tiraba, asi que no hubo forma de saber la causa. Y como `enrutar`
+# volvia normal, `manejar_voz` marcaba `procesado=true` y nada lo reintentaba.
+# Ahora el error trae los dos flujos, recortados y sin secretos, y una `causa`
+# con la que el bot le dice a la persona que paso de verdad.
+CAUSA_LOGIN = "login"
+CAUSA_OTRA = "otra"
+# El timeout no se reintenta: la persona ya espero 90 s y seria el doble.
+CAUSA_TIEMPO = "tiempo"
+# Un reintento, corto: la falla de las 10:02 tardo 2 s. Login y tope no se
+# reintentan: fallarian igual.
+REINTENTOS = 1
+ESPERA_REINTENTO_S = 2
+_LOGIN = re.compile(
+    r"not logged in|please run /login|run\s+`?claude\s+(?:/?login|auth)|invalid api key"
+    r"|oauth|authentication[_ ](?:error|failed|required)|unauthorized"
+    r"|(?:token|credentials?|session)\s+(?:has\s+|have\s+|is\s+)?expired",
+    re.IGNORECASE)
+_SECRETOS = re.compile(r"sk-ant-[\w-]+|\b\d{8,12}:[\w-]{30,}|Bearer\s+\S+|\b[\w-]{40,}\b")
+
+
+class Caido(str):
+    """El error del modelo: se comporta como texto y trae `.causa`."""
+
+    def __new__(cls, texto, causa=CAUSA_OTRA):
+        obj = str.__new__(cls, texto)
+        obj.causa = causa
+        return obj
+
+
+def _sin_secretos(texto):
+    """Lo que sale de `claude -p` va al log: ningun token, venga de donde venga."""
+    return _SECRETOS.sub("[oculto]", " ".join(str(texto or "").split()))
+
+
+def error_del_modelo(returncode, stdout, stderr):
+    """El error con la causa y los DOS flujos. **Pura.**
+
+    Con stderr vacio, lo unico que dice que paso esta en stdout: tirarlo fue
+    el defecto de las 10:02."""
+    salida, errores = _sin_secretos(stdout)[-300:], _sin_secretos(stderr)[-300:]
+    causa = CAUSA_LOGIN if _LOGIN.search("%s\n%s" % (stdout or "", stderr or "")) else CAUSA_OTRA
+    return Caido("el modelo devolvio error: rc=%s stderr=%r stdout=%r"
+                 % (returncode, errores, salida), causa)
 
 # Las intenciones que el bot sabe atender. "charla" es el cajon honesto: un
 # saludo o algo que no cae en ninguna, y se contesta hablando, no con un menu.
@@ -861,6 +911,37 @@ def _normaliza(obj):
     }
 
 
+def _llamar_al_modelo(entrada):
+    """Una llamada a `claude -p`. Devuelve (True, salida) o (False, error)."""
+    try:
+        salida = subprocess.run(
+            _claude(),
+            input=entrada,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=TIMEOUT,
+            cwd=claude_cli.cwd_neutro(),
+        )
+    except subprocess.TimeoutExpired:
+        return False, Caido("el modelo no contesto a tiempo", CAUSA_TIEMPO)
+    except Exception as e:
+        return False, Caido("no pude llamar al modelo: " + _sin_secretos(e))
+
+    crudo = (salida.stdout or "").strip()
+    sin_objeto = crudo.find("{") == -1 or crudo.rfind("}") == -1
+    # Cazador F0 (item 6): el tope de la suscripcion no es "se cayo el modelo".
+    # Solo se busca cuando NO hubo objeto: un JSON bueno que diga "limit" no es tope.
+    if salida.returncode != 0 or sin_objeto:
+        t = tope.detectar(salida.stdout, salida.stderr)
+        if t is not None:
+            return False, t
+    if salida.returncode != 0:
+        return False, error_del_modelo(salida.returncode, salida.stdout, salida.stderr)
+    return True, salida
+
+
 def enrutar(texto, borrador=None, catalogo=None, deudores=None,
             productos=None, en_pantalla=None, historial=None, hablante=None):
     """Devuelve (ok, objeto_o_error). Nunca lanza por culpa del modelo.
@@ -881,32 +962,18 @@ def enrutar(texto, borrador=None, catalogo=None, deudores=None,
                                   historial, hablante)
                + mensaje_delimitado(texto))
 
-    try:
-        salida = subprocess.run(
-            _claude(),
-            input=entrada,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=TIMEOUT,
-            cwd=claude_cli.cwd_neutro(),
-        )
-    except subprocess.TimeoutExpired:
-        return False, "el modelo no contesto a tiempo"
-    except Exception as e:
-        return False, "no pude llamar al modelo: " + str(e)
+    for intento in range(REINTENTOS + 1):
+        ok, salida = _llamar_al_modelo(entrada)
+        reintentable = (not ok and not isinstance(salida, tope.Tope)
+                        and getattr(salida, "causa", None) == CAUSA_OTRA)
+        if not reintentable or intento == REINTENTOS:
+            break
+        time.sleep(ESPERA_REINTENTO_S)
+    if not ok:
+        return False, salida
 
     crudo = (salida.stdout or "").strip()
     ini, fin = crudo.find("{"), crudo.rfind("}")
-    # Cazador F0 (item 6): el tope de la suscripcion no es "se cayo el modelo".
-    # Solo se busca cuando NO hubo objeto: un JSON bueno que diga "limit" no es tope.
-    if salida.returncode != 0 or ini == -1 or fin == -1:
-        t = tope.detectar(salida.stdout, salida.stderr)
-        if t is not None:
-            return False, t
-    if salida.returncode != 0:
-        return False, "el modelo devolvio error: " + (salida.stderr or "")[-200:]
     if ini == -1 or fin == -1:
         return False, "el modelo no devolvio un objeto"
     try:
