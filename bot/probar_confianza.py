@@ -65,7 +65,7 @@ UUID = "7c2d9e41-3b55-4a18-9f60-2e8d1c4b7a03"
 # escritura bajo `confianza: baja` es el defecto.
 # Fase 8 (D77): `/api/bot/pendiente` solo lee (la rehidratacion tras reinicio).
 SOLO_LECTURA = ("/api/bot/catalogo", "/api/bot/consulta", "/api/bot/cancelar",
-                "/api/bot/pendiente")
+                "/api/bot/pendiente", B.RUTA_LEER_CUENTAS)
 
 casos = []
 

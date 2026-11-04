@@ -230,8 +230,8 @@ caso("D80 - el mensaje del 2026-09-19: DOS propuestas (venta y gasto)",
 de_venta = [c for r, c in prop if r.endswith("/venta/proponer")]
 de_gasto = [c for r, c in prop if r.endswith("/gasto/proponer")]
 caso("D80 - las dos quedan vivas, cada una con su VA", len(vivos()), 2)
-caso("D79 - la primera sale como mensaje NUEVO (el servidor cancela lo viejo)",
-     "conservar_pendientes" in prop[0][1], False)
+caso("2026-11-04 - la primera tambien conserva: un mensaje nuevo ya no cancela",
+     prop[0][1].get("conservar_pendientes"), True)
 caso("D79 - la segunda CONSERVA la primera", prop[1][1].get("conservar_pendientes"), True)
 caso("D80 - el gasto es el de $45, la venta la de $599",
      (de_gasto[0]["propuesta"]["monto"], de_venta[0]["propuesta"]["monto"]), (45, 599))
@@ -301,8 +301,10 @@ limpiar()
 texto("vendi una botella de 750", g("d49_un_solo_hecho"))
 viejo = vivos()[0]
 texto("vendi una botella de 750", g("d49_un_solo_hecho"))
+caso("2026-11-04 - dos mensajes: las dos propuestas conviven", len(vivos()), 2)
+boton("no:" + viejo)
 dichos = boton("vavt:" + viejo)
-caso("D79 - el VA de una propuesta reemplazada NO escribe la vigente", confirmados(), [],
+caso("D79 - el VA de una propuesta caida NO escribe la vigente", confirmados(), [],
      str(dichos))
 caso("D79 - CONTROL: el VA de la vigente si llega", (boton("vavt:" + vivos()[0]) is not None
                                                     and [r for r, _ in confirmados()]),
@@ -381,7 +383,7 @@ texto("vendi una de 750 a publico", g("d80_control_eco"))
 texto("vendi otras 2 de 750 a publico", g("d74_control_otra_venta"))
 ultima = SERVIDOR[0].proponer()[-1][1]
 caso("D74 - CONTROL: 'vendi otras 2' es una venta NUEVA (2 piezas), no un ajuste",
-     (ultima["productos"][0]["cantidad"], "conservar_pendientes" in ultima), (2, False))
+     (ultima["productos"][0]["cantidad"], len(vivos())), (2, 2))
 
 # ════════════════ D73 + D76: la memoria corta y la cartera de UNO ════════════
 limpiar()

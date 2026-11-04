@@ -95,7 +95,9 @@ select <telegram_id>, 'norman', e.id, c.id
   Minusculas, sin espacios. Es lo unico que dice **quien** de planta capturo.
 - Si algun dia entra mas de una persona, todas apuntan a la **misma entidad**: la
   captura es un puesto, no una persona. No se crea rol nuevo en el ERP.
-- **`id_cuenta_destino` es la cuenta POR DEFECTO, no la unica.** El boton
+- **`id_cuenta_destino` es la cuenta POR DEFECTO, no la unica** (desde el
+  2026-11-04 el default solo sella la propuesta: si no se dijo cuenta y hay mas de
+  una, el bot pregunta antes de ofrecer VA; regla 2, abajo). El boton
   *"Cambiar cuenta"* ofrece las demas cuentas de la misma entidad que no esten
   vetadas, y **cambiar de cuenta vuelve a sellar**: el "va" nunca cubre una
   cuenta distinta de la que se enseno. Existe porque el default no puede ser
@@ -156,12 +158,28 @@ pruebas puras pasaban en verde mientras la fase era incapaz de escribir**: ningu
 hacia el viaje por la base. Un sello que tiene que sobrevivir a un almacen se
 prueba contra ese almacen.
 
+**Varias propuestas conviven (Norman, 2026-11-04).** Una propuesta nueva no cancela
+la pendiente: cada una tiene su VA y sus botones, por `borrador_id`. Todo boton
+valida que su borrador siga vivo y, si no, dice que ya no esta activa. Un "va" o un
+"no" escritos valen para el mensaje al que contestan (el id sale del teclado de ese
+mensaje); un "va" sin reply con dos o mas pendientes pregunta cual, y un "no" sin
+reply las apaga todas.
+
 **Las tres reglas que no se negocian:**
 
 1. Nada se escribe sin confirmacion explicita. Es la especificacion, no una precaucion.
 2. El LLM no escribe en campos que el sistema interpreta: categoria de lista
-   cerrada, `categoria_gasto` siempre `NULL`, y la cuenta y el autor salen de la
-   identidad, no de la propuesta. **En el abono esa columna NO puede ir en `NULL`**
+   cerrada, `categoria_gasto` siempre `NULL`, y el autor sale de la identidad, no
+   de la propuesta. **La cuenta ya puede salir de lo dicho, de lista cerrada y
+   siempre con clic humano** (reescrita el 2026-11-04 por decision de Norman: *"a
+   veces si digo desde la cuenta tal no me hace caso y lo toma como una
+   descripcion... debe ser un agente que clasifique todo lo que se escucha en la
+   categoria adecuada y proponga las mejores"*). El esquema de la llamada solo
+   admite las cuentas vivas de esa identidad (`enum` de `cuenta_id`), el codigo
+   vuelve a validar el id y el servidor lo vuelve a validar al sellar. Lo oido que
+   no casa con la lista no se adivina: se pregunta. Sin cuenta dicha, la propuesta
+   sale **sin boton VA** hasta escoger una; una cuenta `solo_egresos` no recibe
+   abonos. **En el abono esa columna NO puede ir en `NULL`**
    —lleva la referencia— y por eso sale de una lista cerrada del servidor: es la
    misma columna que lee `v_pasivo_fiscal` para dar por pagado un impuesto.
 3. Lo que no mapea entra como `SIN_CATEGORIZAR` con aviso `W14`. **Nunca se

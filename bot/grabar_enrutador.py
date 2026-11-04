@@ -45,6 +45,10 @@ sys.path.insert(0, str(RAIZ))
 import enrutador as E  # noqa: E402
 
 ARCHIVO = RAIZ / "grabaciones_enrutador.json"
+# 2026-11-04: el bot ya le pasa las cuentas vivas al modelo. Aqui van las de la foto
+# del set de oro: sin ellas, lo grabado no seria lo que el bot corre.
+CUENTAS = [{"id": c["id"], "nombre": c["nombre"]} for c in json.loads(
+    (RAIZ / "oro" / "catalogo_2026-11-04.json").read_text(encoding="utf-8"))["cuentas"]]
 
 # Fase 8 (D74): lo que esta en pantalla lleva el CONTENIDO. Los dos mensajes
 # son los que devolvio el servidor real (ruta `proponer` en ensayo, 2026-09-22),
@@ -265,7 +269,7 @@ def grabar(solo_faltantes=False):
             if espera:
                 time.sleep(espera)
             ok, r = E.enrutar(texto, None, categorias, None, productos, en_pantalla,
-                              historial=historial, hablante=hablante)
+                              historial=historial, hablante=hablante, cuentas=CUENTAS)
             if ok:
                 grabacion = {"texto": texto, "en_pantalla": en_pantalla, "salida": r}
                 if historial:
@@ -286,8 +290,8 @@ def grabar(solo_faltantes=False):
         "llamadas": len(pendientes),
         "segundos": round(time.time() - t0, 1),
         "contexto": ("catalogo de productos real (/api/bot/catalogo), categorias de "
-                     "categorias_movimiento (%d), sin deudores, sin borrador a medias"
-                     % len(categorias)),
+                     "categorias_movimiento (%d), cuentas de oro/catalogo_2026-11-04.json, "
+                     "sin deudores, sin borrador a medias" % len(categorias)),
         "frases": frases,
     }
     io.open(ARCHIVO, "w", encoding="utf-8", newline="\n").write(
