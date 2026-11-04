@@ -7,7 +7,7 @@
  * de borde y la otra no, y las dos escriben fechas en la base.
  */
 
-import { hoyEnMX } from '@/lib/date-format'
+import { hoyEnMX, medianocheMXaISO } from '@/lib/date-format'
 
 /**
  * `AAAA-MM-DD` en hora de MEXICO, que es la que la persona tiene en la cabeza.
@@ -36,6 +36,44 @@ export function sumarDias(fecha: string, dias: number): string {
   const base = new Date(Date.UTC(y, m - 1, d))
   base.setUTCDate(base.getUTCDate() + dias)
   return base.toISOString().slice(0, 10)
+}
+
+/**
+ * El instante que se guarda para una fecha dictada, con su regla en un solo lugar.
+ *
+ * `new Date('2026-11-03')` es medianoche UTC: en Mexico todavia es el dia 2, asi
+ * que "ayer" caia un dia antes y "el primero" caia en el mes anterior (auditoria
+ * del 2026-11-04). `finanzas_ledger.fecha_movimiento` es `timestamptz`.
+ *
+ * - Un dia pasado se ancla al MEDIODIA de Mexico, igual que la web
+ *   (`resolverFechaMovimiento` en `app/actions/abonos.ts`): se lee el mismo dia en
+ *   UTC y en Mexico, que importa porque `lib/bot-consultas.ts` hace `.slice(0, 10)`.
+ * - Hoy es el instante real.
+ * - Un dia futuro se ancla a `ahora` y lo dice (`futura`): una fila con fecha
+ *   futura desaparece de todo filtro "hasta hoy" (aviso W11).
+ * - Vacio, ilegible o un dia que no existe: `null`, y quien llama usa `ahora`.
+ */
+export function instanteDeFechaDictada(
+  valor: unknown,
+  ahora: Date
+): { instante: Date; futura: boolean } | null {
+  const texto = String(valor ?? '').trim()
+  if (texto === '') return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(texto)) {
+    const hoy = hoyEnMX(ahora)
+    if (texto > hoy) return { instante: ahora, futura: true }
+    if (texto === hoy) return { instante: ahora, futura: false }
+    const medianoche = medianocheMXaISO(texto)
+    if (!medianoche) return null
+    const mediodia = new Date(new Date(medianoche).getTime() + 12 * 60 * 60 * 1000)
+    // `Date.UTC` da la vuelta sola (31 de febrero es 3 de marzo): no es ese dia.
+    return hoyEnMX(mediodia) === texto ? { instante: mediodia, futura: false } : null
+  }
+  const parseada = new Date(texto)
+  if (Number.isNaN(parseada.getTime())) return null
+  return parseada > ahora
+    ? { instante: ahora, futura: true }
+    : { instante: parseada, futura: false }
 }
 
 /**

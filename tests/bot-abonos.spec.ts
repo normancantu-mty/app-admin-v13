@@ -392,6 +392,12 @@ test('una fecha futura se ancla a hoy y se dice', () => {
   expect(r.avisos.some((a) => a.includes('futura'))).toBe(true)
 })
 
+test('ayer se escribe ayer, al mediodia de Mexico (auditoria 2026-11-04)', () => {
+  const r = abonoDe(DEUDORES[4], TICKETS_GILBERTO, 1000, { fecha: '2026-09-11' })
+  expect(r.payload.fecha_movimiento).toBe('2026-09-11T18:00:00.000Z')
+  expect(r.avisos.some((a) => a.includes('futura'))).toBe(false)
+})
+
 // ─── 7. El mensaje que la persona lee antes de decir VA ───────────────────
 
 test('la confirmacion ensena a QUE pedidos se aplica, no solo el total', () => {

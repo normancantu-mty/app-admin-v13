@@ -155,6 +155,10 @@ def transcribir_que_no_debe_correr(ruta, vocab=None):
 sys.modules["transcribir_nota"] = types.SimpleNamespace(transcribir=transcribir_que_no_debe_correr)
 orig_anotar = B.bitacora.anotar
 B.bitacora.anotar = lambda fila: None
+# La puerta de privado (e3d3d54) pregunta la identidad al ERP antes de bajar la
+# nota. Sin este doble el caso dependia de tener un ERP local arriba y dado de
+# alta, aunque el encabezado diga "sin red": con el ERP caido fallaba el caso 5.
+B._identidad_de = lambda persona: {"ok": True, "registrado": True, "nombre": "Prueba"}
 try:
     u = Update(Mensaje(111))
     ctx = types.SimpleNamespace(bot=BotTg(guion_get=[TimedOut(), TimedOut()]))

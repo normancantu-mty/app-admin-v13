@@ -11,6 +11,7 @@ categoria adecuada y proponga las mejores".
     python bot/probar_clasificador.py      (sin red, sin modelo)
 """
 import asyncio
+import copy
 import io
 import json
 import os
@@ -33,7 +34,8 @@ UUID_X = "e274064a-e1be-451d-b920-f02b99d29d78"
 
 
 def caso(nombre, obtenido, esperado):
-    casos.append((nombre, obtenido, esperado))
+    # Copia: una lista del doble crece despues, y el caso se evalua al final.
+    casos.append((nombre, copy.deepcopy(obtenido), esperado))
 
 
 EFECTIVO = {"id": E.ID_EFECTIVO, "nombre": "Efectivo"}
@@ -169,6 +171,10 @@ caso("5. sin hoy pone la fecha de la PC", "HOY ES " in E._pedazo_contexto(None, 
 class Mensaje(object):
     def __init__(self):
         self.dichos = []
+        self.chat = self
+
+    async def send_action(self, *a):
+        return None
 
     async def reply_text(self, texto, reply_markup=None, **k):
         self.dichos.append((str(texto), reply_markup))
@@ -202,26 +208,64 @@ MSJ_ABONO = ('Esto es lo que voy a escribir. Revisalo:\n\nABONO DE:   Aeropuerto
 
 
 class Servidor(object):
+    """El doble del ERP, **con los estados de `bot_borradores`**: confirmar algo que no
+    esta PENDIENTE da 409, como la ruta real. Sin esto la prueba no veia S3 (dos VA que
+    escriben) ni S7 (la fila que queda PENDIENTE y sin VA)."""
+
     def __init__(self):
-        self.pedidos, self.n, self.abono_422, self.en_base = [], 0, False, []
+        self.pedidos, self.n, self.abono_422, self.borradores, self.escritos = [], 0, False, {}, []
+
+    def nuevo(self, tipo, cuerpo, cuentas, **extra):
+        self.n += 1
+        bid = "00000000-0000-4000-8000-%012d" % self.n
+        contexto = cuerpo.get("contexto_bot")
+        if contexto:
+            contexto = dict(contexto, cuentas=cuentas, **extra)
+        self.borradores[bid] = {"tipo": tipo, "estado": "PENDIENTE", "contexto": contexto,
+                                "id_cuenta": cuerpo.get("id_cuenta") or E.ID_EFECTIVO}
+        return bid
+
+    def pendientes(self):
+        return sorted(k for k, v in self.borradores.items() if v["estado"] == "PENDIENTE")
 
     def __call__(self, ruta, cuerpo):
         self.pedidos.append((ruta, json.loads(json.dumps(cuerpo))))
-        self.n += 1
-        bid = "00000000-0000-4000-8000-%012d" % self.n
         if ruta.endswith("/pendiente"):
-            return 200, {"ok": True, "pendientes": self.en_base}
+            return 200, {"ok": True, "pendientes": [
+                dict({"borrador_id": k, "sello": "s", "tipo": v["tipo"],
+                      "creado_en": time.strftime("%Y-%m-%dT%H:%M:%S")},
+                     **({"contexto": v["contexto"]} if v["contexto"] else {}))
+                for k, v in self.borradores.items() if v["estado"] == "PENDIENTE"]}
+        if "leer=cuentas" in ruta:
+            return 200, {"ok": True, "cuentas": CUENTAS}
         if ruta.endswith("gasto/proponer"):
-            return 200, {"ok": True, "borrador_id": bid, "sello": "s", "cuentas": CUENTAS,
-                         "id_cuenta": cuerpo.get("id_cuenta") or E.ID_EFECTIVO,
+            id_cuenta = cuerpo.get("id_cuenta") or E.ID_EFECTIVO
+            bid = self.nuevo("gasto", cuerpo, CUENTAS, id_cuenta=id_cuenta)
+            return 200, {"ok": True, "borrador_id": bid, "sello": "s", "cuentas": CUENTAS, "id_cuenta": id_cuenta,
                          "categorias": CATS, "mensaje": MSJ_GASTO}
         if ruta.endswith("abono/proponer"):
             if self.abono_422 and cuerpo.get("id_cuenta"):
                 return 422, {"error": "La cuenta de la matriz la escoge Norman al aprobar."}
-            return 200, {"ok": True, "borrador_id": bid, "sello": "s", "cuentas": [] if self.abono_422 else CUENTAS,
-                         "id_cuenta": cuerpo.get("id_cuenta") or E.ID_EFECTIVO, "id_deudor": "d1",
-                         "opciones": [], "mensaje": MSJ_ABONO}
-        return 200, {"ok": True, "mensaje": "escrito", "filas_escritas": 1}
+            id_cuenta = cuerpo.get("id_cuenta") or E.ID_EFECTIVO
+            cuentas = [] if self.abono_422 else CUENTAS
+            bid = self.nuevo("abono", cuerpo, cuentas, id_cuenta=id_cuenta, id_deudor="d1", nombre_deudor="Aeropuerto")
+            return 200, {"ok": True, "borrador_id": bid, "sello": "s", "cuentas": cuentas, "id_cuenta": id_cuenta,
+                         "id_deudor": "d1", "nombre_deudor": "Aeropuerto", "mensaje": MSJ_ABONO,
+                         "opciones": [{"id_entidad": "d1", "nombre": "Aeropuerto", "rol": "DST", "deuda": 1},
+                                      {"id_entidad": "d2", "nombre": "Pepe", "rol": "DST", "deuda": 1}]}
+        if ruta.endswith("/cancelar"):
+            fila = self.borradores.get(cuerpo.get("borrador_id"))
+            if fila:
+                fila["estado"] = "CANCELADO"
+            return 200, {"ok": True}
+        if ruta.endswith("/confirmar"):
+            fila = self.borradores.get(cuerpo.get("borrador_id"))
+            if not fila or fila["estado"] != "PENDIENTE":
+                return 409, {"error": "Esa propuesta ya no esta pendiente."}
+            fila["estado"] = "CONFIRMADO"
+            self.escritos.append((cuerpo["borrador_id"], fila["id_cuenta"]))
+            return 200, {"ok": True, "mensaje": "escrito", "filas_escritas": 1}
+        return 200, {"ok": True}
 
 
 CHAT = 333
@@ -237,15 +281,57 @@ def en(c):
 
 def fresco():
     B._olvidar_chat(CHAT)
+    B._esperando_monto.pop(CHAT, None)
+    B._cuentas_leidas.clear()
     srv.pedidos[:] = []
-    B._modo_propuesta[CHAT] = "nuevo"
+    srv.borradores.clear()
+    srv.escritos = []
 
 
-def propone_gasto(cuenta=None, sugeridas=None):
-    u = Update()
-    en(B._proponer_gasto_directo(u, CHAT, {"monto": 400, "categoria": CATS[0], "descripcion": "gasolina"},
-                                 cuenta, sugeridas))
+def ruta_de(intencion, campos):
+    """Lo que devuelve el enrutador, para entrar por donde entra un mensaje."""
+    hecho = {"intencion": intencion, "campos": campos, "faltantes": [], "pregunta": None, "confianza": "alta"}
+    return {"intencion": intencion, "campos": campos, "hechos": [hecho], "confianza": "alta",
+            "entendido": "x", "respuesta": ""}
+
+
+def dicta(intencion, campos, contesta_a=None):
+    """**El camino real**: `_despachar_hechos`, no la funcion de proponer. Antes de la
+    auditoria del 2026-11-04 esta prueba fijaba el modo a mano y llamaba directo: el
+    defecto vivia justo en lo que se saltaba."""
+    u = Update(contesta_a)
+    ruta = ruta_de(intencion, campos)
+    en(B._despachar_hechos(u, CHAT, ruta, B._hechos_de(ruta)))
     return u
+
+
+def campos_de_cuenta(cuenta):
+    cuenta = cuenta or {}
+    salida = {}
+    if cuenta.get("id_cuenta"):
+        salida["cuenta_id"] = cuenta["id_cuenta"]
+    if cuenta.get("oida"):
+        salida["cuenta_oida"] = cuenta["oida"]
+    return salida
+
+
+def propone_gasto(cuenta=None, sugeridas=None, desc="gasolina", monto=400):
+    campos = {"monto": monto, "categoria": CATS[0], "descripcion": desc}
+    if sugeridas:
+        campos["categorias_sugeridas"] = sugeridas
+    return dicta("gasto", dict(campos, **campos_de_cuenta(cuenta)))
+
+
+def propone_abono(cuenta=None, **campos):
+    return dicta("abono", dict({"monto": 5000, "deudor": "Aeropuerto"}, **dict(campos, **campos_de_cuenta(cuenta))))
+
+
+def reinicio():
+    """Se va la RAM. La base se queda."""
+    B._olvidar_chat(CHAT)
+    B._esperando_monto.pop(CHAT, None)
+    B._cuentas_leidas.clear()
+    B._rehidratar(CHAT)
 
 
 def propuesto():
@@ -331,9 +417,7 @@ try:
     fresco()
     propone_gasto()
     primero = B._memoria.get(CHAT)["borrador_id"]
-    B._modo_propuesta[CHAT] = "agrega"
-    B._soltar_foco(CHAT)
-    propone_gasto()
+    propone_gasto(desc="papeleria", monto=900)
     segundo = B._memoria.get(CHAT)["borrador_id"]
     boton("setcta:1:" + primero)
     caso("6. dos gastos: el boton re-sella el suyo, no el foco",
@@ -343,8 +427,7 @@ try:
 
     # abono
     fresco()
-    u = Update()
-    en(B._proponer_abono(u, CHAT, {"monto": 5000}, nombre="Aeropuerto"))
+    u = propone_abono()
     txt, tecl = u.message.dichos[0]
     d = B._memoria.get(CHAT)
     caso("7. abono sin cuenta: sin VA y sin Gilberto",
@@ -357,8 +440,7 @@ try:
          (E.ID_SPIN if d["cuentas"][1]["id"] == E.ID_SPIN else None, "d1"))
 
     fresco()
-    u = Update()
-    en(B._proponer_abono(u, CHAT, {"monto": 5000}, nombre="Aeropuerto", cuenta={"id_cuenta": E.ID_EFECTIVO}))
+    u = propone_abono({"id_cuenta": E.ID_EFECTIVO})
     d = B._memoria.get(CHAT)
     caso("7. abono con cuenta dicha: VA directo y Cambiar cuenta",
          (("vaab:" + d["borrador_id"]) in botones(u.message.dichos[0][1]), ("cta:" + d["borrador_id"]) in botones(u.message.dichos[0][1])),
@@ -367,18 +449,14 @@ try:
 
     fresco()
     srv.abono_422 = True
-    u = Update()
-    en(B._proponer_abono(u, CHAT, {"monto": 5000}, nombre="Aeropuerto", cuenta={"id_cuenta": E.ID_SPIN}))
+    u = propone_abono({"id_cuenta": E.ID_SPIN})
     srv.abono_422 = False
-    caso("7. DST: el 422 re-propone sin cuenta", [p[1].get("id_cuenta") for p in srv.pedidos], [E.ID_SPIN, None])
+    caso("7. DST: el 422 re-propone sin cuenta",
+         [p[1].get("id_cuenta") for p in srv.pedidos if p[0].endswith("/proponer")], [E.ID_SPIN, None])
     caso("7. ... y queda con VA (sin cuentas no se pregunta)",
          any(x.startswith("vaab:") for x in botones(u.message.dichos[0][1])), True)
 
     # --- 10. El bug del 2026-11-04: borrador 60e66116 y abono e274064a -----------------
-    def mensaje_nuevo():
-        B._modo_propuesta[CHAT] = "nuevo"
-        B._soltar_foco(CHAT)
-
     def confirmados():
         return [(r, c.get("borrador_id")) for r, c in srv.pedidos if r.endswith("/confirmar")]
 
@@ -386,14 +464,10 @@ try:
         fresco()
         u = propone_gasto({"id_cuenta": E.ID_SPIN})
         gasto = B._memoria.get(CHAT)["borrador_id"]
-        mensaje_nuevo()
-        v = Update()
-        en(B._proponer_abono(v, CHAT, {"monto": 5000, "metodo_pago": "efectivo"}, nombre="Aeropuerto",
-                             cuenta={"id_cuenta": E.ID_EFECTIVO}))
+        v = propone_abono({"id_cuenta": E.ID_EFECTIVO}, metodo_pago="efectivo")
         return gasto, B._memoria.get(CHAT)["borrador_id"], u.message.dichos[0][1], v.message.dichos[0][1]
 
     gasto, abono, tecl_gasto, tecl_abono = dos_vivas()
-    B._modo_propuesta[CHAT] = "nuevo"
     caso("10. mensaje nuevo: la bandera sale siempre",
          B._con_conservar("/api/bot/abono/proponer", {"telegram_id": CHAT}).get("conservar_pendientes"), True)
     caso("10. CONTROL otras rutas no la llevan", "conservar_pendientes" in B._con_conservar("/api/bot/cancelar", {}), False)
@@ -465,8 +539,9 @@ try:
     dos_vivas()
     u = Update()
     en(B._manejar_texto(u, CHAT, "no"))
-    caso("11. CONTROL no sin reply con dos: las dos (D79)", (len([r for r, _ in srv.pedidos if "cancelar" in r]),
-         B._pendientes.get(CHAT, {})), (2, {}))
+    caso("11. no sin reply con dos: no apaga ninguna y pregunta cual (S7, retira D79)",
+         ([r for r, _ in srv.pedidos if "cancelar" in r], len(srv.pendientes()), "toca la que cancelo" in u.message.dichos[0][0]),
+         ([], 2, True))
 
     teclado_apr = B.InlineKeyboardMarkup([[B.InlineKeyboardButton("Aprobar", callback_data="apr:" + UUID_X)]])
     caso("11. un mensaje de Aprobar no es una propuesta", B._borrador_del_reply(Update(Contestado(teclado_apr))), "")
@@ -474,20 +549,101 @@ try:
 
     # El metodo
     fresco()
-    u = Update()
-    en(B._proponer_abono(u, CHAT, B._propuesta_de_abono({"monto": 5000, "metodo_pago": "efectivo"}), nombre="Aeropuerto"))
+    propone_abono(metodo_pago="efectivo")
     caso("12. el metodo viaja al servidor", propuesto()[1]["propuesta"]["metodo_pago"], "efectivo")
     boton("setcta:0:" + B._memoria.get(CHAT)["borrador_id"])
     caso("12. ... y sobrevive a cambiar la cuenta", propuesto()[1]["propuesta"]["metodo_pago"], "efectivo")
 
     # El reinicio con el abono pendiente: vuelve de la base y su VA escribe ESE.
     fresco()
-    B._modo_propuesta.pop(CHAT, None)
-    srv.en_base = [{"borrador_id": UUID_X, "sello": "s", "tipo": "abono", "creado_en": time.strftime("%Y-%m-%dT%H:%M:%S")}]
-    B._rehidratar(CHAT)
-    srv.en_base = []
-    boton("vaab:" + UUID_X)
-    caso("13. reinicio: el VA del abono pendiente lo escribe", confirmados(), [("/api/bot/abono/confirmar", UUID_X)])
+    propone_abono({"id_cuenta": E.ID_SPIN})
+    viejo = B._memoria.get(CHAT)["borrador_id"]
+    reinicio()
+    boton("vaab:" + viejo)
+    caso("13. reinicio: el VA del abono pendiente lo escribe", confirmados(), [("/api/bot/abono/confirmar", viejo)])
+
+    # --- 14. Lo que la auditoria encontro, por el camino real (el detalle: probar_independientes) ----
+    fresco()
+    propone_gasto()
+    pendiente = B._memoria.get(CHAT)["borrador_id"]
+    reinicio()
+    u = Update()
+    en(B._manejar_texto(u, CHAT, "va"))
+    caso("14. va sobre pendiente rehidratado: no escribe la default", srv.escritos, [])
+    caso("14. ... pregunta la cuenta con sus botones",
+         ("De cual cuenta" in u.message.dichos[0][0], botones(u.message.dichos[0][1])[1]),
+         (True, "setcta:1:" + pendiente))
+    boton("setcta:1:" + pendiente)
+    nuevo = B._memoria.get(CHAT)["borrador_id"]
+    caso("14. ... el boton sirve tras el reinicio y sustituye al suyo", srv.pendientes(), [nuevo])
+    boton("va:" + nuevo)
+    caso("14. ... y escribe la que se escogio", srv.escritos, [(nuevo, E.ID_SPIN)])
+
+    fresco()
+    propone_abono()
+    srv.borradores[B._memoria.get(CHAT)["borrador_id"]]["contexto"] = None
+    pendiente = B._memoria.get(CHAT)["borrador_id"]
+    reinicio()
+    u = Update()
+    en(B._manejar_texto(u, CHAT, "va"))
+    caso("14. borrador viejo sin contexto: no escribe y dice por que",
+         (srv.escritos, "No escribi nada" in u.message.dichos[0][0]), ([], True))
+
+    fresco()
+    propone_abono({"id_cuenta": E.ID_SPIN})
+    a = B._memoria.get(CHAT)["borrador_id"]
+    propone_abono({"id_cuenta": E.ID_SPIN}, monto=800, deudor="Pepe")
+    b_id = B._memoria.get(CHAT)["borrador_id"]
+    lista = botones(boton("deu:" + a).message.dichos[0][1])
+    caso("14. la lista de deudores dice de quien es", lista[1], "setdeu:1:" + a)
+    boton("montoab:" + b_id)
+    B._esperando_monto.pop(CHAT, None)
+    boton(lista[1])
+    caso("14. lista con dos vivas: el indice cae en su dueno",
+         (propuesto()[1].get("id_deudor"), propuesto()[1]["propuesta"]["monto"], srv.borradores[a]["estado"],
+          srv.borradores[b_id]["estado"]), ("d2", 5000, "CANCELADO", "PENDIENTE"))
+
+    fresco()
+    propone_gasto({"id_cuenta": E.ID_SPIN}, desc="A")
+    a = B._memoria.get(CHAT)["borrador_id"]
+    propone_gasto({"id_cuenta": E.ID_SPIN}, desc="B", monto=900)
+    b_id = B._memoria.get(CHAT)["borrador_id"]
+    boton("monto:" + a)
+    boton("cat:" + b_id)
+    u = Update()
+    en(B._manejar_texto(u, CHAT, "150"))
+    nuevo = [k for k in srv.pendientes() if k != b_id]
+    caso("14. monto cruzado: el numero cae en el borrador que lo pidio",
+         (srv.borradores[a]["estado"], srv.borradores[b_id]["estado"], len(nuevo),
+          propuesto()[1]["propuesta"]["monto"], propuesto()[1]["propuesta"]["descripcion"]),
+         ("CANCELADO", "PENDIENTE", 1, 150.0, "A"))
+
+    fresco()
+    propone_gasto({"id_cuenta": E.ID_SPIN}, desc="A")
+    propone_gasto({"id_cuenta": E.ID_SPIN}, desc="B", monto=900)
+    q = Update()
+    en(B._manejar_texto(q, CHAT, "va"))
+    rotulos = [b.text for fila in q.message.dichos[0][1].inline_keyboard for b in fila]
+    caso("14. la pregunta cual dice monto y concepto", rotulos, ["VA: un gasto $400 A", "VA: un gasto $900 B"])
+    u = Update(Contestado(q.message.dichos[0][1]))
+    en(B._manejar_texto(u, CHAT, "va"))
+    caso("14. va contestando a la pregunta cual: no escribe, pregunta otra vez",
+         (srv.escritos, "Tengo 2 propuestas" in u.message.dichos[0][0]), ([], True))
+    u = Update(Contestado(q.message.dichos[0][1]))
+    en(B._manejar_texto(u, CHAT, "no"))
+    caso("14. no contestando a la pregunta cual: no apaga, pregunta otra vez",
+         (len(srv.pendientes()), "toca la que cancelo" in u.message.dichos[0][0]), (2, True))
+
+    fresco()
+    propone_gasto({"id_cuenta": E.ID_SPIN})
+    viva = B._memoria.get(CHAT)["borrador_id"]
+    u = boton("no:x")
+    caso("14. no:x cancela en la base, no solo en RAM", (srv.pendientes(), viva in (B._pendientes.get(CHAT) or {})), ([], False))
+    fresco()
+    propone_gasto({"id_cuenta": E.ID_SPIN}, desc="A")
+    propone_gasto({"id_cuenta": E.ID_SPIN}, desc="B", monto=900)
+    u = boton("no:x")
+    caso("14. no:x viejo con dos: no apaga ninguna", (len(srv.pendientes()), "toca la que cancelo" in u.message.dichos[0][0]), (2, True))
 
     # lectura de cuentas
     llamadas = []

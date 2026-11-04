@@ -13,7 +13,7 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
-import { fechaParaPersona } from '@/lib/fechas'
+import { fechaParaPersona, instanteDeFechaDictada } from '@/lib/fechas'
 
 // ============================================================================
 // 1. LA LISTA CERRADA
@@ -649,15 +649,9 @@ export function normalizarPropuesta(
   // La fecha: si el modelo no la resuelve, hoy. Nunca en el futuro — un gasto
   // con fecha futura desaparece de todo filtro "hasta hoy" (mismo razonamiento
   // que el aviso W11).
-  let fecha = ahora
-  const propuestaFecha = String(propuesta.fecha ?? '').trim()
-  if (propuestaFecha !== '') {
-    const parseada = new Date(propuestaFecha)
-    if (!Number.isNaN(parseada.getTime())) {
-      fecha = parseada > ahora ? ahora : parseada
-      if (parseada > ahora) avisos.push('La fecha que entendi es futura; la anclo a hoy.')
-    }
-  }
+  const dictada = instanteDeFechaDictada(propuesta.fecha, ahora)
+  const fecha = dictada?.instante ?? ahora
+  if (dictada?.futura) avisos.push('La fecha que entendi es futura; la anclo a hoy.')
 
   return {
     ok: true,

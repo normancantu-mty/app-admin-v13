@@ -239,7 +239,7 @@ def _enrutar_falso(texto, *a, **k):
 
 
 def limpiar():
-    for d in (B._memoria, B._pendientes, B._apartado, B._modo_propuesta, B._caidos,
+    for d in (B._memoria, B._pendientes, B._apartado, B._preguntas, B._caidos,
               B._cola, B._historial, B._eventos, B._identidades):
         dict.clear(d)
     B._rehidratado.clear()
@@ -765,10 +765,12 @@ S.respuestas["/api/bot/entrega/confirmar"] = [(200, {"ok": True, "filas_escritas
 async def d112_matriz():
     un = Update(NORMAN, NORMAN, "/entrega 2,000 Gil")
     await B.comando_entrega(un, Contexto(["2,000", "Gil"]))
+    lista = botones(un.message.teclados[-1])
     caso("D112: la matriz dice el nombre; con duda, botones por indice",
-         (S.a("/api/bot/entrega/proponer")[0].get("entidad"), botones(un.message.teclados[-1])),
+         (S.a("/api/bot/entrega/proponer")[0].get("entidad"), [":".join(x.split(":")[:2]) for x in lista]),
          ("Gil", ["setet:0", "setet:1", "no:x"]))
-    ue = UpdateBoton(NORMAN, NORMAN, "setet:1")
+    caso("D112: ... y los tres dicen de que pregunta son", len({x.split(":")[-1] for x in lista}), 1)
+    ue = UpdateBoton(NORMAN, NORMAN, lista[1])
     await B.manejar_boton(ue, Contexto())
     segunda = S.a("/api/bot/entrega/proponer")[-1]
     caso("D112: el boton re-propone por uuid de la lista, con el mismo monto",

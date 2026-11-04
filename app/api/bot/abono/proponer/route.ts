@@ -36,6 +36,7 @@ import {
 } from '@/lib/bot-servidor'
 import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { actorDe, alcanceDeCaptura, cuentaDeLaMatrizParaAbono, redDe } from '@/lib/bot-aprobacion'
+import { contextoDelCuerpo } from '@/lib/bot-pendiente'
 import { leerCartera } from '@/lib/vistas'
 import {
   buscarDeudor,
@@ -93,6 +94,8 @@ export async function POST(request: Request) {
       /** Cuando la persona ya eligio con un boton: el uuid, validado contra la lista. */
       id_deudor?: unknown
       id_cuenta?: unknown
+      /** Con que se propuso, para que un reinicio del bot no lo pierda. No se sella. */
+      contexto_bot?: unknown
     }
 
     const telegramId = Number(cuerpo.telegram_id)
@@ -272,7 +275,14 @@ export async function POST(request: Request) {
             nombre_cuenta_origen: cuentaOrigen.nombre,
             nombre_cuenta_destino: nombreCuentaDestino,
             desglose: normalizada.desglose,
-            avisos: normalizada.avisos
+            avisos: normalizada.avisos,
+            contexto_bot: contextoDelCuerpo(cuerpo.contexto_bot, {
+              // Un DST no cambia la cuenta destino: lo mismo que se le contesta abajo.
+              cuentas: esDeLaMatriz ? identidad.cuentas : [],
+              id_cuenta: idCuentaDestino,
+              id_deudor: deudor.id_entidad,
+              nombre_deudor: deudor.nombre
+            })
           }
         } as unknown as Json
       })

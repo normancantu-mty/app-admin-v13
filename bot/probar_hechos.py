@@ -288,13 +288,16 @@ dichos = texto("va")
 caso("D79 - CONTROL: con UNA viva, el 'va' escrito confirma como siempre",
      [r for r, _ in confirmados()], ["/api/bot/venta/confirmar"], str(dichos))
 
-# El "no" escrito con dos vivas: se apagan las dos.
+# El "no" escrito con dos vivas: antes se apagaban las dos (D79). Desde el 2026-11-04
+# (Norman: "que los trate de forma independiente"; auditoria S7) se pregunta cual.
 limpiar()
 texto(G.EL_MENSAJE_2026_09_19, g("d80_mensaje_2026_09_19"))
 dos = vivos()
 dichos = texto("no")
-caso("D79 - 'no' escrito con DOS vivas las cancela a las dos", sorted(cancelados()), sorted(dos))
-caso("D79 - ...y no queda ninguna viva", vivos(), [])
+caso("S7 - 'no' escrito con DOS vivas no apaga ninguna", (cancelados(), sorted(vivos())), ([], sorted(dos)))
+caso("S7 - ...y pregunta cual", any("toca la que cancelo" in d for d in dichos), True, str(dichos))
+boton("no:" + dos[0])
+caso("S7 - ...y el boton apaga SOLO esa", (cancelados(), vivos()), ([dos[0]], [dos[1]]))
 
 # Un VA de una propuesta que ya NO esta viva no confirma la que este en el foco.
 limpiar()

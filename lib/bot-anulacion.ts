@@ -460,7 +460,7 @@ export function mensajeDeRecaptura(
       `${pesos(nueva.monto)} — ${nueva.tipo_movimiento}` +
       (nueva.categoria ? ` (${nueva.categoria})` : '') +
       (nueva.descripcion ? `: ${recortar(nueva.descripcion, 60)}` : '') +
-      ` — ${fechaParaPersona(String(nueva.fecha_movimiento ?? '').slice(0, 10) || null)}`
+      ` — ${fechaParaPersona(nueva.fecha_movimiento || null)}`
   ]
   const aviso = avisoDeCascada(alcance)
   if (aviso) {

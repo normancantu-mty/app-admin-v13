@@ -10,7 +10,12 @@
  */
 import { test, expect } from '@playwright/test'
 import { filtrarCartera, textoCartera } from '@/lib/bot-consultas'
-import { pendientesVigentes, tipoDelPayload, VIDA_DEL_PENDIENTE_MS } from '@/lib/bot-pendiente'
+import {
+  contextoDelCuerpo,
+  pendientesVigentes,
+  tipoDelPayload,
+  VIDA_DEL_PENDIENTE_MS
+} from '@/lib/bot-pendiente'
 import { conservaPendientes } from '@/lib/bot-servidor'
 import type { FilaCarteraVista } from '@/lib/vistas'
 
@@ -82,8 +87,42 @@ test.describe('D77 — los pendientes que se rehidratan', () => {
     expect(tipoDelPayload({ tipo: 'alta_entidad' })).toBe('alta')
     expect(tipoDelPayload({ fila: { monto: 45 }, meta: {} })).toBe('gasto')
     expect(tipoDelPayload({ tipo: 'otra_cosa' })).toBeNull()
+    // Auditoria 2026-11-04: estos cinco se perdian en un reinicio.
+    for (const tipo of ['entrega_efectivo', 'alta_miembro', 'alta_categoria', 'entrada_insumo', 'lote_etapa']) {
+      expect(tipoDelPayload({ tipo })).toBe(tipo)
+    }
     expect(tipoDelPayload({ meta: {} })).toBeNull()
     expect(tipoDelPayload(null)).toBeNull()
+  })
+
+  test('el contexto del bot se sanea y vuelve con el pendiente', () => {
+    const cuentas = [{ id: 'c1', nombre: 'Efectivo', extra: 'no' }]
+    const contexto = contextoDelCuerpo(
+      {
+        cuenta: { oida: 'la de Kevin', raro: 'x' },
+        propuesta: { monto: 400, descripcion: 'gasolina', objeto: { a: 1 } },
+        sugeridas: ['A', 2]
+      },
+      { cuentas, id_cuenta: 'c1' }
+    )
+    expect(contexto?.cuenta).toEqual({ oida: 'la de Kevin' })
+    expect(contexto?.propuesta).toEqual({ monto: 400, descripcion: 'gasolina' })
+    expect(contexto?.sugeridas).toEqual(['A'])
+    expect(contexto?.cuentas).toEqual([{ id: 'c1', nombre: 'Efectivo' }])
+
+    const fila = (payload: unknown) => [
+      { id: 'b', sello, payload, estado: 'PENDIENTE', creado_en: new Date(ahora.getTime() - 60000).toISOString() }
+    ]
+    expect(pendientesVigentes(fila({ fila: {}, meta: { contexto_bot: contexto } }), ahora)[0].contexto).toEqual(contexto)
+    expect(pendientesVigentes(fila({ fila: {}, meta: {} }), ahora)[0]).not.toHaveProperty('contexto')
+  })
+
+  test('sin contexto, o demasiado grande, no se guarda nada', () => {
+    const servidor = { cuentas: [], id_cuenta: 'c1' }
+    expect(contextoDelCuerpo(undefined, servidor)).toBeNull()
+    expect(contextoDelCuerpo({ cuenta: {} }, servidor)).toBeNull()
+    const propuesta = Object.fromEntries(Array.from({ length: 10 }, (_, i) => ['k' + i, 'x'.repeat(900)]))
+    expect(contextoDelCuerpo({ propuesta }, servidor)).toBeNull()
   })
 
   test('solo PENDIENTE, de menos de 30 min, del mas viejo al mas nuevo', () => {

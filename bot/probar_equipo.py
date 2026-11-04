@@ -217,7 +217,7 @@ def boton(teclado, prefijo):
 
 
 def limpiar():
-    for d in (B._memoria, B._pendientes, B._apartado, B._modo_propuesta, B._caidos,
+    for d in (B._memoria, B._pendientes, B._apartado, B._preguntas, B._caidos,
               B._cola, B._historial, B._eventos, B._identidades):
         dict.clear(d)
     B._rehidratado.clear()

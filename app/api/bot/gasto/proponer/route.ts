@@ -11,6 +11,7 @@ import type { Json } from '@/types/database'
 import { clienteDeServicio, conservaPendientes, leerCatalogo, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { actorDe } from '@/lib/bot-aprobacion'
+import { contextoDelCuerpo } from '@/lib/bot-pendiente'
 import { fetchTodasLasFilas, type ConsultaPaginable } from '@/lib/paginacion'
 import {
   buscarDuplicado,
@@ -35,6 +36,8 @@ export async function POST(request: Request) {
       chat_id?: unknown
       propuesta?: Record<string, unknown>
       id_cuenta?: unknown
+      /** Con que se propuso, para que un reinicio del bot no lo pierda. No se sella. */
+      contexto_bot?: unknown
     }
 
     const telegramId = Number(cuerpo.telegram_id)
@@ -147,7 +150,11 @@ export async function POST(request: Request) {
             descripcion_original: normalizada.descripcionOriginal,
             categoria_nueva: normalizada.categoriaNueva,
             avisos: normalizada.avisos,
-            duplicado_de: duplicado?.id ?? null
+            duplicado_de: duplicado?.id ?? null,
+            contexto_bot: contextoDelCuerpo(cuerpo.contexto_bot, {
+              cuentas: identidad.cuentas,
+              id_cuenta: idCuenta
+            })
           }
         } as unknown as Json
       })
