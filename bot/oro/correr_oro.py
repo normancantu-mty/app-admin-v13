@@ -19,6 +19,7 @@ El avance por caso se guarda en `bot/oro/avance_<fecha>.jsonl`; si se corta
 reanuda donde se quedo.
 """
 import argparse
+import inspect
 import json
 import os
 import re
@@ -48,6 +49,12 @@ ETIQUETA_PRODUCTO = {
     "c1000000-0000-0000-0000-000000000003": "chica",
     "c1000000-0000-0000-0000-000000000004": "mini",
 }
+# 2026-11-04: el mundo real, fijo. Desde d2a660b `CATEGORIAS_SEMILLA` esta vacia y el
+# set corria sin categorias, que no es lo que ve el bot. Antes y despues compiten igual.
+CATALOGO = json.load(open(os.path.join(AQUI, "catalogo_2026-11-04.json"), encoding="utf-8"))
+HOY_DEL_SET = "2026-11-04"
+_ACEPTA = inspect.signature(E.enrutar).parameters
+EXTRA = {k: v for k, v in (("cuentas", CATALOGO["cuentas"]), ("hoy", HOY_DEL_SET)) if k in _ACEPTA}
 NOMBRE_HABLANTE = {"norman": "Norman", "kevin": "Kevin", "trabajador": "Luis (trabajador)"}
 TIPOS_QUE_ESCRIBEN = set(E.TIPOS_DE_HECHO)
 PERSONA = ("comprador", "cliente", "deudor", "quien", "nombre", "para_quien")
@@ -174,8 +181,8 @@ def es_limite(texto):
 def llamar(texto, borrador, en_pantalla, historial, hablante):
     ultimo = ""
     for intento in range(8):
-        ok, r = E.enrutar(texto, borrador, list(E.CATEGORIAS_SEMILLA), None, PRODUCTOS,
-                          en_pantalla, historial=historial, hablante=hablante)
+        ok, r = E.enrutar(texto, borrador, list(CATALOGO["categorias"]), None, PRODUCTOS,
+                          en_pantalla, historial=historial, hablante=hablante, **EXTRA)
         if ok:
             return True, r
         ultimo = str(r)
@@ -311,6 +318,86 @@ def sumar(cats):
     return t
 
 
+# --------------------------------------------------------------- el clasificador
+# 2026-11-04: cuenta, fecha y categoria de frases reales. Un set aparte porque el
+# de 148 no pregunta por ellas. Mide lo que sale de `enrutar`, despues de validar.
+_ID_DE = {c["clave"]: c["id"] for c in CATALOGO["cuentas"]}
+_CUENTA_EN_TEXTO = re.compile(r"\b(cuenta|spin|spain|gilberto|efectivo|transferencia|transfer)\b")
+
+
+def correr_clasificador(caso):
+    ok, r = llamar(caso["texto"], None, None, None, None)
+    return {"id": caso["id"], "salida": r if ok else None, "error": None if ok else r}
+
+
+def hecho_del_caso(caso, r):
+    """El hecho del tipo y monto esperados; si no hay, el primero."""
+    hs = [h for h in (r.get("hechos") or []) if isinstance(h, dict)]
+    for h in hs:
+        if h.get("intencion") == caso["tipo"] and a_num((h.get("campos") or {}).get("monto")) == caso["monto"]:
+            return h
+    return hs[0] if hs else {"intencion": r.get("intencion"), "campos": r.get("campos") or {}}
+
+
+def notas_clasificador(caso, r):
+    h = hecho_del_caso(caso, r)
+    c = h.get("campos") or {}
+    n = {"tipo": h.get("intencion") == caso["tipo"], "monto": a_num(c.get("monto")) == caso["monto"],
+         "cuenta": (c.get("cuenta_id") or None) == (_ID_DE.get(caso["cuenta"]) if caso.get("cuenta") else None)}
+    if caso.get("cuenta"):
+        n["cuenta_dicha"] = n["cuenta"]
+    if caso.get("oida"):
+        n["cuenta_oida"] = not c.get("cuenta_id") and bool(c.get("cuenta_oida"))
+    if caso.get("cats"):
+        lista = c.get("categorias_sugeridas") or ([c["categoria"]] if c.get("categoria") else [])
+        n["categoria_top3"] = any(norm(x) == norm(e) for x in lista for e in caso["cats"])
+    if caso.get("fecha"):
+        n["fecha"] = c.get("fecha") == caso["fecha"]
+    if caso["tipo"] == "gasto" and caso.get("cuenta"):
+        n["descripcion_limpia"] = not _CUENTA_EN_TEXTO.search(norm(c.get("descripcion") or ""))
+    return n
+
+
+def medir_clasificador(casos, corridas):
+    t, fallos = {}, []
+    for c in casos:
+        corr = corridas.get(c["id"])
+        if not corr or corr.get("error"):
+            fallos.append((c["id"], "sin correr o error"))
+            continue
+        for k, v in notas_clasificador(c, corr["salida"]).items():
+            a = t.setdefault(k, [0, 0])
+            a[0] += 1 if v else 0
+            a[1] += 1
+            if not v:
+                fallos.append((c["id"], k))
+    return t, fallos
+
+
+def corrida_clasificador(fecha, workers, solo_evaluar):
+    casos = [json.loads(l) for l in open(os.path.join(AQUI, "casos_clasificador.jsonl"), encoding="utf-8") if l.strip()]
+    ruta = os.path.join(AQUI, "avance_clasificador_%s.jsonl" % fecha)
+    corridas = {}
+    if os.path.exists(ruta):
+        for l in open(ruta, encoding="utf-8"):
+            if l.strip():
+                d = json.loads(l)
+                corridas[d["id"]] = d
+    if not solo_evaluar:
+        falta = [c for c in casos if c["id"] not in corridas or corridas[c["id"]].get("error")]
+        with open(ruta, "a", encoding="utf-8") as f, ThreadPoolExecutor(max_workers=workers) as ex:
+            for res in ex.map(correr_clasificador, falta):
+                corridas[res["id"]] = res
+                f.write(json.dumps(res, ensure_ascii=False) + "\n")
+                f.flush()
+    t, fallos = medir_clasificador(casos, corridas)
+    print("\nCLASIFICADOR (%d casos)" % len(casos))
+    for k in sorted(t):
+        print("  %-20s %d/%d" % (k, t[k][0], t[k][1]))
+    print("  fallos:", fallos)
+    return {"metricas": t, "fallos": fallos}
+
+
 # --------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser()
@@ -319,6 +406,7 @@ def main():
     ap.add_argument("--solo", nargs="*", default=None)
     ap.add_argument("--solo-evaluar", action="store_true")
     ap.add_argument("--rehacer-errores", action="store_true")
+    ap.add_argument("--sin-clasificador", action="store_true")
     a = ap.parse_args()
 
     casos = [json.loads(l) for l in open(os.path.join(AQUI, "casos.jsonl"), encoding="utf-8") if l.strip()]
@@ -355,6 +443,8 @@ def main():
         "total": resumen(sumar(cats)),
         "por_categoria": {k: resumen(v) for k, v in sorted(cats.items())},
     }
+    if not a.sin_clasificador and a.solo is None:
+        salida["clasificador"] = corrida_clasificador(a.fecha, a.workers, a.solo_evaluar)
     ruta = os.path.join(AQUI, "resultados_%s.json" % a.fecha)
     with open(ruta, "w", encoding="utf-8") as f:
         json.dump(salida, f, ensure_ascii=False, indent=2)
