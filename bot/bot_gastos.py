@@ -43,7 +43,7 @@ import uuid
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
-from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
+from telegram.ext import (Application, BaseHandler, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, TypeHandler, filters)
 from telegram.request import HTTPXRequest
 from telegram.error import BadRequest, NetworkError, TimedOut  # noqa: E402
@@ -65,6 +65,9 @@ import lote_plantilla  # noqa: E402  Cazador F0 (WP-7a)
 import lote_ciclo  # noqa: E402  Lote v2: aditivo 2, destilacion, muestra, temperatura
 import voz_salida  # noqa: E402  Cazador F0 (WP-V)
 import tope  # noqa: E402  Cazador F0 (item 6)
+import comprobantes  # noqa: E402  2026-11-03: la foto de cada ticket
+import grupos_silenciosos  # noqa: E402  2026-11-03: grupos donde el bot solo escucha
+import ocr_ticket  # noqa: E402  2026-11-03: lectura del ticket con vision
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -702,8 +705,11 @@ async def _boton_de_aprobacion(update, clave, q, accion, bid):
     if estado != 200 or not r2.get("ok"):
         await decir(r2.get("error", "No pude escribirlo. No se escribio nada."))
         return
+    # 2026-11-03: si lo aprobado traia foto, se liga a ESE borrador.
+    pie = await asyncio.to_thread(_ligar_comprobante, bid, r2.get("id"))
     # D107: si la marca final fallo, quien aprobo lo sabe (no se repite).
-    await decir("Aprobado. Quedo escrito." + ((NL + str(r2["aviso_marca"])) if r2.get("aviso_marca") else ""))
+    await decir("Aprobado. Quedo escrito." + pie
+                + ((NL + str(r2["aviso_marca"])) if r2.get("aviso_marca") else ""))
     await _avisar_en(update, r.get("chat_id"),
                      "Aprobado por " + str(r.get("aprobador") or _nombre_de(_persona(clave)))
                      + ": lo que propuso " + str(r.get("autor") or "")
@@ -848,9 +854,7 @@ async def _contestar_texto_de_consulta(update, clave, r):
             await update.effective_message.reply_text("Te lo mande por privado.")
         except Exception as e:
             log.warning("no pude mandar por privado a %s: %s", _persona(clave), e)
-            await update.effective_message.reply_text(
-                "Eso va por privado y no te lo pude mandar: escribele /start al bot en "
-                "privado una vez y vuelve a preguntar.")
+            await update.effective_message.reply_text(abreme_en_privado(update.get_bot()))
         return
     await update.effective_message.reply_text(r["texto"])
 
@@ -1702,8 +1706,11 @@ def _texto_al_soltar(chat, pregunta):
     puede dar a entender lo contrario (segunda auditoria del 2026-11-04)."""
     if pregunta.get("tipo") == "duplicado_eligiendo":
         igual = (_pendientes.get(chat) or {}).get(pregunta.get("igual"))
+        # 2026-11-03: dicto el gasto y luego mando su ticket: la foto va con el dicho.
+        pegada = igual and _adjuntar_comprobante(chat, igual.get("borrador_id"), pregunta.get("foto"))
         return "Va, no lo agregue." + (
-            " Sigue pendiente " + _etiqueta_de(igual) + ", con su VA." if igual else "")
+            " Sigue pendiente " + _etiqueta_de(igual) + ", con su VA." if igual else "") + (
+            " Le pegue la foto del ticket." if pegada else "")
     if _pendientes_de(chat):
         return ("Va, eso lo deje y no escribi nada. Lo que tenias pendiente sigue ahi, "
                 "cada propuesta con su VA.")
@@ -2568,7 +2575,7 @@ async def _preguntar_duplicado(update, chat, igual, que, dato):
 
 
 async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugeridas=None,
-                                  ya_avisado=False):
+                                  ya_avisado=False, foto=None):
     """Propone un gasto cuyos campos ya vienen resueltos por el enrutador.
 
     Es el mismo destino que `_proponer` -- la puerta sellada del servidor --
@@ -2577,13 +2584,16 @@ async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugerida
     velocidad es parte de lo que Norman pidio: "Telegram tiene que ser lo mas
     conciso posible".
     """
+    # 2026-11-03: la foto dada, o la que espera su gasto en este chat.
+    foto = foto or _foto_en_vuelo(chat)
     igual = None if ya_avisado else next(
         (v for v in _pendientes_de(chat) if _mismo_gasto(propuesta, v)), None)
     if igual is not None:
         # S12: dos VA sobre lo mismo escriben dos filas. Se avisa ANTES de agregarlo.
+        _comprobante_en_vuelo.pop(chat, None)
         await _preguntar_duplicado(update, chat, igual, "gasto", {
             "propuesta": dict(propuesta), "cuenta": dict(cuenta or {}),
-            "sugeridas": list(sugeridas or [])})
+            "sugeridas": list(sugeridas or []), "foto": foto})
         return True
     cuerpo = {"telegram_id": chat, "propuesta": propuesta,
               "contexto_bot": _contexto_para_base(cuenta, propuesta, sugeridas)}
@@ -2606,7 +2616,11 @@ async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugerida
         "cuenta": dict(cuenta or {}),
     }, **_estado_de_cuenta(cuenta, cuentas))
     _refrescar_catalogo(r)
-    await _ensenar_gasto(update, chat, r["mensaje"])
+    mensaje = r["mensaje"]
+    _comprobante_en_vuelo.pop(chat, None)
+    if _adjuntar_comprobante(chat, r["borrador_id"], foto):
+        mensaje = str(mensaje) + NL + NL + "Va con la foto del ticket."
+    await _ensenar_gasto(update, chat, mensaje)
     return True
 
 
@@ -4521,6 +4535,11 @@ async def _manejar_texto(update, chat, texto):
             await _proponer_entrada(update, chat, texto)
         return
 
+    # 2026-11-03: "muestrame el ticket de la gasolina". No pasa por el modelo.
+    if pide_ticket(texto):
+        await _mostrar_ticket(update, chat, texto)
+        return
+
     # Si veniamos preguntando un dato que faltaba, quien lo recoge es el
     # enrutador con el borrador a medias. Aqui ya no se pegan frases.
     await update.message.chat.send_action("typing")
@@ -4607,6 +4626,347 @@ async def manejar_voz(update, context):
         await _avisar_aprobaciones(update)
     finally:
         _cerrar_turno(chat, texto)
+
+
+# ===========================================================================
+# 2026-11-03 -- LA FOTO DEL TICKET DE COMPRA (ejecutor del Socio, fotos).
+# ===========================================================================
+#
+# Norman, por voz: "empezar a ponerle foto del ticket de compra, para tener todo
+# en control, agregar al ERP las fotos... se puede hacer un OCR para leer toda
+# la imagen, y en cuanto te pidamos que factures algo, pues ya lo facturas".
+#
+# El camino: foto -> se GUARDA en disco ya (`comprobantes.guardar_foto`) -> se
+# lee con vision (`ocr_ticket.leer`, el mismo `claude -p` de minimo privilegio)
+# -> el bot dice lo que leyo (texto armado por el codigo) -> propone el gasto
+# por la MISMA puerta sellada que el texto (`_proponer_gasto_directo`) -> solo
+# el clic de Norman lo escribe -> al escribirse, la foto queda ligada al
+# `id_movimiento` (`_ligar_comprobante`), venga el clic por el VA de Norman o
+# por su Aprobar a lo de otro.
+#
+# Los campos para pedir la factura despues (RFC, folio, URL de facturacion...)
+# viajan en el indice local y, al ligarse, a la tabla `comprobantes_gasto`; la
+# foto se comprime y va al bucket privado `tickets_gasto`. El disco queda de
+# respaldo. `COMPROBANTES_EN_SUPABASE=0` apaga la subida.
+COMPROBANTES_EN_SUPABASE = os.environ.get("COMPROBANTES_EN_SUPABASE", "1").strip().lower() in VALORES_SI
+BOT_USUARIO_TG = os.environ.get("BOT_USUARIO_TG", "ERPFresnilloBot")
+AVISO_FOTO_NO_BAJO = "No pude bajar tu foto (Telegram no la entrego a tiempo). Mandala otra vez."
+TOPE_FOTO = 10 * 1024 * 1024
+VIDA_COMPROBANTE_EN_VUELO = 600
+# La foto normal va POR ID: `_proponer_gasto_directo(..., foto=clave)` la pega al
+# borrador que acaba de sellar. Esto es solo para los dos casos donde el gasto
+# todavia no existe (el modelo no pudo leerla; no se leyo el total): {clave de
+# chat: (clave de la foto, cuando)}. Dura 10 minutos, lo toma UN solo gasto, y el
+# mensaje de la propuesta dice "Va con la foto del ticket" antes del VA.
+_comprobante_en_vuelo = {}
+
+
+def abreme_en_privado(bot=None):
+    """El texto para quien nunca abrio chat privado con el bot (Telegram no deja
+    que un bot le escriba primero a nadie). Sin cifras: va en el grupo."""
+    try:
+        usuario = getattr(bot, "username", None) or BOT_USUARIO_TG
+    except Exception:  # PTB: un Bot sin initialize() lanza RuntimeError aqui
+        usuario = BOT_USUARIO_TG
+    return "\u00c1breme en privado una vez (t.me/" + str(usuario) + ") y te lo mando."
+
+
+async def _bajar_foto(bot, file_id):
+    """Los bytes de la foto, o None. Misma politica que la voz (E-612):
+    timeouts explicitos y UN reintento de red."""
+    for intento in range(REINTENTOS_DESCARGA + 1):
+        try:
+            archivo = await bot.get_file(file_id, **TIMEOUTS_DESCARGA)
+            return bytes(await archivo.download_as_bytearray(**TIMEOUTS_DESCARGA))
+        except BadRequest as e:  # subclase de NetworkError: va ANTES, y no se reintenta
+            log.warning("foto: no se pudo bajar (%s): %s", type(e).__name__, e)
+            return None
+        except (NetworkError, TimedOut) as e:
+            log.warning("foto: intento %d de bajarla fallo (%s)", intento + 1, type(e).__name__)
+        except Exception as e:
+            log.warning("foto: no se pudo bajar (%s): %s", type(e).__name__, e)
+            return None
+    return None
+
+
+def _foto_del_mensaje(mensaje):
+    """(file_id, file_unique_id, mime) de la foto MAS GRANDE, o de una imagen
+    mandada como archivo (JPG/PNG/WEBP). None si no hay imagen. **Pura.**"""
+    fotos = getattr(mensaje, "photo", None) or ()
+    if fotos:
+        f = fotos[-1]
+        return f.file_id, getattr(f, "file_unique_id", None), "image/jpeg"
+    doc = getattr(mensaje, "document", None)
+    mime = str(getattr(doc, "mime_type", "") or "").lower()
+    if doc is not None and mime in comprobantes.EXTENSION:
+        return doc.file_id, getattr(doc, "file_unique_id", None), mime
+    return None
+
+
+def _foto_en_vuelo(chat):
+    """La clave de la foto que espera su gasto en este chat, o None. No la saca:
+    la saca quien de verdad la pegue a un borrador."""
+    en_vuelo = _comprobante_en_vuelo.get(chat)
+    if not en_vuelo:
+        return None
+    if time.time() - en_vuelo[1] > VIDA_COMPROBANTE_EN_VUELO:
+        _comprobante_en_vuelo.pop(chat, None)
+        return None
+    return en_vuelo[0]
+
+
+def _adjuntar_comprobante(chat, borrador_id, clave_foto):
+    """Pega la foto a ESE borrador (por id, nunca al foco). Devuelve la clave de
+    la foto o None. Escribe solo en el indice LOCAL: el ERP no se toca hasta el
+    clic."""
+    if not clave_foto or not borrador_id:
+        return None
+    for dato in ((_pendientes.get(chat) or {}).get(borrador_id), dict.get(_memoria, chat)):
+        if isinstance(dato, dict) and dato.get("borrador_id") == borrador_id:
+            dato["comprobante"] = clave_foto
+    try:
+        comprobantes.anotar_borrador(clave_foto, borrador_id)
+    except Exception as e:
+        log.warning("no pude anotar la foto %s con el borrador %s: %s", clave_foto, borrador_id, e)
+        return None
+    return clave_foto
+
+
+def _subir_comprobante(clave_foto):
+    """Con la bandera puesta: sube la foto ligada al ERP. Si falla, se queda en
+    disco y `bot/subir_comprobantes.py` la sube despues. Nunca lanza."""
+    try:
+        cuerpo = comprobantes.cuerpo_para_subir(clave_foto)
+        if cuerpo is None:
+            return False
+        estado, r = _post("/api/bot/comprobante/subir", cuerpo)
+        if estado == 200 and isinstance(r, dict) and r.get("ok"):
+            comprobantes.anotar_subido(clave_foto, r.get("ruta"))
+            return True
+        log.warning("foto %s: no se subio (%s): %s", clave_foto, estado, (r or {}).get("error"))
+    except Exception as e:
+        log.warning("foto %s: no se subio: %s", clave_foto, e)
+    return False
+
+
+def _ligar_comprobante(borrador_id, id_movimiento):
+    """El gasto YA se escribio (clic de Norman): su foto, si traia, queda ligada
+    al movimiento y se sube. Devuelve la frase para el mensaje de "Listo" ("" si
+    no traia foto). Nunca lanza: el gasto ya esta escrito y eso no se deshace por
+    un archivo."""
+    try:
+        clave_foto = comprobantes.ligar(borrador_id, id_movimiento)
+    except Exception as e:
+        log.warning("no pude ligar la foto del borrador %s: %s", borrador_id, e)
+        return ""
+    if not clave_foto:
+        return ""
+    log.info("foto %s ligada al movimiento %s", clave_foto, id_movimiento)
+    pie = " La foto del ticket quedo ligada al movimiento."
+    if COMPROBANTES_EN_SUPABASE and not _subir_comprobante(clave_foto):
+        pie += " No subio al ERP todavia: quedo en la PC y se reintenta."
+    return pie
+
+
+async def manejar_foto(update, context):
+    """La foto de un ticket, en privado o en grupo, con o sin texto."""
+    chat = _clave_de(update)
+    if not await _puerta_de_grupo(update, chat):
+        return
+    if not await _puerta_de_privado(update, chat):
+        return
+    mensaje = update.message
+    texto = str(getattr(mensaje, "caption", None) or "").strip()
+    foto = _foto_del_mensaje(mensaje)
+    if foto is None:
+        await mensaje.reply_text("Esa imagen no la puedo leer. Mandala como foto (JPG o PNG).")
+        return
+    datos = await _bajar_foto(context.bot, foto[0])
+    if not datos:
+        await mensaje.reply_text(AVISO_FOTO_NO_BAJO)
+        return
+    if len(datos) > TOPE_FOTO:
+        await mensaje.reply_text("Esa foto pesa mas de 10 MB. Mandala mas chica.")
+        return
+    clave_foto = await asyncio.to_thread(
+        comprobantes.guardar_foto, datos, foto[2], _persona(chat), _chat_de(chat),
+        texto or None, foto[1])
+    log.info("foto %s de %s en %s (%d bytes)", clave_foto, _persona(chat), _chat_de(chat), len(datos))
+    update = _UpdateQueAnota(update, chat)
+    await asyncio.to_thread(_rehidratar, chat)
+    try:
+        await _leer_y_proponer_ticket(update, chat, clave_foto, datos, foto[2], texto)
+        await bitacora.marcar_procesado(update)
+        await _seguir_cola(update, chat)
+        await _avisar_aprobaciones(update)
+    finally:
+        _cerrar_turno(chat, "[mando la foto de un ticket]" + ((" " + texto) if texto else ""))
+
+
+async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
+    decir = update.effective_message.reply_text
+    await update.effective_message.chat.send_action("typing")
+    # El vocabulario vivo de categorias (categorias_movimiento), como el texto.
+    await asyncio.to_thread(_catalogo_de_productos, chat)
+    ok, t = await asyncio.to_thread(ocr_ticket.leer, datos, mime, texto, list(_catalogo))
+    if not ok:
+        await asyncio.to_thread(comprobantes.anotar_error, clave_foto, t)
+        log.warning("foto %s: no se pudo leer: %s", clave_foto, t)
+        _comprobante_en_vuelo[chat] = (clave_foto, time.time())
+        await decir("No pude leer el ticket (" + str(t) + "). La foto quedo guardada: "
+                    "dime el gasto en texto y se la pego.")
+        return
+    await asyncio.to_thread(comprobantes.anotar_ocr, clave_foto, t)
+    log.info("foto %s: es_ticket=%s monto=%s dudas=%d instrucciones=%s", clave_foto,
+             t.get("es_ticket"), t.get("monto"), len(t.get("dudas") or []),
+             t.get("trae_instrucciones"))
+    if not t.get("es_ticket"):
+        if _en_grupo(chat):
+            return  # una foto cualquiera en el grupo no merece respuesta
+        await decir("Esa foto no parece un ticket de compra. La guarde, pero no propuse "
+                    "nada. Si es un gasto, dimelo en texto.")
+        return
+    await decir(ocr_ticket.resumen(t))
+    if t.get("monto") is None:
+        _comprobante_en_vuelo[chat] = (clave_foto, time.time())
+        _recordar_a_medias(chat, "gasto", {
+            "descripcion": ocr_ticket.descripcion_para_el_ledger(t),
+            "fecha": t.get("fecha"), "categoria": t.get("categoria")})
+        await decir("No lei el total. Cuanto fue?")
+        return
+    if not await _proponer_gasto_directo(update, chat, ocr_ticket.propuesta_de_gasto(t),
+                                         foto=clave_foto):
+        _comprobante_en_vuelo[chat] = (clave_foto, time.time())
+
+
+_PATRON_TICKET = re.compile(r"\b(ticket|tickets|comprobante|comprobantes)\b", re.I)
+_PATRON_VER = re.compile(
+    r"\b(mu[e\u00e9]strame|muestra|m[a\u00e1]ndame|manda|ens[e\u00e9][n\u00f1]ame|ensena|"
+    r"p[a\u00e1]same|pasa|dame|ver|reenv[i\u00ed]a(me)?|env[i\u00ed]a(me)?|quiero)\b", re.I)
+
+
+def pide_ticket(texto):
+    """"muestrame el ticket del gasto de gasolina". **Pura.** No pasa por el
+    modelo: buscar una foto no necesita criterio, y asi tampoco cambia el PROMPT."""
+    texto = str(texto or "")
+    return bool(_PATRON_TICKET.search(texto) and _PATRON_VER.search(texto))
+
+
+def _pie_de_ticket(r):
+    t = r.get("ticket") or {}
+    f = t.get("factura") or {}
+    piezas = []
+    if f.get("folio"):
+        piezas.append("Ticket " + str(f["folio"]))
+    piezas.append(str(t.get("proveedor") or "proveedor sin leer"))
+    if t.get("fecha"):
+        piezas.append(str(t["fecha"]))
+    if isinstance(t.get("monto"), (int, float)):
+        piezas.append("$" + format(t["monto"], ",.2f"))
+    lineas = [" | ".join(piezas)]
+    if r.get("id_movimiento"):
+        lineas.append("Ligado al movimiento " + str(r["id_movimiento"]))
+    else:
+        lineas.append("Todavia sin escribir en el ERP (no tiene el clic de Norman).")
+    if f.get("rfc_emisor"):
+        lineas.append("RFC " + str(f["rfc_emisor"]))
+    if f.get("url_facturacion"):
+        lineas.append("Facturar en: " + str(f["url_facturacion"]))
+    return NL.join(lineas)
+
+
+async def _mostrar_ticket(update, chat, texto):
+    """Reenvia la foto del ticket que mejor casa con `texto`. Solo la Matriz
+    (ADMIN): los gastos son suyos. En grupo, por privado (trae cifras)."""
+    decir = update.effective_message.reply_text
+    ident = await asyncio.to_thread(_identidad_de, _persona(chat))
+    if not ident or not ident.get("registrado"):
+        await decir("No te tengo dado de alta. No hice nada.")
+        return
+    if ident.get("rol") != "ADMIN":
+        await decir("Los tickets de gastos solo los ve la Matriz.")
+        return
+    encontrados, terminos = await asyncio.to_thread(comprobantes.buscar, texto)
+    encontrados = [(p, r) for p, r in encontrados
+                   if (r.get("ticket") or {}).get("es_ticket") or r.get("error")]
+    if not encontrados:
+        await decir("No encontre ese ticket. Dime el folio, el monto o el proveedor."
+                    if terminos else "Todavia no tengo ningun ticket guardado.")
+        return
+    puntos, r = encontrados[0]
+    pie = _pie_de_ticket(r)
+    otros = [x for p, x in encontrados[1:] if p == puntos][:4] if terminos else []
+    if otros:
+        pie += NL + NL + "Hay otros parecidos: " + "; ".join(
+            _pie_de_ticket(x).split(NL)[0] for x in otros) + ". Dime el folio."
+    ruta = comprobantes.ruta_de(r)
+    try:
+        with open(ruta, "rb") as fh:
+            datos = fh.read()
+    except Exception as e:
+        log.warning("ticket %s: no pude leer el archivo: %s", r.get("clave"), e)
+        await decir("Tengo el ticket anotado pero no encuentro la foto en disco.")
+        return
+    destino = int(_persona(chat)) if _en_grupo(chat) else int(_chat_de(chat))
+    try:
+        await update.get_bot().send_photo(destino, photo=datos, caption=pie[:1000],
+                                          filename=r.get("archivo") or "ticket.jpg")
+    except Exception as e:
+        log.warning("ticket %s: no lo pude mandar a %s: %s", r.get("clave"), destino, e)
+        if _en_grupo(chat):
+            await decir(abreme_en_privado(update.get_bot()))
+        else:
+            await decir("No pude mandarte la foto del ticket. Intenta otra vez.")
+        return
+    log.info("ticket %s mandado a %s", r.get("clave"), destino)
+    if _en_grupo(chat):
+        await decir("Te lo mande por privado.")
+
+
+# ===========================================================================
+# 2026-11-03 -- GRUPOS SILENCIOSOS ("Fresnillo - Equipo"): el bot escucha y
+# no habla. La lista y la regla viven en `grupos_silenciosos.py`.
+# ===========================================================================
+def _datos_del_bot(update):
+    try:
+        bot = update.get_bot()
+    except Exception:
+        return BOT_USUARIO_TG, None
+    try:
+        usuario = bot.username
+    except Exception:
+        usuario = None
+    try:
+        id_bot = bot.id
+    except Exception:
+        id_bot = None
+    return usuario or BOT_USUARIO_TG, id_bot
+
+
+def debe_callar(update):
+    usuario, id_bot = _datos_del_bot(update)
+    return grupos_silenciosos.decidir(update, usuario, id_bot)
+
+
+async def _callar(update, context):
+    chat = getattr(update, "effective_chat", None)
+    log.info("grupo silencioso %s: update anotado en la bitacora, no se procesa",
+             getattr(chat, "id", None))
+
+
+class _Silencio(BaseHandler):
+    """El PRIMER handler del grupo 0 de `main()`. La bitacora (grupo -1) ya
+    anoto el update; si el chat es silencioso, este lo atiende sin hacer nada y,
+    como en un grupo de PTB solo corre el primer handler que acepta, ningun otro
+    (texto, voz, foto, comandos, entrada de miembros) lo ve."""
+
+    def __init__(self):
+        super().__init__(_callar)
+
+    def check_update(self, update):
+        if not isinstance(update, Update):
+            return None
+        return True if debe_callar(update) else None
 
 
 # ===========================================================================
@@ -5076,15 +5436,17 @@ async def _confirmar(update, chat, por_boton=False):
     })
     if estado == 200 and r.get("ok"):
         _memoria.pop(chat, None)
+        # 2026-11-03: el clic ya escribio; la foto se liga a ESE borrador.
+        pie = await asyncio.to_thread(_ligar_comprobante, dato.get("borrador_id"), r.get("id"))
         creada = r.get("categoria_creada")
         if creada:
             if creada not in _catalogo:
                 _catalogo.append(creada)
             await update.effective_message.reply_text(
                 "Listo. Quedo escrito, y la categoria " + str(creada) +
-                " quedo creada: desde ahora la uso sola.")
+                " quedo creada: desde ahora la uso sola." + pie)
         else:
-            await update.effective_message.reply_text("Listo. Quedo escrito.")
+            await update.effective_message.reply_text("Listo. Quedo escrito." + pie)
     else:
         await update.effective_message.reply_text(r.get("error", "No pude escribirlo."))
 
@@ -5140,7 +5502,12 @@ async def _reproponer(update, chat, cambios):
             "cuenta": {k: v for k, v in cuenta.items() if v},
         }, **_estado_de_cuenta(cuenta, cuentas))
     _refrescar_catalogo(r)
-    await _ensenar_gasto(update, chat, r["mensaje"])
+    # 2026-11-03: el borrador nuevo sustituye al viejo, y se lleva su foto.
+    mensaje = r["mensaje"]
+    if _adjuntar_comprobante(chat, r["borrador_id"], dato.get("comprobante")
+                             or comprobantes.de_borrador(dato.get("borrador_id"))):
+        mensaje = str(mensaje) + NL + NL + "Va con la foto del ticket."
+    await _ensenar_gasto(update, chat, mensaje)
 
 
 # Los botones que ESCRIBEN. El `borrador_id` que traen es el de la propuesta
@@ -5618,7 +5985,8 @@ async def _accion_de_boton(update, chat, partes, accion):
                                   cuenta=dato.get("cuenta"), ya_avisado=True)
             return
         await _proponer_gasto_directo(update, chat, dato["propuesta"], dato.get("cuenta"),
-                                      dato.get("sugeridas"), ya_avisado=True)
+                                      dato.get("sugeridas"), ya_avisado=True,
+                                      foto=dato.get("foto"))
     elif accion == "setaj":
         # Contesta a "a cual se lo hago?": el cambio esperaba en la pregunta.
         pregunta = (_preguntas.get(chat) or {}).pop(partes[2] if len(partes) > 2 else "", None)
@@ -5765,6 +6133,12 @@ async def _consulta_directa(update, consulta, filtro=None):
         await update.effective_message.reply_text(r.get("error", "No pude consultarlo."))
         return
     await _contestar_texto_de_consulta(update, chat, r)
+
+
+@_con_puerta
+async def comando_ticket(update, context):
+    """/ticket <folio, monto o proveedor>: reenvia la foto del ticket."""
+    await _mostrar_ticket(update, _clave_de(update), " ".join(context.args or []))
 
 
 @_con_puerta
@@ -5919,7 +6293,10 @@ async def comando_inicio(update, context):
         + "PARA CAPTURAR, dime lo que gastaste como lo dirias en persona, por"
           " texto o nota de voz:" + NL
         + '  "gaste 340 de gasolina yendo a Zacatecas"' + NL
-        + "Te enseno la fila exacta antes de escribir nada. Nada entra sin tu VA." + NL + NL
+        + "Te enseno la fila exacta antes de escribir nada. Nada entra sin tu VA." + NL
+        + "O mandame la FOTO del ticket: la leo y te propongo el gasto. Queda ligada al"
+          " movimiento; \"muestrame el ticket de la gasolina\" o /ticket 500 te la regresa."
+        + NL + NL
         + "PARA CONSULTAR:" + NL
         + "  /stock            que hay, y donde" + NL
         + "  /stock chile 750  solo de un producto, o de un punto de venta" + NL
@@ -6078,6 +6455,9 @@ def main():
     # Grupo -1: corre ANTES que cualquier otro handler y no corta la cadena.
     # Todo mensaje (texto, voz, boton, edicion) queda escrito antes de procesarse.
     app.add_handler(TypeHandler(Update, bitacora.anotar_update), group=-1)
+    # 2026-11-03: grupos silenciosos. Va PRIMERO en el grupo 0: lo que acepta aqui
+    # ya quedo en la bitacora y no lo ve ningun otro handler.
+    app.add_handler(_Silencio())
     app.add_handler(CommandHandler("start", comando_inicio))
     app.add_handler(CommandHandler("stock", comando_stock))
     app.add_handler(CommandHandler("cartera", comando_cartera))
@@ -6090,8 +6470,10 @@ def main():
     app.add_handler(CommandHandler("corregir", comando_corregir))
     app.add_handler(CommandHandler("alta", comando_alta))
     app.add_handler(CommandHandler("convertir", comando_convertir))
+    app.add_handler(CommandHandler("ticket", comando_ticket))
     app.add_handler(CallbackQueryHandler(manejar_boton))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, manejar_foto))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, manejar_entrada))
     app.add_error_handler(manejar_error)
