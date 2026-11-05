@@ -201,6 +201,8 @@ escribe sin el VA. Al escribirse, la foto se liga al movimiento y se sube compri
 - `COMPROBANTES_EN_SUPABASE=0` apaga la subida; la foto sigue en disco y ligada.
 - "muestrame el ticket de la gasolina" o `/ticket 500` la regresa. Solo la Matriz; en grupo va por
   privado. Hoy se lee del disco de esta PC.
+- El PROMPT del enrutador no sabe de tickets y los niega. Lo que escapa de `pide_ticket` lo recogen
+  `reclama_ticket` (si pide verlo, se muestra) y `niega_tickets` (si el modelo dice que no hay).
 - El mismo ticket (`sha256` o `file_unique_id`) ya escrito o esperando su VA o su Aprobar no se
   propone otra vez: el bot avisa quien lo mando. Si lo anularon, se dicta en texto.
 - Una foto sola espera su gasto: la toma solo lo que esa persona dicte, y la propuesta trae

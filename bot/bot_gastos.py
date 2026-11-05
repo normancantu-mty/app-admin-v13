@@ -2041,6 +2041,15 @@ def _rehidratar(chat):
         except ValueError:
             nacido = ahora
         dato["_sellado_en"] = nacido
+        # La foto no viaja con el borrador: su lazo vive en el indice local. Sin
+        # esto, tras un reinicio su descripcion volvia al enrutador sin marca y la
+        # propuesta perdia el boton de quitar la foto.
+        foto = comprobantes.de_borrador(bid)
+        if foto:
+            dato["comprobante"] = foto
+            vuelo = comprobantes.foto_de_vuelo(bid)
+            if vuelo:
+                dato["foto_de_vuelo"] = vuelo
         reg[bid] = dato
     if reg and dict.get(_memoria, chat) is None:
         dict.__setitem__(_memoria, chat, list(reg.values())[-1])
@@ -2109,6 +2118,8 @@ _historial = {}
 _eventos = {}
 
 
+# Hasta donde `_etiqueta_de` deja una descripcion.
+LARGO_ETIQUETA = 24
 # True mientras el bot habla de lo que leyo en un ticket (`_hablando_de_ticket`).
 _texto_de_ticket = contextvars.ContextVar("texto_de_ticket", default=False)
 
@@ -2123,17 +2134,23 @@ def _hablando_de_ticket(si=True):
 
 
 def _cita_un_ticket(chat, texto):
-    """¿Repite la descripcion de una propuesta que salio de un ticket? Pasa fuera
-    de ese turno: "Sigue pendiente <etiqueta>"."""
-    return any(d.get("comprobante") and (d.get("propuesta") or {}).get("descripcion")
-               and str(d["propuesta"]["descripcion"]) in texto for d in _pendientes_de(chat))
+    """¿Cita una propuesta que salio de un ticket? Pasa fuera de ese turno, con
+    `_etiqueta_de`, que RECORTA la descripcion: se compara contra lo recortado, y
+    con los espacios como los deja `_texto_plano`."""
+    for d in _pendientes_de(chat):
+        detalle = _texto_plano(str((d.get("propuesta") or {}).get("descripcion") or "")[:LARGO_ETIQUETA])
+        if d.get("comprobante") and detalle and detalle in texto:
+            return True
+    return False
 
 
 def _anotar(chat, texto):
     """Lo que el bot le dijo a Norman en este turno, para el historial. Lo que
-    viene de un ticket va marcado: de aqui vuelve a entrar al enrutador."""
+    viene de un ticket va marcado: de aqui vuelve a entrar al enrutador. La cita se
+    busca ANTES del tope de 240: "Sigue pendiente" puede caer al final del mensaje."""
+    de_ticket = _texto_de_ticket.get() or _cita_un_ticket(chat, _texto_plano(texto, 100000))
     texto = _texto_plano(texto, 240)
-    if texto and (_texto_de_ticket.get() or _cita_un_ticket(chat, texto)):
+    if texto and de_ticket:
         texto = enrutador.dato_de_ticket(texto)
     if texto:
         _eventos.setdefault(_chat_de(chat), []).append(texto)
@@ -3792,6 +3809,14 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     if _en_grupo(chat) and intencion == "charla" and not _le_hablan_al_bot(update):
         log.info("grupo %s: charla entre personas, no contesto", _chat_de(chat))
         return
+    if reclama_ticket(texto, ruta):
+        log.info("pedido de ticket que escapo de pide_ticket: %r", texto)
+        await _mostrar_ticket(update, chat, texto)
+        return
+    if niega_tickets(texto, ruta):
+        log.info("el modelo nego los tickets, corrijo: %r", ruta.get("respuesta"))
+        await update.effective_message.reply_text(AVISO_SI_HAY_TICKETS)
+        return
 
     # ── D30: LA CONFIANZA DEJA DE CALCULARSE PARA TIRARSE ───────────────────
     # `enrutador.py` la calcula y el unico lector era el log: **cero `if` sobre
@@ -5039,37 +5064,83 @@ async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
 # El mensaje tiene que ABRIR con el pedido y seguir de inmediato con el ticket.
 # La auditoria tumbo la version que buscaba las dos palabras en cualquier lugar: 9
 # de 11 frases perdian su gasto ("gaste 340 de gasolina, quiero subir el ticket").
+# La re-auditoria tumbo la lista corta de verbos: 12 de 19 pedidos reales caian al
+# enrutador, y el modelo NEGABA tener la funcion. Y 7 capturas se tragaban: abrian
+# con verbo de pedir ("mandame el ticket del diesel 1500 pesos efectivo").
 _PIDE_TICKET = re.compile(
-    r"^(?:(?:oye|hey|bot|porfa|por favor)[, ]+)*"
-    r"(?:muestrame|ensename|mandame|pasame|reenviame|enviame|dame|ver|quiero ver|dejame ver|a ver"
-    r"|me (?:muestras|ensenas|mandas|pasas|reenvias|envias)"
-    r"|(?:me )?(?:puedes|podrias) (?:mostrar|ensenar|mandar|pasar|reenviar|enviar)(?:me)?)"
-    r"\s+(?:(?:el|la|los|las|ese|esa|esos|este|esta|estos|mi|mis|ultimo|ultima|ultimos)\s+)*"
+    r"^(?:(?:oye|hey|hola|buenas|este|bot|porfa|por favor|a ver)[, ]+)*"
+    r"(?:muestrame|muestra|ensename|ensena|mandame|manda|pasame|pasa|reenviame|reenvia|enviame|envia"
+    r"|dame|regresame|devuelveme|ver|quiero ver|quiero|necesito ver|necesito|ocupo|busca|buscame|dejame ver|a ver"
+    r"|donde esta|donde estan|donde quedo|donde quedaron|tienes|me (?:muestras|ensenas|mandas|pasas|reenvias|envias|das)"
+    r"|(?:me )?(?:puedes|podrias) (?:mostrar|ensenar|mandar|pasar|reenviar|enviar|buscar)(?:me)?)"
+    r"\s+(?:(?:el|la|los|las|ese|esa|esos|este|esta|estos|mi|mis|ultimo|ultima|ultimos|todos|todas|otra vez)\s+)*"
     r"(?:foto\s+(?:del?\s+)?(?:(?:el|la|ese|este)\s+)?)?"
-    r"(?:tickets?|comprobantes?)\b(.*)$", re.S)
+    r"(?:tickets?|comprobantes?|fotos?)\b(.*)$", re.S)
 _OTRA_INTENCION = re.compile(
     r"\b(?:y|e|pero|como|gaste|gastamos|pague|pagamos|compre|compramos|registra\w*|anota\w*"
     r"|sube|subir|alta|factura\w*|saldo|cartera|stock|debe\w*|cuanto|cuantos|vend\w*"
-    r"|fue|son|era|costo|salio)\b|\ba\s+(?:gastos?|cartera|erp)\b")
+    r"|fue|son|era|costo|salio|pago|cargue|cargo|meti|puse|efectivo|pesos|deposito|abono)\b"
+    r"|\ba\s+\w+|\ben la (?:manana|tarde|noche)\b")
 _CORTESIA = ("porfa", "por favor", "plis", "please", "gracias", "bot")
+# "..., el de ayer": lo que sigue a la coma todavia dice cual ticket.
+# "el ticket de 12345 pesos" busca por monto: ese "pesos" no es una captura. El de
+# "el ticket de la gasolina 500 pesos" si: ahi el monto no viene justo despues.
+_MONTO_BUSCADO = re.compile(r"^\s*(?:de|por)\s+\$?[\d.,]+\s+pesos\b")
+_ACLARA_CUAL = re.compile(r"^(?:(?:el|la|los|las)\s+)?(?:de|del|ultimo|ultima)\b")
+
+
+def _sigue_siendo_el_pedido(trozo):
+    return not trozo or trozo in _CORTESIA or bool(_ACLARA_CUAL.match(trozo))
 
 
 def pide_ticket(texto):
     """"muestrame el ticket del gasto de gasolina". **Pura.** No pasa por el
     modelo: buscar una foto no necesita criterio, y asi tampoco cambia el PROMPT.
 
-    True SOLO si el mensaje no trae otra intencion. En la duda es False: lo lee el
-    enrutador, que es el que sabe de capturas; un pedido de foto que se le escape
-    cuesta repetirlo, y un gasto tragado aqui se pierde."""
+    True SOLO si el mensaje no trae otra intencion: un gasto tragado aqui se pierde.
+    En la duda es False y lo lee el enrutador. Un pedido que escape de aqui no se
+    queda en la negativa del modelo: lo recoge `reclama_ticket`."""
     plano = comprobantes.plano(texto).strip(" \t\r\n¿¡")
     encontrado = _PIDE_TICKET.match(plano)
     if not encontrado:
         return False
     resto = encontrado.group(1)
-    trozos = [t.strip() for t in re.split(r"[,;:.?!]+", resto)]
-    if any(t and t not in _CORTESIA for t in trozos[1:]):
+    # La coma de "1,500" y el punto de "99.50" no separan nada.
+    trozos = [t.strip() for t in re.split(r"[;:?!]+|[,.](?!\d)", resto)]
+    if not all(_sigue_siendo_el_pedido(t) for t in trozos[1:]):
         return False
-    return not _OTRA_INTENCION.search(resto)
+    return not _OTRA_INTENCION.search(_MONTO_BUSCADO.sub("", resto))
+
+
+# Lo que escapa de `pide_ticket` llega al modelo, y el PROMPT no sabe de tickets:
+# medido con el enrutador real, 9 de 12 formas contestaban "No puedo mostrarte
+# tickets" o "No guardo tickets". "Se va al modelo" no era una salida segura.
+_MENCIONA_TICKET = re.compile(r"\b(?:tickets?|comprobantes?)\b")
+_VE_TICKET = re.compile(
+    r"\b(?:muestrame|muestra|mostrar\w*|ensename|ensena|ensenar\w*|dame|mandame|pasame|reenviame"
+    r"|regresame|devuelveme|veo|ver|busca|buscame|cual|donde|recuerdas|tienes)\b")
+_PREGUNTA_AL_ERP = re.compile(r"\b(?:cuanto|cuantos|cuantas|saldo|cartera|debe\w*|stock|vend\w*)\b")
+_NIEGA_TICKETS = re.compile(r"\bno\b[^.?!]{0,50}\b(?:tickets?|comprobantes?|fotos?)\b")
+AVISO_SI_HAY_TICKETS = ("Si guardo las fotos de los tickets. Pidemelas con el monto, el proveedor "
+                        "o el folio: \"muestrame el ticket de la gasolina\".")
+
+
+def reclama_ticket(texto, ruta):
+    """El modelo no tomo accion sobre un mensaje de tickets y si pide verlo. **Pura.**"""
+    plano = comprobantes.plano(texto)
+    return bool(_sin_hechos_de_ticket(plano, ruta) and _VE_TICKET.search(plano)
+                and not _PREGUNTA_AL_ERP.search(plano))
+
+
+def niega_tickets(texto, ruta):
+    """El modelo dice que no hay tickets: es falso, y no lo va a decir el bot. **Pura.**"""
+    return bool(_sin_hechos_de_ticket(comprobantes.plano(texto), ruta)
+                and _NIEGA_TICKETS.search(comprobantes.plano(ruta.get("respuesta"))))
+
+
+def _sin_hechos_de_ticket(plano, ruta):
+    return (ruta.get("intencion") in ("charla", "consulta") and not _hechos_de(ruta)
+            and bool(_MENCIONA_TICKET.search(plano)))
 
 
 
@@ -5461,7 +5532,7 @@ def _etiqueta_de(dato):
     monto = propuesta.get("monto") or dato.get("monto")
     detalle = str(propuesta.get("descripcion") or dato.get("nombre_deudor") or propuesta.get("nota")
                   or peticion.get("comprador") or peticion.get("cliente") or dato.get("para_quien")
-                  or dato.get("folio") or "")[:24]
+                  or dato.get("folio") or "")[:LARGO_ETIQUETA]
     if not monto and not detalle and dato.get("mostrado"):
         lineas = [x for x in _texto_plano(dato["mostrado"][1], 60).split(". ") if x]
         detalle = lineas[0][:36] if lineas else ""
