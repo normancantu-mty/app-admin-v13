@@ -29,6 +29,7 @@ export type TipoPendiente =
   | 'alta_categoria'
   | 'entrada_insumo'
   | 'lote_etapa'
+  | 'traspaso'
 
 /**
  * `payload.tipo` como lo escribe cada ruta `proponer`, al tipo del bot. El gasto
@@ -53,6 +54,7 @@ export function tipoDelPayload(payload: unknown): TipoPendiente | null {
     case 'alta_categoria':
     case 'entrada_insumo':
     case 'lote_etapa':
+    case 'traspaso':
       return p.tipo
     case 'alta_entidad':
       return 'alta'

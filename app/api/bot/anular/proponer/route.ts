@@ -205,6 +205,12 @@ export async function POST(request: Request) {
           { status: 422 }
         )
       }
+      if (movimiento.es_traspaso) {
+        return NextResponse.json(
+          { error: 'Un traspaso no se reescribe como gasto. Lo anulo completo y lo vuelves a dictar.' },
+          { status: 422 }
+        )
+      }
       if (movimiento.id_ticket) {
         // Una venta no se "recaptura" como gasto: se anula y se vuelve a
         // vender. Escribir un GASTO_OPERATIVO en lugar de una venta anulada

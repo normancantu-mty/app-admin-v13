@@ -55,6 +55,9 @@ export async function listarAnulables(
     // y una fila que no se puede anular porque no se ve es peor que una que se
     // ve y se rechaza.
     .in('status', ['ACTIVO', 'APPROVED'])
+    // 2026-11-05: un traspaso es un solo renglon. La salida lo representa, y
+    // anularla se lleva la entrada (`anularFinanzas`).
+    .neq('tipo_movimiento', 'INGRESO_TRASPASO')
     .order('fecha_movimiento', { ascending: false })
     // El 8 va LITERAL y no `MOVIMIENTOS_OFRECIDOS`, y es a proposito. El
     // centinela de ERP-25 lee el codigo fuente: un `.limit(<identificador>)` no

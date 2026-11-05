@@ -133,6 +133,9 @@ INTENCIONES = (
     # --- 2026-11-03. Agregar una categoria/subcategoria a la lista cerrada
     # (`categorias_movimiento`). Escribe: propone y espera el clic de Norman.
     "categoria",
+    # --- 2026-11-05. Mover dinero entre dos cuentas propias: dos filas del ledger
+    # que no son ingreso ni gasto. Propone y espera el VA, como el gasto.
+    "traspaso",
     "charla",
 )
 
@@ -256,6 +259,26 @@ QUE ES CADA INTENCION
   Campos: deudor, monto, fecha, cuenta_id, cuenta_oida, metodo_pago (como pago,
   con su palabra: "efectivo", "transferencia", "deposito", "cheque", y cualquier otro
   tal cual, como "tarjeta"; solo si lo dijo).
+- traspaso: mover dinero ENTRE DOS CUENTAS PROPIAS de la lista "CUENTAS", sin que
+  entre ni salga de la empresa. "transferencia de la cuenta de Gilberto a la Spin
+  25 mil", "traspaso de efectivo a Spin", "pase 5,000 de la caja a Spin", "movi mil
+  de Spin a Efectivo".
+  Campos: monto, fecha, concepto (para que fue, solo si lo dijo), origen_id,
+  origen_oida, destino_id, destino_oida. **origen** es de donde SALE y **destino**
+  a donde ENTRA: nunca los inviertas. Los `_id` son ids de la lista "CUENTAS",
+  copiados tal cual. **Cada lado que nombre lleva SIEMPRE su `_oida` con lo que dijo
+  de esa cuenta, tal cual y completo ("la cuenta de Gilberto", "la caja", "efectivo
+  de Aeropuerto"), aunque su `_id` vaya lleno**: el bot los contrasta. Si nombra una
+  cuenta que no esta o no se sabe cual es ("la G"), su `_id` null y su `_oida` con lo
+  que dijo: nunca escojas la que mas se parece. Si no dijo una de las dos, las dos
+  llaves null. **Origen y destino nunca van en "faltantes" ni en "pregunta"**: eso
+  lo resuelve el bot.
+  Aqui "transferencia" es el VERBO, no la cuenta Transferencias: esa cuenta solo es
+  origen o destino si la nombra asi ("de Transferencias a Efectivo").
+  **No es traspaso** si hay alguien de afuera. Si un cliente o distribuidor pago,
+  es abono aunque haya sido "por transferencia" ("Aeropuerto me pago 5,000 por
+  transferencia"). Si se le pago a un tercero, es gasto aunque diga "le transferi"
+  ("le transferi 3,000 a Solo Vidrio").
 - venta: se vendio producto. Entro dinero o se dejo a credito.
   Campos: productos (lista de {producto, cantidad, id_producto}), comprador, monto, condicion_pago (CONTADO o CONCESION), fecha,
   descuento.
@@ -479,7 +502,8 @@ REGLAS QUE NO SE ROMPEN
    (venta: condicion_pago, comprador, productos, monto, descuento; gasto:
    monto, descripcion, categorias_sugeridas, proveedor, fecha, cuenta_id,
    cuenta_oida; abono: deudor, monto, cuenta_id, cuenta_oida; cotizacion: cliente,
-   productos, vigencia_dias, descuento), mas "sobre": el tipo de la propuesta
+   productos, vigencia_dias, descuento; traspaso: monto, concepto, fecha,
+   origen_id, origen_oida, destino_id, destino_oida), mas "sobre": el tipo de la propuesta
    que cambias (uno de los de "hechos"). El bot conserva todo lo demas y la
    vuelve a ensenar con su boton. **Un hecho NUEVO no es "ajustar"** (otra
    venta, otro gasto): es su intencion de siempre.
@@ -678,7 +702,7 @@ def _pedazo_contexto(borrador, catalogo, deudores, productos=None, en_pantalla=N
 
 # Los tipos de hecho economico que el bot sabe capturar. **Lista cerrada**, por
 # la misma razon que `INTENCIONES`: un tipo que no esta aqui no se menciona.
-TIPOS_DE_HECHO = ("gasto", "abono", "venta", "lote", "cotizacion")
+TIPOS_DE_HECHO = ("gasto", "abono", "venta", "lote", "cotizacion", "traspaso")
 
 
 def _enumera(piezas):
@@ -1076,6 +1100,10 @@ def esquema_de(cuentas, n_categorias):
     campos = {"type": "object", "additionalProperties": True, "properties": {
         "cuenta_id": {"enum": ids + [None]},
         "cuenta_oida": {"type": ["string", "null"]},
+        "origen_id": {"enum": ids + [None]},
+        "origen_oida": {"type": ["string", "null"]},
+        "destino_id": {"enum": ids + [None]},
+        "destino_oida": {"type": ["string", "null"]},
         "proveedor": {"type": ["string", "null"]},
         "fecha": {"type": ["string", "null"]},
         "categorias_sugeridas": sugeridas}}
@@ -1095,7 +1123,43 @@ def esquema_de(cuentas, n_categorias):
                 "confianza": {"enum": list(NIVELES_DE_CONFIANZA)}}}
 
 
-def _aplica_a(campos, intencion, cuentas, categorias):
+def _aplica_lados_de_traspaso(campos, cuentas, borrador=None):
+    """Origen y destino: de la lista o nada; lo oido se rescata tolerante, sin
+    adivinar. El `_id` del modelo no basta: **solo vale si lo oido nombra esa misma
+    cuenta** (auditoria 2026-11-05: "del efectivo de Aeropuerto" salio Efectivo).
+    Sin oido o con uno que no casa, ese lado queda por preguntar. La excepcion es
+    `borrador`, la captura a medias: ese lado ya lo valido este codigo, y al repetirlo
+    el modelo no tiene por que decir como lo oyo. Una cuenta SOLO PAGA no recibe.
+    `_nombre` y `_solo_paga` solo los pone este codigo: si vienen del modelo, se tiran."""
+    por_id = dict((c.get("id"), c) for c in cuentas or ())
+    for lado in ("origen", "destino"):
+        campos.pop(lado + "_nombre", None)
+        campos.pop(lado + "_solo_paga", None)
+        dicha = por_id.get(campos.pop(lado + "_id", None))
+        oida = str(campos.pop(lado + "_oida", None) or "").strip()
+        elegida = casar_cuenta(oida, cuentas) if oida else None
+        if dicha is not None and (elegida or {}).get("id") != dicha.get("id"):
+            ya_validada = not oida and dicha.get("id") == (borrador or {}).get(lado + "_id")
+            elegida = dicha if ya_validada else None
+        if elegida is not None and lado == "destino" and elegida.get("id") in SOLO_EGRESOS:
+            campos["destino_solo_paga"] = str(elegida.get("nombre"))
+            continue
+        if elegida is not None:
+            campos[lado + "_id"] = elegida["id"]
+            campos[lado + "_nombre"] = str(elegida.get("nombre"))
+        elif oida:
+            campos[lado + "_oida"] = oida[:60]
+
+
+def lado_de_traspaso_que_falta(campos):
+    """"origen", "destino" o None. **Pura.** Solo cuenta el id validado."""
+    for lado in ("origen", "destino"):
+        if not (campos or {}).get(lado + "_id"):
+            return lado
+    return None
+
+
+def _aplica_a(campos, intencion, cuentas, categorias, borrador=None):
     # Categorias: del numero al nombre. El modelo no puede nombrar nada de fuera.
     numeros = campos.pop("categorias_sugeridas", None)
     if isinstance(numeros, list):
@@ -1113,6 +1177,10 @@ def _aplica_a(campos, intencion, cuentas, categorias):
     # Proveedor vacio no viaja.
     if not str(campos.get("proveedor") or "").strip():
         campos.pop("proveedor", None)
+    # En "ajustar" el modelo no siempre dice `sobre`: manda la llave que trajo.
+    if intencion == "traspaso" or (intencion == "ajustar" and any(
+            lado + sufijo in campos for lado in ("origen", "destino") for sufijo in ("_id", "_oida"))):
+        _aplica_lados_de_traspaso(campos, cuentas, borrador)
     # Cuenta: de la lista o nada; lo oido se rescata tolerante. Estas dos llaves
     # solo las pone este codigo: si vienen del modelo, se tiran.
     campos.pop("cuenta_nombre", None)
@@ -1134,7 +1202,7 @@ def _aplica_a(campos, intencion, cuentas, categorias):
         campos["cuenta_oida"] = oida[:60]
 
 
-def aplicar_catalogos(r, cuentas, categorias):
+def aplicar_catalogos(r, cuentas, categorias, borrador=None):
     """Valida lo que el modelo eligio contra las listas de ESTA llamada. **Pura
     sobre `r`:** lo deja como lo usa el bot (`cuenta_id` valido, `cuenta_nombre`,
     `categorias_sugeridas` como nombres y `categoria` = la primera)."""
@@ -1143,7 +1211,7 @@ def aplicar_catalogos(r, cuentas, categorias):
         campos = h.get("campos")
         if isinstance(campos, dict) and id(campos) not in vistos:
             vistos.add(id(campos))
-            _aplica_a(campos, h.get("intencion"), cuentas, categorias)
+            _aplica_a(campos, h.get("intencion"), cuentas, categorias, borrador)
     return r
 
 
@@ -1254,7 +1322,7 @@ def enrutar(texto, borrador=None, catalogo=None, deudores=None,
         if not isinstance(obj, dict):
             return False, "el modelo no devolvio un objeto"
 
-    return True, aplicar_catalogos(_normaliza(obj), cuentas, categorias)
+    return True, aplicar_catalogos(_normaliza(obj), cuentas, categorias, borrador)
 
 
 if __name__ == "__main__":

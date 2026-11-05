@@ -653,6 +653,7 @@ RUTA_CONFIRMAR_DE = {
     # FASE 11 (D112): la entrega de efectivo del DST se aprueba por el camino
     # generico (ESPERA_APROBACION -> Aprobar -> su confirmar con el sello).
     "entrega_efectivo": "/api/bot/entrega/confirmar",
+    "traspaso": "/api/bot/traspaso/confirmar",
     # 2026-11-03: alta de categoria/subcategoria.
     "alta_categoria": "/api/bot/categoria/confirmar",
 }
@@ -1591,6 +1592,7 @@ _COMO_SE_LLAMA = {
     "entrega": "una entrega de efectivo",
     "categoria": "una categoria nueva",
     "alta_categoria": "una categoria nueva",
+    "traspaso": "un traspaso",
 }
 
 
@@ -2619,6 +2621,20 @@ def _mismo_abono(propuesta, id_deudor, nombre, viva):
     return bool(a and b and (a in b or b in a))
 
 
+def _mismo_traspaso(propuesta, viva):
+    """Lo mismo para un traspaso: mismo monto, mismo dia y las mismas dos cuentas,
+    cada una en su lado. Un rehidratado no trae su propuesta y no se compara."""
+    if _tipo_de(viva) != "traspaso":
+        return False
+    otra = viva.get("propuesta") or {}
+    if not _mismo_monto(otra.get("monto"), propuesta.get("monto")):
+        return False
+    if _dia_de(otra) != _dia_de(propuesta):
+        return False
+    return (otra.get("origen_id"), otra.get("destino_id")) == (
+        propuesta.get("origen_id"), propuesta.get("destino_id"))
+
+
 async def _preguntar_duplicado(update, chat, igual, que, dato):
     """Ya hay una viva que parece esta: no se agrega sin preguntar (S12)."""
     _memoria[chat] = dict(dato, tipo="duplicado_eligiendo", igual=igual["borrador_id"])
@@ -3642,6 +3658,8 @@ INTENCIONES_QUE_ESCRIBEN = (
     "anular", "corregir", "alta", "convertir",
     # 2026-11-03: agregar categoria/subcategoria (propone; escribe el clic de Norman).
     "categoria",
+    # 2026-11-05: mover dinero entre dos cuentas propias.
+    "traspaso",
     # Y la que de verdad aprieta el gatillo: `confirmar` es el paso que convierte
     # el borrador sellado en INSERT. El sello protege el CONTENIDO -- el monto es
     # el que Norman vio en pantalla -- pero no protege el DISPARADOR.
@@ -3653,7 +3671,7 @@ INTENCIONES_QUE_ESCRIBEN = (
 # que valga la pena recordar, y pisar `_memoria` con ellas seria un defecto**:
 # ahi vive la propuesta sellada que esta en pantalla, y sobreescribirla con un
 # borrador vacio la mataria justo cuando Norman iba a decir que va.
-INTENCIONES_CON_BORRADOR = ("gasto", "abono", "venta", "lote", "cotizacion", "alta")
+INTENCIONES_CON_BORRADOR = ("gasto", "abono", "venta", "lote", "cotizacion", "alta", "traspaso")
 
 
 ETIQUETAS_DE_NOTA = ("lote", "persona", "cliente", "tema")
@@ -4158,6 +4176,10 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
         await _responder_natural(update, ruta)
         return
 
+    if intencion == "traspaso":
+        await _atender_traspaso(update, chat, campos, pregunta)
+        return
+
     if intencion == "venta":
         # FASE 3. Lo indispensable de una venta es QUE se vendio; el comprador
         # vacio en CONTADO es "publico en general", que es una venta legitima y
@@ -4445,6 +4467,24 @@ async def _aplicar_ajuste(update, chat, blanco, campos):
         propuesta.update(nueva["propuesta"])
         peticion["propuesta"] = propuesta
         await _proponer_cotizacion(update, chat, peticion)
+    elif tipo == "traspaso":
+        if campos.get("cuenta_id"):
+            # "mejor de Spin" sin decir de que lado: no se adivina. Se queda viva.
+            await update.effective_message.reply_text(
+                "Esa cuenta va de origen o de destino? Dimelo asi: de Spin, o a Spin.")
+            return
+        # Una cuenta que no se ubico no puede dejar la vieja como si nada: repropondria
+        # lo mismo y pareceria que hizo caso. La propuesta se queda viva.
+        sin_ubicar = next((campos[lado + "_oida"] for lado in ("origen", "destino")
+                           if campos.get(lado + "_oida") and not campos.get(lado + "_id")), None)
+        if sin_ubicar:
+            await update.effective_message.reply_text(
+                'No ubico "' + str(sin_ubicar) + '" entre tus cuentas: la propuesta sigue '
+                "igual. Dime la cuenta con su nombre.")
+            return
+        juntos = dict(blanco.get("campos") or {})
+        juntos.update({k: v for k, v in campos.items() if not _vacio(v)})
+        await _atender_traspaso(update, chat, juntos)
     else:
         await update.effective_message.reply_text(
             "Eso no lo puedo cambiar asi. Cancela la propuesta y dictamela otra vez.")
@@ -5414,6 +5454,99 @@ async def _confirmar_entrega(update, chat):
         await update.effective_message.reply_text(r.get("error", "No pude registrar la entrega."))
 
 
+# 2026-11-05: traspaso entre cuentas propias. El servidor decide todo lo que importa
+# (lista cerrada, solo egresos, saldos); aqui solo se pregunta lo que falta.
+
+def _teclado_confirmar_traspaso(borrador_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, escribelo", callback_data="va:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _lados_de_traspaso(campos):
+    """La cuenta suelta de "de Spin", contestada a una pregunta, cae en el lado que
+    falta. Si no falta ninguno, no se adivina cual de los dos cambia. **Pura.**"""
+    campos = dict(campos or {})
+    suelta, nombre = campos.pop("cuenta_id", None), campos.pop("cuenta_nombre", None)
+    falta = enrutador.lado_de_traspaso_que_falta(campos)
+    if suelta and falta:
+        campos[falta + "_id"] = suelta
+        campos[falta + "_nombre"] = nombre
+    return campos
+
+
+async def _preguntar_lado(update, chat, campos, lado):
+    nombres = ", ".join(str(c.get("nombre")) for c in await asyncio.to_thread(_cuentas_vivas, chat))
+    oida = str(campos.get(lado + "_oida") or "").strip()
+    texto = 'No ubico "' + oida + '" entre tus cuentas. ' if oida else ""
+    texto += "De cual cuenta sale?" if lado == "origen" else "A cual cuenta entra?"
+    await update.effective_message.reply_text(texto + (" Tengo: " + nombres + "." if nombres else ""))
+
+
+async def _atender_traspaso(update, chat, campos, pregunta=None, ya_avisado=False):
+    campos = _lados_de_traspaso(campos)
+    if not campos.get("monto"):
+        _recordar_a_medias(chat, "traspaso", campos)
+        await update.effective_message.reply_text(pregunta or "De cuanto fue el traspaso?")
+        return
+    solo_paga = campos.pop("destino_solo_paga", None)
+    if solo_paga:
+        _recordar_a_medias(chat, "traspaso", campos)
+        await update.effective_message.reply_text(
+            str(solo_paga) + " solo registra salidas: no puede recibir un traspaso. "
+            "A cual otra cuenta entra?")
+        return
+    lado = enrutador.lado_de_traspaso_que_falta(campos)
+    if lado:
+        _recordar_a_medias(chat, "traspaso", campos)
+        await _preguntar_lado(update, chat, campos, lado)
+        return
+    propuesta = {llave: campos.get(llave) for llave in
+                 ("monto", "origen_id", "destino_id", "concepto", "fecha")}
+    # S12: dos dictados iguales eran dos borradores y dos VA, dos traspasos. Un
+    # ajuste (`_reemplazo`) sustituye al suyo: no se parece a nada, ES el mismo.
+    igual = None if ya_avisado or _reemplazo.get(chat) else next(
+        (v for v in _pendientes_de(chat) if _mismo_traspaso(propuesta, v)), None)
+    if igual:
+        await _preguntar_duplicado(update, chat, igual, "traspaso",
+                                   {"traspaso": dict(campos), "propuesta": propuesta})
+        return
+    estado, r = _post("/api/bot/traspaso/proponer", {"telegram_id": chat, "propuesta": propuesta})
+    log.info("traspaso propuesto: %s -> %s monto=%s -> %s", campos.get("origen_nombre"),
+             campos.get("destino_nombre"), campos.get("monto"), estado)
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponer el traspaso."))
+        return
+    _memoria[chat] = {"tipo": "traspaso", "borrador_id": r["borrador_id"], "sello": r["sello"],
+                      "campos": campos, "propuesta": propuesta}
+    await _ensenar_propuesta(update, chat, r["mensaje"], _teclado_confirmar_traspaso(r["borrador_id"]))
+
+
+async def _confirmar_traspaso(update, chat):
+    """El VA. Solo viajan `{telegram_id, borrador_id, sello}`: un segundo clic no
+    duplica nada porque el servidor reusa los ids sellados."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "traspaso":
+        await update.effective_message.reply_text("No tengo ningun traspaso pendiente que escribir.")
+        return
+    estado, r = _post("/api/bot/traspaso/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("traspaso confirmado: borrador=%s -> %s filas=%s",
+             dato["borrador_id"], estado, r.get("filas_escritas"))
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        texto = r.get("mensaje") or "Listo. Quedo escrito el traspaso."
+        if r.get("aviso_marca"):
+            texto += NL + str(r["aviso_marca"])
+        await update.effective_message.reply_text(texto)
+    else:
+        await update.effective_message.reply_text(r.get("error", "No pude escribir el traspaso."))
+
+
 async def _ensenar_propuesta(update, chat, mensaje, teclado):
     """Ensena una propuesta sellada y la deja guardada JUNTO A SU BORRADOR.
 
@@ -5658,6 +5791,10 @@ async def _confirmar(update, chat, por_boton=False):
     # persona contesta como habla y no tiene por que saber que hay dos caminos.
     if dato.get("tipo") == "abono":
         await _confirmar_abono(update, chat)
+        return
+    # Sin esta rama, el default de abajo le mandaria el VA a la ruta del gasto.
+    if dato.get("tipo") == "traspaso":
+        await _confirmar_traspaso(update, chat)
         return
     # D112: sin esta rama un "va" escrito caia al camino de gasto.
     if dato.get("tipo") == "entrega_efectivo":
@@ -6307,6 +6444,9 @@ async def _accion_de_boton(update, chat, partes, accion):
                                   id_deudor=dato["abono"].get("id_deudor"),
                                   nombre=dato["abono"].get("nombre"),
                                   cuenta=dato.get("cuenta"), ya_avisado=True)
+            return
+        if dato.get("traspaso"):
+            await _atender_traspaso(update, chat, dato["traspaso"], ya_avisado=True)
             return
         await _proponer_gasto_directo(update, chat, dato["propuesta"], dato.get("cuenta"),
                                       dato.get("sugeridas"), ya_avisado=True,

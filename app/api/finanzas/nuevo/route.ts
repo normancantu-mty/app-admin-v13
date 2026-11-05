@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { Database, TablesInsert } from '@/types/database'
+import { marcaDeTraspaso } from '@/lib/traspaso-pareja'
 import { CATEGORIA_SIN_CATEGORIZAR, normalizarCategoriaGasto } from '@/lib/avisos'
 import { registrarAviso } from '@/lib/avisos-server'
 
@@ -159,10 +161,13 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Cuenta origen fuera de tu alcance operativo.' }, { status: 403 })
       }
 
+      // La liga de las dos patas: sin ella, anular una descuadraria las cuentas.
+      const marca = marcaDeTraspaso(randomUUID())
       const transferPayload: FinanzaInsert[] = [
         {
           tipo_movimiento: 'EGRESO_TRASPASO',
           categoria: 'TRANSFERENCIA',
+          subcategoria: marca,
           categoria_gasto: descripcion ?? 'Traspaso entre cuentas',
           monto,
           id_cuenta_destino: cuentaOrigen,
@@ -172,6 +177,7 @@ export async function POST(request: Request) {
         {
           tipo_movimiento: 'INGRESO_TRASPASO',
           categoria: 'TRANSFERENCIA',
+          subcategoria: marca,
           categoria_gasto: descripcion ?? 'Traspaso entre cuentas',
           monto,
           id_cuenta_destino: cuentaDestino,

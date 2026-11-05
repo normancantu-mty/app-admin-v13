@@ -68,13 +68,18 @@ MENSAJE_GASTO = (
 
 def en_pantalla_de(tipo, mensaje):
     """La linea de `_en_pantalla` para UNA propuesta viva (misma regla)."""
-    como = {"venta": "una venta", "gasto": "un gasto", "abono": "un abono"}[tipo]
+    como = {"venta": "una venta", "gasto": "un gasto", "abono": "un abono",
+            "traspaso": "un traspaso"}[tipo]
     return "propuesta de " + como + " esperando su VA: " + " ".join(mensaje.split())[:320]
 
 
 VENTA_EN_PANTALLA = en_pantalla_de("venta", MENSAJE_VENTA)
 GASTO_EN_PANTALLA = en_pantalla_de("gasto", MENSAJE_GASTO)
 VENTA_Y_GASTO_EN_PANTALLA = VENTA_EN_PANTALLA + "\n" + GASTO_EN_PANTALLA
+TRASPASO_EN_PANTALLA = en_pantalla_de("traspaso", (
+    "Esto es lo que voy a escribir. Revisalo:\n\nTRASPASO ENTRE CUENTAS\n"
+    "MONTO:      $25,000.00\nDE:         Cuenta Gilberto\nA:          Cuenta Spin\n\n"
+    "Contesta VA para escribirlo, o dime que cambio."))
 
 # D73: historiales (hace_min, dijo, contesto), como los arma el bot.
 HIST_CARTERA_AEROPUERTO = [
@@ -95,6 +100,20 @@ EL_MENSAJE_2026_09_19 = (
 # (clave, texto, en_pantalla[, extra]). La clave dice de que `D` viene y a que grupo
 # pertenece; las pruebas filtran por prefijo.
 FRASES = [
+    # 2026-11-05: traspaso entre cuentas propias. La primera es la frase real.
+    ("tr_1_frase_real", "Transferencia de la cuenta de Gilberto a la Spin $25,000 pesos.", None),
+    ("tr_2_pase", "pase 5 mil de efectivo a spin", None),
+    ("tr_3_a_transferencias", "traspaso de 1,200 de la caja a la cuenta de transferencias", None),
+    ("tr_4_desde_transferencias", "movi 700 de transferencias a efectivo", None),
+    ("tr_5_destino_desconocido", "movi 3000 de spin a la cuenta de kevin", None),
+    ("tr_6_falta_origen", "haz un traspaso de 500 a spin", None),
+    ("tr_7_ambigua", "pasa 800 de la G a efectivo", None),
+    ("tr_8_no_abono", "Aeropuerto me pago 5,000 por transferencia", None),
+    ("tr_9_abono_con_cuenta", "Delirio me deposito 2000 por transferencia a Spin", None),
+    ("tr_10_no_gasto", "le transferi 3,000 a Solo Vidrio por las botellas", None),
+    ("tr_11_ajuste", "no, que sean 20 mil", TRASPASO_EN_PANTALLA),
+    ("tr_12_efectivo_de_aeropuerto", "pase 500 del efectivo de Aeropuerto a Spin", None),
+    ("tr_13_ajuste_de_cuenta", "no, mejor a efectivo", TRASPASO_EN_PANTALLA),
     # ── D50: "el mismo cliente" (auditoria Fase 6, §8.1: las cinco) ──────────
     ("d50_1_mismo_cliente", "cotizame para el mismo cliente 35 grandes, 43 chicas y 25 mini", None),
     ("d50_2_olvidalo_textual", "Olvidalo, ahora cotizame por favor para el mismo cliente 35 grandes, 43 chicas y 25 mini.", None),

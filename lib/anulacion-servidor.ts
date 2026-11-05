@@ -41,6 +41,13 @@ import {
   assertPermiteAnularTicketEnPerfil
 } from '@/lib/ticket-annul-cascade'
 import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
+import {
+  esMarcaDeTraspaso,
+  esPataDeTraspaso,
+  juzgarPareja,
+  MENSAJE_PAREJA_INCOMPLETA,
+  MENSAJE_SIN_MARCA
+} from '@/lib/traspaso-pareja'
 
 export type ClienteDeAnulacion = SupabaseClient<Database>
 
@@ -217,6 +224,38 @@ export interface ResultadoAnulacion {
 }
 
 /**
+ * Las dos patas de un traspaso, en UN update: un statement es una transaccion.
+ * Sin marca, o con la pareja incompleta, no se anula nada. Ver `lib/traspaso-pareja.ts`.
+ */
+async function anularTraspasoCompleto(
+  supabase: ClienteDeAnulacion,
+  marca: string | null | undefined
+): Promise<void> {
+  if (!esMarcaDeTraspaso(marca)) throw new Error(MENSAJE_SIN_MARCA)
+
+  const { data: patas, error: lecturaError } = await supabase
+    .from('finanzas_ledger')
+    .select('id, tipo_movimiento, monto, status')
+    .eq('subcategoria', marca)
+    .order('id')
+    // Una pareja son dos filas: pedir tres alcanza para ver una tercera y rechazarla.
+    .limit(3)
+  if (lecturaError) throw new Error(`Error al leer el traspaso: ${lecturaError.message}`)
+
+  const juicio = juzgarPareja(patas ?? [])
+  if (!juicio.ok) throw new Error(juicio.error)
+
+  const { data: anuladas, error: annullError } = await supabase
+    .from('finanzas_ledger')
+    .update({ status: 'ANULADO' })
+    .in('id', juicio.ids)
+    .eq('status', 'ACTIVO')
+    .select('id')
+  if (annullError) throw new Error(`Error al anular el traspaso: ${annullError.message}`)
+  if ((anuladas?.length ?? 0) !== 2) throw new Error(MENSAJE_PAREJA_INCOMPLETA)
+}
+
+/**
  * Anula UNA fila de `finanzas_ledger`. Si la fila cuelga de un ticket, anula la
  * venta entera — ticket, dinero e inventario — **en una sola transaccion**
  * (`anular_ticket_atomica`, ver `lib/ticket-annul-cascade.ts`).
@@ -240,7 +279,7 @@ export async function anularFinanzas(
 
   const { data: movimientoRaw, error: fetchError } = await supabase
     .from('finanzas_ledger')
-    .select('id, usuario_creador, fecha_movimiento, status, id_entidad_relacionada, id_ticket')
+    .select('id, usuario_creador, fecha_movimiento, status, id_entidad_relacionada, id_ticket, tipo_movimiento, subcategoria')
     .eq('id', id)
     .single()
 
@@ -248,7 +287,11 @@ export async function anularFinanzas(
     throw new Error('No se encontró el movimiento financiero.')
   }
 
-  const movimiento = movimientoRaw as FinanzaLedgerRow & { id_entidad_relacionada: string | null }
+  const movimiento = movimientoRaw as FinanzaLedgerRow & {
+    id_entidad_relacionada: string | null
+    tipo_movimiento?: string | null
+    subcategoria?: string | null
+  }
 
   if (movimiento.status === 'ANULADO') {
     throw new Error('El movimiento financiero ya está anulado.')
@@ -288,6 +331,12 @@ export async function anularFinanzas(
     }
     await annulComercialCascadePorTicketId(supabase, idTicket)
     return { success: true, idTicket }
+  }
+
+  // Una pata de traspaso no se anula sola: es dinero que aparece o desaparece.
+  if (esPataDeTraspaso(movimiento.tipo_movimiento)) {
+    await anularTraspasoCompleto(supabase, movimiento.subcategoria)
+    return { success: true, idTicket: null }
   }
 
   const { error: annullError } = await supabase

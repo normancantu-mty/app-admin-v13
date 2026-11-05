@@ -42,6 +42,7 @@ import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
 import { fechaParaPersona } from '@/lib/fechas'
 import { desactivarTextoFiscal, TOPE_DESCRIPCION, type PayloadGasto } from '@/lib/bot-gastos'
 import { VENTANA_EDICION_HORAS, VENTANA_EDICION_MS } from '@/lib/constants'
+import { esPataDeTraspaso } from '@/lib/traspaso-pareja'
 
 // ============================================================================
 // 1. EL PAYLOAD Y SU SELLO
@@ -163,6 +164,8 @@ export interface MovimientoAnulable {
   /** La linea de la lista, con mas detalle que el boton. */
   detalle: string
   id_ticket: string | null
+  /** 2026-11-05: pata de un traspaso; se anula con su pareja y no se recaptura. */
+  es_traspaso?: boolean
   /**
    * Lo que la fila dice HOY, para poder corregir UN campo sin volver a llamar
    * al modelo. Es el mismo principio que `_reproponer` en el bot: re-extraer la
@@ -233,6 +236,7 @@ export function describirFinanzas(fila: FilaFinanzasAnulable): MovimientoAnulabl
       (fila.descripcion ? `: ${recortar(fila.descripcion, 60)}` : '') +
       (fila.id_ticket ? ' — de una VENTA' : ''),
     id_ticket: fila.id_ticket ? String(fila.id_ticket).trim() || null : null,
+    ...(esPataDeTraspaso(fila.tipo_movimiento) ? { es_traspaso: true } : {}),
     valores: {
       monto,
       categoria: fila.categoria,
@@ -435,6 +439,9 @@ export function mensajeDeAnulacion(
   const partes = ['Voy a ANULAR:', '', movimiento.detalle]
   const aviso = avisoDeCascada(alcance)
   if (aviso) partes.push('', aviso)
+  if (movimiento.es_traspaso) {
+    partes.push('', 'Es un traspaso: anulo las DOS filas juntas, la salida y la entrada.')
+  }
   partes.push('', 'Va?')
   return partes.join('\n')
 }

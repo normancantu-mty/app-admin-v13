@@ -26,7 +26,8 @@ import {
   calcularFechasPorRango,
   fetchTodasLasFilas,
   getDesgloseCategorias,
-  limitesRangoMX
+  limitesRangoMX,
+  esEgresoDelPeriodo
 } from '@/lib/dashboard-utils'
 import { leerPasivoFiscal, type FilaMovimientoClasificado } from '@/lib/vistas'
 import type { CurrentUser } from '@/lib/auth-utils'
@@ -144,7 +145,7 @@ async function getMovimientos(fechaInicio?: string, fechaFin?: string): Promise<
 /** Fila de `v_movimiento_clasificado`: lo minimo que necesitan las tarjetas. */
 type MovimientoClasificado = Pick<
   FilaMovimientoClasificado,
-  'id' | 'monto' | 'toca_cuenta_admin' | 'es_ingreso_admin' | 'es_egreso_admin'
+  'id' | 'monto' | 'tipo_movimiento' | 'toca_cuenta_admin' | 'es_ingreso_admin' | 'es_egreso_admin'
 >
 
 /**
@@ -165,7 +166,7 @@ async function getMovimientosClasificados(
     return await fetchTodasLasFilas<MovimientoClasificado>(() => {
       let query = supabase
         .from('v_movimiento_clasificado')
-        .select('id, monto, toca_cuenta_admin, es_ingreso_admin, es_egreso_admin')
+        .select('id, monto, tipo_movimiento, toca_cuenta_admin, es_ingreso_admin, es_egreso_admin')
 
       if (desde && hastaExclusivo) {
         query = query.gte('fecha_movimiento', desde).lt('fecha_movimiento', hastaExclusivo)
@@ -182,7 +183,7 @@ async function getMovimientosClasificados(
 /** Las tres tarjetas de arriba, sumando las banderas que ya puso la vista. */
 function resumirClasificados(filas: MovimientoClasificado[]): ResumenFinanciero {
   const ingresos = filas.filter((m) => m.es_ingreso_admin).reduce((sum, m) => sum + Number(m.monto), 0)
-  const egresos = filas.filter((m) => m.es_egreso_admin).reduce((sum, m) => sum + Number(m.monto), 0)
+  const egresos = filas.filter(esEgresoDelPeriodo).reduce((sum, m) => sum + Number(m.monto), 0)
   return { ingresos, egresos, balance: ingresos - egresos }
 }
 
