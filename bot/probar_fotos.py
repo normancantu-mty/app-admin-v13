@@ -708,6 +708,80 @@ chica = io.BytesIO()
 Image.new("RGB", (100, 50), "white").save(chica, "PNG")
 caso("comprimir: nunca agranda", C.comprimir(chica.getvalue())[1:], (100, 50))
 
+# -- D1 (auditoria): el error de `claude -p` no sale crudo a ningun lado ------
+class Salida(object):
+    def __init__(self, rc, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = rc, stdout, stderr
+
+
+def leer_con(salida):
+    return LEER_REAL(b"x", "image/jpeg", "", [], correr=lambda *a, **k: salida)
+
+
+SECRETO = "Bearer sk-ant-api03-AAAABBBBCCCCDDDD token=123456789:AAFakeTelegramTokenFakeTelegramToken12"
+LOGIN = "Not logged in - please run /login"
+SOBRE_LOGIN = json.dumps({"type": "result", "is_error": True, "result": LOGIN})
+ok, e = leer_con(Salida(1, LOGIN, ""))
+caso("D1: 'Not logged in' en stdout con stderr vacio conserva la causa",
+     (ok, LOGIN in str(e), getattr(e, "causa", None)), (False, True, "login"))
+ok, e = leer_con(Salida(1, SOBRE_LOGIN, ""))
+caso("D1: lo mismo dentro del sobre result", (LOGIN in str(e), getattr(e, "causa", None)), (True, "login"))
+ok, e = leer_con(Salida(0, SOBRE_LOGIN, ""))
+caso("D1: is_error con rc 0 tambien es error con su causa",
+     (ok, LOGIN in str(e), getattr(e, "causa", None)), (False, True, "login"))
+ok, e = leer_con(Salida(1, "", SECRETO))
+caso("D1: el stderr sale sin secretos", ("sk-ant" in str(e), "AAFake" in str(e), "[oculto]" in str(e)),
+     (False, False, True))
+ok, e = LEER_REAL(b"x", "image/jpeg", "", [],
+                  correr=lambda *a, **k: (_ for _ in ()).throw(OSError("fallo " + SECRETO)))
+caso("D1: la excepcion sale sin secretos", ("sk-ant" in str(e), "[oculto]" in str(e)), (False, True))
+ok, e = leer_con(Salida(1, json.dumps({"type": "result", "is_error": True,
+                                       "result": "You've hit your session limit, resets 9pm"}), ""))
+caso("D1: el tope de la suscripcion se reconoce", isinstance(e, B.tope.Tope), True)
+ok, e = leer_con(Salida(0, json.dumps({"type": "system", "usage": "weekly limit reached"}) + "\n", ""))
+caso("D1 CONTROL: la llave de un sobre que no es result no es tope",
+     (isinstance(e, B.tope.Tope), str(e)), (False, "el modelo no devolvio el objeto del ticket"))
+ok, e = leer_con(Salida(0, json.dumps({"type": "result", "structured_output": {"es_ticket": True}}), ""))
+caso("D1 CONTROL: la lectura buena sigue pasando", (ok, e), (True, {"es_ticket": True}))
+
+
+async def error_en_grupo():
+    BOT.imagen = imagen()
+    u = Update(GRUPO, KEVIN, foto=True)
+    await B.manejar_foto(u, Contexto())
+    dicho = " ".join(str(x) for x in u.message.dichos)
+    caso("D1: en el grupo no sale el secreto", "sk-ant" in dicho or "AAFake" in dicho, False)
+    caso("D1: en el grupo no sale el error crudo", "rc=" in dicho or "stderr" in dicho, False)
+    caso("D1: se dice que no se pudo y que la foto quedo", "La foto quedo guardada" in dicho, True)
+    indice = [r.get("error") for r in C.registros().values()]
+    caso("D1: el indice guarda la causa sin secretos",
+         (len(indice), "sk-ant" in str(indice), "[oculto]" in str(indice)), (1, False, True))
+
+
+async def error_de_login():
+    BOT.imagen = imagen()
+    u = Update(NORMAN, NORMAN, foto=True)
+    await B.manejar_foto(u, Contexto())
+    dicho = " ".join(str(x) for x in u.message.dichos)
+    caso("D1: con login vencido dice que hacer", ("claude login" in dicho, "guardada" in dicho), (True, True))
+
+
+S = Servidor()
+limpiar()
+O_LEER = lambda i, m, t, c, correr=None: LEER_REAL(i, m, t, c, correr=lambda *a, **k: Salida(1, "", SECRETO))
+original_post = B._post_de_verdad
+B._post_de_verdad = S
+O.leer_crudo = O_LEER
+asyncio.run(error_en_grupo())
+limpiar()
+O.leer_crudo = lambda i, m, t, c, correr=None: LEER_REAL(i, m, t, c, correr=lambda *a, **k: Salida(1, LOGIN, ""))
+asyncio.run(error_de_login())
+B._post_de_verdad = original_post
+O.leer_crudo = LEER_REAL
+caso("D1: `comprobantes` no guarda un secreto aunque se lo den crudo", (
+    C.anotar_error("x", SECRETO), [e.get("error") for e in C.eventos() if e["clave"] == "x"][0].count("sk-ant")),
+    (None, 0))
+
 # \u2500\u2500 Resultado \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 malos = 0
 for nombre, obtenido, esperado in casos:

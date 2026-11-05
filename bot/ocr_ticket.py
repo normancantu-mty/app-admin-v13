@@ -40,6 +40,7 @@ import subprocess
 
 import claude_cli
 import enrutador
+import tope
 
 TIMEOUT = 120
 NL = "\n"
@@ -152,16 +153,25 @@ def comando():
         "--json-schema", json.dumps(ESQUEMA)]
 
 
-def _resultado_de(stdout):
-    """El objeto final de la corrida `stream-json`, o None."""
-    final = None
+def _final_de(stdout):
+    """(el ultimo evento `result` de la corrida `stream-json` o None, las lineas
+    que no son JSON). Estas son lo unico que dice que paso si el CLI no llego a
+    armar el sobre."""
+    final, sueltas = None, []
     for linea in str(stdout or "").splitlines():
         try:
             o = json.loads(linea)
         except ValueError:
+            sueltas.append(linea)
             continue
         if isinstance(o, dict) and o.get("type") == "result":
             final = o
+    return final, NL.join(sueltas)
+
+
+def _resultado_de(stdout):
+    """El objeto final de la corrida `stream-json`, o None."""
+    final = _final_de(stdout)[0]
     if not final or final.get("is_error"):
         return None
     obj = final.get("structured_output")
@@ -179,20 +189,34 @@ def _resultado_de(stdout):
 
 
 def leer_crudo(imagen, mime, texto_usuario, catalogo, correr=subprocess.run):
-    """(ok, objeto_del_modelo_o_error). Nunca lanza por culpa del modelo."""
+    """(ok, objeto_del_modelo_o_error). Nunca lanza por culpa del modelo.
+
+    El error es un `enrutador.Caido` (con `.causa`, sin secretos y con los DOS
+    flujos: con stderr vacio, lo que paso esta en stdout) o un `tope.Tope`. Sale
+    al log y al indice; **al chat no**: ahi solo va `bot_gastos.aviso_ocr_fallo`."""
     try:
         salida = correr(comando(), input=mensaje_stream(imagen, mime, texto_usuario, catalogo),
                         capture_output=True, text=True, encoding="utf-8", errors="replace",
                         timeout=TIMEOUT, cwd=claude_cli.cwd_neutro())
     except subprocess.TimeoutExpired:
-        return False, "el modelo no contesto a tiempo"
+        return False, enrutador.Caido("el modelo no contesto a tiempo", enrutador.CAUSA_TIEMPO)
     except Exception as e:
-        return False, "no pude llamar al modelo: " + str(e)
-    if salida.returncode != 0:
-        return False, "el modelo devolvio error: " + (salida.stderr or "")[-200:]
-    obj = _resultado_de(salida.stdout)
+        return False, enrutador.Caido("no pude llamar al modelo: " + enrutador._sin_secretos(e))
+    # Como `enrutador._llamar`: se revisa el texto del sobre y no el sobre, que
+    # trae llaves como "usage" que no son el aviso de tope. `is_error` puede
+    # venir con rc 0.
+    final, sueltas = _final_de(salida.stdout)
+    texto = str(final.get("result") or "") if final else sueltas
+    fallo = salida.returncode != 0 or bool(final and final.get("is_error"))
+    obj = None if fallo else _resultado_de(salida.stdout)
     if obj is None:
-        return False, "el modelo no devolvio el objeto del ticket"
+        t = tope.detectar(texto, salida.stderr)
+        if t is not None:
+            return False, t
+    if fallo:
+        return False, enrutador.error_del_modelo(salida.returncode, texto, salida.stderr)
+    if obj is None:
+        return False, enrutador.Caido("el modelo no devolvio el objeto del ticket")
     return True, obj
 
 

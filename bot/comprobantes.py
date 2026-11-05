@@ -32,6 +32,8 @@ import threading
 import unicodedata
 from pathlib import Path
 
+import enrutador
+
 RAIZ = Path(__file__).resolve().parent
 CARPETA = Path(os.environ.get("BOT_COMPROBANTES") or (RAIZ / "comprobantes"))
 INDICE = "indice.jsonl"
@@ -111,7 +113,8 @@ def anotar_ocr(clave, ticket):
 
 
 def anotar_error(clave, error):
-    _anotar({"evento": "error", "clave": clave, "error": str(error)[:300]})
+    _anotar({"evento": "error", "clave": clave,
+             "error": enrutador._sin_secretos(error)[:300]})
 
 
 def anotar_borrador(clave, borrador_id):

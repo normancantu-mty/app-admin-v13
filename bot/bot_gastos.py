@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from enrutador import (  # noqa: E402
     CATEGORIAS_SEMILLA, CAUSA_LOGIN, FORMAS_DEL_MISMO, MAX_HECHOS, SOLO_EGRESOS, TIPOS_DE_HECHO,
     alias_de, enrutar, es_afirmacion_explicita)
+import enrutador  # noqa: E402  2026-11-03: `_sin_secretos` y las causas del OCR
 # Cazador F0 (2026-10-17): el codigo nuevo vive en modulos nuevos; aqui solo se
 # enchufan. `bitacora` esta APAGADA hasta que `main()` la prende.
 import bitacora  # noqa: E402
@@ -4651,6 +4652,7 @@ async def manejar_voz(update, context):
 COMPROBANTES_EN_SUPABASE = os.environ.get("COMPROBANTES_EN_SUPABASE", "1").strip().lower() in VALORES_SI
 BOT_USUARIO_TG = os.environ.get("BOT_USUARIO_TG", "ERPFresnilloBot")
 AVISO_FOTO_NO_BAJO = "No pude bajar tu foto (Telegram no la entrego a tiempo). Mandala otra vez."
+AVISO_FOTO_EN_PAUSA = "La foto quedo guardada. Cuando regrese, mandala otra vez y la leo."
 TOPE_FOTO = 10 * 1024 * 1024
 VIDA_COMPROBANTE_EN_VUELO = 600
 REINTENTOS_POR_SUBIDA = 5
@@ -4670,6 +4672,22 @@ def abreme_en_privado(bot=None):
     except Exception:  # PTB: un Bot sin initialize() lanza RuntimeError aqui
         usuario = BOT_USUARIO_TG
     return "\u00c1breme en privado una vez (t.me/" + str(usuario) + ") y te lo mando."
+
+
+def aviso_ocr_fallo(error):
+    """Lo que se dice en el chat cuando el modelo no leyo la foto. **Pura.**
+
+    El texto del error NO sale aqui: es salida del CLI, y este mensaje tambien
+    llega a un grupo. Ese texto, ya sin secretos, va al log y al indice."""
+    causa = getattr(error, "causa", None)
+    if causa == CAUSA_LOGIN:
+        motivo = "se vencio el login de Claude en la PC. Norman: hay que correr `claude login` ahi."
+    elif causa == enrutador.CAUSA_TIEMPO:
+        motivo = "el modelo tardo demasiado."
+    else:
+        motivo = "se me cayo el modelo."
+    return ("No pude leer el ticket: " + motivo + " La foto quedo guardada: dime el gasto "
+            "en texto y se la pego.")
 
 
 async def _bajar_foto(bot, file_id):
@@ -4811,16 +4829,23 @@ async def manejar_foto(update, context):
 
 async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
     decir = update.effective_message.reply_text
+    # El modelo no se llama en pausa: es la misma regla del texto y la voz.
+    if await _en_pausa(update):
+        await decir(AVISO_FOTO_EN_PAUSA)
+        return
     await update.effective_message.chat.send_action("typing")
     # El vocabulario vivo de categorias (categorias_movimiento), como el texto.
     await asyncio.to_thread(_catalogo_de_productos, chat)
     ok, t = await asyncio.to_thread(ocr_ticket.leer, datos, mime, texto, list(_catalogo))
     if not ok:
         await asyncio.to_thread(comprobantes.anotar_error, clave_foto, t)
-        log.warning("foto %s: no se pudo leer: %s", clave_foto, t)
+        log.warning("foto %s: no se pudo leer: %s", clave_foto, enrutador._sin_secretos(t))
+        if isinstance(t, tope.Tope):
+            await _en_pausa(update, t.hasta)
+            await decir(AVISO_FOTO_EN_PAUSA)
+            return
         _comprobante_en_vuelo[chat] = (clave_foto, time.time())
-        await decir("No pude leer el ticket (" + str(t) + "). La foto quedo guardada: "
-                    "dime el gasto en texto y se la pego.")
+        await decir(aviso_ocr_fallo(t))
         return
     await asyncio.to_thread(comprobantes.anotar_ocr, clave_foto, t)
     log.info("foto %s: es_ticket=%s monto=%s dudas=%d instrucciones=%s", clave_foto,
