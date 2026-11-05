@@ -165,6 +165,31 @@ try:
     asyncio.run(B.manejar_voz(u, ctx))
     caso("5. descarga caida: se le dice a Norman", u.message.dichos, [B.AVISO_VOZ_NO_BAJO])
     caso("5. ... y no se intenta transcribir", transcribio[0], 0)
+
+    # 6. transcripcion colgada: PTB atiende en fila, asi que hay que soltar el manejador
+    import time
+    sys.modules["transcribir_nota"] = types.SimpleNamespace(transcribir=lambda ruta, vocab=None: time.sleep(2) or (True, "tarde"))
+    orig_vivas, orig_tope = B._cuentas_vivas, B.TOPE_TRANSCRIPCION
+    B._cuentas_vivas, B.TOPE_TRANSCRIPCION = (lambda chat: []), 0.2
+    try:
+        u = Update(Mensaje(111))
+        inicio = time.time()
+        asyncio.run(B.manejar_voz(u, types.SimpleNamespace(bot=BotTg())))
+        caso("6. transcripcion colgada: se le dice", u.message.dichos, [B.AVISO_VOZ_NO_TRANSCRIBIO])
+    finally:
+        B._cuentas_vivas, B.TOPE_TRANSCRIPCION = orig_vivas, orig_tope
+
+    # 7. por omision va a CPU: la GPU colgada no lanza error y la caida no se dispara
+    sys.modules.pop("transcribir_nota", None)
+    import transcribir_nota as T
+    pedidos = []
+    orig_construir = T._construir
+    T._construir = lambda device, compute: pedidos.append(device) or object()
+    T._MODELO, T._DISPOSITIVO = None, None
+    os.environ.pop("BOT_WHISPER_GPU", None)
+    T._cargar()
+    caso("7. Whisper usa CPU por omision", (pedidos, T._DISPOSITIVO), (["cpu"], "cpu"))
+    T._construir = orig_construir
 finally:
     B.bitacora.anotar = orig_anotar
 

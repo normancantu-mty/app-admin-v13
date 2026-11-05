@@ -4633,6 +4633,9 @@ async def _manejar_texto(update, chat, texto):
 TIMEOUTS_DESCARGA = {"read_timeout": 60, "write_timeout": 60, "connect_timeout": 15, "pool_timeout": 15}
 REINTENTOS_DESCARGA = 1
 AVISO_VOZ_NO_BAJO = "No pude bajar tu nota de voz (Telegram no la entrego a tiempo). Mandala otra vez, o escribemelo."
+# PTB atiende los mensajes en fila: una transcripcion colgada calla al bot entero.
+TOPE_TRANSCRIPCION = 240
+AVISO_VOZ_NO_TRANSCRIBIO = "No alcance a transcribir tu nota de voz. Mandala otra vez, o escribemelo."
 
 
 async def _bajar_voz(bot, file_id, destino):
@@ -4676,7 +4679,12 @@ async def manejar_voz(update, context):
         vocab += [c.get("nombre")] + alias_de(c)
     vocab += list(_catalogo)
     vocab += [d.get("nombre") for d in (_deudores or []) if isinstance(d, dict)]
-    ok, texto = await asyncio.to_thread(transcribir, str(destino), [v for v in vocab if v])
+    try:
+        ok, texto = await asyncio.wait_for(asyncio.to_thread(transcribir, str(destino), [v for v in vocab if v]), TOPE_TRANSCRIPCION)
+    except asyncio.TimeoutError:
+        log.warning("nota de voz: la transcripcion paso de %d s", TOPE_TRANSCRIPCION)
+        await update.message.reply_text(AVISO_VOZ_NO_TRANSCRIBIO)
+        return
     if not ok:
         await update.message.reply_text(str(texto))
         return
