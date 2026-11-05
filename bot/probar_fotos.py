@@ -1154,6 +1154,8 @@ async def a_medias_marcado():
     caso("H8: el borrador a medias del ticket va marcado", ABRE + "{" in ctx and "}" + CIERRA in ctx, True)
     caso("H8: la se\u00f1a interna no llega al modelo", "\"_de_ticket\"" in ctx, False)
     caso("H8: el aviso va", E.AVISO_TICKET in ctx, True)
+    pedazo = chr(10).join(E._pedazo_historial(B.historial_para_el_modelo(NORMAN)))
+    caso("H8: lo dicho sobre un ticket sin total va marcado", ABRE in pedazo, True)
 
 
 limpiar()
@@ -1288,6 +1290,7 @@ async def fallo_y_reintento():
     O.leer_crudo = lambda *a, **k: lecturas.pop(0)
     await B.manejar_foto(Update(NORMAN, NORMAN, foto=True), Contexto())
     caso("dup: la que no se leyo espera en vuelo", B._foto_en_vuelo(NORMAN) is not None, True)
+    await asyncio.sleep(1.1)  # la clave lleva el segundo: en la vida real es otra copia
     await B.manejar_foto(Update(NORMAN, NORMAN, foto=True), Contexto())
     caso("dup CONTROL: reenviar la que no se leyo la vuelve a leer", len(S.a("/api/bot/gasto/proponer")), 1)
     caso("dup: y la copia vieja deja de esperar gasto", B._foto_en_vuelo(NORMAN), None)
