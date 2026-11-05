@@ -29,6 +29,7 @@ modelo licencia para cambiar campos que nadie pidio cambiar.
 
 import asyncio
 import contextlib
+import contextvars
 import datetime as dt
 import functools
 import json
@@ -1016,10 +1017,13 @@ def _teclado_gasto(dato):
     actual = (dato.get("propuesta") or {}).get("categoria")
     otras = [[InlineKeyboardButton(n, callback_data="setsug:%d:%s" % (i, bid))]
              for i, n in enumerate(dato.get("sugeridas") or []) if n != actual]
+    # La foto que llego en vuelo no se leyo con este gasto: se puede despegar.
+    quitar = ([[InlineKeyboardButton("Quitar la foto", callback_data="qf:" + bid)]]
+              if dato.get("foto_de_vuelo") else [])
     if dato.get("cuenta_pendiente"):
         cuentas = list(_teclado_cuentas(dato.get("cuentas") or [], bid).inline_keyboard)
-        return InlineKeyboardMarkup(cuentas + otras + [filas[1], filas[3]])
-    return InlineKeyboardMarkup(filas[:1] + otras + filas[1:])
+        return InlineKeyboardMarkup(cuentas + otras + [filas[1], filas[3]] + quitar)
+    return InlineKeyboardMarkup(filas[:1] + otras + filas[1:] + quitar)
 
 
 _PIE_DE_GASTO = re.compile(r"^\(la cuenta no la elige el modelo[^\n]*$", re.M)
@@ -2576,7 +2580,7 @@ async def _preguntar_duplicado(update, chat, igual, que, dato):
 
 
 async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugeridas=None,
-                                  ya_avisado=False, foto=None):
+                                  ya_avisado=False, foto=None, de_vuelo=False):
     """Propone un gasto cuyos campos ya vienen resueltos por el enrutador.
 
     Es el mismo destino que `_proponer` -- la puerta sellada del servidor --
@@ -2584,17 +2588,19 @@ async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugerida
     Ahorrar esa llamada es lo que hace que el bot conteste rapido, y la
     velocidad es parte de lo que Norman pidio: "Telegram tiene que ser lo mas
     conciso posible".
+
+    `foto` es la que se pega a este borrador; nunca se toma sola de la cola en
+    vuelo (lo decide `_foto_para_lo_dictado`). `de_vuelo` dice que no se leyo con
+    este gasto: la propuesta lo avisa y trae el boton para despegarla.
     """
-    # 2026-11-03: la foto dada, o la que espera su gasto en este chat.
-    foto = foto or _foto_en_vuelo(chat)
     igual = None if ya_avisado else next(
         (v for v in _pendientes_de(chat) if _mismo_gasto(propuesta, v)), None)
     if igual is not None:
         # S12: dos VA sobre lo mismo escriben dos filas. Se avisa ANTES de agregarlo.
-        _comprobante_en_vuelo.pop(chat, None)
+        _sacar_de_vuelo(chat, foto)
         await _preguntar_duplicado(update, chat, igual, "gasto", {
             "propuesta": dict(propuesta), "cuenta": dict(cuenta or {}),
-            "sugeridas": list(sugeridas or []), "foto": foto})
+            "sugeridas": list(sugeridas or []), "foto": foto, "de_vuelo": de_vuelo})
         return True
     cuerpo = {"telegram_id": chat, "propuesta": propuesta,
               "contexto_bot": _contexto_para_base(cuenta, propuesta, sugeridas)}
@@ -2618,9 +2624,11 @@ async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugerida
     }, **_estado_de_cuenta(cuenta, cuentas))
     _refrescar_catalogo(r)
     mensaje = r["mensaje"]
-    _comprobante_en_vuelo.pop(chat, None)
-    if _adjuntar_comprobante(chat, r["borrador_id"], foto):
+    _sacar_de_vuelo(chat, foto)
+    if _adjuntar_comprobante(chat, r["borrador_id"], foto, de_vuelo):
         mensaje = str(mensaje) + NL + NL + "Va con la foto del ticket."
+        if de_vuelo:
+            mensaje += " Si no es de este gasto, toca Quitar la foto."
     await _ensenar_gasto(update, chat, mensaje)
     return True
 
@@ -4007,6 +4015,10 @@ async def _despachar_lista(update, chat, hechos, ruta=None):
             dict.__setitem__(_memoria, chat, vivos[-1])
 
 
+# Lo que sale de la cola se dicto ANTES: no es el gasto que la foto esta esperando.
+_desde_cola = contextvars.ContextVar("desde_cola", default=False)
+
+
 async def _seguir_cola(update, chat):
     """Si quedaron hechos en cola y el bot ya no espera respuesta, siguen."""
     cola = _cola.get(chat)
@@ -4018,7 +4030,11 @@ async def _seguir_cola(update, chat):
     if _esperando_respuesta(chat):
         return
     _cola.pop(chat, None)
-    await _despachar_lista(update, chat, list(cola.get("hechos") or []), None)
+    marca = _desde_cola.set(True)
+    try:
+        await _despachar_lista(update, chat, list(cola.get("hechos") or []), None)
+    finally:
+        _desde_cola.reset(marca)
 
 
 async def _despachar_hecho(update, chat, hecho, ruta=None):
@@ -4051,8 +4067,10 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
             await update.effective_message.reply_text(
                 pregunta or "Cuanto fue?")
             return
+        foto = _foto_para_lo_dictado(chat)
         await _proponer_gasto_directo(update, chat, _propuesta_de_gasto(campos, _catalogo),
-                                      _cuenta_de_campos(campos), campos.get("categorias_sugeridas"))
+                                      _cuenta_de_campos(campos), campos.get("categorias_sugeridas"),
+                                      foto=foto, de_vuelo=bool(foto))
         return
 
     if intencion == "abono":
@@ -4657,10 +4675,13 @@ TOPE_FOTO = 10 * 1024 * 1024
 VIDA_COMPROBANTE_EN_VUELO = 600
 REINTENTOS_POR_SUBIDA = 5
 # La foto normal va POR ID: `_proponer_gasto_directo(..., foto=clave)` la pega al
-# borrador que acaba de sellar. Esto es solo para los dos casos donde el gasto
-# todavia no existe (el modelo no pudo leerla; no se leyo el total): {clave de
-# chat: (clave de la foto, cuando)}. Dura 10 minutos, lo toma UN solo gasto, y el
-# mensaje de la propuesta dice "Va con la foto del ticket" antes del VA.
+# borrador que acaba de sellar. Esto es solo para los TRES casos donde el gasto
+# todavia no existe: el modelo no pudo leerla, no se leyo el total, o el ERP
+# rechazo la propuesta. {clave de chat: [(clave de la foto, cuando), ...]}, la mas
+# vieja primero, porque cada foto espera su propio gasto y la segunda no borra a
+# la primera. Dura 10 minutos y la toma UN solo gasto, y solo uno DICTADO por esa
+# misma persona (`_foto_para_lo_dictado`). La clave de chat ya separa a la gente
+# dentro de un grupo. La propuesta lo dice antes del VA y trae "Quitar la foto".
 _comprobante_en_vuelo = {}
 
 
@@ -4722,19 +4743,43 @@ def _foto_del_mensaje(mensaje):
     return None
 
 
+def _foto_a_vuelo(chat, clave_foto, primero=False):
+    """La foto se queda esperando su gasto. `primero`: la que el bot acaba de
+    pedir que le completen ("cuanto fue?") va antes que las que ya esperaban."""
+    _sacar_de_vuelo(chat, clave_foto)
+    fotos = _comprobante_en_vuelo.setdefault(chat, [])
+    fotos.insert(0 if primero else len(fotos), (clave_foto, time.time()))
+
+
 def _foto_en_vuelo(chat):
-    """La clave de la foto que espera su gasto en este chat, o None. No la saca:
-    la saca quien de verdad la pegue a un borrador."""
-    en_vuelo = _comprobante_en_vuelo.get(chat)
-    if not en_vuelo:
-        return None
-    if time.time() - en_vuelo[1] > VIDA_COMPROBANTE_EN_VUELO:
+    """La clave de la foto que lleva mas tiempo esperando su gasto en este chat, o
+    None. No la saca: la saca quien de verdad la pegue a un borrador."""
+    ahora = time.time()
+    vivas = [f for f in _comprobante_en_vuelo.get(chat) or []
+             if ahora - f[1] <= VIDA_COMPROBANTE_EN_VUELO]
+    if not vivas:
         _comprobante_en_vuelo.pop(chat, None)
         return None
-    return en_vuelo[0]
+    _comprobante_en_vuelo[chat] = vivas
+    return vivas[0][0]
 
 
-def _adjuntar_comprobante(chat, borrador_id, clave_foto):
+def _sacar_de_vuelo(chat, clave_foto):
+    """Saca ESA foto y ninguna otra."""
+    quedan = [f for f in _comprobante_en_vuelo.get(chat) or [] if f[0] != clave_foto]
+    if quedan:
+        _comprobante_en_vuelo[chat] = quedan
+    else:
+        _comprobante_en_vuelo.pop(chat, None)
+
+
+def _foto_para_lo_dictado(chat):
+    """La foto que le toca a un gasto que esta persona acaba de dictar. Un hecho
+    que sale de la cola se dicto antes de la foto: ese no se la lleva."""
+    return None if _desde_cola.get() else _foto_en_vuelo(chat)
+
+
+def _adjuntar_comprobante(chat, borrador_id, clave_foto, de_vuelo=False):
     """Pega la foto a ESE borrador (por id, nunca al foco). Devuelve la clave de
     la foto o None. Escribe solo en el indice LOCAL: el ERP no se toca hasta el
     clic."""
@@ -4743,12 +4788,35 @@ def _adjuntar_comprobante(chat, borrador_id, clave_foto):
     for dato in ((_pendientes.get(chat) or {}).get(borrador_id), dict.get(_memoria, chat)):
         if isinstance(dato, dict) and dato.get("borrador_id") == borrador_id:
             dato["comprobante"] = clave_foto
+            if de_vuelo:
+                dato["foto_de_vuelo"] = clave_foto
     try:
-        comprobantes.anotar_borrador(clave_foto, borrador_id)
+        comprobantes.anotar_borrador(clave_foto, borrador_id, de_vuelo)
     except Exception as e:
         log.warning("no pude anotar la foto %s con el borrador %s: %s", clave_foto, borrador_id, e)
         return None
     return clave_foto
+
+
+async def _quitar_foto(update, chat, borrador_id):
+    """Despega de la propuesta la foto que le llego en vuelo. La foto no se borra
+    (es un ticket guardado) y no vuelve a volar: no se la lleva el gasto que sigue.
+    Lee el indice y no la RAM: el boton sobrevive a un reinicio del bot."""
+    clave = await asyncio.to_thread(comprobantes.foto_de_vuelo, borrador_id)
+    if not clave:
+        await update.effective_message.reply_text("Esa propuesta ya no trae foto por quitar.")
+        return
+    await asyncio.to_thread(comprobantes.despegar, clave, borrador_id)
+    for dato in ((_pendientes.get(chat) or {}).get(borrador_id), dict.get(_memoria, chat)):
+        if isinstance(dato, dict) and dato.get("borrador_id") == borrador_id:
+            dato.pop("foto_de_vuelo", None)
+            dato.pop("comprobante", None)
+            mostrado = dato.get("mostrado")
+            if mostrado:
+                dato["mostrado"] = (mostrado[0], str(mostrado[1]).split(NL + NL + "Va con la foto")[0],
+                                    _teclado_gasto(dato))
+    await update.effective_message.reply_text(
+        "Quite la foto de esta propuesta. Sigue guardada y este VA ya no la liga.")
 
 
 def _subir_comprobante(clave_foto):
@@ -4844,7 +4912,7 @@ async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
             await _en_pausa(update, t.hasta)
             await decir(AVISO_FOTO_EN_PAUSA)
             return
-        _comprobante_en_vuelo[chat] = (clave_foto, time.time())
+        _foto_a_vuelo(chat, clave_foto)
         await decir(aviso_ocr_fallo(t))
         return
     await asyncio.to_thread(comprobantes.anotar_ocr, clave_foto, t)
@@ -4859,7 +4927,7 @@ async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
         return
     await decir(ocr_ticket.resumen(t))
     if t.get("monto") is None:
-        _comprobante_en_vuelo[chat] = (clave_foto, time.time())
+        _foto_a_vuelo(chat, clave_foto, primero=True)
         _recordar_a_medias(chat, "gasto", {
             "descripcion": ocr_ticket.descripcion_para_el_ledger(t),
             "fecha": t.get("fecha"), "categoria": t.get("categoria")})
@@ -4867,7 +4935,7 @@ async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
         return
     if not await _proponer_gasto_directo(update, chat, ocr_ticket.propuesta_de_gasto(t),
                                          foto=clave_foto):
-        _comprobante_en_vuelo[chat] = (clave_foto, time.time())
+        _foto_a_vuelo(chat, clave_foto)
 
 
 _PATRON_TICKET = re.compile(r"\b(ticket|tickets|comprobante|comprobantes)\b", re.I)
@@ -5535,8 +5603,9 @@ async def _reproponer(update, chat, cambios):
     _refrescar_catalogo(r)
     # 2026-11-03: el borrador nuevo sustituye al viejo, y se lleva su foto.
     mensaje = r["mensaje"]
-    if _adjuntar_comprobante(chat, r["borrador_id"], dato.get("comprobante")
-                             or comprobantes.de_borrador(dato.get("borrador_id"))):
+    vuelo = comprobantes.foto_de_vuelo(dato.get("borrador_id"))
+    if _adjuntar_comprobante(chat, r["borrador_id"], comprobantes.de_borrador(dato.get("borrador_id")),
+                             bool(vuelo)):
         mensaje = str(mensaje) + NL + NL + "Va con la foto del ticket."
     await _ensenar_gasto(update, chat, mensaje)
 
@@ -5709,6 +5778,9 @@ async def _manejar_boton(update, chat, q, partes, accion):
 
 
 async def _accion_de_boton(update, chat, partes, accion):
+    if accion == "qf":
+        await _quitar_foto(update, chat, partes[1] if len(partes) > 1 else "")
+        return
     if accion == "vamb":
         await _confirmar_miembro(update, chat)
         return
@@ -6017,7 +6089,7 @@ async def _accion_de_boton(update, chat, partes, accion):
             return
         await _proponer_gasto_directo(update, chat, dato["propuesta"], dato.get("cuenta"),
                                       dato.get("sugeridas"), ya_avisado=True,
-                                      foto=dato.get("foto"))
+                                      foto=dato.get("foto"), de_vuelo=bool(dato.get("de_vuelo")))
     elif accion == "setaj":
         # Contesta a "a cual se lo hago?": el cambio esperaba en la pregunta.
         pregunta = (_preguntas.get(chat) or {}).pop(partes[2] if len(partes) > 2 else "", None)

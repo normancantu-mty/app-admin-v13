@@ -9,7 +9,9 @@ git). Cada foto es un archivo `<clave>.<ext>` y TODO lo que le pasa queda en
 
     foto      llego la foto (quien, de que chat, sha256, texto que la acompano)
     ocr       lo que se leyo (campos de gasto + campos de factura)
-    borrador  se propuso un gasto con ella (borrador_id)
+    borrador  se propuso un gasto con ella (borrador_id; `de_vuelo` si no se leyo
+              con ese gasto, sino que estaba esperando uno)
+    despegado se quito de ese borrador (boton "Quitar la foto")
     ligado    el clic de Norman escribio el gasto: id_movimiento de finanzas_ledger
     subido    ya esta en Supabase (bucket `tickets_gasto`, tabla `comprobantes_gasto`)
 
@@ -117,8 +119,13 @@ def anotar_error(clave, error):
              "error": enrutador._sin_secretos(error)[:300]})
 
 
-def anotar_borrador(clave, borrador_id):
-    _anotar({"evento": "borrador", "clave": clave, "borrador_id": str(borrador_id)})
+def anotar_borrador(clave, borrador_id, de_vuelo=False):
+    _anotar({"evento": "borrador", "clave": clave, "borrador_id": str(borrador_id),
+             "de_vuelo": bool(de_vuelo)})
+
+
+def despegar(clave, borrador_id):
+    _anotar({"evento": "despegado", "clave": clave, "borrador_id": str(borrador_id)})
 
 
 def anotar_subido(clave, ruta_storage):
@@ -138,6 +145,10 @@ def registros():
             r["ticket"] = e.get("ticket")
         elif ev == "borrador":
             r["borradores"].append(e.get("borrador_id"))
+            if e.get("de_vuelo"):
+                r.setdefault("de_vuelo", []).append(e.get("borrador_id"))
+        elif ev == "despegado":
+            r["borradores"] = [b for b in r["borradores"] if b != e.get("borrador_id")]
         elif ev == "ligado":
             r["id_movimiento"] = e.get("id_movimiento")
             r["ligado_en"] = e.get("en")
@@ -152,6 +163,14 @@ def de_borrador(borrador_id):
     """La clave de la foto propuesta con ese borrador, o None."""
     for clave, r in registros().items():
         if str(borrador_id) in r["borradores"]:
+            return clave
+    return None
+
+
+def foto_de_vuelo(borrador_id):
+    """La clave de la foto que llego en vuelo a ese borrador, o None."""
+    for clave, r in registros().items():
+        if str(borrador_id) in r["borradores"] and str(borrador_id) in r.get("de_vuelo", ()):
             return clave
     return None
 

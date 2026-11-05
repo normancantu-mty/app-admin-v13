@@ -512,8 +512,8 @@ async def ocr_falla():
     caso("ocr falla: lo dice y la foto queda", "La foto quedo guardada" in " ".join(u.message.dichos), True)
     caso("ocr falla: no propone", S.a("/api/bot/gasto/proponer"), [])
     t = Update(NORMAN, NORMAN, "gaste 500 de gasolina")
-    await B._proponer_gasto_directo(t, NORMAN, {"monto": 500, "categoria": None, "categoria_nueva": None,
-                                                "descripcion": "gasolina", "fecha": None})
+    await B._despachar_hecho(t, NORMAN, {"intencion": "gasto", "confianza": "alta", "campos": {
+        "monto": 500, "descripcion": "gasolina", "fecha": None}})
     caso("ocr falla: el siguiente gasto se la lleva", C.de_borrador(UUID_2) is not None, True)
     caso("ocr falla: y lo dice antes del VA", "Va con la foto del ticket." in " ".join(str(x) for x in t.message.dichos), True)
     caso("ocr falla: la lleva UN solo gasto", B._foto_en_vuelo(NORMAN), None)
@@ -524,7 +524,7 @@ correr(S, ocr_falla())
 
 # La foto en vuelo caduca: un gasto de media hora despues no se la lleva.
 limpiar()
-B._comprobante_en_vuelo[NORMAN] = ("clave", B.time.time() - B.VIDA_COMPROBANTE_EN_VUELO - 1)
+B._comprobante_en_vuelo[NORMAN] = [("clave", B.time.time() - B.VIDA_COMPROBANTE_EN_VUELO - 1)]
 caso("en vuelo: caduca", B._foto_en_vuelo(NORMAN), None)
 
 # \u2500\u2500 7. (e) POR ID: dos vivas, y la foto se liga a la que traia foto \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -781,6 +781,128 @@ O.leer_crudo = LEER_REAL
 caso("D1: `comprobantes` no guarda un secreto aunque se lo den crudo", (
     C.anotar_error("x", SECRETO), [e.get("error") for e in C.eventos() if e["clave"] == "x"][0].count("sk-ant")),
     (None, 0))
+
+# -- D2 (auditoria): la foto en vuelo solo la toma lo DICTADO por esa persona --
+def gasto_dictado(monto, descripcion):
+    return {"intencion": "gasto", "confianza": "alta",
+            "campos": {"monto": monto, "descripcion": descripcion, "fecha": None}}
+
+
+S = Servidor()
+S.respuestas["/api/bot/gasto/proponer"] = [propuesta_ok(UUID_2), propuesta_ok(UUID_3)]
+S.respuestas["/api/bot/gasto/confirmar"] = [(200, {"ok": True, "id": ID_MOV})]
+
+
+async def cola_no_la_toma():
+    BOT.imagen = imagen()
+    O.leer_crudo = lambda *a, **k: (False, "el modelo no contesto a tiempo")
+    B._cola[NORMAN] = {"en": B.time.time(), "hechos": [gasto_dictado(200, "tacos del equipo")]}
+    u = Update(NORMAN, NORMAN, foto=True)
+    await B.manejar_foto(u, Contexto())
+    caso("D2: el gasto de la cola se propuso", len(S.a("/api/bot/gasto/proponer")), 1)
+    caso("D2: el gasto de la cola NO se lleva la foto", C.de_borrador(UUID_2), None)
+    caso("D2: y no dice que va con foto", "Va con la foto" in " ".join(str(x) for x in u.message.dichos), False)
+    caso("D2: la foto sigue en vuelo", B._foto_en_vuelo(NORMAN) is not None, True)
+    t = Update(NORMAN, NORMAN, "gaste 500 de gasolina")
+    await B._despachar_hecho(t, NORMAN, gasto_dictado(500, "gasolina"))
+    caso("D2: lo dictado despues SI se la lleva", C.de_borrador(UUID_3) is not None, True)
+    caso("D2: y lo dice", "Va con la foto" in " ".join(str(x) for x in t.message.dichos), True)
+    d = boton(t.message, "qf")
+    caso("D2: trae boton para despegarla", d, "qf:" + UUID_3)
+    v = UpdateBoton(NORMAN, NORMAN, d)
+    await B.manejar_boton(v, Contexto())
+    dicho = " ".join(str(x) for x in v.effective_message.dichos)
+    caso("D2: se despega y lo dice", ("Quite la foto" in dicho, C.de_borrador(UUID_3)), (True, None))
+    caso("D2: la foto no se borra", len(C.registros()), 1)
+    caso("D2: no vuelve a volar sola", B._foto_en_vuelo(NORMAN), None)
+    otra = UpdateBoton(NORMAN, NORMAN, d)
+    await B.manejar_boton(otra, Contexto())
+    caso("D2: el segundo clic no truena", "no trae foto" in " ".join(str(x) for x in otra.effective_message.dichos), True)
+    va = UpdateBoton(NORMAN, NORMAN, boton(t.message, "va"))
+    await B.manejar_boton(va, Contexto())
+    caso("D2: el VA ya no la liga", list(C.registros().values())[0].get("id_movimiento"), None)
+    caso("D2: el VA si escribio", len(S.escrituras()), 1)
+
+
+limpiar()
+correr(S, cola_no_la_toma())
+
+S = Servidor()
+S.respuestas["/api/bot/gasto/proponer"] = [propuesta_ok(UUID_2), propuesta_ok(UUID_3)]
+
+
+async def ajeno_y_ajuste():
+    BOT.imagen = imagen()
+    O.leer_crudo = lambda *a, **k: (False, "el modelo no contesto a tiempo")
+    k = Update(GRUPO, KEVIN, foto=True)
+    await B.manejar_foto(k, Contexto())
+    n = Update(GRUPO, NORMAN, "gaste 200 en tacos")
+    clave = (GRUPO, NORMAN)
+    await B._despachar_hecho(B._UpdateQueAnota(n, clave), clave, gasto_dictado(200, "tacos"))
+    caso("D2: lo que dicta OTRA persona no se lleva la foto", C.de_borrador(UUID_2), None)
+    caso("D2: sigue esperando a quien la mando", B._foto_en_vuelo((GRUPO, KEVIN)) is not None, True)
+    # Un boton que vuelve a proponer no es dictar.
+    await B._proponer_gasto_directo(n, (GRUPO, KEVIN), {"monto": 1, "categoria": None, "categoria_nueva": None,
+                                                        "descripcion": "x", "fecha": None}, ya_avisado=True)
+    caso("D2: proponer sin dictar no la toma", C.de_borrador(UUID_3), None)
+
+
+limpiar()
+correr(S, ajeno_y_ajuste())
+
+# -- D6 (auditoria): la foto 2 no borra a la 1 ---------------------------------
+S = Servidor()
+S.respuestas["/api/bot/gasto/proponer"] = [propuesta_ok(UUID_1), propuesta_ok(UUID_2), propuesta_ok(UUID_3)]
+
+
+async def dos_en_vuelo():
+    BOT.imagen = imagen()
+    lecturas = [(False, "el modelo no contesto a tiempo"), (True, json.loads(json.dumps(GRABADO["casos"]["limpio"])))]
+    O.leer_crudo = lambda *a, **k: lecturas.pop(0)
+    await B.manejar_foto(Update(NORMAN, NORMAN, foto=True), Contexto())
+    primera = B._foto_en_vuelo(NORMAN)
+    BOT.imagen = imagen() + b"2"
+    await B.manejar_foto(Update(NORMAN, NORMAN, foto=True), Contexto())
+    caso("D6: la foto 2 se propuso y la 1 sigue en vuelo", B._foto_en_vuelo(NORMAN), primera)
+    caso("D6: la 2 va con su propio borrador", C.de_borrador(UUID_1) is not None and C.de_borrador(UUID_1) != primera, True)
+
+
+limpiar()
+correr(S, dos_en_vuelo())
+
+
+async def vuelo_en_orden():
+    B._foto_a_vuelo(NORMAN, "a")
+    B._foto_a_vuelo(NORMAN, "b")
+    caso("D6: la mas vieja primero", B._foto_en_vuelo(NORMAN), "a")
+    B._foto_a_vuelo(NORMAN, "c", primero=True)
+    caso("D6: la que el bot acaba de pedir completar va antes", B._foto_en_vuelo(NORMAN), "c")
+    B._sacar_de_vuelo(NORMAN, "c")
+    B._sacar_de_vuelo(NORMAN, "a")
+    caso("D6: sacar una no saca las otras", B._foto_en_vuelo(NORMAN), "b")
+    B._foto_a_vuelo(NORMAN, "b")
+    caso("D6: la misma no se apunta dos veces", len(B._comprobante_en_vuelo[NORMAN]), 1)
+
+
+limpiar()
+asyncio.run(vuelo_en_orden())
+
+S = Servidor()
+S.respuestas["/api/bot/gasto/proponer"] = [propuesta_ok(UUID_1)]
+
+
+async def duplicado_no_borra_otra():
+    await B._proponer_gasto_directo(Update(NORMAN, NORMAN, "x"), NORMAN, {
+        "monto": 500, "categoria": None, "categoria_nueva": None, "descripcion": "gasolina", "fecha": None})
+    B._foto_a_vuelo(NORMAN, "a")
+    B._foto_a_vuelo(NORMAN, "b")
+    await B._despachar_hecho(Update(NORMAN, NORMAN, "gaste 500 de gasolina"), NORMAN,
+                             gasto_dictado(500, "gasolina"))
+    caso("D6: la pregunta de duplicado se lleva UNA foto y deja la otra", B._foto_en_vuelo(NORMAN), "b")
+
+
+limpiar()
+correr(S, duplicado_no_borra_otra())
 
 # \u2500\u2500 Resultado \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 malos = 0
