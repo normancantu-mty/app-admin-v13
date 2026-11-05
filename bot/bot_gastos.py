@@ -2812,6 +2812,16 @@ async def _proponer_venta(update, chat, peticion):
     return True
 
 
+def _aviso_de_concesion(r):
+    """Lo de esta venta y la deuda TOTAL del comprador. El total de la venta solo
+    no es lo que debe: Norman oyo "quedo a deber 8,256" de quien debia 15,256."""
+    aviso = "Listo. Esta venta: " + "{:,.2f}".format(float(r.get("total") or 0)) + "."
+    deuda = r.get("deuda_total")
+    if deuda is None:
+        return aviso + " No pude leer su deuda total."
+    return aviso + " Deuda total de " + str(r.get("nombre_comprador")) + ": " + "{:,.2f}".format(float(deuda)) + "."
+
+
 async def _confirmar_venta(update, chat):
     """El "va" de una venta. Aqui tampoco hay LLM, y no puede haberlo: solo
     viajan `{telegram_id, borrador_id, sello}`. Ninguna fila."""
@@ -2833,7 +2843,7 @@ async def _confirmar_venta(update, chat):
 
     _memoria.pop(chat, None)
     if r.get("condicion_pago") == "CONCESION":
-        aviso = "Listo. Quedo a deber " + "{:,.2f}".format(float(r.get("total") or 0)) + "."
+        aviso = _aviso_de_concesion(r)
     else:
         aviso = "Listo. Quedo escrita."
     await update.effective_message.reply_text(aviso)

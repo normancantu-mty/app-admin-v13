@@ -655,6 +655,8 @@ test.describe('el mensaje de confirmacion', () => {
     expect(m).toContain('VENTA CONCESION')
     expect(m).toContain('No entra dinero')
     expect(m).toContain('$4,800.00')
+    expect(m).toContain('a su deuda')
+    expect(m).not.toContain('queda a deber')
     expect(m).not.toContain('El dinero entra')
   })
 })
