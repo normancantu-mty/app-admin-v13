@@ -107,6 +107,22 @@ def nombres(update):
     return [getattr(h.callback, "__name__", "?") for h in despacha(update)]
 
 
+respuestas = []
+
+
+class BotFalso(object):
+    """Todo lo que el bot le diga a Telegram queda aqui: `respuestas` es la medida."""
+    defaults = None
+    id = 999
+    username = "ERPFresnilloBot"
+
+    def __getattr__(self, nombre):
+        async def metodo(*a, **k):
+            respuestas.append((nombre, k.get("text") or a))
+        return metodo
+
+
+BOT = BotFalso()
 _n = [100]
 
 
@@ -116,7 +132,7 @@ def mensaje(chat, de=NORMAN, titulo="Fresnillo \u00b7 Equipo", **extra):
          "chat": {"id": chat, "type": "supergroup", "title": titulo},
          "from": {"id": de, "is_bot": False, "first_name": "X"}}
     m.update(extra)
-    return UpdateTG.de_json({"update_id": _n[0], "message": m}, None)
+    return UpdateTG.de_json({"update_id": _n[0], "message": m}, BOT)
 
 
 FOTO = [{"file_id": "f1", "file_unique_id": "u1", "width": 90, "height": 90},
@@ -125,7 +141,6 @@ FOTO = [{"file_id": "f1", "file_unique_id": "u1", "width": 90, "height": 90},
 # \u2500\u2500 1. El caso que pidio el coordinador, con el despacho y la bitacora reales \u2500\u2500
 GS.agregar(EQUIPO, "Fresnillo \u00b7 Equipo")
 filas = []
-respuestas = []
 al_erp = []
 
 
@@ -160,6 +175,7 @@ try:
     asyncio.run(corre(actualizaciones))
 except Exception as e:
     caso("1. sin excepcion", repr(e), None)
+caso("1. cero respuestas al grupo", respuestas, [])
 caso("1. cero llamadas al ERP (ni identidad, ni borrador)", al_erp, [])
 caso("1. cero borradores en memoria", dict(B._memoria), {})
 caso("1. UNA fila en la bitacora", len(filas), 1)
@@ -229,7 +245,7 @@ caso("5. CONTROL: 'equipaje' no es equipo", GS.titulo_de_equipo("Equipaje"), Fal
 # Privado: nunca se calla, aunque el id coincidiera.
 privado = UpdateTG.de_json({"update_id": 9000, "message": {
     "message_id": 9000, "date": 1762000000, "chat": {"id": NORMAN, "type": "private"},
-    "from": {"id": NORMAN, "is_bot": False, "first_name": "N"}, "text": "gaste 300 de diesel"}}, None)
+    "from": {"id": NORMAN, "is_bot": False, "first_name": "N"}, "text": "gaste 300 de diesel"}}, BOT)
 caso("CONTROL: en privado sigue llegando", nombres(privado), ["anotar_update", "manejar_texto"])
 
 # \u2500\u2500 Resultado \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
