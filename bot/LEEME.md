@@ -185,3 +185,25 @@ reply las apaga todas.
 3. Lo que no mapea entra como `SIN_CATEGORIZAR` con aviso `W14`. **Nunca se
    rechaza la captura por una etiqueta**: perder la etiqueta es barato, perder el
    gasto es lo que lleva costando desde el 2026-06-09.
+
+## Fotos de tickets y grupos silenciosos (2026-11-03)
+
+Escrito el 2026-11-03 por el ejecutor del Socio.
+
+**Foto de un ticket**, en privado o en grupo, con o sin texto: `manejar_foto` la baja con
+`getFile` del update, la guarda en `bot/comprobantes/`, la lee con `ocr_ticket.py` (`claude -p`
+sin herramientas; lo impreso es dato) y propone el gasto por la misma puerta de siempre. Nada se
+escribe sin el VA. Al escribirse, la foto se liga al movimiento y se sube comprimida (JPEG, 1600 px,
+200 KB) al bucket privado `tickets_gasto`, con sus campos para facturar en `comprobantes_gasto`.
+
+- Si la subida falla, el gasto ya esta escrito y la foto se queda en disco: se reintenta cuando otra
+  subida sale bien, o con `python bot/subir_comprobantes.py --subir`.
+- `COMPROBANTES_EN_SUPABASE=0` apaga la subida; la foto sigue en disco y ligada.
+- "muestrame el ticket de la gasolina" o `/ticket 500` la regresa. Solo la Matriz; en grupo va por
+  privado. Hoy se lee del disco de esta PC.
+- Si cambia `ocr_ticket.PROMPT`, su esquema o el modelo, `probar_fotos.py` sale en rojo hasta correr
+  `python bot/grabar_ocr.py`.
+
+**Grupos silenciosos:** en los chats de `bot/grupos_silenciosos.json`, el bot solo anota en la
+bitacora y no contesta nada, salvo que lo mencionen (@ERPFresnilloBot). Un grupo con "Equipo" en
+el titulo se registra solo cuando meten al bot. Para sacar uno, se borra del archivo.

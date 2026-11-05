@@ -4653,6 +4653,7 @@ BOT_USUARIO_TG = os.environ.get("BOT_USUARIO_TG", "ERPFresnilloBot")
 AVISO_FOTO_NO_BAJO = "No pude bajar tu foto (Telegram no la entrego a tiempo). Mandala otra vez."
 TOPE_FOTO = 10 * 1024 * 1024
 VIDA_COMPROBANTE_EN_VUELO = 600
+REINTENTOS_POR_SUBIDA = 5
 # La foto normal va POR ID: `_proponer_gasto_directo(..., foto=clave)` la pega al
 # borrador que acaba de sellar. Esto es solo para los dos casos donde el gasto
 # todavia no existe (el modelo no pudo leerla; no se leyo el total): {clave de
@@ -4763,8 +4764,13 @@ def _ligar_comprobante(borrador_id, id_movimiento):
         return ""
     log.info("foto %s ligada al movimiento %s", clave_foto, id_movimiento)
     pie = " La foto del ticket quedo ligada al movimiento."
-    if COMPROBANTES_EN_SUPABASE and not _subir_comprobante(clave_foto):
-        pie += " No subio al ERP todavia: quedo en la PC y se reintenta."
+    if not COMPROBANTES_EN_SUPABASE:
+        return pie
+    if not _subir_comprobante(clave_foto):
+        return pie + " No subio al ERP todavia: quedo en la PC y se reintenta."
+    # Esta si subio, asi que el ERP esta de pie: se sube lo que quedo atras.
+    for atrasada in comprobantes.pendientes_de_subir()[:REINTENTOS_POR_SUBIDA]:
+        _subir_comprobante(atrasada)
     return pie
 
 

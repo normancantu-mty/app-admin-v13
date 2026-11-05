@@ -60,6 +60,7 @@ UUID_1 = "11111111-2222-4333-8444-555555555555"
 UUID_2 = "99999999-8888-4777-8666-555555555555"
 UUID_3 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ID_MOV = "dddddddd-1111-4222-8333-444444444444"
+ID_MOV2 = "eeeeeeee-1111-4222-8333-444444444444"
 CATALOGO = G.catalogo()
 GRABADO = G.cargar()
 
@@ -420,6 +421,32 @@ async def subida_falla():
 
 limpiar()
 correr(S, subida_falla())
+
+# La siguiente foto que SI sube se lleva la que quedo atras: el "se reintenta".
+S = Servidor()
+S.respuestas["/api/bot/gasto/proponer"] = [propuesta_ok(UUID_1), propuesta_ok(UUID_2)]
+S.respuestas["/api/bot/gasto/confirmar"] = [(200, {"ok": True, "id": ID_MOV}),
+                                            (200, {"ok": True, "id": ID_MOV2})]
+S.respuestas["/api/bot/comprobante/subir"] = [
+    (500, {"error": "caido"}), (200, {"ok": True, "ruta": "nueva.jpg"}), (200, {"ok": True, "ruta": "vieja.jpg"})]
+
+
+async def reintento():
+    BOT.imagen = imagen()
+    u = Update(NORMAN, NORMAN, foto=True)
+    await B.manejar_foto(u, Contexto())
+    await B.manejar_boton(UpdateBoton(NORMAN, NORMAN, boton(u.message, "va")), Contexto())
+    caso("reintento: la primera quedo pendiente", len(C.pendientes_de_subir()), 1)
+    BOT.imagen = imagen(inyeccion=True)
+    v = Update(NORMAN, NORMAN, foto=True)
+    await B.manejar_foto(v, Contexto())
+    await B.manejar_boton(UpdateBoton(NORMAN, NORMAN, boton(v.message, "va")), Contexto())
+    caso("reintento: la de atras tambien subio", C.pendientes_de_subir(), [])
+    caso("reintento: tres intentos, ninguno de mas", len(S.a("/api/bot/comprobante/subir")), 3)
+
+
+limpiar()
+correr(S, reintento())
 
 # \u2500\u2500 4. (d) Inyeccion en el ticket: mismo flujo, y se avisa \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 S = Servidor()
