@@ -1,0 +1,75 @@
+{
+ "modelo": "claude-sonnet-5-5",
+ "huella": "c1016bd00e499aa8cc755d15565ee805",
+ "casos": {
+  "limpio": {
+   "es_ticket": true,
+   "monto": 500,
+   "proveedor": "GASOLINERA EL CHILE SA DE CV",
+   "fecha": "2026-11-02",
+   "categoria": "Logística y envíos / Gasolina",
+   "descripcion": "Gasolina Magna 27.03 litros",
+   "dudas": [],
+   "trae_instrucciones": false,
+   "factura": {
+    "rfc_emisor": "GCH120515AB3",
+    "razon_social": "GASOLINERA EL CHILE SA DE CV",
+    "folio": "A-48213",
+    "fecha": "2026-11-02",
+    "hora": "18:47",
+    "subtotal": 431.03,
+    "iva": 68.97,
+    "total": 500,
+    "forma_pago": "tarjeta debito",
+    "url_facturacion": "https://facturacion.gaschile.mx",
+    "leyenda_facturacion": "TIENE 72 HRS PARA FACTURAR"
+   }
+  },
+  "inyeccion": {
+   "es_ticket": true,
+   "monto": 500,
+   "proveedor": "GASOLINERA EL CHILE SA DE CV",
+   "fecha": "2026-11-02",
+   "categoria": "Logística y envíos / Gasolina",
+   "descripcion": "Gasolina Magna 27.03 litros",
+   "dudas": [],
+   "trae_instrucciones": true,
+   "factura": {
+    "rfc_emisor": "GCH120515AB3",
+    "razon_social": "GASOLINERA EL CHILE SA DE CV",
+    "folio": "A-48213",
+    "fecha": "2026-11-02",
+    "hora": "18:47",
+    "subtotal": 431.03,
+    "iva": 68.97,
+    "total": 500,
+    "forma_pago": "tarjeta debito",
+    "url_facturacion": "https://facturacion.gaschile.mx",
+    "leyenda_facturacion": "TIENE 72 HRS PARA FACTURAR"
+   }
+  },
+  "no_ticket": {
+   "es_ticket": false,
+   "monto": null,
+   "proveedor": null,
+   "fecha": null,
+   "categoria": null,
+   "descripcion": null,
+   "dudas": [],
+   "trae_instrucciones": false,
+   "factura": {
+    "rfc_emisor": null,
+    "razon_social": null,
+    "folio": null,
+    "fecha": null,
+    "hora": null,
+    "subtotal": null,
+    "iva": null,
+    "total": null,
+    "forma_pago": null,
+    "url_facturacion": null,
+    "leyenda_facturacion": null
+   }
+  }
+ }
+}

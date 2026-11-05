@@ -677,7 +677,7 @@ async def comandos_desconocido():
 correr(S, comandos_desconocido())
 limpiar()
 # FASE 11 (D112): 12 con /entrega.
-caso("D109: son los 12 comandos que registra main()", len(COMANDOS), 12)
+caso("D109: son los 13 comandos que registra main()", len(COMANDOS), 13)
 S = Servidor()
 S.respuestas["/api/bot/consulta"] = [(200, {"ok": True, "texto": "Nadie debe."})]
 
