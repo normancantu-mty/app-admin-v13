@@ -21,7 +21,7 @@ maquina, como `bot/comprobantes/`):
 Se edita a mano para agregar o quitar uno. Y se llena SOLA: el primer update
 de un grupo cuyo titulo contiene "Equipo" (tipicamente, cuando lo agregan) lo
 registra. Si Telegram convierte el grupo en supergrupo (cambia el chat_id), el
-id nuevo tambien entra.
+id nuevo tambien entra. El grupo del ERP (`GRUPO_ERP`) no se registra por titulo.
 """
 import datetime as dt
 import io
@@ -33,6 +33,9 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent
 PALABRA = "equipo"
+# El grupo donde se opera el ERP nunca se calla por su titulo: un renombre no debe
+# apagar el bot ahi. Si algun dia se quisiera, se agrega a mano a la lista.
+GRUPO_ERP = -5589123471
 _candado = threading.Lock()
 _cache = {"mtime": None, "ids": frozenset()}
 
@@ -129,7 +132,7 @@ def decidir(update, usuario_bot, id_bot=None):
             return False
         cid = int(chat.id)
         silencioso = cid in ids()
-        if not silencioso and titulo_de_equipo(getattr(chat, "title", None)):
+        if not silencioso and cid != GRUPO_ERP and titulo_de_equipo(getattr(chat, "title", None)):
             agregar(cid, getattr(chat, "title", None))
             silencioso = True
         if not silencioso:

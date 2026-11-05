@@ -2626,7 +2626,7 @@ async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugerida
     mensaje = r["mensaje"]
     _sacar_de_vuelo(chat, foto)
     if _adjuntar_comprobante(chat, r["borrador_id"], foto, de_vuelo):
-        mensaje = str(mensaje) + NL + NL + "Va con la foto del ticket."
+        mensaje = str(mensaje) + NL + NL + _pie_de_propuesta(1)
         if de_vuelo:
             mensaje += " Si no es de este gasto, toca Quitar la foto."
     await _ensenar_gasto(update, chat, mensaje)
@@ -4748,6 +4748,10 @@ def _foto_del_mensaje(mensaje):
     return None
 
 
+def _pie_de_propuesta(fotos):
+    return "Va con la foto del ticket." if fotos == 1 else "Va con las %d fotos del ticket." % fotos
+
+
 def _foto_a_vuelo(chat, clave_foto, primero=False):
     """La foto se queda esperando su gasto. `primero`: la que el bot acaba de
     pedir que le completen ("cuanto fue?") va antes que las que ya esperaban."""
@@ -4818,7 +4822,7 @@ async def _quitar_foto(update, chat, borrador_id):
             dato.pop("comprobante", None)
             mostrado = dato.get("mostrado")
             if mostrado:
-                dato["mostrado"] = (mostrado[0], str(mostrado[1]).split(NL + NL + "Va con la foto")[0],
+                dato["mostrado"] = (mostrado[0], str(mostrado[1]).split(NL + NL + "Va con ")[0],
                                     _teclado_gasto(dato))
     await update.effective_message.reply_text(
         "Quite la foto de esta propuesta. Sigue guardada y este VA ya no la liga.")
@@ -4847,17 +4851,18 @@ def _ligar_comprobante(borrador_id, id_movimiento):
     no traia foto). Nunca lanza: el gasto ya esta escrito y eso no se deshace por
     un archivo."""
     try:
-        clave_foto = comprobantes.ligar(borrador_id, id_movimiento)
+        fotos = comprobantes.ligar(borrador_id, id_movimiento)
     except Exception as e:
         log.warning("no pude ligar la foto del borrador %s: %s", borrador_id, e)
         return ""
-    if not clave_foto:
+    if not fotos:
         return ""
-    log.info("foto %s ligada al movimiento %s", clave_foto, id_movimiento)
-    pie = " La foto del ticket quedo ligada al movimiento."
+    log.info("fotos %s ligadas al movimiento %s", fotos, id_movimiento)
+    pie = (" La foto del ticket quedo ligada al movimiento." if len(fotos) == 1
+           else " Las %d fotos del ticket quedaron ligadas al movimiento." % len(fotos))
     if not COMPROBANTES_EN_SUPABASE:
         return pie
-    if not _subir_comprobante(clave_foto):
+    if not all([_subir_comprobante(c) for c in fotos]):
         return pie + " No subio al ERP todavia: quedo en la PC y se reintenta."
     # Esta si subio, asi que el ERP esta de pie: se sube lo que quedo atras.
     for atrasada in comprobantes.pendientes_de_subir()[:REINTENTOS_POR_SUBIDA]:
@@ -4900,13 +4905,22 @@ async def manejar_foto(update, context):
         _cerrar_turno(chat, "[mando la foto de un ticket]" + ((" " + texto) if texto else ""))
 
 
+async def _escribiendo(update):
+    """El "escribiendo..." es cortesia: un TimedOut aqui no se traga la foto, que
+    es como se perdieron las notas de voz de E-612. Solo se anota."""
+    try:
+        await update.effective_message.chat.send_action("typing")
+    except Exception as e:
+        log.warning("foto: send_action fallo (%s): %s", type(e).__name__, e)
+
+
 async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
     decir = update.effective_message.reply_text
     # El modelo no se llama en pausa: es la misma regla del texto y la voz.
     if await _en_pausa(update):
         await decir(AVISO_FOTO_EN_PAUSA)
         return
-    await update.effective_message.chat.send_action("typing")
+    await _escribiendo(update)
     # El vocabulario vivo de categorias (categorias_movimiento), como el texto.
     await asyncio.to_thread(_catalogo_de_productos, chat)
     ok, t = await asyncio.to_thread(ocr_ticket.leer, datos, mime, texto, list(_catalogo))
@@ -5023,30 +5037,35 @@ async def _mostrar_ticket(update, chat, texto):
         return
     puntos, r = encontrados[0]
     pie = _pie_de_ticket(r)
-    otros = [x for p, x in encontrados[1:] if p == puntos][:4] if terminos else []
+    # Un ticket largo son varias fotos del mismo movimiento: van todas.
+    hermanas = [x for _p, x in encontrados[1:]
+                if r.get("id_movimiento") and x.get("id_movimiento") == r["id_movimiento"]]
+    otros = [x for p, x in encontrados[1:]
+             if p == puntos and not any(x is h for h in hermanas)][:4] if terminos else []
     if otros:
         pie += NL + NL + "Hay otros parecidos: " + "; ".join(
             _pie_de_ticket(x).split(NL)[0] for x in otros) + ". Dime el folio."
-    ruta = comprobantes.ruta_de(r)
-    try:
-        with open(ruta, "rb") as fh:
-            datos = fh.read()
-    except Exception as e:
-        log.warning("ticket %s: no pude leer el archivo: %s", r.get("clave"), e)
-        await decir("Tengo el ticket anotado pero no encuentro la foto en disco.")
-        return
     destino = int(_persona(chat)) if _en_grupo(chat) else int(_chat_de(chat))
-    try:
-        await update.get_bot().send_photo(destino, photo=datos, caption=pie[:1000],
-                                          filename=r.get("archivo") or "ticket.jpg")
-    except Exception as e:
-        log.warning("ticket %s: no lo pude mandar a %s: %s", r.get("clave"), destino, e)
-        if _en_grupo(chat):
-            await decir(abreme_en_privado(update.get_bot()))
-        else:
-            await decir("No pude mandarte la foto del ticket. Intenta otra vez.")
-        return
-    log.info("ticket %s mandado a %s", r.get("clave"), destino)
+    for foto, leyenda in [(r, pie)] + [(h, _pie_de_ticket(h)) for h in hermanas]:
+        ruta = comprobantes.ruta_de(foto)
+        try:
+            with open(ruta, "rb") as fh:
+                datos = fh.read()
+        except Exception as e:
+            log.warning("ticket %s: no pude leer el archivo: %s", foto.get("clave"), e)
+            await decir("Tengo el ticket anotado pero no encuentro la foto en disco.")
+            return
+        try:
+            await update.get_bot().send_photo(destino, photo=datos, caption=leyenda[:1000],
+                                              filename=foto.get("archivo") or "ticket.jpg")
+        except Exception as e:
+            log.warning("ticket %s: no lo pude mandar a %s: %s", foto.get("clave"), destino, e)
+            if _en_grupo(chat):
+                await decir(abreme_en_privado(update.get_bot()))
+            else:
+                await decir("No pude mandarte la foto del ticket. Intenta otra vez.")
+            return
+        log.info("ticket %s mandado a %s", foto.get("clave"), destino)
     if _en_grupo(chat):
         await decir("Te lo mande por privado.")
 
@@ -5633,9 +5652,10 @@ async def _reproponer(update, chat, cambios):
     # 2026-11-03: el borrador nuevo sustituye al viejo, y se lleva su foto.
     mensaje = r["mensaje"]
     vuelo = comprobantes.foto_de_vuelo(dato.get("borrador_id"))
-    if _adjuntar_comprobante(chat, r["borrador_id"], comprobantes.de_borrador(dato.get("borrador_id")),
-                             bool(vuelo)):
-        mensaje = str(mensaje) + NL + NL + "Va con la foto del ticket."
+    pegadas = [c for c in comprobantes.fotos_de_borrador(dato.get("borrador_id"))
+               if _adjuntar_comprobante(chat, r["borrador_id"], c, c == vuelo)]
+    if pegadas:
+        mensaje = str(mensaje) + NL + NL + _pie_de_propuesta(len(pegadas))
     await _ensenar_gasto(update, chat, mensaje)
 
 
@@ -6605,7 +6625,10 @@ def main():
     app.add_handler(CommandHandler("ticket", comando_ticket))
     app.add_handler(CallbackQueryHandler(manejar_boton))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, manejar_foto))
+    # Solo mensajes nuevos: editar el pie llega como `edited_message`, y ahi
+    # `update.message` es None y la foto ya se atendio cuando llego.
+    app.add_handler(MessageHandler((filters.PHOTO | filters.Document.IMAGE) & filters.UpdateType.MESSAGE,
+                                   manejar_foto))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, manejar_entrada))
     app.add_error_handler(manejar_error)

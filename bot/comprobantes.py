@@ -159,12 +159,16 @@ def registros():
     return salida
 
 
+def fotos_de_borrador(borrador_id):
+    """Las claves de las fotos de ese borrador, en orden de llegada. Pueden ser
+    varias: un ticket largo llega en dos fotos."""
+    return [c for c, r in registros().items() if str(borrador_id) in r["borradores"]]
+
+
 def de_borrador(borrador_id):
-    """La clave de la foto propuesta con ese borrador, o None."""
-    for clave, r in registros().items():
-        if str(borrador_id) in r["borradores"]:
-            return clave
-    return None
+    """La clave de la primera foto de ese borrador, o None."""
+    fotos = fotos_de_borrador(borrador_id)
+    return fotos[0] if fotos else None
 
 
 def foto_de_vuelo(borrador_id):
@@ -176,16 +180,15 @@ def foto_de_vuelo(borrador_id):
 
 
 def ligar(borrador_id, id_movimiento):
-    """El gasto ya se escribio: la foto de su borrador queda ligada al
-    movimiento. Devuelve la clave, o None si ese borrador no traia foto."""
+    """El gasto ya se escribio: las fotos de su borrador quedan ligadas al
+    movimiento. Devuelve sus claves ([] si ese borrador no traia foto)."""
     if not borrador_id or not id_movimiento:
-        return None
-    clave = de_borrador(borrador_id)
-    if clave is None:
-        return None
-    _anotar({"evento": "ligado", "clave": clave, "borrador_id": str(borrador_id),
-             "id_movimiento": str(id_movimiento)})
-    return clave
+        return []
+    fotos = fotos_de_borrador(borrador_id)
+    for clave in fotos:
+        _anotar({"evento": "ligado", "clave": clave, "borrador_id": str(borrador_id),
+                 "id_movimiento": str(id_movimiento)})
+    return fotos
 
 
 def ruta_de(registro):

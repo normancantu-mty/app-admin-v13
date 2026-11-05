@@ -248,6 +248,34 @@ privado = UpdateTG.de_json({"update_id": 9000, "message": {
     "from": {"id": NORMAN, "is_bot": False, "first_name": "N"}, "text": "gaste 300 de diesel"}}, BOT)
 caso("CONTROL: en privado sigue llegando", nombres(privado), ["anotar_update", "manejar_texto"])
 
+# -- D5 (auditoria): editar el pie de una foto no es una foto nueva -------------
+def editado(chat, **extra):
+    _n[0] += 1
+    m = {"message_id": _n[0], "date": 1762000000, "edit_date": 1762000100,
+         "chat": {"id": chat, "type": "supergroup", "title": "Ventas"},
+         "from": {"id": NORMAN, "is_bot": False, "first_name": "X"}}
+    m.update(extra)
+    return UpdateTG.de_json({"update_id": _n[0], "edited_message": m}, BOT)
+
+
+caso("D5: editar el pie de una foto no llega a manejar_foto",
+     nombres(editado(NORMAL, photo=FOTO, caption="corregido")), ["anotar_update"])
+caso("D5: tampoco el de una imagen como archivo",
+     nombres(editado(NORMAL, document=DOC, caption="corregido")), ["anotar_update"])
+caso("D5 CONTROL: la foto nueva si llega",
+     nombres(mensaje(NORMAL, titulo="Ventas", photo=FOTO, caption="x")), ["anotar_update", "manejar_foto"])
+
+# -- H10 (auditoria): el grupo del ERP no se vuelve silencioso por su titulo -----
+ERP = GS.GRUPO_ERP
+caso("H10: el id del grupo del ERP", ERP, -5589123471)
+caso("H10: con 'Equipo' en el titulo sigue llegando al handler",
+     nombres(mensaje(ERP, titulo="ERP Equipo", text="gaste 300 de diesel")), ["anotar_update", "manejar_texto"])
+caso("H10: y no quedo en la lista", ERP in GS.ids(), False)
+OTRO = -1006666666666
+caso("H10 CONTROL: otro grupo con ese titulo si se calla",
+     (nombres(mensaje(OTRO, titulo="ERP Equipo", text="hola")), OTRO in GS.ids()),
+     (["anotar_update", "_callar"], True))
+
 # \u2500\u2500 Resultado \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 malos = 0
 for nombre, obtenido, esperado in casos:

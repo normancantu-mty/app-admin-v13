@@ -671,7 +671,7 @@ async def muestrame():
     BOT.privado_cerrado = False
     l = Update(GRUPO, LUIS, "muestrame el ticket A-48213")
     await B._manejar_texto(l, (GRUPO, LUIS), "muestrame el ticket A-48213")
-    caso("(f) un DST no la ve", (BOT.fotos, l.message.dichos), ([], ["Los tickets de gastos solo los ve la Matriz."]))
+    caso("(f) un DST no la ve", (list(BOT.fotos), l.message.dichos), ([], ["Los tickets de gastos solo los ve la Matriz."]))
     n = Update(NORMAN, NORMAN, "muestrame el ticket de 12345 pesos")
     await B._manejar_texto(n, NORMAN, "muestrame el ticket de 12345 pesos")
     caso("(f) sin coincidencia lo dice", "No encontre" in " ".join(n.message.dichos), True)
@@ -1033,6 +1033,68 @@ async def voz():
 S = Servidor()
 limpiar()
 correr(S, voz())
+
+# -- D4 (auditoria): un TimedOut en `send_action` no se traga la foto (E-612) --
+S = Servidor()
+S.respuestas["/api/bot/gasto/proponer"] = [propuesta_ok(UUID_1)]
+
+
+async def accion_falla():
+    from telegram.error import TimedOut
+    BOT.imagen = imagen()
+    u = Update(NORMAN, NORMAN, foto=True)
+
+    async def malo(_a):
+        raise TimedOut("x")
+    u.message.chat.send_action = malo
+    await B.manejar_foto(u, Contexto())
+    caso("D4: la foto se propuso igual", len(S.a("/api/bot/gasto/proponer")), 1)
+    caso("D4: y se contesto", any("Lei el ticket" in str(x) for x in u.message.dichos), True)
+
+
+limpiar()
+correr(S, accion_falla())
+
+# -- D7 (auditoria): ticket largo en dos fotos: las dos se ligan -----------------
+S = Servidor()
+S.respuestas["/api/bot/gasto/proponer"] = [propuesta_ok(UUID_1, DOS_CUENTAS), propuesta_ok(UUID_2)]
+S.respuestas["/api/bot/gasto/confirmar"] = [(200, {"ok": True, "id": ID_MOV})]
+S.respuestas["/api/bot/comprobante/subir"] = [(200, {"ok": True, "ruta": ID_MOV + "/x.jpg"})]
+
+
+async def dos_fotos():
+    BOT.imagen = imagen()
+    a = Update(NORMAN, NORMAN, foto=True)
+    await B.manejar_foto(a, Contexto())
+    BOT.imagen = imagen(inyeccion=True)
+    b = Update(NORMAN, NORMAN, foto=True)
+    await B.manejar_foto(b, Contexto())
+    caso("D7: la segunda pregunta si es otro", "parece lo mismo" in " ".join(str(x) for x in b.message.dichos), True)
+    n = UpdateBoton(NORMAN, NORMAN, boton(b.message, "no"))
+    await B.manejar_boton(n, Contexto())
+    caso("D7: dice que la pego", "Le pegue la foto" in " ".join(n.effective_message.dichos), True)
+    caso("D7: el borrador trae las dos", len(C.fotos_de_borrador(UUID_1)), 2)
+    # Cambiar de cuenta crea OTRO borrador: se lleva las dos.
+    c = UpdateBoton(NORMAN, NORMAN, boton(a.message, "setcta"))
+    await B.manejar_boton(c, Contexto())
+    caso("D7: el borrador nuevo se lleva las dos", len(C.fotos_de_borrador(UUID_2)), 2)
+    dicho = " ".join(str(x) for x in c.effective_message.dichos)
+    caso("D7: la propuesta nueva dice 2 fotos", "Va con las 2 fotos del ticket." in dicho, True)
+    v = UpdateBoton(NORMAN, NORMAN, "va:" + UUID_2)
+    await B.manejar_boton(v, Contexto())
+    regs = list(C.registros().values())
+    caso("D7: las dos quedaron ligadas", [r.get("id_movimiento") for r in regs], [ID_MOV, ID_MOV])
+    caso("D7: el bot dice lo que paso", "Las 2 fotos del ticket quedaron ligadas" in " ".join(v.effective_message.dichos), True)
+    caso("D7: subieron las dos", len(S.a("/api/bot/comprobante/subir")), 2)
+    del BOT.fotos[:]
+    m = Update(NORMAN, NORMAN, "muestrame el ticket")
+    await B.manejar_texto(m, Contexto())
+    caso("D7: 'muestrame el ticket' manda las dos", [f[0] for f in BOT.fotos], [NORMAN, NORMAN])
+    caso("D7: y no las cuenta como otros parecidos", "parecidos" in BOT.fotos[0][2], False)
+
+
+limpiar()
+correr(S, dos_fotos())
 
 # \u2500\u2500 Resultado \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 malos = 0
