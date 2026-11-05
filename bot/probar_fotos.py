@@ -999,8 +999,8 @@ class Voz(object):
     file_id = "voz"
 
 
-async def por_voz(dicho):
-    u = Update(NORMAN, NORMAN)
+async def por_voz(dicho, chat=NORMAN, persona=NORMAN):
+    u = Update(chat, persona)
     u.message.voice = Voz()
     vistos = []
 
@@ -1551,6 +1551,76 @@ async def tras_reinicio_de_vuelo():
 S = Servidor()
 limpiar()
 correr(S, tras_reinicio_de_vuelo())
+
+# Ultima ronda: las consultas de gastos son del ERP, "ya te mande" no es una
+# negacion, y en grupo "foto" a secas es charla entre personas.
+CONSULTAS_DE_GASTOS = [
+    "dame los gastos de ayer con ticket",
+    "ver los gastos de gasolina con comprobante",
+    "cual fue el ticket mas caro de la semana",
+    "dame el reporte de gastos sin ticket",
+    "muestrame los gastos que no traen ticket",
+]
+for frase in CONSULTAS_DE_GASTOS:
+    ruta_gastos = dict(charla("No tengo tickets.", "consulta"), consulta="gastos")
+    caso("consulta de gastos no la reclama el ticket: " + frase, B.reclama_ticket(frase, ruta_gastos), False)
+    caso("consulta de gastos no es negacion: " + frase, B.niega_tickets(frase, ruta_gastos), False)
+caso("consulta CONTROL: otra consulta si se reclama",
+     B.reclama_ticket("muestrame el ticket", dict(charla("Va.", "consulta"), consulta="ventas")), True)
+caso("consulta CONTROL: otra consulta si niega",
+     B.niega_tickets("muestrame el ticket", dict(charla("No tengo tickets.", "consulta"), consulta="ventas")), True)
+
+YA_TE_MANDE = [
+    "ya te mande el ticket",
+    "ya te pase el comprobante",
+    "te mande la foto del ticket, no contestaste",
+    "no te llego el ticket?",
+    "mande el ticket hace rato",
+    "ya viste el ticket que te mande?",
+    "te llego mi comprobante?",
+]
+NO_LLEGO = "No me ha llegado ningun ticket por aqui; dime el monto y que fue, y lo capturo."
+for frase in YA_TE_MANDE:
+    caso("no me ha llegado no es negar la funcion: " + frase, B.niega_tickets(frase, charla(NO_LLEGO)), False)
+for negacion in ["No puedo ver tus tickets.", "No tengo acceso a los comprobantes.", "No guardo fotos.",
+                 "No manejo comprobantes.", "No llevo registro de tickets.", "No hay tickets aqui.",
+                 "No cuento con tus fotos."]:
+    caso("niega CONTROL: " + negacion, B.niega_tickets("el ticket de ayer", charla(negacion)), True)
+
+
+async def dicho_en(chat, persona, frase):
+    """El camino real del texto: la foto guardada existe, el modelo contesta charla."""
+    limpiar()
+    BOT.fotos.clear()
+    BOT.privado_cerrado = False
+    foto_ligada()
+    guardado = B.enrutar
+    B.enrutar = lambda *a, **k: (True, charla("NO DEBE SALIR"))
+    u = Update(chat, persona, frase)
+    try:
+        await B.manejar_texto(u, Contexto())
+    finally:
+        B.enrutar = guardado
+    return [str(x) for x in u.message.dichos], len(BOT.fotos)
+
+
+async def charla_de_grupo():
+    for persona in (NORMAN, KEVIN, LUIS):
+        caso("grupo: pasame la foto calla (%s)" % persona, await dicho_en(GRUPO, persona, "pasame la foto"), ([], 0))
+    caso("grupo: pasame el ticket responde a quien no es Matriz",
+         (await dicho_en(GRUPO, LUIS, "pasame el ticket"))[0], ["Los tickets de gastos solo los ve la Matriz."])
+    caso("grupo: pasame el ticket llega a Norman en privado",
+         await dicho_en(GRUPO, NORMAN, "Pasame el TICKET"), (["Te lo mande por privado."], 1))
+    caso("grupo CONTROL: en privado la foto a secas si se entrega",
+         (await dicho_en(NORMAN, NORMAN, "pasame la foto"))[1], 1)
+    caso("grupo voz: pasame la foto no va al ticket", await por_voz("pasame la foto", GRUPO, KEVIN), ["enrutador"])
+    caso("grupo voz: pasame el ticket si", await por_voz("pasame el ticket", GRUPO, KEVIN), ["mostrar"])
+    caso("grupo voz CONTROL: en privado la foto a secas si", await por_voz("pasame la foto"), ["mostrar"])
+
+
+S = Servidor()
+limpiar()
+correr(S, charla_de_grupo())
 
 # \u2500\u2500 Resultado \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 malos = 0

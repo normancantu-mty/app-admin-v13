@@ -4614,7 +4614,7 @@ async def _manejar_texto(update, chat, texto):
         return
 
     # 2026-11-03: "muestrame el ticket de la gasolina". No pasa por el modelo.
-    if pide_ticket(texto):
+    if pide_ticket(texto) and (not _en_grupo(chat) or _MENCIONA_TICKET.search(comprobantes.plano(texto))):
         await _mostrar_ticket(update, chat, texto)
         return
 
@@ -4696,7 +4696,7 @@ async def manejar_voz(update, context):
     try:
         # 2026-11-03: Norman dicta. "Muestrame el ticket" por voz es lo mismo que
         # por texto, y tampoco pasa por el modelo.
-        if pide_ticket(texto):
+        if pide_ticket(texto) and (not _en_grupo(chat) or _MENCIONA_TICKET.search(comprobantes.plano(texto))):
             await _mostrar_ticket(update, chat, texto)
         else:
             await _enrutar_y_despachar(update, chat, texto)
@@ -5120,7 +5120,7 @@ _VE_TICKET = re.compile(
     r"\b(?:muestrame|muestra|mostrar\w*|ensename|ensena|ensenar\w*|dame|mandame|pasame|reenviame"
     r"|regresame|devuelveme|veo|ver|busca|buscame|cual|donde|recuerdas|tienes)\b")
 _PREGUNTA_AL_ERP = re.compile(r"\b(?:cuanto|cuantos|cuantas|saldo|cartera|debe\w*|stock|vend\w*)\b")
-_NIEGA_TICKETS = re.compile(r"\bno\b[^.?!]{0,50}\b(?:tickets?|comprobantes?|fotos?)\b")
+_NIEGA_TICKETS = re.compile(r"\bno (?:puedo|tengo|guardo|manejo|llevo|hay|cuento)\b[^.?!]{0,50}\b(?:tickets?|comprobantes?|fotos?)\b")
 AVISO_SI_HAY_TICKETS = ("Si guardo las fotos de los tickets. Pidemelas con el monto, el proveedor "
                         "o el folio: \"muestrame el ticket de la gasolina\".")
 
@@ -5139,7 +5139,7 @@ def niega_tickets(texto, ruta):
 
 
 def _sin_hechos_de_ticket(plano, ruta):
-    return (ruta.get("intencion") in ("charla", "consulta") and not _hechos_de(ruta)
+    return (ruta.get("intencion") in ("charla", "consulta") and ruta.get("consulta") != "gastos" and not _hechos_de(ruta)
             and bool(_MENCIONA_TICKET.search(plano)))
 
 
