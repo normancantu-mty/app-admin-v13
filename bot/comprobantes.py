@@ -3,8 +3,7 @@
 
 Escrito el 2026-11-03 por el ejecutor del Socio (bot ERP, fotos de tickets).
 
-HOY (sin migracion aplicada): en disco, en `bot/comprobantes/` (ignorado por
-git). Cada foto es un archivo `<clave>.<ext>` y TODO lo que le pasa queda en
+Primero en disco, en `bot/comprobantes/` (ignorado por git). Cada foto es un archivo `<clave>.<ext>` y TODO lo que le pasa queda en
 `indice.jsonl`, una linea por evento, solo se agrega:
 
     foto      llego la foto (quien, de que chat, sha256, texto que la acompano)
@@ -13,13 +12,16 @@ git). Cada foto es un archivo `<clave>.<ext>` y TODO lo que le pasa queda en
               con ese gasto, sino que estaba esperando uno)
     despegado se quito de ese borrador (boton "Quitar la foto")
     ligado    el clic de Norman escribio el gasto: id_movimiento de finanzas_ledger
+    espera    dio VA quien no escribe solo: falta el Aprobar de Norman
+    rechazado Norman no lo aprobo
     subido    ya esta en Supabase (bucket `tickets_gasto`, tabla `comprobantes_gasto`)
+    fallo_subida  no subio: se cuenta para que no tape la cola
 
 Se lee doblando los eventos (`registros`). Un archivo que solo crece no se
 corrompe a medias como un JSON que se reescribe, y sobrevive al reinicio del bot
 (el Aprobar de Norman puede llegar despues de un reinicio).
 
-CON LA MIGRACION `..._comprobantes_gasto.sql` aplicada: cada foto ligada se
+La migracion `..._comprobantes_gasto.sql` ya esta aplicada: cada foto ligada se
 comprime (`comprimir`) y se sube por `/api/bot/comprobante/subir` al bucket
 privado `tickets_gasto`; `bot/subir_comprobantes.py` sube las que faltaron.
 `COMPROBANTES_EN_SUPABASE=0` lo apaga. El disco se queda como respaldo.
@@ -96,9 +98,14 @@ def eventos():
 
 
 def guardar_foto(datos, mime, telegram_id, chat_id, texto=None, file_unique_id=None):
-    """Guarda la foto YA, antes de leerla: un ticket no se pierde porque el
-    modelo o el ERP fallen. Devuelve la clave."""
-    sha = hashlib.sha256(datos).hexdigest()
+    """Guarda la foto antes de leerla: un ticket no se pierde porque el modelo
+    falle. Devuelve la clave.
+
+    NO es lo primero del turno: antes van las puertas (grupo callado, quien es,
+    descarga, tope de peso) y la revision de duplicado. Quien no paso una puerta
+    no deja foto: con el ERP caido y sin identidad en cache no se guarda, y el
+    mismo ticket ya escrito o ya propuesto tampoco."""
+    sha = huella(datos)
     clave = dt.datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + sha[:10]
     archivo = clave + EXTENSION.get(mime, ".jpg")
     with open(carpeta() / archivo, "wb") as f:
@@ -128,6 +135,23 @@ def despegar(clave, borrador_id):
     _anotar({"evento": "despegado", "clave": clave, "borrador_id": str(borrador_id)})
 
 
+def anotar_espera(borrador_id):
+    """Ese borrador espera el Aprobar de Norman. Va al indice y no a la RAM: esa
+    espera no caduca (`lib/bot-aprobacion.ts`) y sobrevive a un reinicio."""
+    for clave in fotos_de_borrador(borrador_id):
+        _anotar({"evento": "espera", "clave": clave, "borrador_id": str(borrador_id)})
+
+
+def anotar_rechazo(borrador_id):
+    for clave in fotos_de_borrador(borrador_id):
+        _anotar({"evento": "rechazado", "clave": clave, "borrador_id": str(borrador_id)})
+
+
+def anotar_fallo_subida(clave, error):
+    _anotar({"evento": "fallo_subida", "clave": clave,
+             "error": enrutador._sin_secretos(error)[:300]})
+
+
 def anotar_subido(clave, ruta_storage):
     _anotar({"evento": "subido", "clave": clave, "ruta_storage": ruta_storage})
 
@@ -140,7 +164,7 @@ def registros():
         ev = e.get("evento")
         if ev == "foto":
             r.update({k: e.get(k) for k in ("archivo", "sha256", "mime", "telegram_id",
-                                              "chat_id", "texto", "en")})
+                                              "chat_id", "texto", "en", "file_unique_id")})
         elif ev == "ocr":
             r["ticket"] = e.get("ticket")
         elif ev == "borrador":
@@ -154,9 +178,27 @@ def registros():
             r["ligado_en"] = e.get("en")
         elif ev == "subido":
             r["ruta_storage"] = e.get("ruta_storage")
+        elif ev == "fallo_subida":
+            r["fallos_subida"] = r.get("fallos_subida", 0) + 1
+            r["error_subida"] = e.get("error")
+        elif ev == "espera":
+            r["espera"] = e.get("borrador_id")
+        elif ev == "rechazado":
+            r.pop("espera", None)
         elif ev == "error":
             r["error"] = e.get("error")
     return salida
+
+
+def huella(datos):
+    return hashlib.sha256(datos).hexdigest()
+
+
+def previas(sha256, file_unique_id=None):
+    """Las veces que ya llego esta misma foto, la mas nueva primero. Telegram da
+    el mismo `file_unique_id` a un reenvio; el sha256 reconoce el mismo archivo."""
+    return [r for r in reversed(list(registros().values())) if r.get("sha256") == sha256
+            or (file_unique_id and r.get("file_unique_id") == file_unique_id)]
 
 
 def fotos_de_borrador(borrador_id):
@@ -217,8 +259,12 @@ def cuerpo_para_subir(clave):
 
 
 def pendientes_de_subir():
-    """Las claves ligadas a un movimiento que todavia no estan en Supabase."""
-    return [c for c, r in registros().items() if r.get("id_movimiento") and not r.get("ruta_storage")]
+    """Las claves ligadas a un movimiento que todavia no estan en Supabase, las
+    que menos han fallado primero: quien recorta la lista no se queda con puras
+    fotos rotas, y las rotas no salen de ella."""
+    faltan = [(c, r) for c, r in registros().items()
+              if r.get("id_movimiento") and not r.get("ruta_storage")]
+    return [c for c, r in sorted(faltan, key=lambda x: x[1].get("fallos_subida", 0))]
 
 
 # ---------------------------------------------------------------------------

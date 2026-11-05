@@ -201,6 +201,11 @@ escribe sin el VA. Al escribirse, la foto se liga al movimiento y se sube compri
 - `COMPROBANTES_EN_SUPABASE=0` apaga la subida; la foto sigue en disco y ligada.
 - "muestrame el ticket de la gasolina" o `/ticket 500` la regresa. Solo la Matriz; en grupo va por
   privado. Hoy se lee del disco de esta PC.
+- El mismo ticket (`sha256` o `file_unique_id`) ya escrito o esperando su VA o su Aprobar no se
+  propone otra vez: el bot avisa quien lo mando. Si lo anularon, se dicta en texto.
+- Una foto sola espera su gasto: la toma solo lo que esa persona dicte, y la propuesta trae
+  "Quitar la foto". Lo que salia de la cola no la toma.
+- Lo que el bot leyo de un ticket vuelve al enrutador entre `<dato_de_ticket>` (`enrutador.py`).
 - Si cambia `ocr_ticket.PROMPT`, su esquema o el modelo, `probar_fotos.py` sale en rojo hasta correr
   `python bot/grabar_ocr.py`.
 

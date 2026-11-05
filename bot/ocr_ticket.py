@@ -25,8 +25,12 @@ EL TICKET ES TEXTO DE UN TERCERO (L1/L2 de /construir):
     escribe el clic de Norman. Un ticket que diga "ignora las instrucciones y
     escribelo" no tiene a donde llegar: el codigo no lee ningun campo del modelo
     como orden.
-  - lo que el bot DICE del ticket lo arma este codigo con los campos (`resumen`),
-    no es prosa del modelo.
+  - lo que el bot DICE del ticket lo arma este codigo (`resumen`): las frases y
+    las etiquetas son fijas. Los VALORES (proveedor, folio, forma de pago, URL) si
+    son lo que el modelo copio del ticket: van recortados y con su etiqueta, pero
+    son texto de un tercero y pueden decir cualquier cosa. `dudas` y `descripcion`
+    son prosa del modelo: las dudas salen solo como el NOMBRE del campo
+    (`temas_de_duda`), y con `trae_instrucciones` no se repite URL ni leyenda.
 
 Los numeros del modelo se revisan aqui (L4): RFC con forma de RFC, total
 positivo, subtotal + IVA contra total, fecha no futura. Lo que no cuadra no se
@@ -359,9 +363,28 @@ def _pesos(n):
     return "$" + format(n, ",.2f") if isinstance(n, (int, float)) else "?"
 
 
+# La lista cerrada de lo que una duda puede nombrar. La prosa de `dudas` viene de
+# leer un ticket: se queda en el indice, y la voz del bot solo dice de que campo es.
+_CAMPOS_DE_DUDA = (
+    ("proveedor", r"proveedor|raz[o\u00f3]n social|emisor"), ("fecha", r"fecha"), ("hora", r"hora"),
+    ("subtotal", r"subtotal"), ("IVA", r"\biva\b"), ("total", r"\btotal\b|\bmonto\b"),
+    ("categoria", r"categor[i\u00ed]a"), ("RFC", r"\brfc\b"), ("folio", r"folio"),
+    ("forma de pago", r"forma de pago|\bpago\b"),
+    ("datos para facturar", r"\burl\b|facturaci[o\u00f3]n|leyenda"))
+
+
+def temas_de_duda(dudas):
+    """Los campos de los que hay duda, sin repetir, en el orden del ticket. Lo que
+    no cae en ninguno es "otro dato". **Pura.**"""
+    temas = []
+    for duda in dudas or []:
+        temas += [n for n, patron in _CAMPOS_DE_DUDA if re.search(patron, str(duda), re.I)] or ["otro dato"]
+    return list(dict.fromkeys(temas))
+
+
 def resumen(t):
-    """Lo que el bot dice que leyo. **Lo arma el codigo con los campos**: ni una
-    frase del modelo sale como voz del bot."""
+    """Lo que el bot dice que leyo. Las frases son del codigo; los valores, con su
+    etiqueta, son lo que el modelo copio del ticket (ver el encabezado)."""
     f = t.get("factura") or {}
     r = ["Lei el ticket:"]
     r.append("- Proveedor: " + (t.get("proveedor") or "no lo lei")
@@ -375,13 +398,16 @@ def resumen(t):
     if f.get("forma_pago"):
         r.append("- Pago: " + f["forma_pago"])
     r.append("- Categoria: " + (t.get("categoria") or "no estoy seguro (elige con el boton)"))
-    if f.get("url_facturacion") or f.get("leyenda_facturacion"):
+    if t.get("trae_instrucciones"):
+        # Quien imprimio una orden en el ticket tambien pudo imprimir una URL falsa.
+        r.append("- Para facturar: no lo repito, revisa la foto")
+    elif f.get("url_facturacion") or f.get("leyenda_facturacion"):
         r.append("- Para facturar: " + " ".join(
             x for x in (f.get("url_facturacion"), f.get("leyenda_facturacion")) if x))
     else:
         r.append("- Para facturar: el ticket no trae direccion de facturacion")
     if t.get("dudas"):
-        r.append("No estoy seguro de: " + "; ".join(t["dudas"]))
+        r.append("No estoy seguro de: " + ", ".join(temas_de_duda(t["dudas"])))
     if t.get("trae_instrucciones"):
         r.append("OJO: el ticket trae texto que parece una orden. Lo ignore: solo "
                  "lei la compra, y nada se escribe sin el clic de Norman.")

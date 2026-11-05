@@ -586,6 +586,11 @@ def _anotar_aprobacion(clave, r):
         "mensaje": str(r.get("mensaje_aprobador") or "Hay algo esperando tu Aprobar."),
         "abono": abono and not espera,
     })
+    if espera:
+        try:
+            comprobantes.anotar_espera(r["borrador_id"])
+        except Exception as e:
+            log.warning("no pude anotar la espera de %s: %s", r["borrador_id"], e)
 
 
 def _teclado_aprobar(borrador_id, abono=False):
@@ -688,6 +693,10 @@ async def _boton_de_aprobacion(update, clave, q, accion, bid):
         if estado != 200 or not r.get("ok"):
             await decir(r.get("error", "No pude rechazarlo."))
             return
+        try:
+            comprobantes.anotar_rechazo(bid)
+        except Exception as e:
+            log.warning("no pude anotar el rechazo de %s: %s", bid, e)
         await decir("Rechazado. No se escribio nada.")
         # Fase 10 (D106): Norman o Kevin; el nombre lo da el servidor.
         quien = r.get("rechazado_por") or _nombre_de(_persona(clave))
@@ -1617,6 +1626,8 @@ def _en_pantalla(chat, esperando=""):
     for vivo in _pendientes_de(chat):
         mostrado = vivo.get("mostrado")
         contenido = _texto_plano(mostrado[1]) if mostrado else ""
+        if contenido and vivo.get("comprobante"):
+            contenido = enrutador.dato_de_ticket(contenido)
         renglones.append("propuesta de " + _COMO_SE_LLAMA.get(_tipo_de(vivo), "captura")
                          + " esperando su VA" + (": " + contenido if contenido else ""))
     dato = _memoria.get(chat)
@@ -2098,9 +2109,32 @@ _historial = {}
 _eventos = {}
 
 
+# True mientras el bot habla de lo que leyo en un ticket (`_hablando_de_ticket`).
+_texto_de_ticket = contextvars.ContextVar("texto_de_ticket", default=False)
+
+
+@contextlib.contextmanager
+def _hablando_de_ticket(si=True):
+    marca = _texto_de_ticket.set(bool(si) or _texto_de_ticket.get())
+    try:
+        yield
+    finally:
+        _texto_de_ticket.reset(marca)
+
+
+def _cita_un_ticket(chat, texto):
+    """¿Repite la descripcion de una propuesta que salio de un ticket? Pasa fuera
+    de ese turno: "Sigue pendiente <etiqueta>"."""
+    return any(d.get("comprobante") and (d.get("propuesta") or {}).get("descripcion")
+               and str(d["propuesta"]["descripcion"]) in texto for d in _pendientes_de(chat))
+
+
 def _anotar(chat, texto):
-    """Lo que el bot le dijo a Norman en este turno, para el historial."""
+    """Lo que el bot le dijo a Norman en este turno, para el historial. Lo que
+    viene de un ticket va marcado: de aqui vuelve a entrar al enrutador."""
     texto = _texto_plano(texto, 240)
+    if texto and (_texto_de_ticket.get() or _cita_un_ticket(chat, texto)):
+        texto = enrutador.dato_de_ticket(texto)
     if texto:
         _eventos.setdefault(_chat_de(chat), []).append(texto)
 
@@ -4697,7 +4731,7 @@ def abreme_en_privado(bot=None):
         usuario = getattr(bot, "username", None) or BOT_USUARIO_TG
     except Exception:  # PTB: un Bot sin initialize() lanza RuntimeError aqui
         usuario = BOT_USUARIO_TG
-    return "\u00c1breme en privado una vez (t.me/" + str(usuario) + ") y te lo mando."
+    return "\u00c1breme en privado una vez (t.me/" + str(usuario) + ") y me lo vuelves a pedir."
 
 
 def aviso_ocr_fallo(error):
@@ -4830,18 +4864,25 @@ async def _quitar_foto(update, chat, borrador_id):
 
 def _subir_comprobante(clave_foto):
     """Con la bandera puesta: sube la foto ligada al ERP. Si falla, se queda en
-    disco y `bot/subir_comprobantes.py` la sube despues. Nunca lanza."""
+    disco y `bot/subir_comprobantes.py` la sube despues. Nunca lanza. Cada fallo
+    se cuenta: `pendientes_de_subir` pone atras a las que no suben."""
     try:
         cuerpo = comprobantes.cuerpo_para_subir(clave_foto)
         if cuerpo is None:
-            return False
-        estado, r = _post("/api/bot/comprobante/subir", cuerpo)
-        if estado == 200 and isinstance(r, dict) and r.get("ok"):
-            comprobantes.anotar_subido(clave_foto, r.get("ruta"))
-            return True
-        log.warning("foto %s: no se subio (%s): %s", clave_foto, estado, (r or {}).get("error"))
+            error = "sin archivo o sin movimiento"
+        else:
+            estado, r = _post("/api/bot/comprobante/subir", cuerpo)
+            if estado == 200 and isinstance(r, dict) and r.get("ok"):
+                comprobantes.anotar_subido(clave_foto, r.get("ruta"))
+                return True
+            error = "%s: %s" % (estado, (r or {}).get("error"))
     except Exception as e:
-        log.warning("foto %s: no se subio: %s", clave_foto, e)
+        error = repr(e)
+    log.warning("foto %s: no se subio: %s", clave_foto, enrutador._sin_secretos(error))
+    try:
+        comprobantes.anotar_fallo_subida(clave_foto, error)
+    except Exception as e:
+        log.warning("foto %s: no pude contar el fallo: %s", clave_foto, e)
     return False
 
 
@@ -4890,19 +4931,57 @@ async def manejar_foto(update, context):
     if len(datos) > TOPE_FOTO:
         await mensaje.reply_text("Esa foto pesa mas de 10 MB. Mandala mas chica.")
         return
-    clave_foto = await asyncio.to_thread(
-        comprobantes.guardar_foto, datos, foto[2], _persona(chat), _chat_de(chat),
-        texto or None, foto[1])
-    log.info("foto %s de %s en %s (%d bytes)", clave_foto, _persona(chat), _chat_de(chat), len(datos))
     update = _UpdateQueAnota(update, chat)
-    await asyncio.to_thread(_rehidratar, chat)
     try:
-        await _leer_y_proponer_ticket(update, chat, clave_foto, datos, foto[2], texto)
+        # Revisar si ya existe depende del ERP; guardar la foto, no. Si la revision
+        # falla, la foto se guarda: un aviso de duplicado perdido se corrige, un
+        # ticket perdido no.
+        try:
+            previas = await asyncio.to_thread(comprobantes.previas, comprobantes.huella(datos), foto[1])
+            if await _ticket_ya_existe(update, chat, previas):
+                await bitacora.marcar_procesado(update)
+                return
+            for r in previas:
+                _sacar_de_vuelo(_clave(r["chat_id"], r["telegram_id"]), r["clave"])
+        except Exception as e:
+            log.warning("foto: no pude revisar si ya existia: %s", enrutador._sin_secretos(repr(e)))
+        clave_foto = await asyncio.to_thread(
+            comprobantes.guardar_foto, datos, foto[2], _persona(chat), _chat_de(chat),
+            texto or None, foto[1])
+        log.info("foto %s de %s en %s (%d bytes)", clave_foto, _persona(chat), _chat_de(chat), len(datos))
+        await asyncio.to_thread(_rehidratar, chat)
+        with _hablando_de_ticket():
+            await _leer_y_proponer_ticket(update, chat, clave_foto, datos, foto[2], texto)
         await bitacora.marcar_procesado(update)
         await _seguir_cola(update, chat)
         await _avisar_aprobaciones(update)
     finally:
         _cerrar_turno(chat, "[mando la foto de un ticket]" + ((" " + texto) if texto else ""))
+
+
+async def _ticket_ya_existe(update, chat, previas):
+    """True si esta misma foto ya se escribio o ya espera su VA o su Aprobar, y lo
+    dice. Sin esto el mismo ticket mandado por otra persona, o despues de aprobado,
+    eran dos gastos con dos VA. Sin cifras: esto tambien llega a un grupo. Una foto
+    que no se leyo, que se cancelo o que se rechazo no cuenta: se vuelve a procesar."""
+    for r in previas:
+        tid = r["telegram_id"]
+        await asyncio.to_thread(_identidad_de, tid)
+        quien = "tu" if int(tid) == int(_persona(chat)) else _nombre_de(tid)
+        if r.get("id_movimiento"):
+            await update.effective_message.reply_text(
+                "Ese ticket ya quedo escrito en el ERP (lo mando " + quien + "). No propuse nada. "
+                "Si lo anularon, dictamelo en texto.")
+            return True
+        clave = _clave(r["chat_id"], tid)
+        await asyncio.to_thread(_rehidratar, clave)
+        vivos = set(d.get("borrador_id") for d in _pendientes_de(clave))
+        if r.get("espera") or vivos.intersection(r.get("borradores") or ()):
+            await update.effective_message.reply_text(
+                "Ese ticket ya esta propuesto (lo mando " + quien + ") y sigue esperando su VA "
+                "o el Aprobar de Norman. No lo agregue.")
+            return True
+    return False
 
 
 async def _escribiendo(update):
@@ -4949,7 +5028,7 @@ async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
         _foto_a_vuelo(chat, clave_foto, primero=True)
         _recordar_a_medias(chat, "gasto", {
             "descripcion": ocr_ticket.descripcion_para_el_ledger(t),
-            "fecha": t.get("fecha"), "categoria": t.get("categoria")})
+            "fecha": t.get("fecha"), "categoria": t.get("categoria"), "_de_ticket": True})
         await decir("No lei el total. Cuanto fue?")
         return
     if not await _proponer_gasto_directo(update, chat, ocr_ticket.propuesta_de_gasto(t),
@@ -5012,7 +5091,7 @@ def _pie_de_ticket(r):
         lineas.append("Todavia sin escribir en el ERP (no tiene el clic de Norman).")
     if f.get("rfc_emisor"):
         lineas.append("RFC " + str(f["rfc_emisor"]))
-    if f.get("url_facturacion"):
+    if f.get("url_facturacion") and not t.get("trae_instrucciones"):
         lineas.append("Facturar en: " + str(f["url_facturacion"]))
     return NL.join(lineas)
 
@@ -5022,7 +5101,10 @@ async def _mostrar_ticket(update, chat, texto):
     (ADMIN): los gastos son suyos. En grupo, por privado (trae cifras)."""
     decir = update.effective_message.reply_text
     ident = await asyncio.to_thread(_identidad_de, _persona(chat))
-    if not ident or not ident.get("registrado"):
+    if ident is None:
+        await decir("No pude revisar quien eres (el ERP no contesto). No hice nada.")
+        return
+    if not ident.get("registrado"):
         await decir("No te tengo dado de alta. No hice nada.")
         return
     if ident.get("rol") != "ADMIN":
@@ -5254,7 +5336,8 @@ async def _ensenar_propuesta(update, chat, mensaje, teclado):
     dato = _memoria.get(chat)
     if isinstance(dato, dict) and dato.get("borrador_id"):
         dato["mostrado"] = (dato["borrador_id"], mensaje, teclado)
-    enviado = await update.effective_message.reply_text(mensaje, reply_markup=teclado)
+    with _hablando_de_ticket(isinstance(dato, dict) and dato.get("comprobante")):
+        enviado = await update.effective_message.reply_text(mensaje, reply_markup=teclado)
     if isinstance(dato, dict) and dato.get("borrador_id"):
         _anotar_mensaje(chat, enviado, dato["borrador_id"])
     caidos = _caidos.pop(chat, None)
