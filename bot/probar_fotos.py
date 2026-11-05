@@ -904,6 +904,136 @@ async def duplicado_no_borra_otra():
 limpiar()
 correr(S, duplicado_no_borra_otra())
 
+# -- D3 (auditoria): `pide_ticket` no se traga capturas ni consultas ----------
+ADVERSARIALES = [
+    "quiero registrar el ticket de 500 de gasolina", "gaste 340 de gasolina, quiero subir el ticket",
+    "pasa este ticket de 300 de comida a gastos", "dame de alta el ticket de 200 de papeleria",
+    "manda a gastos el ticket de 150 del oxxo", "gaste 200 en gasolina, ahi te paso el ticket",
+    "gaste 200 en gasolina, ahi te mando el ticket", "quiero facturar el ticket de la gasolina",
+    "ya pague el ticket, dame el saldo de cartera", "cuanto debe delirio? manda el comprobante",
+    "manda el comprobante de pago a Delirio",
+    "a ver, el ticket fue 500", "muestrame el ticket y dame la cartera",
+    "muestrame el ticket, gaste 200 en tacos", "ensename el comprobante e inscribe el gasto",
+    "pasame el ticket a gastos", "mandame el ticket a gastos", "dame el ticket de 300 de gasolina como gasto",
+    "muestrame el ticket pero registra el gasto", "muestrame la cartera", "gaste 300 de diesel",
+    "el ticket de la gasolina fue 500", "ver cartera", "quiero ver el stock",
+]
+for frase in ADVERSARIALES:
+    caso("D3: al enrutador: " + frase, B.pide_ticket(frase), False)
+PIDEN = [
+    "muestrame el ticket", u"mu\u00e9strame el ticket", "muestrame los tickets de ayer",
+    "muestrame el ticket de la gasolina", "Mu\u00e9strame el ticket del gasto de gasolina.",
+    "ensename el comprobante del gasto", "mandame el ticket del oxxo", "pasame el ticket A-48213",
+    "quiero ver el ticket de la gasolina", "a ver el ticket de la gasolina", "ver el ticket",
+    "me muestras el ticket de la gasolina?", "puedes mostrarme el comprobante de ayer",
+    "muestrame el ticket por favor", "porfa muestrame el ticket, gracias", "reenviame el ticket de 500",
+    "dame el ticket de la gasolina", "muestrame la foto del ticket de la gasolina", "muestrame ese ticket",
+    "muestrame el ticket que te mande ayer",
+]
+for frase in PIDEN:
+    caso("D3: pide la foto: " + frase, B.pide_ticket(frase), True)
+
+
+def frases_de_oro():
+    """El corpus de oro entero: ninguna frase real debe caer en `pide_ticket`."""
+    import glob
+    frases = set()
+
+    def anda(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in ("texto", "frase", "mensaje", "text") and isinstance(v, str):
+                    frases.add(v)
+                anda(v)
+        elif isinstance(o, list):
+            for x in o:
+                anda(x)
+    for ruta in glob.glob(os.path.join(AQUI, "oro", "**", "*"), recursive=True):
+        if os.path.isfile(ruta) and ruta.endswith(".jsonl"):
+            with io.open(ruta, encoding="utf-8") as f:
+                for linea in f:
+                    try:
+                        anda(json.loads(linea))
+                    except ValueError:
+                        pass
+        elif os.path.isfile(ruta) and ruta.endswith(".json"):
+            try:
+                with io.open(ruta, encoding="utf-8") as f:
+                    anda(json.load(f))
+            except ValueError:
+                pass
+    return frases
+
+
+oro = frases_de_oro()
+caso("D3: el corpus de oro no esta vacio", len(oro) > 0, True)
+caso("D3: ninguna frase del corpus de oro cae en pide_ticket", sorted(f for f in oro if B.pide_ticket(f)), [])
+
+
+async def captura_llega_al_enrutador():
+    vistos = []
+
+    async def enrutador_falso(_u, _c, texto, esperando=""):
+        vistos.append(texto)
+    orig = B._enrutar_y_despachar
+    B._enrutar_y_despachar = enrutador_falso
+    try:
+        u = Update(NORMAN, NORMAN, "gaste 340 de gasolina, quiero subir el ticket")
+        await B.manejar_texto(u, Contexto())
+    finally:
+        B._enrutar_y_despachar = orig
+    caso("D3: la captura llego al enrutador", vistos, ["gaste 340 de gasolina, quiero subir el ticket"])
+    caso("D3: no se le contesto otra cosa", u.message.dichos, [])
+
+
+S = Servidor()
+limpiar()
+correr(S, captura_llega_al_enrutador())
+
+
+# -- D3-bis (auditoria): "muestrame el ticket" por VOZ --------------------------
+class Voz(object):
+    file_id = "voz"
+
+
+async def por_voz(dicho):
+    u = Update(NORMAN, NORMAN)
+    u.message.voice = Voz()
+    vistos = []
+
+    async def bajar(*a, **k):
+        return True
+
+    async def mostrar(*a, **k):
+        vistos.append("mostrar")
+
+    async def enrutar(*a, **k):
+        vistos.append("enrutador")
+    import transcribir_nota
+    guardado = (B._bajar_voz, B._mostrar_ticket, B._enrutar_y_despachar, transcribir_nota.transcribir,
+                B.bitacora.fila_de_transcripcion, B.bitacora.anotar)
+    B._bajar_voz, B._mostrar_ticket, B._enrutar_y_despachar = bajar, mostrar, enrutar
+    transcribir_nota.transcribir = lambda *a, **k: (True, dicho)
+    B.bitacora.fila_de_transcripcion = lambda *a, **k: {"clave": "x"}
+    B.bitacora.anotar = lambda *a, **k: None
+    try:
+        await B.manejar_voz(u, Contexto())
+    finally:
+        (B._bajar_voz, B._mostrar_ticket, B._enrutar_y_despachar, transcribir_nota.transcribir,
+         B.bitacora.fila_de_transcripcion, B.bitacora.anotar) = guardado
+    return vistos
+
+
+async def voz():
+    caso("D3-bis: por voz muestra el ticket", await por_voz("muestrame el ticket de la gasolina"), ["mostrar"])
+    caso("D3-bis CONTROL: por voz una captura va al enrutador",
+         await por_voz("gaste 340 de gasolina, quiero subir el ticket"), ["enrutador"])
+
+
+S = Servidor()
+limpiar()
+correr(S, voz())
+
 # \u2500\u2500 Resultado \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 malos = 0
 for nombre, obtenido, esperado in casos:

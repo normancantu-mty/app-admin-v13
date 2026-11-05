@@ -4635,7 +4635,12 @@ async def manejar_voz(update, context):
     # abono, fallaba; y contestaba el mensaje de ayuda. Todo lo que las fases 3 y
     # 4 agregaron existia solo para quien escribiera, y Norman dicta.
     try:
-        await _enrutar_y_despachar(update, chat, texto)
+        # 2026-11-03: Norman dicta. "Muestrame el ticket" por voz es lo mismo que
+        # por texto, y tampoco pasa por el modelo.
+        if pide_ticket(texto):
+            await _mostrar_ticket(update, chat, texto)
+        else:
+            await _enrutar_y_despachar(update, chat, texto)
         # R1 (auditoria F0): procesado=true SOLO si el handler termino. Si revienta,
         # la fila se queda procesado=false (en la cola), no en el finally.
         # Lote v2 (c): tambien la fila `:transcripcion`, que se quedaba en false.
@@ -4938,17 +4943,41 @@ async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
         _foto_a_vuelo(chat, clave_foto)
 
 
-_PATRON_TICKET = re.compile(r"\b(ticket|tickets|comprobante|comprobantes)\b", re.I)
-_PATRON_VER = re.compile(
-    r"\b(mu[e\u00e9]strame|muestra|m[a\u00e1]ndame|manda|ens[e\u00e9][n\u00f1]ame|ensena|"
-    r"p[a\u00e1]same|pasa|dame|ver|reenv[i\u00ed]a(me)?|env[i\u00ed]a(me)?|quiero)\b", re.I)
+# El mensaje tiene que ABRIR con el pedido y seguir de inmediato con el ticket.
+# La auditoria tumbo la version que buscaba las dos palabras en cualquier lugar: 9
+# de 11 frases perdian su gasto ("gaste 340 de gasolina, quiero subir el ticket").
+_PIDE_TICKET = re.compile(
+    r"^(?:(?:oye|hey|bot|porfa|por favor)[, ]+)*"
+    r"(?:muestrame|ensename|mandame|pasame|reenviame|enviame|dame|ver|quiero ver|dejame ver|a ver"
+    r"|me (?:muestras|ensenas|mandas|pasas|reenvias|envias)"
+    r"|(?:me )?(?:puedes|podrias) (?:mostrar|ensenar|mandar|pasar|reenviar|enviar)(?:me)?)"
+    r"\s+(?:(?:el|la|los|las|ese|esa|esos|este|esta|estos|mi|mis|ultimo|ultima|ultimos)\s+)*"
+    r"(?:foto\s+(?:del?\s+)?(?:(?:el|la|ese|este)\s+)?)?"
+    r"(?:tickets?|comprobantes?)\b(.*)$", re.S)
+_OTRA_INTENCION = re.compile(
+    r"\b(?:y|e|pero|como|gaste|gastamos|pague|pagamos|compre|compramos|registra\w*|anota\w*"
+    r"|sube|subir|alta|factura\w*|saldo|cartera|stock|debe\w*|cuanto|cuantos|vend\w*"
+    r"|fue|son|era|costo|salio)\b|\ba\s+(?:gastos?|cartera|erp)\b")
+_CORTESIA = ("porfa", "por favor", "plis", "please", "gracias", "bot")
 
 
 def pide_ticket(texto):
     """"muestrame el ticket del gasto de gasolina". **Pura.** No pasa por el
-    modelo: buscar una foto no necesita criterio, y asi tampoco cambia el PROMPT."""
-    texto = str(texto or "")
-    return bool(_PATRON_TICKET.search(texto) and _PATRON_VER.search(texto))
+    modelo: buscar una foto no necesita criterio, y asi tampoco cambia el PROMPT.
+
+    True SOLO si el mensaje no trae otra intencion. En la duda es False: lo lee el
+    enrutador, que es el que sabe de capturas; un pedido de foto que se le escape
+    cuesta repetirlo, y un gasto tragado aqui se pierde."""
+    plano = comprobantes.plano(texto).strip(" \t\r\n¿¡")
+    encontrado = _PIDE_TICKET.match(plano)
+    if not encontrado:
+        return False
+    resto = encontrado.group(1)
+    trozos = [t.strip() for t in re.split(r"[,;:.?!]+", resto)]
+    if any(t and t not in _CORTESIA for t in trozos[1:]):
+        return False
+    return not _OTRA_INTENCION.search(resto)
+
 
 
 def _pie_de_ticket(r):

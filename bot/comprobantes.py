@@ -226,17 +226,19 @@ _VACIAS = set("""el la los las de del un una unos unas y o a al en por para con 
 me mi mis lo le les se su sus este esta ese esa eso esto ticket tickets foto fotos
 comprobante comprobantes gasto gastos muestrame muestra mostrar mandame manda mandar
 ensename ensena pasame pasa dame ver quiero reenviame reenvia
-envia enviame del ultimo ultima porfa porfavor favor hoy""".split())
+envia enviame del ultimo ultima porfa porfavor favor hoy mostrarme ensenarme mandarme
+pasarme enviarme reenviarme mostrar ensenar enviar reenviar puedes podrias muestras ensenas
+mandas pasas envias reenvias dejame gracias plis please oye hey bot""".split())
 
 
-def _plano(s):
+def plano(s):
     s = unicodedata.normalize("NFD", str(s or "").lower())
     return "".join(c for c in s if unicodedata.category(c) != "Mn")
 
 
 def terminos(texto):
     """Las palabras que sirven para buscar. **Pura.**"""
-    crudo = re.findall(r"[a-z0-9][a-z0-9.\-/]*", _plano(texto))
+    crudo = re.findall(r"[a-z0-9][a-z0-9.\-/]*", plano(texto))
     return [t.strip(".-/") for t in crudo if t.strip(".-/") and t.strip(".-/") not in _VACIAS]
 
 
@@ -250,7 +252,7 @@ def _pajar(r):
     for n in (t.get("monto"), f.get("total")):
         if isinstance(n, (int, float)):
             numeros += ["%d" % n if float(n).is_integer() else "%.2f" % n, "%.2f" % n]
-    return _plano(" ".join(str(p) for p in piezas if p)), set(numeros)
+    return plano(" ".join(str(p) for p in piezas if p)), set(numeros)
 
 
 def buscar(texto, solo_ligados=False):
