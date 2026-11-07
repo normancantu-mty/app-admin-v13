@@ -68,7 +68,9 @@ function estadoInicial() {
     ],
     catalogo_productos: [
       { id: 'ins-az', sku: 'ing-az', nombre: 'Ingrediente Az', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
-      { id: 'ins-al', sku: 'ing-al', nombre: 'Ingrediente Al', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' }
+      { id: 'ins-al', sku: 'ing-al', nombre: 'Ingrediente Al', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
+      // Fase 7A: como en produccion desde el 2026-11-07.
+      { id: 'ins-ad2', sku: 'aditivo-2', nombre: 'Aditivo 2', unidad_medida: 'GRAMOS', tipo: 'INSUMO' }
     ],
     lotes: [
       { id: 'lote-1', codigo_lote: 'L-15-10.1', fecha_inicio: haceDias(4), creado_en: haceDias(4) + 'T15:00:00Z' },
@@ -236,7 +238,27 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
     const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { tipo: string; etapa: { entradas: Fila[] } } }
     expect(b.payload.tipo).toBe('lote_etapa')
     expect(b.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-al', cantidad: 2.5 }])
-    expect(String(r.j.mensaje)).toContain('Kilos de aditivo 2: 2.5')
+    expect(String(r.j.mensaje)).toContain('Aditivo 2: 2.5 kg')
+  })
+
+  test('Fase 7A: aditivo 2 en GRAMOS en el catalogo: 1.5 kg dicho -> 1500 en el borrador; 800 g -> 800', async () => {
+    estadoInicial()
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 1.5, unidad: 'kg', insumo_sku: 'aditivo-2' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { etapa: { entradas: Fila[] } } }
+    expect(b.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-ad2', cantidad: 1500 }])
+    expect(String(r.j.mensaje)).toContain('Aditivo 2: 1500 g')
+    estadoInicial()
+    const g = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 800, unidad: 'g', insumo_sku: 'aditivo-2' })
+    const bg = tablas.bot_borradores.find((x) => x.id === g.j.borrador_id) as Fila & { payload: { etapa: { entradas: Fila[] } } }
+    expect(bg.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-ad2', cantidad: 800 }])
+  })
+
+  test('Fase 7A: cantidad sin unidad -> 422, sin borrador', async () => {
+    estadoInicial()
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 4, insumo_sku: 'aditivo-2' })
+    expect(r.status).toBe(422)
+    expect(escrituras).toEqual([])
   })
 
   test('un SKU que no existe no inventa insumo -> 422', async () => {

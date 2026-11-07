@@ -63,6 +63,7 @@ function estadoInicial(corchos = 100) {
     catalogo_productos: [
       { id: 'ins-az', sku: 'ing-az', nombre: 'Ingrediente Az', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
       { id: 'chile-g', sku: 'chile-guajillo', nombre: 'Chile Guajillo', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
+      { id: 'ad1', sku: 'mosto-1', nombre: 'Aditivo 1', unidad_medida: 'GRAMOS', tipo: 'INSUMO' },
       { id: 'corcho', sku: 'corcho', nombre: 'Corcho', unidad_medida: 'PIEZAS', tipo: 'INSUMO' },
       { id: 'bot-750', sku: 'dst-750', nombre: 'Destilado 750', unidad_medida: 'PIEZAS', tipo: 'TERMINADO', ml_por_unidad: 750 }
     ],
@@ -308,6 +309,50 @@ test.describe('envasado diario (ronda 5, B): nunca abre ni pide un lote', () => 
     const c = await llamar('lote/confirmar', { telegram_id: PEDRO, borrador_id: p.j.borrador_id, sello: p.j.sello })
     expect(c.j.espera_aprobacion, JSON.stringify(c.j)).toBe(true)
     expect(rpcs).toEqual([])
+  })
+})
+
+test.describe('Fase 7A: el dia de produccion con el aditivo 1 en GRAMOS', () => {
+  test('la plantilla manda 8 kg de aditivo 1 con unidad kg -> el borrador lleva 8000 (g); el chile en kg queda igual', async () => {
+    estadoInicial()
+    tablas.lotes = []
+    const r = await llamar('lote/proponer', {
+      telegram_id: NORMAN,
+      chat_id: NORMAN,
+      insumos: [
+        { insumo: 'chile-guajillo', cantidad: 40, unidad: 'kg' },
+        { insumo: 'mosto-1', cantidad: 8, unidad: 'kg' }
+      ],
+      envasado: [],
+      propuesta: { codigo_lote: 'L-07-11.1' }
+    })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { lote: { entradas: Fila[] } } }
+    expect(b.payload.lote.entradas).toEqual([
+      { id_insumo: 'chile-g', cantidad: 40 },
+      { id_insumo: 'ad1', cantidad: 8000 }
+    ])
+  })
+
+  test('sin unidad (camino del modelo) la cantidad va tal cual en la unidad del catalogo', async () => {
+    estadoInicial()
+    tablas.lotes = []
+    const r = await llamar('lote/proponer', {
+      telegram_id: NORMAN, chat_id: NORMAN, insumos: [{ insumo: 'mosto-1', cantidad: 8 }], envasado: [], propuesta: { codigo_lote: 'L-07-11.1' }
+    })
+    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { lote: { entradas: Fila[] } } }
+    expect(b.payload.lote.entradas).toEqual([{ id_insumo: 'ad1', cantidad: 8 }])
+  })
+
+  test('kilos de algo que se lleva en piezas: 422, no se convierte ni se escribe', async () => {
+    estadoInicial()
+    tablas.lotes = []
+    const r = await llamar('lote/proponer', {
+      telegram_id: NORMAN, chat_id: NORMAN, insumos: [{ insumo: 'corcho', cantidad: 2, unidad: 'kg' }], envasado: [], propuesta: { codigo_lote: 'L-07-11.1' }
+    })
+    expect(r.status).toBe(422)
+    expect(String(r.j.error)).toContain('No lo convierto')
+    expect(escrituras).toEqual([])
   })
 })
 

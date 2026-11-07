@@ -128,7 +128,7 @@ function medidasDelTexto(tokens: string[], monto?: number | null): Set<string> {
   return medidas
 }
 
-const CORTA: Record<string, string> = { KILOGRAMOS: 'kg', PIEZAS: 'pzas', LITROS: 'l', FRACCIONES: 'fracciones' }
+const CORTA: Record<string, string> = { KILOGRAMOS: 'kg', GRAMOS: 'g', PIEZAS: 'pzas', LITROS: 'l', FRACCIONES: 'fracciones' }
 
 export function unidadCorta(unidadMedida: string | null | undefined): string {
   const u = String(unidadMedida ?? '').toUpperCase()
@@ -137,6 +137,23 @@ export function unidadCorta(unidadMedida: string | null | undefined): string {
 
 function redondear(n: number): number {
   return Math.round(n * 10000) / 10000
+}
+
+/**
+ * Fase 7A (2026-11-07): masa dicha en kg o g -> la unidad del insumo. **Pura.**
+ * Solo g <-> kg (y la identidad). Cualquier otra conversion (kilos de algo que
+ * se lleva en piezas o en litros) NO se adivina: vuelve `ok: false` y se pregunta.
+ */
+export function convertirMasa(
+  valor: number,
+  dicha: 'kg' | 'g',
+  unidadMedida: string | null | undefined
+): { ok: true; cantidad: number } | { ok: false; motivo: string } {
+  const u = String(unidadMedida ?? '').toUpperCase()
+  if (!Number.isFinite(valor) || valor <= 0) return { ok: false, motivo: 'la cantidad no es un numero mayor que cero' }
+  if (u === 'GRAMOS') return { ok: true, cantidad: redondear(dicha === 'kg' ? valor * 1000 : valor) }
+  if (u === 'KILOGRAMOS') return { ok: true, cantidad: redondear(dicha === 'g' ? valor / 1000 : valor) }
+  return { ok: false, motivo: `dijiste ${valor} ${dicha} y ese insumo se lleva en ${unidadCorta(unidadMedida)}` }
 }
 
 /**
@@ -154,6 +171,15 @@ export function aUnidadDelInsumo(
     if (c.unidad === 'g') return { ok: true, cantidad: redondear(c.valor / 1000) }
     if (c.unidad === 'ton') return { ok: true, cantidad: redondear(c.valor * 1000) }
     return { ok: false, motivo: `dijiste "${c.texto}" y ese insumo se lleva en kg` }
+  }
+  if (u === 'GRAMOS') {
+    // Un numero pelon NO se lee como gramos: el aditivo se dicto en kilos hasta
+    // el 2026-11-07 y "5" puede ser 5 kg. Se pregunta.
+    if (c.unidad === null) {
+      return { ok: false, motivo: `ese insumo se lleva en gramos: dime si son gramos o kilos (por ejemplo "500 g" o "1.5 kg")` }
+    }
+    if (c.unidad === 'g' || c.unidad === 'kg') return convertirMasa(c.valor, c.unidad, u)
+    return { ok: false, motivo: `dijiste "${c.texto}" y ese insumo se lleva en gramos` }
   }
   if (u === 'PIEZAS') {
     if (c.unidad !== null && c.unidad !== 'pz') {

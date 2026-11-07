@@ -69,6 +69,7 @@ import {
   sellarEnvasadoDiario
 } from '@/lib/bot-envasado-diario'
 import { fechaLocal } from '@/lib/fechas'
+import { convertirMasa } from '@/lib/bot-compra'
 import type { ClienteServicio } from '@/lib/bot-servidor'
 import { inventarioDelEnvasado } from '@/lib/bot-empaque-servidor'
 
@@ -81,6 +82,8 @@ interface InsumoPedido {
   insumo?: unknown
   id_insumo?: unknown
   cantidad?: unknown
+  /** Fase 7A: 'kg' | 'g' si el bot sabe en que se dijo (la plantilla dicta en kilos). Sin ella, la cantidad ya va en la unidad del catalogo. */
+  unidad?: unknown
 }
 
 interface EnvasadoPedido {
@@ -228,7 +231,16 @@ export async function POST(request: Request) {
         insumo = hallazgo.elegido
       }
 
-      insumos.push({ insumo, cantidad: Number(pedido.cantidad) })
+      const dicha = String(pedido.unidad ?? '').trim().toLowerCase()
+      if (dicha === 'kg' || dicha === 'g') {
+        const conv = convertirMasa(Number(pedido.cantidad), dicha, insumo.unidad_medida)
+        if (!conv.ok) {
+          return NextResponse.json({ error: `No lo convierto: ${conv.motivo}.` }, { status: 422 })
+        }
+        insumos.push({ insumo, cantidad: conv.cantidad })
+      } else {
+        insumos.push({ insumo, cantidad: Number(pedido.cantidad) })
+      }
     }
 
     // ── EL ENVASADO ─────────────────────────────────────────────────────────

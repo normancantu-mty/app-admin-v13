@@ -26,8 +26,12 @@ formato_codigo: 'L-{dd}-{mm}.{n}'
 
 # Los aditivos van por SKU OPACO (ERP-84): nunca por su nombre real.
 # Decidido por Norman el 2026-10-19 (plan v3 §8): aditivo 1 = ing-az, aditivo 2 = ing-al.
-aditivo_1_sku: 'ing-az'
-aditivo_2_sku: 'ing-al'
+# Fase 7 (2026-11-07): 'ing-az'/'ing-al' NO existen en el catalogo de produccion
+# (SELECT del 2026-11-07: los SKU son 'mosto-1' = "Aditivo 1" y 'aditivo-2' =
+# "Aditivo 2"); con ellos el aditivo 1 del dia de produccion no se resolvia y la
+# etapa del aditivo 2 respondia "No encontre el insumo". Se apunta a los reales.
+aditivo_1_sku: 'mosto-1'
+aditivo_2_sku: 'aditivo-2'
 
 # Frases que ABREN la plantilla sin pasar por el modelo. Se buscan al inicio
 # del mensaje (o "plantilla" en cualquier parte).
@@ -230,7 +234,7 @@ etapas:
     - '\W*\bque\s+crees\b\W*'
     - '\W*\bsabes\s+que\b\W*'
     - '\W*\bcomo\s+quedamos\b\W*'
-  datos_de_etapa: '\bgarraf\w*|\d+(?:[.,]\d+)?\s*(?:kg|kgs|kilos?|kilogramos?)\b|%|\bpor\s*ciento\b'
+  datos_de_etapa: '\bgarraf\w*|\d+(?:[.,]\d+)?\s*(?:kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?)\b|%|\bpor\s*ciento\b'
   # Ronda 5: la parte de envasados salio a `envasado_diario` (arriba).
   no_abren_etapa:
     - '\?'
@@ -241,6 +245,8 @@ etapas:
     # En cualquier parte del mensaje, SOLO si el mismo mensaje trae un codigo L-.
     disparadores_con_codigo:
       - '\baditivo\s*(2|dos)\b'
+    # En KILOS aunque el catalogo lleve el aditivo en GRAMOS (Fase 7A): lo dicho
+    # en g se compara en kg. Solo AVISA.
     rango_kg: [0.01, 200]
   destilacion:
     disparadores:
@@ -253,8 +259,9 @@ etapas:
     tope_garrafas: 50
 
 textos:
-  aditivo_2_recordatorio: 'Lote {codigo}: hoy toca el aditivo 2 (dia {dia} desde la produccion). Cuantos kilos le pusieron?'
-  aditivo_2_pregunta: 'Lote {codigo} - aditivo 2. Cuantos kilos de aditivo 2?'
+  aditivo_2_recordatorio: 'Lote {codigo}: hoy toca el aditivo 2 (dia {dia} desde la produccion). Cuanto le pusieron? Con su unidad: 800 g o 1.5 kg.'
+  aditivo_2_pregunta: 'Lote {codigo} - aditivo 2. Cuanto aditivo 2 le pusieron? Con su unidad: 800 g o 1.5 kg.'
+  aditivo_2_unidad: 'Lote {codigo} - aditivo 2: {cantidad} gramos o {cantidad} kilos? Contesta "gramos" o "kilos".'
   destilar_recordatorio: 'Lote {codigo}: ya paso el reposo ({dias} dias desde el aditivo 2). Ya toca destilar.'
   destilacion_pregunta: "Lote {codigo} - destilacion. Cuantas garrafas salieron, y de cada una el peso (kg) y el % de alcohol?\nEjemplo: 3 garrafas: 18.5 kg 52%, 17 kg 48%, 10 kg 30%"
   muestra: 'Guarda una muestra del lote {codigo}.'

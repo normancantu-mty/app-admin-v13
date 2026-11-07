@@ -388,12 +388,12 @@ def renglones_de_chile(campos):
     conocidos = chiles_conocidos()
     mezcla = campos.get("chiles")
     if isinstance(mezcla, dict) and mezcla:
-        return [{"insumo": conocidos[k], "cantidad": v} for k, v in sorted(mezcla.items()) if k in conocidos]
+        return [{"insumo": conocidos[k], "cantidad": v, "unidad": "kg"} for k, v in sorted(mezcla.items()) if k in conocidos]
     tipo = _plano(campos.get("tipo_chile") or "").strip()
     kg = campos.get("kg_chile")
     if kg in (None, "", 0) or tipo not in conocidos:
         return []
-    return [{"insumo": conocidos[tipo], "cantidad": kg}]
+    return [{"insumo": conocidos[tipo], "cantidad": kg, "unidad": "kg"}]
 
 
 def _valores_de_item(nombres, texto):
@@ -520,7 +520,9 @@ def campos_para_peticion(s):
         c.pop("kg_chile", None)  # va como renglon(es) con su SKU, no suelto
     kg_ad = s["campos"].get("kg_aditivo_1")
     if kg_ad not in (None, "", 0):
-        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "ing-az", "cantidad": kg_ad})
+        # Fase 7A: se dicta en KILOS (pregunta del YAML) y el catalogo lo lleva en
+        # GRAMOS: va con su unidad y el servidor convierte (8 kg -> 8000 g).
+        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "mosto-1", "cantidad": kg_ad, "unidad": "kg"})
     if insumos:
         c["insumos"] = insumos
     return c

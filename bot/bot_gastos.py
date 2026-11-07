@@ -3017,12 +3017,17 @@ def _peticion_de_lote(campos):
                 continue
             nombre = c.get("insumo") or c.get("nombre")
             if nombre:
-                insumos.append({"insumo": nombre, "cantidad": c.get("cantidad")})
+                linea = {"insumo": nombre, "cantidad": c.get("cantidad")}
+                # Fase 7A: la plantilla dice en que unidad se dicto (kg); el
+                # servidor lo pasa a la del catalogo (el aditivo va en GRAMOS).
+                if c.get("unidad") in ("kg", "g"):
+                    linea["unidad"] = c.get("unidad")
+                insumos.append(linea)
 
     kg = campos.get("kg_chile")
     ya_hay_chile = any("chile" in str(i.get("insumo")).lower() for i in insumos)
     if kg not in (None, "", 0) and not ya_hay_chile:
-        insumos.append({"insumo": "chile-guajillo", "cantidad": kg})
+        insumos.append({"insumo": "chile-guajillo", "cantidad": kg, "unidad": "kg"})
 
     tandas = []
     for t in (campos.get("tandas") or []):
@@ -3053,7 +3058,7 @@ def _lote_es_de_otro_camino(campos):
     Entonces va al camino F0/D81 de `_proponer_lote`, que agrega al existente."""
     if campos.get("codigo_lote") not in (None, ""):
         return True
-    propios = (str(lote_plantilla.plantilla().get("aditivo_1_sku") or "ing-az").lower(),)
+    propios = (str(lote_plantilla.plantilla().get("aditivo_1_sku") or "mosto-1").lower(),)
     for c in (campos.get("insumos") or []):
         if not isinstance(c, dict):
             continue

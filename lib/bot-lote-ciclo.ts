@@ -6,7 +6,9 @@
  * El dia de produccion sigue siendo el lote de siempre (`lib/bot-lotes.ts`, con
  * Brix). Lo que viene despues son ETAPAS de un lote que ya existe:
  *
- *   · `aditivo_2`   — kilos del aditivo 2 (SKU opaco, ERP-84) -> `lote_entradas`.
+ *   · `aditivo_2`   — el aditivo 2 (SKU opaco, ERP-84) -> `lote_entradas`, en la
+ *                     unidad del CATALOGO (Fase 7A: GRAMOS desde 2026-11-07;
+ *                     lo dicho en kg o g se convierte, nada mas se adivina).
  *   · `destilacion` — una fila de `lote_salidas` por GARRAFA, con peso (kg) y %
  *                     de alcohol; `litros` va NULL (no hay densidad medida y no
  *                     se inventa una).
@@ -19,6 +21,7 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
+import { convertirMasa, unidadCorta } from '@/lib/bot-compra'
 import { fechaLocal, fechaParaPersona } from '@/lib/fechas'
 
 export const ETAPAS_CON_VA = ['aditivo_2', 'destilacion'] as const
@@ -54,6 +57,11 @@ export interface PayloadEtapa {
   usuario_creador: string
   entradas: EntradaEtapa[]
   garrafas: GarrafaEtapa[]
+  /**
+   * Fase 7A: la unidad corta de `entradas[].cantidad` ('g', 'kg'), la del
+   * catalogo. OPCIONAL por la misma razon que `notas`.
+   */
+  unidad_entrada?: string
   /**
    * Ronda 5: lo que no es de la etapa y se dijo (p. ej. una temperatura: la
    * gente no la dicta, sale de Open-Meteo). OPCIONAL: `canonizar` omite la
@@ -100,6 +108,9 @@ function numero(v: unknown): number | null {
 
 export interface PedidoEtapa {
   etapa: unknown
+  /** Lo dicho del aditivo 2. `cantidad` + `unidad` ('kg'|'g'); `kg` es el campo viejo (= cantidad en kg). */
+  cantidad?: unknown
+  unidad?: unknown
   kg?: unknown
   garrafas?: unknown
   notas?: unknown
@@ -114,6 +125,8 @@ export interface ContextoEtapa {
   ahora: Date
   /** El insumo del aditivo 2 ya resuelto por SKU (solo para `aditivo_2`). */
   idInsumoAditivo?: string | null
+  /** Su `unidad_medida` del catalogo. Sin ella se asume KILOGRAMOS (lo de antes de la Fase 7A). */
+  unidadAditivo?: string | null
 }
 
 export type ResultadoEtapa =
@@ -141,13 +154,27 @@ export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): Result
     ...(String(pedido.notas ?? '').trim() !== '' ? { notas: String(pedido.notas).trim().slice(0, 500) } : {})
   }
   if (pedido.etapa === 'aditivo_2') {
-    const kg = numero(pedido.kg)
-    if (kg === null || kg <= 0) return { ok: false, error: 'No entendi cuantos kilos de aditivo 2.' }
-    if (kg > TOPE_KG_ADITIVO) return { ok: false, error: `${kg} kilos de aditivo es demasiado. Revisalo.` }
+    const conCantidad = pedido.cantidad !== undefined && pedido.cantidad !== null && pedido.cantidad !== ''
+    const valor = numero(conCantidad ? pedido.cantidad : pedido.kg)
+    const dicha = conCantidad ? String(pedido.unidad ?? '').trim().toLowerCase() : 'kg'
+    if (valor === null || valor <= 0) return { ok: false, error: 'No entendi cuanto aditivo 2 le pusieron.' }
+    if (dicha !== 'kg' && dicha !== 'g') {
+      return { ok: false, error: 'Dime si el aditivo 2 fue en gramos o en kilos (por ejemplo "800 g" o "1.5 kg").' }
+    }
+    const kgEquivalentes = dicha === 'g' ? valor / 1000 : valor
+    if (kgEquivalentes > TOPE_KG_ADITIVO) return { ok: false, error: `${valor} ${dicha} de aditivo es demasiado. Revisalo.` }
     if (!ctx.idInsumoAditivo) return { ok: false, error: 'No encontre el insumo del aditivo 2 en el catalogo.' }
+    const unidadCatalogo = ctx.unidadAditivo ?? 'KILOGRAMOS'
+    const conv = convertirMasa(valor, dicha, unidadCatalogo)
+    if (!conv.ok) return { ok: false, error: `No lo convierto: ${conv.motivo}.` }
     return {
       ok: true,
-      payload: { ...base, entradas: [{ id_insumo: ctx.idInsumoAditivo, cantidad: Number(kg.toFixed(4)) }], garrafas: [] }
+      payload: {
+        ...base,
+        entradas: [{ id_insumo: ctx.idInsumoAditivo, cantidad: conv.cantidad }],
+        garrafas: [],
+        unidad_entrada: unidadCorta(unidadCatalogo)
+      }
     }
   }
   const crudas = Array.isArray(pedido.garrafas) ? pedido.garrafas : []
@@ -175,7 +202,9 @@ function corto(n: number): string {
 /** Lo que el servidor devuelve como `mensaje` de la propuesta (el bot ensena el suyo). */
 export function mensajeDeEtapa(p: PayloadEtapa): string {
   const lineas = [`LOTE ${p.codigo_lote} — ${p.etapa === 'aditivo_2' ? 'ADITIVO 2' : 'DESTILACION'}`, `Fecha: ${fechaParaPersona(p.fecha)}`]
-  for (const e of p.entradas) lineas.push(`Kilos de aditivo 2: ${corto(e.cantidad)}`)
+  for (const e of p.entradas) {
+    lineas.push(p.unidad_entrada ? `Aditivo 2: ${corto(e.cantidad)} ${p.unidad_entrada}` : `Kilos de aditivo 2: ${corto(e.cantidad)}`)
+  }
   if (p.garrafas.length) lineas.push(`Garrafas: ${p.garrafas.length}`)
   for (const g of p.garrafas) lineas.push(`   Garrafa ${g.numero}: ${corto(g.peso_kg)} kg a ${corto(g.grado_alcohol)}%`)
   if (p.notas) lineas.push(`Notas: ${p.notas}`)

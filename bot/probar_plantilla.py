@@ -190,7 +190,9 @@ def seguir(texto, doble, dichos, modelo=None):
 
 def aditivo(pet):
     for i in pet.get("insumos") or []:
-        if i.get("insumo") == "ing-az":
+        # Fase 7: el SKU del YAML (mosto-1 en produccion), y va con su unidad 'kg'.
+        if i.get("insumo") == B.lote_plantilla.plantilla().get("aditivo_1_sku"):
+            assert i.get("unidad") == "kg", i
             return i.get("cantidad")
     return None
 

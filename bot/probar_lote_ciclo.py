@@ -300,25 +300,34 @@ def rutas():
 HOY_TXT = P.fecha_para_persona(C.ahora_local().date())
 u = Update(CHAT)
 boton(u, "ltad2", "L-12-10.1")
-caso("5. boton del recordatorio: pregunta los kilos del aditivo 2", "Cuantos kilos de aditivo 2" in u.message.dichos[-1], True)
+caso("5. boton del recordatorio: pregunta el aditivo 2 con su unidad", "Con su unidad: 800 g o 1.5 kg" in u.message.dichos[-1], True)
+# Fase 7A: un numero pelon NO se adivina: se pregunta gramos o kilos.
 texto(u, "4.5")
+caso("5. numero pelon: pregunta gramos o kilos", "4.5 gramos o 4.5 kilos?" in u.message.dichos[-1], True)
+caso("5. ... sin resumen todavia (sin Confirmar en esa respuesta)", u.message.teclados[-1], [])
+texto(u, "kilos")
 res = u.message.dichos[-1]
-caso("5. resumen: lote, etapa, fecha de hoy y kilos",
-     ("LOTE L-12-10.1 - ADITIVO 2" in res, ("Fecha: %s (hoy)" % HOY_TXT) in res, "Kilos de aditivo 2: 4.5" in res),
+caso("5. resumen: lote, etapa, fecha de hoy y cantidad con unidad",
+     ("LOTE L-12-10.1 - ADITIVO 2" in res, ("Fecha: %s (hoy)" % HOY_TXT) in res, "Aditivo 2: 4.5 kg" in res),
      (True, True, True))
 caso("5. ... con Confirmar / Corregir", u.message.teclados[-1], ["ltec:x", "ltecc:x"])
 caso("5. ... y NADA salio al servidor antes de Confirmar", [r for r in rutas() if "/etapa/" in r], [])
 boton(u, "ltecc")
-caso("5. Corregir: vuelve a preguntar", "Cuantos kilos de aditivo 2" in u.message.dichos[-1], True)
+caso("5. Corregir: vuelve a preguntar", "Cuanto aditivo 2 le pusieron?" in u.message.dichos[-1], True)
 caso("5. ... y sigue sin salir nada", [r for r in rutas() if "/etapa/" in r], [])
-texto(u, "250")
-caso("5. fuera de rango AVISA y no bloquea", ("Ojo" in u.message.dichos[-1], "Kilos de aditivo 2: 250" in u.message.dichos[-1]),
+texto(u, "250 kg")
+caso("5. fuera de rango AVISA y no bloquea", ("Ojo" in u.message.dichos[-1], "Aditivo 2: 250 kg" in u.message.dichos[-1]),
      (True, True))
-texto(u, "4")
+# 800 g = 0.8 kg: dentro del rango en kilos, sin aviso (el rango es fisico).
+texto(u, "800 gramos")
+caso("5. 800 gramos: dentro de rango (se compara en kg), sin Ojo",
+     ("Ojo" in u.message.dichos[-1], "Aditivo 2: 800 g" in u.message.dichos[-1]), (False, True))
+texto(u, "4 kg")
 boton(u, "ltec")
 prop = [c for r, c in base.llamadas if r == C.RUTA_ETAPA_PROPONER]
-caso("5. Confirmar: propone UNA vez con kg y el SKU del YAML",
-     [(c["etapa"], c["kg"], c["insumo_sku"], c["codigo_lote"]) for c in prop], [("aditivo_2", 4.0, "ing-al", "L-12-10.1")])
+caso("5. Confirmar: propone UNA vez con cantidad, unidad y el SKU del YAML",
+     [(c["etapa"], c["cantidad"], c["unidad"], c["insumo_sku"], c["codigo_lote"]) for c in prop],
+     [("aditivo_2", 4.0, "kg", "aditivo-2", "L-12-10.1")])
 caso("5. ... y confirma", rutas().count(C.RUTA_ETAPA_CONFIRMAR), 1)
 caso("5. ... quedo en la base", ("lote-a", "aditivo_2") in base.etapas, True)
 caso("5. ... y lo dice", u.message.dichos[-1].startswith("Listo."), True)
@@ -395,7 +404,7 @@ caso("5b. ... se le dice que espera el Aprobar", "espera el Aprobar" in u.messag
 caso("5b. ... y queda anotado para avisar al aprobador", [p["avisar_a"] for p in B._por_aprobar], [[111]])
 asyncio.run(B._avisar_aprobaciones(u))
 caso("5b. el aviso al aprobador lleva el resumen con la fecha",
-     ("Kilos de aditivo 2: 3" in BOT_APROBADOR.enviados[-1][1], ("Fecha: %s" % HOY_TXT) in BOT_APROBADOR.enviados[-1][1]),
+     ("Aditivo 2: 3 kg" in BOT_APROBADOR.enviados[-1][1], ("Fecha: %s" % HOY_TXT) in BOT_APROBADOR.enviados[-1][1]),
      (True, True))
 caso("5b. ... con Aprobar / Rechazar", [d.split(":")[0] for d in BOT_APROBADOR.enviados[-1][2]], ["apr", "rch"])
 caso("5b. la ruta de Aprobar de lote_etapa existe", B.RUTA_CONFIRMAR_DE.get("lote_etapa"), "/api/bot/lote/etapa/confirmar")
@@ -406,7 +415,7 @@ base.etapas.pop(("lote-a", "aditivo_2"), None)
 n = rutas().count(C.RUTA_ETAPA_PROPONER)
 u = Update(CHAT)
 texto(u, "aditivo 2 del L-12-10.1, 4 kilos")
-caso("6. 'aditivo 2 del L-..., 4 kilos': resumen directo", "Kilos de aditivo 2: 4" in u.message.dichos[-1], True)
+caso("6. 'aditivo 2 del L-..., 4 kilos': resumen directo", "Aditivo 2: 4 kg" in u.message.dichos[-1], True)
 caso("6. ... sin proponer todavia", rutas().count(C.RUTA_ETAPA_PROPONER), n)
 texto(u, "confirmar")
 caso("6. 'confirmar' dicho: propone y confirma", (rutas().count(C.RUTA_ETAPA_PROPONER), ("lote-a", "aditivo_2") in base.etapas),
@@ -425,7 +434,7 @@ C.olvidar(CHAT)
 u = Update(CHAT)
 texto(u, "le pusimos 4 kilos de aditivo 2 al L-12-10.1")
 caso("7. 'le pusimos 4 kilos de aditivo 2 al L-12-10.1' (sin modelo): resumen de la etapa del L-12-10.1",
-     ("LOTE L-12-10.1 - ADITIVO 2" in u.message.dichos[-1], "Kilos de aditivo 2: 4" in u.message.dichos[-1]),
+     ("LOTE L-12-10.1 - ADITIVO 2" in u.message.dichos[-1], "Aditivo 2: 4 kg" in u.message.dichos[-1]),
      (True, True))
 caso("7. ... NO abre la plantilla de lote nuevo", any("Me falta" in d for d in u.message.dichos), False)
 C.olvidar(CHAT)
@@ -487,9 +496,21 @@ asyncio.run(B._despachar_hecho(u, CHAT, {"intencion": "lote", "campos": {"kg_chi
 caso("7. CONTROL solo kg_chile -> la plantilla (pregunta lo que falta, sin proponer)",
      ([r for r, _c in base.llamadas[n:]].count("/api/bot/lote/proponer"), any("Me falta" in d for d in u.message.dichos)),
      (0, True))
-caso("7. CONTROL chile + aditivo 1 (ing-az) sin codigo -> la plantilla",
+caso("7. CONTROL chile + aditivo 1 (SKU del YAML) sin codigo -> la plantilla",
      B._lote_es_de_otro_camino({"insumos": [{"insumo": "chile-guajillo", "cantidad": 80},
-                                            {"insumo": "ing-az", "cantidad": 2}]}), False)
+                                            {"insumo": "mosto-1", "cantidad": 2}]}), False)
+
+# --- Fase 7A: la masa con su unidad (puras) ---------------------------------
+caso("7A. leer_masa '800 g' -> (800, g)", C.leer_masa("800 g"), (800.0, "g"))
+caso("7A. leer_masa '1.5 kilos' -> (1.5, kg)", C.leer_masa("1.5 kilos"), (1.5, "kg"))
+caso("7A. leer_masa '350 gramos de aditivo 2 al L-12-10.1' no lee el codigo", C.leer_masa("350 gramos de aditivo 2 al L-12-10.1"), (350.0, "g"))
+caso("7A. leer_masa '4' -> (4, None): pelon, sin unidad", C.leer_masa("4"), (4.0, None))
+caso("7A. leer_masa '4' con_unidad -> nada", C.leer_masa("4", con_unidad=True), (None, None))
+caso("7A. solo_unidad 'gramos' / 'son kilos' / 'ok'", (C.solo_unidad("gramos"), C.solo_unidad("son kilos"), C.solo_unidad("ok")), ("g", "kg", None))
+caso("7A. en_kg 800 g = 0.8", C.en_kg(800.0, "g"), 0.8)
+_c7a = C.cuerpo_de_propuesta({"etapa": "aditivo_2", "codigo": "L-12-10.1", "cantidad": 800.0, "unidad": "g", "notas": []}, CHAT)
+caso("7A. cuerpo de la propuesta: 800 g salen como cantidad 800 + unidad g (el servidor convierte)",
+     (_c7a["cantidad"], _c7a["unidad"], "kg" in _c7a), (800.0, "g", False))
 P.olvidar(CHAT)
 B._olvidar_chat(CHAT)
 

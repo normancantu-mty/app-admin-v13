@@ -426,6 +426,14 @@ def _num(s):
     return lote_plantilla._num(s)
 
 
+def _bonito(n):
+    try:
+        f = float(n)
+    except (TypeError, ValueError):
+        return str(n)
+    return str(int(f)) if f.is_integer() else str(f)
+
+
 def sesion(chat):
     s = _etapas.get(chat)
     if not s:
@@ -445,7 +453,8 @@ def pregunta_de(etapa, codigo):
 
 
 def empezar(chat, etapa, codigo):
-    _etapas[chat] = {"etapa": etapa, "codigo": codigo, "kg": None, "n": None, "garrafas": [], "notas": [],
+    _etapas[chat] = {"etapa": etapa, "codigo": codigo, "cantidad": None, "unidad": None, "sin_unidad": None,
+                     "n": None, "garrafas": [], "notas": [],
                      "modo": "captura", "nacido_en": time.time()}
     return _etapas[chat]
 
@@ -469,6 +478,10 @@ def leer_garrafas(texto):
 
 _CODIGO = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
 _KG_CON_UNIDAD = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilogramos?)\b")
+# Fase 7A (2026-11-07): el aditivo 2 se lleva en GRAMOS en el catalogo. Se lee
+# la masa CON su unidad; un numero pelon no se adivina (se pregunta g o kg).
+_MASA = re.compile(r"(\d+(?:[.,]\d+)?)\s*(kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?)\b")
+_SOLO_UNIDAD = re.compile(r"^\W*(?:son\s+|en\s+|fueron\s+)?(kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?)\W*$")
 
 
 def sin_codigo(texto):
@@ -482,13 +495,43 @@ def leer_kg(texto, con_unidad=False):
     return _num(m.group(1)) if m else None
 
 
+def _corta(u):
+    return "kg" if u.startswith("k") else "g"
+
+
+def leer_masa(texto, con_unidad=False):
+    """'800 g' -> (800, 'g'); '1.5 kilos' -> (1.5, 'kg'); '4' -> (4, None)
+    (o (None, None) si `con_unidad`). **Pura.**"""
+    t = sin_codigo(texto)
+    m = _MASA.search(t)
+    if m:
+        return _num(m.group(1)), _corta(m.group(2))
+    if con_unidad:
+        return None, None
+    m = re.search(r"(\d+(?:[.,]\d+)?)", t)
+    return (_num(m.group(1)), None) if m else (None, None)
+
+
+def solo_unidad(texto):
+    """'gramos' / 'son kilos' -> 'g' / 'kg'; otra cosa -> None. **Pura.**"""
+    m = _SOLO_UNIDAD.match(_plano(texto))
+    return _corta(m.group(1)) if m else None
+
+
+def en_kg(cantidad, unidad):
+    return cantidad / 1000.0 if unidad == "g" else cantidad
+
+
 def avisos(s):
     e = (cfg().get("etapas") or {}).get(s["etapa"]) or {}
     out = []
-    if s["etapa"] == "aditivo_2" and s["kg"] is not None:
+    if s["etapa"] == "aditivo_2" and s.get("cantidad") is not None:
+        # El rango del YAML esta en KILOS (es fisico); lo dicho en g se compara en kg.
         a, b = e.get("rango_kg") or [0.01, 200]
-        if not (a <= s["kg"] <= b):
-            out.append("Ojo: %s kg de aditivo 2 se sale de lo normal (%s a %s). Lo dejo asi; si es error, corrigelo." % (s["kg"], a, b))
+        kg = en_kg(s["cantidad"], s.get("unidad"))
+        if not (a <= kg <= b):
+            out.append("Ojo: %s %s de aditivo 2 se sale de lo normal (%s a %s kg). Lo dejo asi; si es error, corrigelo."
+                       % (_bonito(s["cantidad"]), s.get("unidad") or "kg", a, b))
     if s["etapa"] == "destilacion":
         pa, pb = e.get("rango_peso_kg") or [0.1, 60]
         aa, ab = e.get("rango_alcohol") or [0, 80]
@@ -507,7 +550,7 @@ def resumen(s, hoy=None):
     lineas = ["Revisa antes de guardarlo:", "", "LOTE %s - %s" % (s["codigo"], nombre),
               "Fecha: %s (hoy)" % lote_plantilla.fecha_para_persona(hoy)]
     if s["etapa"] == "aditivo_2":
-        lineas.append("Kilos de aditivo 2: %s" % s["kg"])
+        lineas.append("Aditivo 2: %s %s" % (_bonito(s["cantidad"]), s.get("unidad") or "kg"))
     else:
         lineas.append("Garrafas: %d" % len(s["garrafas"]))
         for i, (peso, grado) in enumerate(s["garrafas"], 1):
@@ -688,10 +731,20 @@ async def atender(update, chat, texto, confirmar=None, post=None):
 async def _capturar(update, s, texto, primera=False):
     """Mete el texto en la etapa. False si no traia nada de la etapa."""
     if s["etapa"] == "aditivo_2":
-        kg = leer_kg(texto, con_unidad=primera)
-        if kg is None:
-            return False
-        s["kg"] = kg
+        cantidad, unidad = leer_masa(texto, con_unidad=primera)
+        if cantidad is None:
+            # "gramos" despues de un numero pelon: completa la cantidad pendiente.
+            u = solo_unidad(texto) if s.get("sin_unidad") is not None else None
+            if u is None:
+                return False
+            cantidad, unidad = s["sin_unidad"], u
+        if unidad is None:
+            s["sin_unidad"] = cantidad
+            s["modo"] = "captura"
+            await update.effective_message.reply_text(
+                _texto("aditivo_2_unidad", cantidad=_bonito(cantidad), codigo=s["codigo"]))
+            return True
+        s["cantidad"], s["unidad"], s["sin_unidad"] = cantidad, unidad, None
         await _ensenar(update, s)
         return True
     n, pares = leer_garrafas(texto)
@@ -720,8 +773,10 @@ async def _capturar(update, s, texto, primera=False):
 def cuerpo_de_propuesta(s, chat):
     cuerpo = {"telegram_id": chat, "codigo_lote": s["codigo"], "etapa": s["etapa"]}
     if s["etapa"] == "aditivo_2":
-        cuerpo["kg"] = s["kg"]
-        cuerpo["insumo_sku"] = cfg().get("aditivo_2_sku") or "ing-al"
+        # Fase 7A: lo dicho con su unidad; el servidor lo pasa a la del catalogo.
+        cuerpo["cantidad"] = s["cantidad"]
+        cuerpo["unidad"] = s.get("unidad") or "kg"
+        cuerpo["insumo_sku"] = cfg().get("aditivo_2_sku") or "aditivo-2"
     else:
         cuerpo["garrafas"] = [{"peso_kg": p, "grado_alcohol": g} for p, g in s["garrafas"]]
     if s.get("notas"):

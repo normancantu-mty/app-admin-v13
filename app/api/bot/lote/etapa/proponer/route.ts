@@ -37,6 +37,8 @@ export async function POST(request: Request) {
       codigo_lote?: unknown
       etapa?: unknown
       kg?: unknown
+      cantidad?: unknown
+      unidad?: unknown
       insumo_sku?: unknown
       garrafas?: unknown
       notas?: unknown
@@ -81,14 +83,17 @@ export async function POST(request: Request) {
     }
 
     let idInsumoAditivo: string | null = null
+    let unidadAditivo: string | null = null
     if (cuerpo.etapa === 'aditivo_2') {
       const sku = String(cuerpo.insumo_sku ?? '').trim().toLowerCase()
       const insumos = await leerInsumosDeLote(supabase)
-      idInsumoAditivo = insumos.find((i) => (i.sku ?? '').toLowerCase() === sku)?.id ?? null
+      const aditivo = insumos.find((i) => (i.sku ?? '').toLowerCase() === sku)
+      idInsumoAditivo = aditivo?.id ?? null
+      unidadAditivo = aditivo?.unidad_medida ?? null
     }
 
     const r = normalizarEtapa(
-      { etapa: cuerpo.etapa, kg: cuerpo.kg, garrafas: cuerpo.garrafas, notas: cuerpo.notas },
+      { etapa: cuerpo.etapa, kg: cuerpo.kg, cantidad: cuerpo.cantidad, unidad: cuerpo.unidad, garrafas: cuerpo.garrafas, notas: cuerpo.notas },
       {
         idLote: lote.id,
         codigoLote: lote.codigo_lote,
@@ -96,7 +101,8 @@ export async function POST(request: Request) {
         telegramId,
         etiqueta: identidad.etiqueta,
         ahora: new Date(),
-        idInsumoAditivo
+        idInsumoAditivo,
+        unidadAditivo
       }
     )
     if (!r.ok) return NextResponse.json({ error: r.error }, { status: 422 })
