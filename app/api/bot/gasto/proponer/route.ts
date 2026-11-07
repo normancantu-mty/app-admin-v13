@@ -25,6 +25,7 @@ import {
   avisoDeDuplicado,
   conOjo,
   derivarCompra,
+  diceCompra,
   esCategoriaDeInsumo,
   mensajeDeCompra,
   ojoDeGastoDeInsumo,
@@ -110,7 +111,10 @@ export async function POST(request: Request) {
     // UNA cosa (`lib/bot-compra.ts`).
     const pedido = (cuerpo.propuesta ?? {}) as Record<string, unknown>
     const pideInsumo = typeof pedido.id_insumo === 'string' && pedido.id_insumo !== ''
-    const insumos = esCategoriaDeInsumo(fila.categoria) || pideInsumo ? await leerInsumosDeCompra(supabase) : []
+    // Bug en vivo 2026-11-07: "compra/compre ..." tambien lee el catalogo, aunque
+    // el modelo le haya puesto otra categoria (lo decide `derivarCompra`).
+    const insumos =
+      esCategoriaDeInsumo(fila.categoria) || pideInsumo || diceCompra(pedido.texto_dicho) ? await leerInsumosDeCompra(supabase) : []
     const derivacion: Derivacion =
       insumos.length > 0
         ? derivarCompra({

@@ -50,6 +50,16 @@ export function esCategoriaDeInsumo(categoria: unknown): boolean {
   return CATEGORIAS_DE_INSUMO.includes(sinAcentos(categoria))
 }
 
+/**
+ * Bug en vivo 2026-11-07 ("Compra 90 g de aditivo 1 en 2008 en efectivo"): el
+ * mensaje EMPIEZA diciendo que es una compra. Con eso, un insumo del catalogo
+ * nombrado en el mensaje vuelve compra el gasto aunque el modelo le haya
+ * puesto una categoria que no es de insumo. **Pura.**
+ */
+export function diceCompra(texto: unknown): boolean {
+  return /^\W*(ya\s+|hoy\s+|ayer\s+)?(compr(a|e|amos|aron|o|as)|se\s+compr(o|aron))\b/.test(sinAcentos(texto))
+}
+
 // ─── LA CANTIDAD ────────────────────────────────────────────────────────────
 
 export type UnidadDicha = 'kg' | 'g' | 'ton' | 'pz' | 'l' | null
@@ -277,11 +287,24 @@ export function derivarCompra(e: EntradaDerivacion): Derivacion {
   const elegido = elegidoId ? e.insumos.find((i) => i.id === elegidoId) ?? null : null
   // Solo un gasto de categoria de insumo se vuelve compra. Si despues de escoger
   // el insumo le cambian la categoria a otra ("gasolina"), vuelve a ser gasto.
-  if (!esCategoriaDeInsumo(e.categoria)) return { modo: 'gasto', falta: null }
+  // Excepcion (bug en vivo 2026-11-07): el mensaje dice "compra/compre" y nombra
+  // UN insumo del catalogo, en el concepto o en el mensaje entero.
+  const porCategoria = esCategoriaDeInsumo(e.categoria)
+  if (!porCategoria) {
+    if (elegido || !diceCompra(e.textoDicho)) return { modo: 'gasto', falta: null }
+    const nombrado = escogerInsumo(e.descripcion, e.insumos, e.monto)
+    const enElMensaje = nombrado.tipo === 'uno' ? nombrado : escogerInsumo(e.textoDicho, e.insumos, e.monto)
+    if (enElMensaje.tipo !== 'uno') return { modo: 'gasto', falta: null }
+  }
 
   let insumo = elegido
   if (!insumo) {
     let eleccion = escogerInsumo(e.descripcion, e.insumos, e.monto)
+    // "compra ...": el mensaje entero (con su "aditivo 1" y su "90 g") desempata o nombra.
+    if (eleccion.tipo !== 'uno' && diceCompra(e.textoDicho)) {
+      const enElMensaje = escogerInsumo(e.textoDicho, e.insumos, e.monto)
+      if (enElMensaje.tipo === 'uno') eleccion = enElMensaje
+    }
     // Sin insumo en el concepto, la subcategoria ("Botellas", "chile") acota.
     if (eleccion.tipo === 'ninguno') eleccion = escogerInsumo(e.subcategoria, e.insumos, null, true)
     // Varios por el concepto ("aditivo"): la subcategoria ("Aditivo 1") desempata
@@ -298,10 +321,14 @@ export function derivarCompra(e: EntradaDerivacion): Derivacion {
   }
 
   const contestada = String(e.cantidadContestada ?? '').trim()
+  // Un numero SIN unidad que es parte del nombre del insumo ("aditivo 1") no es
+  // la cantidad: se busca en el mensaje entero (bug en vivo 2026-11-07).
+  const delNombre = (c: CantidadDicha | null) =>
+    c && c.unidad === null && claves(insumo!.nombre).numeros.has(String(c.valor)) ? null : c
   const dicho =
     contestada !== ''
       ? leerCantidad(contestada)
-      : leerCantidad(e.descripcion, e.monto) ?? leerCantidad(e.textoDicho, e.monto)
+      : delNombre(leerCantidad(e.descripcion, e.monto)) ?? delNombre(leerCantidad(e.textoDicho, e.monto))
   if (!dicho) return { modo: 'gasto', falta: 'cantidad', insumo, motivo: null }
   const convertida = aUnidadDelInsumo(dicho, insumo.unidad_medida)
   if (!convertida.ok) return { modo: 'gasto', falta: 'cantidad', insumo, motivo: convertida.motivo }

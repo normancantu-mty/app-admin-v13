@@ -22,6 +22,7 @@ import {
   aUnidadDelInsumo,
   CIERRE_PROPUESTA,
   derivarCompra,
+  diceCompra,
   escogerInsumo,
   leerCantidad,
   mensajeDeCompra,
@@ -446,5 +447,105 @@ test.describe('gasto/proponer + gasto/confirmar: la compra completa', () => {
     expect(tablas.inventario_ledger[0]).toMatchObject({ status: 'ANULADO' })
     const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
     expect(b.estado).not.toBe('CONFIRMADO')
+  })
+})
+
+// ─── BUG EN VIVO 2026-11-07 (Fase 7A) ───────────────────────────────────────
+// Norman en el grupo: "Compra 90 g de aditivo 1 en 2008 en efectivo". El
+// borrador e2f8cd8c quedo GASTO_OPERATIVO "Costo de produccion / Aditivo 1":
+// con el catalogo en GRAMOS, master contestaba 'dijiste "90 g" y ese insumo se
+// lleva en gramos' y la compra caia a gasto. La propuesta de abajo es la que el
+// enrutador mando de verdad (SELECT de solo lectura a bot_borradores, contexto_bot).
+const INSUMOS_EN_GRAMOS = INSUMOS.map((i) => (i.id === 'i-ad1' || i.id === 'i-ad2' ? { ...i, unidad_medida: 'GRAMOS' } : i))
+
+function conGramos() {
+  estadoInicial()
+  tablas.catalogo_productos = INSUMOS_EN_GRAMOS.map((i) => ({ ...i, tipo: 'INSUMO' }))
+  // El par de categoria con el mismo nombre que el insumo (existe en produccion).
+  tablas.categorias_movimiento.push(
+    { id: 'cm-a1', tipo: 'EGRESO', categoria: 'Costo de producción', subcategoria: 'Aditivo 1', activa: true, orden: 4 },
+    { id: 'cm-a2', tipo: 'EGRESO', categoria: 'Costo de producción', subcategoria: 'Aditivo 2', activa: true, orden: 5 }
+  )
+}
+
+const COMPRA_ADITIVO_1 = {
+  monto: 2008,
+  categoria: 'Costo de producción / Aditivo 1',
+  descripcion: '90 g de aditivo 1',
+  texto_dicho: 'Compra 90 g de aditivo 1 en 2008 en efectivo'
+}
+const COMPRA_ADITIVO_2 = {
+  monto: 500,
+  categoria: 'Costo de producción / Aditivo 2',
+  descripcion: '1 kg de aditivo 2',
+  texto_dicho: 'compré 1 kg de aditivo 2 a 500 desde Spin'
+}
+
+test.describe('bug en vivo 2026-11-07: compra de aditivo en GRAMOS', () => {
+  test('puro: "90 g" de un insumo en GRAMOS = 90; "1 kg" = 1000', () => {
+    const base = { categoria: 'Costo de producción', monto: 2008, insumos: INSUMOS_EN_GRAMOS }
+    const d = derivarCompra({ ...base, subcategoria: 'Aditivo 1', descripcion: '90 g de aditivo 1', textoDicho: COMPRA_ADITIVO_1.texto_dicho })
+    expect(d.modo === 'compra' && [d.insumo.id, d.cantidad]).toEqual(['i-ad1', 90])
+    const e = derivarCompra({ ...base, monto: 500, subcategoria: 'Aditivo 2', descripcion: '1 kg de aditivo 2', textoDicho: COMPRA_ADITIVO_2.texto_dicho })
+    expect(e.modo === 'compra' && [e.insumo.id, e.cantidad]).toEqual(['i-ad2', 1000])
+  })
+
+  test('puro: "compra/compre" + insumo del catalogo es compra aunque la categoria no sea de insumo', () => {
+    expect(diceCompra('Compra 90 g de aditivo 1 en 2008 en efectivo')).toBe(true)
+    expect(diceCompra('compré 1 kg de aditivo 2 a 500 desde Spin')).toBe(true)
+    expect(diceCompra('gaste 300 en gasolina')).toBe(false)
+    // Anclado al inicio: "compra" a media frase no vuelve compra un gasto.
+    expect(diceCompra('pague el flete de la compra de aditivo 1')).toBe(false)
+    const d = derivarCompra({
+      categoria: 'Gastos generales',
+      subcategoria: 'Aditivo 1',
+      descripcion: 'aditivo 1',
+      monto: 2008,
+      textoDicho: COMPRA_ADITIVO_1.texto_dicho,
+      insumos: INSUMOS_EN_GRAMOS
+    })
+    expect(d.modo === 'compra' && [d.insumo.id, d.cantidad]).toEqual(['i-ad1', 90])
+    // CONTROLES: sin "compra" al inicio, o sin insumo del catalogo, la categoria manda (gasto).
+    expect(derivarCompra({ categoria: 'Gastos generales', subcategoria: null, descripcion: '90 g de aditivo 1', monto: 2008, textoDicho: 'pague 2008 de aditivo 1', insumos: INSUMOS_EN_GRAMOS })).toEqual({ modo: 'gasto', falta: null })
+    expect(derivarCompra({ categoria: 'Logística y envíos', subcategoria: 'Gasolina', descripcion: 'gasolina', monto: 300, textoDicho: 'compre gasolina por 300', insumos: INSUMOS_EN_GRAMOS })).toEqual({ modo: 'gasto', falta: null })
+    // "compre aditivo" nombra VARIOS insumos: con categoria que no es de insumo, no se pregunta cual; queda gasto.
+    expect(derivarCompra({ categoria: 'Gastos generales', subcategoria: null, descripcion: 'aditivo', monto: 300, textoDicho: 'compre aditivo por 300', insumos: INSUMOS_EN_GRAMOS })).toEqual({ modo: 'gasto', falta: null })
+  })
+
+  test('ruta: "Compra 90 g de aditivo 1 en 2008 en efectivo" -> compra de 90 g; el VA escribe dinero Y almacen', async () => {
+    conGramos()
+    const p = await llamar('gasto/proponer', { telegram_id: NORMAN, propuesta: COMPRA_ADITIVO_1, id_cuenta: 'c-ef' })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    expect(p.j.tipo).toBe('compra_insumo')
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    expect(((b.payload as Fila).compra as Fila)).toMatchObject({ id_insumo: 'i-ad1', cantidad: 90, costo_total: 2008, id_cuenta_origen: 'c-ef' })
+    expect(String(p.j.mensaje)).toContain('Aditivo 1')
+    expect(deLibros()).toEqual([])
+    const c = await llamar('gasto/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(insertados.inventario_ledger).toEqual([expect.objectContaining({ id_producto: 'i-ad1', tipo_movimiento: 'ENTRADA_COMPRA', cantidad: 90 })])
+    expect(insertados.finanzas_ledger).toEqual([expect.objectContaining({ tipo_movimiento: 'COMPRA_INSUMOS', monto: 2008, id_cuenta_origen: 'c-ef' })])
+  })
+
+  test('ruta: "compré 1 kg de aditivo 2 a 500 desde Spin" -> compra de 1000 g desde Spin', async () => {
+    conGramos()
+    const p = await llamar('gasto/proponer', { telegram_id: NORMAN, propuesta: COMPRA_ADITIVO_2, id_cuenta: 'c-spin' })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    expect(p.j.tipo).toBe('compra_insumo')
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    expect(((b.payload as Fila).compra as Fila)).toMatchObject({ id_insumo: 'i-ad2', cantidad: 1000, costo_total: 500, id_cuenta_origen: 'c-spin' })
+  })
+
+  test('ruta: si el modelo le pone otra categoria, "compra ..." igual va a compra', async () => {
+    conGramos()
+    const p = await llamar('gasto/proponer', {
+      telegram_id: NORMAN,
+      propuesta: { ...COMPRA_ADITIVO_1, categoria: 'Logística y envíos / Gasolina', descripcion: 'aditivo 1' },
+      id_cuenta: 'c-ef'
+    })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    expect(p.j.tipo).toBe('compra_insumo')
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
+    expect(((b.payload as Fila).compra as Fila)).toMatchObject({ id_insumo: 'i-ad1', cantidad: 90 })
   })
 })
