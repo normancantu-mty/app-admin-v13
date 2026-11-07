@@ -23,6 +23,7 @@ import {
   periodoDe,
   resumenDeVentas,
   textoMovimientos,
+  textoTicket,
   ticketsDelFolio,
   type CuentaDePregunta
 } from '@/lib/bot-pregunta'
@@ -211,6 +212,8 @@ type Fila = Record<string, unknown>
 let tablas: Record<string, Fila[]> = {}
 let saldos: Record<string, number> = {}
 let peticiones: string[] = []
+// Para simular que UNA lectura falla (auditoria 2026-11-07: el error se dice, no se rellena).
+let fallaLectura: ((tabla: string, params: URLSearchParams) => boolean) | null = null
 
 const HOY = fechaLocal(new Date())
 const AYER = sumarDias(HOY, -1)
@@ -258,6 +261,7 @@ function estadoInicial() {
   }
   saldos = { 'c-ef': 380, 'c-spin': 300, 'c-aero': 15 }
   peticiones = []
+  fallaLectura = null
 }
 
 function cumple(fila: Fila, col: string, expr: string): boolean {
@@ -302,6 +306,7 @@ function responder(url: string, init: RequestInit | undefined): Response {
     const id = u.searchParams.get('p_id_cuenta') ?? ''
     return json(id in saldos ? saldos[id] : null)
   }
+  if (fallaLectura?.(tabla, u.searchParams)) return json({ code: '57014', message: `falla simulada en ${tabla}`, details: '', hint: '' }, 500)
   const filas = filtrar(tabla, u.searchParams)
   const objeto = (new Headers(init?.headers).get('accept') ?? '').includes('vnd.pgrst.object')
   if (objeto) return filas.length === 1 ? json(filas[0]) : filas.length === 0 ? json(null) : json({ code: 'PGRST116' }, 406)
@@ -396,6 +401,22 @@ test.describe('/api/bot/pregunta (PostgREST falso)', () => {
     soloGet()
   })
 
+  test('si no puede leer los renglones, dice "no pude leer" y no "(sin renglones)"', async () => {
+    fallaLectura = (tabla) => tabla === 'ticket_detalles'
+    const t = String((await preguntar('detalle del ticket ABCD1234')).j.texto)
+    expect(t).toContain('No pude leer los renglones del ticket ABCD1234')
+    expect(t).not.toContain('sin renglones')
+    expect(t).not.toMatch(/\$\d/)
+  })
+
+  test('si no puede leer los nombres, no dice "Publico en General"', async () => {
+    // Solo la lectura de nombres del ticket (id=in.(...)); la identidad del que pregunta si se lee.
+    fallaLectura = (tabla, params) => tabla === 'entidades' && (params.get('id') ?? '').startsWith('in.')
+    const t = String((await preguntar('detalle del ticket ABCD1234')).j.texto)
+    expect(t).toContain('No pude leer quien vendio ni quien compro')
+    expect(t).not.toContain('Publico en General')
+  })
+
   test('folio que no existe: lo dice', async () => {
     const { j } = await preguntar('ticket 99999999')
     expect(String(j.texto)).toContain('No encuentro ningun ticket con folio 99999999')
@@ -429,5 +450,32 @@ test.describe('/api/bot/pregunta (PostgREST falso)', () => {
     expect(j.privado).toBe(true)
     const enPrivado = await preguntar('cuanto hay en spin', NORMAN, NORMAN)
     expect(enPrivado.j.privado).toBe(false)
+  })
+})
+
+test.describe('textoTicket: un nulo es "sin dato", no 0 (auditoria 2026-11-07)', () => {
+  test('cantidad, precio, subtotal y total nulos', () => {
+    const t = textoTicket(
+      {
+        id: 'abcd1234-0000', fecha_transaccion: null, total_cobrado_real: null, condicion_pago: null,
+        status: 'ACTIVO', id_comprador: null, vendedor: 'CEO Admin', comprador: 'Publico en General', usuario_creador: null
+      },
+      [{ cantidad: null, precio_unitario: null, subtotal_linea: null, producto: 'Destilado 750 ml' }]
+    )
+    expect(t).toContain('sin dato x Destilado 750 ml a sin dato = sin dato')
+    expect(t).toContain('TOTAL COBRADO: sin dato')
+    expect(t).not.toContain('$0.00')
+    expect(t).not.toMatch(/ 0 x /)
+  })
+  test('un 0 de verdad si sale como 0', () => {
+    const t = textoTicket(
+      {
+        id: 'abcd1234-0000', fecha_transaccion: null, total_cobrado_real: 0, condicion_pago: 'CONTADO',
+        status: 'ACTIVO', id_comprador: null, vendedor: 'CEO Admin', comprador: 'Publico en General', usuario_creador: null
+      },
+      [{ cantidad: 1, precio_unitario: 0, subtotal_linea: 0, producto: 'Muestra' }]
+    )
+    expect(t).toContain('1 x Muestra a $0.00 = $0.00')
+    expect(t).toContain('TOTAL COBRADO: $0.00')
   })
 })

@@ -319,14 +319,33 @@ export interface DetalleDeTicket {
   producto: string
 }
 
+/** Lo que se dice cuando la base trae un nulo: nunca un 0 inventado. */
+export const SIN_DATO = 'sin dato'
+
+/** Un numero de la base, o null si viene nulo o no es numero. **Pura.** */
+export function cifraDeLaBase(x: unknown): number | null {
+  if (x === null || x === undefined || x === '') return null
+  const n = Number(x)
+  return Number.isFinite(n) ? n : null
+}
+
+function pesosOSinDato(x: unknown): string {
+  const n = cifraDeLaBase(x)
+  return n === null ? SIN_DATO : pesos(n)
+}
+
 export function textoTicket(
   t: TicketDeVenta & { vendedor: string; comprador: string; usuario_creador: string | null },
   lineas: readonly DetalleDeTicket[]
 ): string {
   const folio = t.id.slice(0, 8).toUpperCase()
+  // Un nulo sale "sin dato", no 0 (auditoria 2026-11-07).
   const cuerpo = lineas.length
     ? lineas
-        .map((l) => `  ${Number(l.cantidad) || 0} x ${l.producto} a ${pesos(Number(l.precio_unitario) || 0)} = ${pesos(Number(l.subtotal_linea) || 0)}`)
+        .map((l) => {
+          const cantidad = cifraDeLaBase(l.cantidad)
+          return `  ${cantidad === null ? SIN_DATO : cantidad} x ${l.producto} a ${pesosOSinDato(l.precio_unitario)} = ${pesosOSinDato(l.subtotal_linea)}`
+        })
         .join('\n')
     : '  (sin renglones de detalle)'
   return (
@@ -335,7 +354,7 @@ export function textoTicket(
     `Vende: ${t.vendedor}   Compra: ${t.comprador}\n` +
     `Condicion: ${t.condicion_pago ?? '—'}\n` +
     `${cuerpo}\n` +
-    `TOTAL COBRADO: ${pesos(Number(t.total_cobrado_real) || 0)}` +
+    `TOTAL COBRADO: ${pesosOSinDato(t.total_cobrado_real)}` +
     (t.usuario_creador ? `\nCapturo: ${t.usuario_creador}` : '')
   )
 }

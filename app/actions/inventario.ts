@@ -278,7 +278,15 @@ export async function registrarSalidaCascada(
     // 2026-11-07: la regla de la cascada vive en `lib/salida-cascada.ts`, la
     // MISMA que usa el bot para la merma. Aqui se queda lo que es de la web:
     // la sesion de arriba y el revalidate de abajo.
-    const resultado = await escribirSalidaCascada(supabase, { ...input, usuario_creador: usuarioCreador })
+    // Campo por campo, los mismos que la web pasaba en bf7c361: sin `...input`,
+    // un cliente no puede colar `notas` ni `devolverIds` (auditoria 2026-11-07).
+    const resultado = await escribirSalidaCascada(supabase, {
+      id_entidad: input.id_entidad,
+      id_producto: input.id_producto,
+      cantidad_a_deducir: input.cantidad_a_deducir,
+      tipo_movimiento: input.tipo_movimiento,
+      usuario_creador: usuarioCreador
+    })
     if (!resultado.success) {
       return { success: false, error: resultado.error }
     }

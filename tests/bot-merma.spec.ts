@@ -90,6 +90,8 @@ type Fila = Record<string, unknown>
 let tablas: Record<string, Fila[]> = {}
 let escrituras: string[] = []
 let contador = 0
+// Lo que viajo en cada POST, tal cual (sin los defaults del doble): toEqual exacto.
+let insertados: Record<string, Fila[]> = {}
 
 function estadoInicial() {
   tablas = {
@@ -117,6 +119,7 @@ function estadoInicial() {
     avisos_captura: []
   }
   escrituras = []
+  insertados = {}
 }
 
 function cumple(fila: Fila, col: string, expr: string): boolean {
@@ -172,6 +175,7 @@ function responder(url: string, init: RequestInit | undefined): Response {
     const cuerpo = init?.body ? JSON.parse(String(init.body)) : null
     if (metodo === 'POST') {
       const defaults: Fila = tabla === 'bot_borradores' ? { estado: 'PENDIENTE', resuelto_en: null, id_registro: null, chat_id: null } : { status: 'ACTIVO' }
+      ;(insertados[tabla] ??= []).push(...(Array.isArray(cuerpo) ? cuerpo : [cuerpo]).map((c: Fila) => ({ ...c })))
       const nuevas = (Array.isArray(cuerpo) ? cuerpo : [cuerpo]).map((c: Fila) => ({ id: `${tabla}-${++contador}`, ...defaults, ...c }))
       ;(tablas[tabla] ??= []).push(...nuevas)
       filas = nuevas
@@ -218,12 +222,12 @@ test.describe('escribirSalidaCascada: lo mismo para la web y el bot', () => {
     estadoInicial()
     const r = await escribirSalidaCascada(cliente(), { ...salida, cantidad_a_deducir: 5 })
     expect(r.success, JSON.stringify(r)).toBe(true)
-    expect(mermas()).toEqual([
-      expect.objectContaining({ cubeta: 'PAGADO', cantidad: 3, id_entidad_origen: 'ent-matriz', usuario_creador: 'web@x' }),
-      expect.objectContaining({ cubeta: 'CONSIGNADO', cantidad: 2, id_entidad_origen: 'ent-matriz' })
+    // toEqual EXACTO de lo que viajo: es la fila de bf7c361, sin notas ni nada de mas.
+    const base = { id_producto: 'p-750', id_entidad_origen: 'ent-matriz', tipo_movimiento: 'MERMA', usuario_creador: 'web@x' }
+    expect(insertados.inventario_ledger).toEqual([
+      { ...base, cubeta: 'PAGADO', cantidad: 3 },
+      { ...base, cubeta: 'CONSIGNADO', cantidad: 2 }
     ])
-    // La web no manda notas: sus filas salen igual que antes, sin la columna.
-    expect(mermas()[0]).not.toHaveProperty('notas')
   })
 
   test('si no alcanza (8 de 7), no escribe nada', async () => {
@@ -246,6 +250,13 @@ test.describe('escribirSalidaCascada: lo mismo para la web y el bot', () => {
     expect(cuerpo).toContain('escribirSalidaCascada(supabase')
     expect(cuerpo).not.toContain('calcularDeduccionCascada')
     expect(cuerpo).not.toContain(".from('inventario_ledger')")
+    // Auditoria 2026-11-07: campo por campo, sin `...input` (no se cuelan notas ni devolverIds).
+    const llamada = cuerpo.slice(cuerpo.indexOf('escribirSalidaCascada(supabase'), cuerpo.indexOf('revalidatePath'))
+    expect(llamada).not.toContain('...input')
+    expect(llamada).not.toMatch(/notas|devolverIds/)
+    for (const campo of ['id_entidad', 'id_producto', 'cantidad_a_deducir', 'tipo_movimiento']) {
+      expect(llamada).toContain(`${campo}: input.${campo}`)
+    }
   })
 })
 
@@ -271,11 +282,11 @@ test.describe('merma/proponer + merma/confirmar', () => {
     expect(mermas()).toEqual([])
     const c = await llamar('confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
     expect(c.status, JSON.stringify(c.j)).toBe(200)
-    expect(mermas()).toEqual([
-      expect.objectContaining({
-        id_producto: 'p-750', cubeta: 'PAGADO', cantidad: 2, id_entidad_origen: 'ent-matriz',
-        usuario_creador: 'telegram:norman', notas: 'Merma dictada al bot: se rompieron 2 botellas de 750'
-      })
+    expect(insertados.inventario_ledger).toEqual([
+      {
+        id_producto: 'p-750', id_entidad_origen: 'ent-matriz', tipo_movimiento: 'MERMA', usuario_creador: 'telegram:norman',
+        notas: 'Merma dictada al bot: se rompieron 2 botellas de 750', cubeta: 'PAGADO', cantidad: 2
+      }
     ])
     const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
     expect(b.estado).toBe('CONFIRMADO')

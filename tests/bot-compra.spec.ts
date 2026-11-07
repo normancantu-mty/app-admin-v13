@@ -173,6 +173,8 @@ let tablas: Record<string, Fila[]> = {}
 let escrituras: string[] = []
 let fallaInsertEn = new Set<string>()
 let contador = 0
+// Lo que viajo en cada POST, tal cual (sin los defaults del doble): toEqual exacto.
+let insertados: Record<string, Fila[]> = {}
 
 function estadoInicial() {
   tablas = {
@@ -200,6 +202,7 @@ function estadoInicial() {
     avisos_captura: []
   }
   escrituras = []
+  insertados = {}
   fallaInsertEn = new Set()
 }
 
@@ -257,6 +260,7 @@ function responder(url: string, init: RequestInit | undefined): Response {
     if (metodo === 'POST') {
       if (fallaInsertEn.has(tabla)) return json({ code: '23514', message: `falla simulada en ${tabla}`, details: '', hint: '' }, 400)
       const defaults: Fila = tabla === 'bot_borradores' ? { estado: 'PENDIENTE', resuelto_en: null, id_registro: null, chat_id: null } : {}
+      ;(insertados[tabla] ??= []).push(...(Array.isArray(cuerpo) ? cuerpo : [cuerpo]).map((c: Fila) => ({ ...c })))
       const nuevas = (Array.isArray(cuerpo) ? cuerpo : [cuerpo]).map((c: Fila) => ({ id: `${tabla}-${++contador}`, ...defaults, ...c }))
       ;(tablas[tabla] ??= []).push(...nuevas)
       filas = nuevas
@@ -317,11 +321,12 @@ test.describe('escribirCompraInsumos: lo mismo para la web y el bot', () => {
     estadoInicial()
     const r = await escribirCompraInsumos(cliente(), compra)
     expect(r.ok, JSON.stringify(r)).toBe(true)
-    expect(tablas.inventario_ledger).toEqual([
-      expect.objectContaining({ id_producto: 'i-guaj', tipo_movimiento: 'ENTRADA_COMPRA', cantidad: 50, id_entidad_destino: 'ent-matriz', status: 'ACTIVO' })
+    // toEqual EXACTO de lo que viajo: un campo de mas (notas, fecha...) pone esto rojo.
+    expect(insertados.inventario_ledger).toEqual([
+      { id_producto: 'i-guaj', tipo_movimiento: 'ENTRADA_COMPRA', cantidad: 50, id_entidad_destino: 'ent-matriz', usuario_creador: 'web@x', status: 'ACTIVO' }
     ])
-    expect(tablas.finanzas_ledger).toEqual([
-      expect.objectContaining({ tipo_movimiento: 'COMPRA_INSUMOS', categoria: 'Insumos', monto: 1200, id_cuenta_origen: 'c-spin', status: 'ACTIVO' })
+    expect(insertados.finanzas_ledger).toEqual([
+      { id_cuenta_origen: 'c-spin', tipo_movimiento: 'COMPRA_INSUMOS', categoria: 'Insumos', monto: 1200, usuario_creador: 'web@x', status: 'ACTIVO' }
     ])
   })
   test('si el gasto falla, la entrada se ANULA (no se borra) y no queda nada a medias', async () => {
@@ -357,11 +362,21 @@ test.describe('gasto/proponer + gasto/confirmar: la compra completa', () => {
 
     const c = await llamar('gasto/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
     expect(c.status, JSON.stringify(c.j)).toBe(200)
-    expect(tablas.inventario_ledger).toEqual([
-      expect.objectContaining({ id_producto: 'i-guaj', tipo_movimiento: 'ENTRADA_COMPRA', cantidad: 50, id_entidad_destino: 'ent-matriz', usuario_creador: 'telegram:norman' })
+    // Auditoria 2026-11-07: la categoria es 'Insumos', la de la web (Norman,
+    // 2026-09-12: nombre unico). Antes viajaba 'Costo de produccion'.
+    expect(insertados.inventario_ledger).toEqual([
+      {
+        id_producto: 'i-guaj', tipo_movimiento: 'ENTRADA_COMPRA', cantidad: 50, id_entidad_destino: 'ent-matriz',
+        usuario_creador: 'telegram:norman', status: 'ACTIVO',
+        notas: 'Compra dictada al bot: 50 kg de Chile Guajillo', fecha_movimiento: expect.any(String)
+      }
     ])
-    expect(tablas.finanzas_ledger).toEqual([
-      expect.objectContaining({ tipo_movimiento: 'COMPRA_INSUMOS', monto: 1200, id_cuenta_origen: 'c-spin', categoria: 'Costo de producción', subcategoria: 'chile' })
+    expect(insertados.finanzas_ledger).toEqual([
+      {
+        id_cuenta_origen: 'c-spin', tipo_movimiento: 'COMPRA_INSUMOS', categoria: 'Insumos', subcategoria: 'chile',
+        monto: 1200, usuario_creador: 'telegram:norman', status: 'ACTIVO',
+        descripcion: '50 kg de chile guajillo', fecha_movimiento: expect.any(String)
+      }
     ])
     expect(tablas.finanzas_ledger[0].id_cuenta_destino ?? null).toBeNull()
     expect(b.estado).toBe('CONFIRMADO')

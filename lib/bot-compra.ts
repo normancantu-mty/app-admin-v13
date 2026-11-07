@@ -329,8 +329,10 @@ export function payloadDeCompra(
   d: Extract<Derivacion, { modo: 'compra' }>,
   idEntidad: string
 ): PayloadCompra {
-  // `derivarCompra` solo da compra con categoria de insumo; el respaldo es la
-  // categoria que escribe la pantalla.
+  // La categoria es SIEMPRE la de la pantalla (`Insumos`): Norman, 2026-09-12,
+  // "nombre unico Insumos" (`lib/bot-gastos.ts`). Corregido el 2026-11-07 tras
+  // la auditoria: antes viajaba la categoria del par de gasto y el bot escribia
+  // COMPRA_INSUMOS con otro nombre que la web. La subcategoria (el insumo) se queda.
   const deInsumo = esCategoriaDeInsumo(fila.categoria)
   return {
     id_insumo: d.insumo.id,
@@ -340,7 +342,7 @@ export function payloadDeCompra(
     id_cuenta_origen: String(fila.id_cuenta_destino ?? fila.id_cuenta_origen ?? ''),
     id_entidad: idEntidad,
     usuario_creador: fila.usuario_creador,
-    categoria: deInsumo ? fila.categoria : CATEGORIA_COMPRA_WEB,
+    categoria: CATEGORIA_COMPRA_WEB,
     subcategoria: deInsumo ? fila.subcategoria ?? null : null,
     descripcion: fila.descripcion,
     fecha_movimiento: fila.fecha_movimiento,

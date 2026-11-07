@@ -137,28 +137,40 @@ async function contestar(
     return `Hay ${hallados.length} tickets que empiezan con ${p.folio}; dame mas caracteres del folio.`
   }
   const t = hallados[0]
-  const [{ data: detalles }, { data: entidades }] = await Promise.all([
+  // Ante un error de lectura se dice "no pude leer": "(sin renglones)" o
+  // "Publico en General" serian datos inventados (auditoria 2026-11-07).
+  const [{ data: detalles, error: errorDetalles }, { data: entidades, error: errorEntidades }] = await Promise.all([
     supabase.from('ticket_detalles').select('cantidad, precio_unitario, subtotal_linea, id_producto').eq('id_ticket', t.id),
     supabase.from('entidades').select('id, nombre').in('id', [t.id_vendedor, t.id_comprador].filter((x): x is string => Boolean(x)))
   ])
+  if (errorDetalles) {
+    return `No pude leer los renglones del ticket ${p.folio} (ticket_detalles). No invento el detalle.`
+  }
+  if (errorEntidades) {
+    return `No pude leer quien vendio ni quien compro en el ticket ${p.folio} (entidades). No lo invento.`
+  }
   const idsProd = [...new Set((detalles ?? []).map((d) => d.id_producto).filter((x): x is string => Boolean(x)))]
-  const { data: productos } = idsProd.length
+  const { data: productos, error: errorProductos } = idsProd.length
     ? await supabase.from('catalogo_productos').select('id, nombre').in('id', idsProd)
-    : { data: [] as { id: string; nombre: string }[] }
+    : { data: [] as { id: string; nombre: string }[], error: null }
+  if (errorProductos) {
+    return `No pude leer los productos del ticket ${p.folio} (catalogo_productos). No invento el detalle.`
+  }
   const nombreEnt = new Map((entidades ?? []).map((e) => [e.id, String(e.nombre ?? '')]))
   const nombreProd = new Map((productos ?? []).map((x) => [x.id, String(x.nombre ?? '')]))
   return (
     textoTicket(
       {
         ...t,
-        vendedor: nombreEnt.get(t.id_vendedor ?? '') || '—',
-        comprador: nombreEnt.get(t.id_comprador ?? '') || 'Publico en General'
+        // Sin id es dato real (venta al publico); con id y sin nombre, se dice.
+        vendedor: t.id_vendedor ? nombreEnt.get(t.id_vendedor) || '(no encontrado en entidades)' : '—',
+        comprador: t.id_comprador ? nombreEnt.get(t.id_comprador) || '(no encontrado en entidades)' : 'Publico en General'
       },
       (detalles ?? []).map((d) => ({
         cantidad: d.cantidad,
         precio_unitario: d.precio_unitario,
         subtotal_linea: d.subtotal_linea,
-        producto: nombreProd.get(d.id_producto ?? '') || '(producto)'
+        producto: (d.id_producto && nombreProd.get(d.id_producto)) || '(producto no encontrado)'
       }))
     ) + pieDeConsulta('transacciones_tickets + ticket_detalles')
   )
