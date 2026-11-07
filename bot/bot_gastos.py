@@ -3902,6 +3902,12 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # Cazador F0 (WP-7a): "hoy empezamos lote" y las respuestas a la plantilla
     # se leen SIN modelo (`bot/plantillas/lote.yaml`). Si el mensaje no es de
     # la plantilla, `atender` devuelve False y sigue el camino de siempre.
+    # Fase 7B (2026-11-07): "trazabilidad del lote X", "en que etapa va el lote
+    # X", "lotes abiertos", "cuanto se produjo este mes" se contestan SIN modelo
+    # y ANTES del cazador de lote (que lee "...del L-12-10.1" como registro). Si
+    # el servidor no la reconoce (p. ej. master sin Fase 7B), sigue lo de siempre.
+    if not esperando and _pregunta_de_lote(texto) and await _contestar_pregunta(update, chat, texto, "produccion"):
+        return
     if not esperando and await lote_ciclo.atender(update, chat, texto, _confirmar_etapa_lote, post=_post):
         return
     if not esperando and await lote_plantilla.atender(update, chat, texto, _proponer_lote, _peticion_de_lote,
@@ -5693,6 +5699,37 @@ async def _confirmar_traspaso(update, chat):
 _PATRON_MERMA = re.compile(
     r"\b(merma|mermas|mermo|se\s+(?:me\s+|nos\s+|le\s+|les\s+)?(?:rompi\w*|quebr\w*|cay\w*|derram\w*|estrell\w*)"
     r"|rot[ao]s?|quebrad[ao]s?|estrellad[ao]s?)\b")
+
+
+# Fase 7B (2026-11-07): las preguntas de lote. Mismos patrones que
+# `interpretarLote` de `lib/bot-pregunta-lote.ts`; aqui solo deciden si se
+# pregunta al servidor antes del cazador de lote. Quien contesta es el servidor.
+_PIDE_TRAZABILIDAD_LOTE = re.compile(
+    r"\b(trazabilidad|trazar|historia|historial|linea de tiempo|todo (lo )?del lote|detalle del lote|datos del lote"
+    r"|info(rmacion)? del lote|resumen del lote)\b")
+_PIDE_ETAPA_LOTE = re.compile(
+    r"\b(en que etapa|que etapa|en que va|como va|en que paso|en que quedo|como esta) (va |esta |anda )?(el )?lote\b"
+    r"|\betapa del lote\b")
+_PIDE_LOTES_ABIERTOS = re.compile(
+    r"\blotes? (abiertos?|activos?|en proceso|en fermentacion|fermentando|sin destilar|pendientes?)\b"
+    r"|\bque lotes (hay|tenemos|estan|van)\b|\blotes (hay|tenemos) (abiertos|activos)\b")
+_PIDE_PRODUCCION = re.compile(
+    r"\b(cuanto|que) (se )?(produjo|producimos|produjimos|hemos producido|se ha producido|llevamos producido)\b"
+    r"|\bproduccion (de|del|este) (mes|este mes|el mes pasado|mes pasado)\b|\bcuanto destilamos\b|\bcuanto se destilo\b")
+_CODIGO_LOTE = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
+
+
+def _pregunta_de_lote(texto):
+    """**Pura.** ¿Es una pregunta de lote? (no un registro: "ya destilamos el L-...")."""
+    t = unicodedata.normalize("NFD", str(texto or ""))
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
+    if _PIDE_TRAZABILIDAD_LOTE.search(t) and (_CODIGO_LOTE.search(t) or re.search(r"\blote\b", t)):
+        return True
+    if _PIDE_ETAPA_LOTE.search(t):
+        return True
+    if _CODIGO_LOTE.search(t) and re.search(r"\b(etapa|como va|en que va)\b", t):
+        return True
+    return bool(_PIDE_LOTES_ABIERTOS.search(t) or _PIDE_PRODUCCION.search(t))
 
 
 def _habla_de_merma(texto):

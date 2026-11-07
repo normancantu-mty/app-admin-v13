@@ -51,8 +51,10 @@ export function diasEntreFechas(inicio: string, fin: string): number {
 }
 
 /**
- * Dias de fermentacion: hasta la destilacion o la fecha de fin si existen; si el
- * lote sigue fermentando, los dias que lleva hasta hoy (`enCurso`).
+ * Dias de fermentacion: hasta la fecha de FIN si existe (Fase 7B, 2026-11-07:
+ * el fin es el dato; antes mandaba la destilacion), si no hasta la
+ * destilacion; si el lote sigue fermentando, los dias que lleva hasta hoy
+ * (`enCurso`).
  */
 export function diasFermentacion(
   inicio: string,
@@ -60,7 +62,7 @@ export function diasFermentacion(
   destilacion: string | null,
   hoy: string
 ): { dias: number; enCurso: boolean } {
-  const hasta = destilacion ?? fin
+  const hasta = fin ?? destilacion
   if (hasta) return { dias: Math.max(0, diasEntreFechas(inicio, hasta)), enCurso: false }
   return { dias: Math.max(0, diasEntreFechas(inicio, hoy)), enCurso: true }
 }

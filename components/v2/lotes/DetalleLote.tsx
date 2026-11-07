@@ -13,13 +13,43 @@ import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { cant, cant2 } from '@/components/v2/inventario/formato-inv'
 import type { DetalleLote as Detalle } from './datos'
 import { CHIP_ESTADO, ETIQUETA_ESTADO } from './estado'
+import { lineaDeTiempo, NOTA_ALCOHOL, resumenGarrafas, type DatosDeLote } from '@/lib/bot-pregunta-lote'
 
 const n = (v: number | null | undefined): number | null => (v === null || v === undefined ? null : Number(v))
 const grado = (v: number | null | undefined) => (n(v) === null ? '—' : `${n(v)!.toFixed(1)}°`)
 const pesos4 = (v: number | null | undefined) => (n(v) === null ? '—' : `$${n(v)!.toFixed(4)}`)
 const pct = (v: number | null | undefined) => (n(v) === null ? '—' : `${(n(v)! * 100).toFixed(1)}%`)
 
-const ETAPA: Record<string, string> = { aditivo_2: 'Segundo aditivo', destilacion: 'Destilación', muestra: 'Muestra' }
+const ETAPA: Record<string, string> = {
+  aditivo_2: 'Segundo aditivo',
+  destilacion: 'Destilación',
+  muestra: 'Muestra',
+  fin_fermentacion: 'Fin de fermentación'
+}
+
+/**
+ * Fase 7B (2026-11-07): la misma linea de tiempo que contesta el bot a
+ * «trazabilidad del lote X» (`lineaDeTiempo`, `lib/bot-pregunta-lote.ts`).
+ */
+function datosDeLinea(lote: Detalle): DatosDeLote {
+  const c = lote.cabecera
+  return {
+    lote: {
+      id: c.id,
+      codigo_lote: c.codigo_lote,
+      fecha_inicio: c.fecha_inicio.slice(0, 10),
+      fecha_fin_fermentacion: c.fecha_fin_fermentacion ? c.fecha_fin_fermentacion.slice(0, 10) : null,
+      horas_fermentacion: n(c.horas_fermentacion),
+      brix_chile: n(c.brix_chile),
+      brix_final: n(c.brix_final),
+      notas: c.notas
+    },
+    entradas: lote.entradas.map((e) => ({ id_insumo: e.id_insumo, cantidad: Number(e.cantidad), nombre: e.nombre, sku: e.sku, unidad: e.unidad || null })),
+    etapas: lote.etapas.map((e) => ({ etapa: e.etapa, fecha: e.fecha.slice(0, 10), datos: e.datos })),
+    salidas: lote.salidas.map((s) => ({ numero_tanda: s.numero_tanda, litros: n(s.litros), grado_alcohol: n(s.grado_alcohol), peso_kg: n(s.peso_kg) })),
+    envasado: lote.envasado.map((v) => ({ fecha: v.fecha.slice(0, 10), botellas: Number(v.botellas), nombre: v.nombre }))
+  }
+}
 
 function resumenDatos(datos: Record<string, unknown> | null): string {
   if (!datos) return ''
@@ -31,6 +61,9 @@ function resumenDatos(datos: Record<string, unknown> | null): string {
 
 export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; puedeEditar: boolean }) {
   const { cabecera: c, resumen: r, entradas, salidas, envasado, etapas, errores } = lote
+  const datosLinea = datosDeLinea(lote)
+  const linea = lineaDeTiempo(datosLinea)
+  const garrafas = resumenGarrafas(datosLinea.salidas)
   const avisos: string[] = []
   if (r?.faltan_costo) avisos.push(`Sin costo en el catálogo: ${r.faltan_costo}. El costo del lote está incompleto.`)
   if (n(r?.tandas_sin_grado)) avisos.push(`${n(r?.tandas_sin_grado)} tanda(s) sin grado: el rendimiento y el $/ml no las cuentan.`)
@@ -50,7 +83,7 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
             ) : null}
             {r ? (
               <>
-                {' '}· <b>{r.dias}</b> días{r.diasEnCurso ? ' (en curso)' : ''}
+                {' '}· <b>{r.dias}</b> días de fermentación{r.diasEnCurso ? ' (en curso)' : ''}
               </>
             ) : null}
             {n(c.horas_fermentacion) !== null ? ` · ${cant2(c.horas_fermentacion)} h` : ''}
@@ -119,6 +152,36 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
         <div className="msg info">Este lote no tiene fila en v_lote_rendimiento: sin rendimiento que mostrar.</div>
       )}
 
+      <div className="lote-tablas" data-testid="lote-linea-tiempo">
+        <h4 className="lote-h">Línea de tiempo</h4>
+        <div className="inv-scroll">
+          <table className="t inv-t">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Qué pasó</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linea.map((e, i) => (
+                <tr key={i}>
+                  <td className="inv-fecha">{e.fecha ? fechaParaPersona(e.fecha) : 'sin fecha'}</td>
+                  <td>
+                    <b>{e.titulo}</b>
+                    {e.detalle.map((x, j) => (
+                      <div key={j} className="inv-sub">{x}</div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="inv-sub">
+          La fecha de los insumos es la del día de producción (la base no guarda otra); la del aditivo 2 sale de su etapa. El envasado diario no se liga a un lote.
+        </div>
+      </div>
+
       <div className="grid g2 lote-tablas">
         <div>
           <h4 className="lote-h">Insumos</h4>
@@ -153,9 +216,9 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
           )}
         </div>
         <div>
-          <h4 className="lote-h">Tandas</h4>
+          <h4 className="lote-h">Garrafas / tandas</h4>
           {salidas.length === 0 ? (
-            <div className="vacio"><b>Sin tandas</b>El lote sigue fermentando o no se ha destilado.</div>
+            <div className="vacio"><b>Sin garrafas</b>El lote sigue fermentando o no se ha destilado.</div>
           ) : (
             <div className="inv-scroll">
               <table className="t inv-t">
@@ -164,7 +227,7 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
                     <th>#</th>
                     <th className="r">Litros</th>
                     <th className="r">Grado</th>
-                    <th className="r inv-opc">Peso kg</th>
+                    <th className="r">Peso kg</th>
                     <th className="inv-opc-lg">Notas</th>
                   </tr>
                 </thead>
@@ -174,11 +237,29 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
                       <td className="mono">{s.numero_tanda}</td>
                       <td className="r">{cant2(s.litros)}</td>
                       <td className="r">{s.grado_alcohol === null ? <span className="chip warn">sin grado</span> : grado(s.grado_alcohol)}</td>
-                      <td className="r inv-opc">{cant2(s.peso_kg)}</td>
+                      <td className="r">{cant2(s.peso_kg)}</td>
                       <td className="inv-opc-lg inv-sub">{s.notas ?? ''}</td>
                     </tr>
                   ))}
                 </tbody>
+                {garrafas.kgTotal > 0 ? (
+                  <tfoot>
+                    <tr>
+                      <td colSpan={3}>
+                        <b>Total</b>
+                        {garrafas.kgAlcohol !== null ? (
+                          <div className="inv-sub" title={NOTA_ALCOHOL}>
+                            Alcohol puro ≈ {cant2(garrafas.kgAlcohol)} kg (cálculo: peso × grado, aproximado)
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="r">
+                        <b>{cant2(garrafas.kgTotal)}</b>
+                      </td>
+                      <td className="inv-opc-lg" />
+                    </tr>
+                  </tfoot>
+                ) : null}
               </table>
             </div>
           )}

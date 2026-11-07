@@ -42,6 +42,8 @@ export async function POST(request: Request) {
       insumo_sku?: unknown
       garrafas?: unknown
       notas?: unknown
+      fecha?: unknown
+      horas?: unknown
     }
     const telegramId = Number(cuerpo.telegram_id)
     if (!Number.isSafeInteger(telegramId)) {
@@ -63,7 +65,7 @@ export async function POST(request: Request) {
     if (codigo === '') return NextResponse.json({ error: 'De cual lote? Dame el codigo.' }, { status: 422 })
     const { data: lote } = await supabase
       .from('lotes')
-      .select('id, codigo_lote, fecha_inicio')
+      .select('id, codigo_lote, fecha_inicio, fecha_fin_fermentacion')
       .ilike('codigo_lote', codigo)
       .maybeSingle()
     if (!lote) return NextResponse.json({ error: `No encontre el lote ${codigo}.` }, { status: 422 })
@@ -77,7 +79,7 @@ export async function POST(request: Request) {
       .maybeSingle()
     if (ya) {
       return NextResponse.json(
-        { error: `La etapa ${cuerpo.etapa === 'aditivo_2' ? 'del aditivo 2' : 'de destilacion'} del lote ${lote.codigo_lote} ya esta registrada.` },
+        { error: `La etapa ${cuerpo.etapa === 'aditivo_2' ? 'del aditivo 2' : cuerpo.etapa === 'destilacion' ? 'de destilacion' : 'del fin de fermentacion'} del lote ${lote.codigo_lote} ya esta registrada.` },
         { status: 409 }
       )
     }
@@ -93,7 +95,16 @@ export async function POST(request: Request) {
     }
 
     const r = normalizarEtapa(
-      { etapa: cuerpo.etapa, kg: cuerpo.kg, cantidad: cuerpo.cantidad, unidad: cuerpo.unidad, garrafas: cuerpo.garrafas, notas: cuerpo.notas },
+      {
+        etapa: cuerpo.etapa,
+        kg: cuerpo.kg,
+        cantidad: cuerpo.cantidad,
+        unidad: cuerpo.unidad,
+        garrafas: cuerpo.garrafas,
+        notas: cuerpo.notas,
+        fecha: cuerpo.fecha,
+        horas: cuerpo.horas
+      },
       {
         idLote: lote.id,
         codigoLote: lote.codigo_lote,
@@ -102,7 +113,8 @@ export async function POST(request: Request) {
         etiqueta: identidad.etiqueta,
         ahora: new Date(),
         idInsumoAditivo,
-        unidadAditivo
+        unidadAditivo,
+        finActual: (lote as { fecha_fin_fermentacion?: string | null }).fecha_fin_fermentacion ?? null
       }
     )
     if (!r.ok) return NextResponse.json({ error: r.error }, { status: 422 })
@@ -134,7 +146,7 @@ export async function POST(request: Request) {
       borrador_id: borrador.id,
       sello,
       codigo_lote: lote.codigo_lote,
-      mensaje: mensajeDeEtapa(r.payload)
+      mensaje: mensajeDeEtapa(r.payload, lote.fecha_inicio)
     })
   } catch (e) {
     console.error('[bot] proponer etapa reviento:', e)

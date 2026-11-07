@@ -257,11 +257,23 @@ etapas:
     rango_peso_kg: [0.1, 60]
     rango_alcohol: [0, 80]
     tope_garrafas: 50
+  # Fase 7B (2026-11-07): el fin de la fermentacion. Escribe la cabecera del lote
+  # (fecha_fin_fermentacion y horas), como la web.
+  fin_fermentacion:
+    disparadores:
+      - '^\W*(ya\s+|hoy\s+|ayer\s+)?(termino|acabo|se\s+acabo|paro|se\s+paro|finalizo)\s+(la\s+)?fermentacion\b'
+      - '^\W*(registra\w*\s+(el\s+)?)?fin\s+de\s+(la\s+)?fermentacion\b'
+      - '^\W*(ya\s+)?(dejo\s+de|termino\s+de|acabo\s+de)\s+fermentar\b'
+    disparadores_con_codigo:
+      - '\b(termino|acabo|paro|finalizo)\s+(la\s+)?fermentacion\b'
+      - '\bfin\s+de\s+(la\s+)?fermentacion\b'
+      - '\b(dejo\s+de|termino\s+de|acabo\s+de)\s+fermentar\b'
 
 textos:
   aditivo_2_recordatorio: 'Lote {codigo}: hoy toca el aditivo 2 (dia {dia} desde la produccion). Cuanto le pusieron? Con su unidad: 800 g o 1.5 kg.'
   aditivo_2_pregunta: 'Lote {codigo} - aditivo 2. Cuanto aditivo 2 le pusieron? Con su unidad: 800 g o 1.5 kg.'
   aditivo_2_unidad: 'Lote {codigo} - aditivo 2: {cantidad} gramos o {cantidad} kilos? Contesta "gramos" o "kilos".'
+  fin_fermentacion_pregunta: 'Lote {codigo} - fin de fermentacion. Cuando termino (hoy, ayer, hace 2 dias) y, si las llevaron, cuantas horas fermento?'
   destilar_recordatorio: 'Lote {codigo}: ya paso el reposo ({dias} dias desde el aditivo 2). Ya toca destilar.'
   destilacion_pregunta: "Lote {codigo} - destilacion. Cuantas garrafas salieron, y de cada una el peso (kg) y el % de alcohol?\nEjemplo: 3 garrafas: 18.5 kg 52%, 17 kg 48%, 10 kg 30%"
   muestra: 'Guarda una muestra del lote {codigo}.'

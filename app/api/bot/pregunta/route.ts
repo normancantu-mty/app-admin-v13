@@ -70,6 +70,20 @@ import {
   type Pregunta,
   type TicketDeVenta
 } from '@/lib/bot-pregunta'
+import {
+  codigoDeLote,
+  textoEtapaLote,
+  textoFaltaCodigo,
+  textoLotesAbiertos,
+  textoNoHayLote,
+  textoProduccionMes,
+  textoTrazabilidad,
+  type CabeceraDeLote,
+  type DatosDeLote,
+  type EtapaDeLote,
+  type PreguntaLote,
+  type SalidaDeLote
+} from '@/lib/bot-pregunta-lote'
 
 export const dynamic = 'force-dynamic'
 
@@ -85,8 +99,15 @@ const CONSULTA_DE_PREGUNTA: Record<Exclude<Pregunta['tipo'], 'ninguna'>, Consult
   cartera_total: 'deuda',
   stock: 'inventario',
   inventario: 'inventario',
-  se_acaba: 'inventario'
+  se_acaba: 'inventario',
+  // Fase 7B: lotes. Cifra de la empresa (como `produccion`): solo quien ve todo.
+  trazabilidad_lote: 'produccion',
+  etapa_lote: 'produccion',
+  lotes_abiertos: 'produccion',
+  produccion_mes: 'produccion'
 }
+
+const DE_LOTES = new Set<Pregunta['tipo']>(['trazabilidad_lote', 'etapa_lote', 'lotes_abiertos', 'produccion_mes'])
 
 /** Las de la Fase 6: a quien no ve todo se le delega a `/api/bot/consulta`. */
 const DE_LA_FASE_6 = new Set<Pregunta['tipo']>(['deuda_cliente', 'movimientos_cliente', 'cartera_total', 'stock', 'inventario', 'se_acaba'])
@@ -204,6 +225,159 @@ async function contestarErp(
     'v_insumos_en_negativo'
   )
   return textoSeAcaba(negativos, terminado, insumos, nombres.productos, rolDe) + pieDeConsulta('v_insumos_en_negativo + v_stock_por_cubeta')
+}
+
+// ─── Fase 7B: lotes ─────────────────────────────────────────────────────────
+// Sin joins incrustados: el catalogo se lee aparte y se junta aqui (el doble de
+// PostgREST de las pruebas no los entiende, y asi el orden lo pone el codigo).
+
+type FilaEntrada = { id_lote: string; id_insumo: string; cantidad: number | string }
+type FilaEtapa = { id_lote: string; etapa: string; fecha: string; datos: Record<string, unknown> | null }
+type FilaSalida = { id_lote: string; numero_tanda: number; litros: number | string | null; grado_alcohol: number | string | null; peso_kg: number | string | null }
+type FilaEnv = { id_lote: string | null; id_producto: string; botellas: number | string; fecha: string }
+type FilaProducto = { id: string; nombre: string | null; sku: string | null; unidad_medida: string | null }
+
+const COLUMNAS_LOTE = 'id, codigo_lote, fecha_inicio, fecha_fin_fermentacion, horas_fermentacion, brix_chile, brix_final, notas'
+
+function cifra(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function aSalida(s: FilaSalida): SalidaDeLote {
+  return { numero_tanda: Number(s.numero_tanda), litros: cifra(s.litros), grado_alcohol: cifra(s.grado_alcohol), peso_kg: cifra(s.peso_kg) }
+}
+
+function aCabecera(l: Record<string, unknown>): CabeceraDeLote {
+  return {
+    id: String(l.id),
+    codigo_lote: String(l.codigo_lote),
+    fecha_inicio: String(l.fecha_inicio).slice(0, 10),
+    fecha_fin_fermentacion: l.fecha_fin_fermentacion ? String(l.fecha_fin_fermentacion).slice(0, 10) : null,
+    horas_fermentacion: cifra(l.horas_fermentacion),
+    brix_chile: cifra(l.brix_chile),
+    brix_final: cifra(l.brix_final),
+    notas: l.notas ? String(l.notas) : null
+  }
+}
+
+async function leerProductos(supabase: ClienteServicio, ids: string[]): Promise<Map<string, FilaProducto>> {
+  if (ids.length === 0) return new Map()
+  const { data, error } = await supabase.from('catalogo_productos').select('id, nombre, sku, unidad_medida').in('id', [...new Set(ids)])
+  if (error) throw new Error('catalogo_productos')
+  return new Map(((data ?? []) as FilaProducto[]).map((p) => [p.id, p]))
+}
+
+/** Todo lo que cuelga de un lote. Un error de lectura revienta (500): no se contesta a medias. */
+async function leerDatosDeLote(supabase: ClienteServicio, codigo: string): Promise<DatosDeLote | null> {
+  const db = supabase as unknown as ClienteSinTipos
+  const { data: lote, error } = await db.from('lotes').select(COLUMNAS_LOTE).ilike('codigo_lote', codigo.replace(/[%_\\]/g, (c: string) => '\\' + c)).maybeSingle()
+  if (error) throw new Error('lotes')
+  if (!lote) return null
+  const id = String((lote as Record<string, unknown>).id)
+  const [ent, eta, sal, env] = await Promise.all([
+    db.from('lote_entradas').select('id_lote, id_insumo, cantidad').eq('id_lote', id),
+    db.from('lote_etapas').select('id_lote, etapa, fecha, datos').eq('id_lote', id),
+    db.from('lote_salidas').select('id_lote, numero_tanda, litros, grado_alcohol, peso_kg').eq('id_lote', id),
+    db.from('lote_envasado').select('id_lote, id_producto, botellas, fecha').eq('id_lote', id)
+  ])
+  const fallo = [['lote_entradas', ent], ['lote_etapas', eta], ['lote_salidas', sal], ['lote_envasado', env]].find(([, r]) => (r as { error: unknown }).error)
+  if (fallo) throw new Error(String(fallo[0]))
+  const entradas = (ent.data ?? []) as FilaEntrada[]
+  const envasado = (env.data ?? []) as FilaEnv[]
+  const productos = await leerProductos(supabase, [...entradas.map((e) => e.id_insumo), ...envasado.map((e) => e.id_producto)])
+  return {
+    lote: aCabecera(lote as Record<string, unknown>),
+    entradas: entradas.map((e) => {
+      const p = productos.get(e.id_insumo)
+      return { id_insumo: e.id_insumo, cantidad: Number(e.cantidad), nombre: p?.nombre ?? 'Insumo sin dato', sku: p?.sku ?? null, unidad: p?.unidad_medida ?? null }
+    }),
+    etapas: ((eta.data ?? []) as FilaEtapa[]).map((e) => ({ etapa: e.etapa, fecha: String(e.fecha).slice(0, 10), datos: e.datos ?? null })),
+    salidas: ((sal.data ?? []) as FilaSalida[]).map(aSalida),
+    envasado: envasado.map((e) => ({ fecha: String(e.fecha).slice(0, 10), botellas: Number(e.botellas), nombre: productos.get(e.id_producto)?.nombre ?? 'producto sin dato' }))
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ClienteSinTipos = any
+
+async function contestarLote(supabase: ClienteServicio, p: PreguntaLote, hoy: string): Promise<string> {
+  const db = supabase as unknown as ClienteSinTipos
+  if (p.tipo === 'trazabilidad_lote' || p.tipo === 'etapa_lote') {
+    const codigo = p.codigo ? codigoDeLote(p.codigo) : null
+    if (!codigo) return textoFaltaCodigo()
+    const d = await leerDatosDeLote(supabase, codigo)
+    if (!d) return textoNoHayLote(codigo)
+    const fuente = 'lotes + lote_entradas + lote_etapas + lote_salidas + lote_envasado'
+    return (p.tipo === 'trazabilidad_lote' ? textoTrazabilidad(d, hoy) : textoEtapaLote(d, hoy)) + pieDeConsulta(fuente)
+  }
+  if (p.tipo === 'lotes_abiertos') {
+    const [lt, eta, sal, env] = await Promise.all([
+      db.from('lotes').select(COLUMNAS_LOTE),
+      db.from('lote_etapas').select('id_lote, etapa, fecha, datos'),
+      db.from('lote_salidas').select('id_lote, numero_tanda, litros, grado_alcohol, peso_kg'),
+      db.from('lote_envasado').select('id_lote, id_producto, botellas, fecha').not('id_lote', 'is', null)
+    ])
+    if (lt.error || eta.error || sal.error || env.error) throw new Error('lotes')
+    const etapas = (eta.data ?? []) as FilaEtapa[]
+    const salidas = (sal.data ?? []) as FilaSalida[]
+    const envs = (env.data ?? []) as FilaEnv[]
+    const lotes = ((lt.data ?? []) as Record<string, unknown>[]).map((l) => {
+      const id = String(l.id)
+      return {
+        lote: aCabecera(l),
+        etapas: etapas.filter((e) => e.id_lote === id).map((e): EtapaDeLote => ({ etapa: e.etapa, fecha: String(e.fecha).slice(0, 10), datos: e.datos })),
+        salidas: salidas.filter((s) => s.id_lote === id).map(aSalida),
+        envasado: envs.filter((e) => e.id_lote === id).map((e) => ({ fecha: String(e.fecha).slice(0, 10), botellas: Number(e.botellas), nombre: '' }))
+      }
+    })
+    return textoLotesAbiertos(lotes, hoy) + pieDeConsulta('lotes + lote_etapas + lote_salidas')
+  }
+  // produccion_mes
+  const { desde, hasta } = p.periodo
+  const [lt, eta, env] = await Promise.all([
+    db.from('lotes').select('id, codigo_lote, fecha_inicio').gte('fecha_inicio', desde).lte('fecha_inicio', hasta),
+    db.from('lote_etapas').select('id_lote, etapa, fecha').eq('etapa', 'destilacion').gte('fecha', desde).lte('fecha', hasta),
+    db.from('lote_envasado').select('id_lote, id_producto, botellas, fecha').gte('fecha', desde).lte('fecha', hasta)
+  ])
+  if (lt.error || eta.error || env.error) throw new Error('produccion')
+  const iniciados = (lt.data ?? []) as { id: string; codigo_lote: string }[]
+  const destiladas = (eta.data ?? []) as FilaEtapa[]
+  const envs = (env.data ?? []) as FilaEnv[]
+  const idsDestilados = destiladas.map((e) => e.id_lote)
+  const [entIni, salDes, codDes] = await Promise.all([
+    iniciados.length ? db.from('lote_entradas').select('id_lote, id_insumo, cantidad').in('id_lote', iniciados.map((l) => l.id)) : { data: [], error: null },
+    idsDestilados.length ? db.from('lote_salidas').select('id_lote, numero_tanda, litros, grado_alcohol, peso_kg').in('id_lote', idsDestilados) : { data: [], error: null },
+    idsDestilados.length ? db.from('lotes').select('id, codigo_lote').in('id', idsDestilados) : { data: [], error: null }
+  ])
+  if (entIni.error || salDes.error || codDes.error) throw new Error('produccion')
+  const entradas = (entIni.data ?? []) as FilaEntrada[]
+  const productos = await leerProductos(supabase, [...entradas.map((e) => e.id_insumo), ...envs.map((e) => e.id_producto)])
+  // Chile = insumo cuyo SKU o nombre dice chile, en KILOGRAMOS (la plantilla lo mete asi).
+  const esChile = (id: string) => {
+    const pr = productos.get(id)
+    return !!pr && pr.unidad_medida === 'KILOGRAMOS' && /chile/i.test(`${pr.sku ?? ''} ${pr.nombre ?? ''}`)
+  }
+  const codigoDe = new Map(((codDes.data ?? []) as { id: string; codigo_lote: string }[]).map((l) => [l.id, l.codigo_lote]))
+  const porProducto = new Map<string, number>()
+  for (const e of envs) {
+    const nombre = productos.get(e.id_producto)?.nombre ?? 'producto sin dato'
+    porProducto.set(nombre, (porProducto.get(nombre) ?? 0) + Number(e.botellas))
+  }
+  const texto = textoProduccionMes(p.periodo, {
+    iniciados: [...iniciados]
+      .sort((a, b) => a.codigo_lote.localeCompare(b.codigo_lote))
+      .map((l) => {
+        const kg = entradas.filter((e) => e.id_lote === l.id && esChile(e.id_insumo)).reduce((s, e) => s + Number(e.cantidad), 0)
+        return { codigo_lote: l.codigo_lote, kgChile: kg }
+      }),
+    destilados: destiladas
+      .map((e) => ({ codigo_lote: codigoDe.get(e.id_lote) ?? '?', salidas: ((salDes.data ?? []) as FilaSalida[]).filter((s) => s.id_lote === e.id_lote).map(aSalida) }))
+      .sort((a, b) => a.codigo_lote.localeCompare(b.codigo_lote)),
+    envasado: [...porProducto.entries()].map(([nombre, botellas]) => ({ nombre, botellas }))
+  })
+  return texto + pieDeConsulta('lotes + lote_etapas + lote_salidas + lote_envasado')
 }
 
 const NO_TE_TOCA = 'Esa consulta es de la empresa; tu alta solo alcanza a lo tuyo.'
@@ -407,8 +581,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: NO_TE_TOCA }, { status: 403 })
     }
     const privado = permiso.privado && esGrupo(cuerpo.chat_id, telegramId)
-    const respuesta =
-      DE_LA_FASE_6.has(pregunta.tipo) && nombres
+    const respuesta = DE_LOTES.has(pregunta.tipo)
+      ? await contestarLote(supabase, pregunta as PreguntaLote, hoy)
+      : DE_LA_FASE_6.has(pregunta.tipo) && nombres
         ? await contestarErp(supabase, pregunta as Parameters<typeof contestarErp>[1], nombres)
         : await contestar(supabase, pregunta as Parameters<typeof contestar>[1], cuentas, identidad.idEntidad)
     return NextResponse.json({ ok: true, reconocida: true, tipo: pregunta.tipo, texto: respuesta, privado })

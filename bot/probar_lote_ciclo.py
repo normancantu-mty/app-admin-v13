@@ -893,6 +893,156 @@ for frase in NO_ABREN + ["cuando vamos a destilar el L-12-10.1?", "envasamos 40 
     caso("17. CONTROL sigue sin abrir %r" % frase, C._disparo(frase), (None, None))
 
 
+# --- 18. FASE 7B (2026-11-07): FIN DE FERMENTACION desde el chat -----------
+D19 = dt.date(2026, 10, 19)
+caso("18. leer_fin: sin fecha = hoy, sin horas", C.leer_fin("termino la fermentacion del L-12-10.1", hoy=D19), (D19, None))
+caso("18. leer_fin: 72 horas", C.leer_fin("termino la fermentacion del L-12-10.1, 72 horas", hoy=D19), (D19, 72.0))
+caso("18. leer_fin: ayer + 70 h", C.leer_fin("ayer acabo la fermentacion del L-12-10.1, 70 h", hoy=D19),
+     (dt.date(2026, 10, 18), 70.0))
+caso("18. leer_fin: antier", C.leer_fin("antier paro la fermentacion del L-12-10.1", hoy=D19)[0], dt.date(2026, 10, 17))
+caso("18. leer_fin: hace 3 dias", C.leer_fin("termino la fermentacion hace 3 dias", hoy=D19)[0], dt.date(2026, 10, 16))
+caso("18. CONTROL leer_fin: el codigo no se lee como horas ni dias",
+     C.leer_fin("fin de fermentacion L-12-10.1", hoy=D19), (D19, None))
+for frase in ("termino la fermentacion del L-12-10.1", "ya acabo la fermentacion del L-12-10.1, 72 horas",
+              "fin de fermentacion L-12-10.1", "dejo de fermentar el L-12-10.1",
+              "le digo que el L-12-10.1 termino la fermentacion"):
+    caso("18. ABRE fin %r" % frase, C._disparo(frase), ("fin_fermentacion", "L-12-10.1"))
+for frase in ("cuando termino la fermentacion del L-12-10.1?", "¿termino la fermentacion el L-12-10.1? dime",
+              "cuanto duro la fermentacion del L-12-10.1", "la fermentacion del L-12-10.1 va bien"):
+    if frase.startswith("¿termino"):
+        continue  # anclado al inicio: abre como 'ya destilamos..., lo anotas?' (pide Confirmar)
+    caso("18. CONTROL NO abre %r" % frase, C._disparo(frase), (None, None))
+for frase in NO_ABREN:
+    caso("18. CONTROL las de siempre no abren el fin %r" % frase, C._disparo(frase), (None, None))
+
+base18 = Ciclo()
+base18.nuevo_lote("lote-a", "L-12-10.1", "2026-10-12")
+B._post_de_verdad = base18
+C.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+u = Update(CHAT)
+texto(u, "termino la fermentacion del L-12-10.1, 72 horas")
+caso("18. bot: abre el fin de fermentacion", (C.sesion(CHAT) or {}).get("etapa"), "fin_fermentacion")
+caso("18. ... ensena el resumen con la fecha (hoy) y las horas",
+     ("FIN DE FERMENTACION" in u.message.dichos[-1], "Termino la fermentacion: %s (hoy)" % HOY_TXT in u.message.dichos[-1],
+      "Horas de fermentacion: 72" in u.message.dichos[-1]), (True, True, True))
+caso("18. ... sin escribir nada todavia", [r for r, _c in base18.llamadas if r in (C.RUTA_ETAPA_PROPONER, C.RUTA_ETAPA_CONFIRMAR)], [])
+boton(u, "ltec")
+prop18 = [c for r, c in base18.llamadas if r == C.RUTA_ETAPA_PROPONER]
+caso("18. Confirmar: propone UNA vez etapa, fecha ISO y horas",
+     [(c["etapa"], c["codigo_lote"], c["fecha"], c["horas"]) for c in prop18],
+     [("fin_fermentacion", "L-12-10.1", C.ahora_local().date().isoformat(), 72.0)])
+caso("18. ... no manda cantidad ni garrafas", [("cantidad" in c, "garrafas" in c) for c in prop18], [(False, False)])
+caso("18. ... y confirma", [r for r, _c in base18.llamadas].count(C.RUTA_ETAPA_CONFIRMAR), 1)
+caso("18. ... quedo", ("lote-a", "fin_fermentacion") in base18.etapas, True)
+C.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+u = Update(CHAT)
+texto(u, "ayer acabo la fermentacion del L-12-10.1")
+caso("18. 'ayer': la fecha del resumen es ayer y NO dice (hoy)",
+     ("Termino la fermentacion: %s" % P.fecha_para_persona(C.ahora_local().date() - dt.timedelta(days=1)) in u.message.dichos[-1],
+      "(hoy)" in u.message.dichos[-1]), (True, False))
+boton(u, "ltec")
+prop18 = [c for r, c in base18.llamadas if r == C.RUTA_ETAPA_PROPONER]
+caso("18. ... manda la fecha de ayer y sin horas",
+     (prop18[-1]["fecha"], "horas" in prop18[-1]),
+     ((C.ahora_local().date() - dt.timedelta(days=1)).isoformat(), False))
+C.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+B._post_de_verdad = base
+
+
+# ─── 19. preguntas de lote: SIN modelo y ANTES del cazador (Fase 7B) ────────
+PREGUNTAS_LOTE = [
+    "trazabilidad del lote L-12-10.1",
+    "¿En qué etapa va el lote L-12-10.1?",
+    "como va el L-12-10.1",
+    "historial del lote L-12-10.1",
+    "lotes abiertos",
+    "¿qué lotes hay?",
+    "cuánto se produjo este mes",
+    "producción del mes pasado",
+]
+REGISTROS_LOTE = [
+    "termino la fermentacion del L-12-10.1, 72 horas",
+    "le pusimos 1.5 kg de aditivo 2 al L-12-10.1",
+    "ya destilamos el L-12-10.1: 3 garrafas, 20 kg 43%, 15 kg 8%, 10 kg 30%",
+    "hoy empezamos lote",
+    "envasamos 40 de 750",
+    "Compra 90 g de aditivo 1 en 2008 en efectivo",
+    "se rompieron 2 de 750",
+]
+caso("19. preguntas de lote reconocidas", [B._pregunta_de_lote(t) for t in PREGUNTAS_LOTE], [True] * len(PREGUNTAS_LOTE))
+caso("19. CONTROL: los registros NO son pregunta", [B._pregunta_de_lote(t) for t in REGISTROS_LOTE],
+     [False] * len(REGISTROS_LOTE))
+
+
+class ConPregunta(object):
+    """La base de siempre + `/api/bot/pregunta` con una respuesta fija."""
+
+    def __init__(self, base_, respuesta, estado=200):
+        self.base, self.respuesta, self.estado, self.preguntas = base_, respuesta, estado, []
+
+    def __call__(self, ruta, cuerpo):
+        if ruta == "/api/bot/pregunta":
+            self.preguntas.append(dict(cuerpo))
+            return self.estado, dict(self.respuesta)
+        return self.base(ruta, cuerpo)
+
+
+class LlegoAlModelo(Exception):
+    pass
+
+
+def _modelo(*a, **k):
+    raise LlegoAlModelo()
+
+
+enrutar_antes = B.enrutar
+B.enrutar = _modelo
+base19 = Ciclo()
+base19.nuevo_lote("lote-a", "L-12-10.1", "2026-10-12")
+TRAZA = "LOTE L-12-10.1 — trazabilidad"
+B._post_de_verdad = ConPregunta(base19, {"ok": True, "reconocida": True, "texto": TRAZA})
+C.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+u = Update(CHAT)
+texto(u, "trazabilidad del lote L-12-10.1")
+caso("19. bot: la pregunta va a /api/bot/pregunta con el texto tal cual",
+     [c.get("texto") for c in B._post_de_verdad.preguntas], ["trazabilidad del lote L-12-10.1"])
+caso("19. ... contesta el texto del servidor", u.message.dichos[-1:], [TRAZA])
+caso("19. ... no abre una etapa ni escribe", ((C.sesion(CHAT) or {}).get("etapa"),
+     [r for r, _c in base19.llamadas if r in (C.RUTA_ETAPA_PROPONER, C.RUTA_ETAPA_CONFIRMAR)]), (None, []))
+
+# Un registro con codigo NO pasa por la pregunta: lo toma el cazador de siempre.
+B._post_de_verdad.preguntas[:] = []
+u = Update(CHAT)
+texto(u, "termino la fermentacion del L-12-10.1, 72 horas")
+caso("19. CONTROL: 'termino la fermentacion del L-...' no pregunta; abre el fin",
+     (len(B._post_de_verdad.preguntas), (C.sesion(CHAT) or {}).get("etapa")), (0, "fin_fermentacion"))
+C.olvidar(CHAT)
+B._olvidar_chat(CHAT)
+
+# Servidor sin Fase 7B (master): no la reconoce -> sigue el camino de siempre (el modelo).
+B._post_de_verdad = ConPregunta(base19, {"ok": True, "reconocida": False, "texto": "Esa no la puedo contestar"})
+u = Update(CHAT)
+try:
+    texto(u, "lotes abiertos")
+    llego = False
+except LlegoAlModelo:
+    llego = True
+caso("19. servidor que no la reconoce: pregunto UNA vez y sigue al enrutador", (len(B._post_de_verdad.preguntas), llego),
+     (1, True))
+
+# Sin permiso (DST): el 403 se contesta y no sigue.
+B._post_de_verdad = ConPregunta(base19, {"ok": False, "error": "Esa consulta no te toca con tu alta."}, estado=403)
+u = Update(CHAT)
+texto(u, "cuanto se produjo este mes")
+caso("19. 403: se contesta el error y no llega al modelo", u.message.dichos[-1:], ["Esa consulta no te toca con tu alta."])
+B.enrutar = enrutar_antes
+B._post_de_verdad = base
+
+
 fallos = [(n_, o, e) for n_, o, e in casos if o != e]
 for n_, o, e in casos:
     print(("ok   " if o == e else "FALLA") + "  " + n_ + ("" if o == e else "  -> obtuve %r, esperaba %r" % (o, e)))

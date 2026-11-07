@@ -22,6 +22,7 @@ import { sumarDias, fechaHoraParaPersona, fechaParaPersona } from '@/lib/fechas'
 import { efectoEnCuenta, type MovimientoDinero } from '@/lib/v2/dinero'
 import { pesos } from '@/lib/bot-consultas'
 import { interpretarClientesEInventario, type NombresDelErp, type PreguntaErp } from '@/lib/bot-pregunta-erp'
+import { interpretarLote, type PreguntaLote } from '@/lib/bot-pregunta-lote'
 
 export interface CuentaDePregunta {
   id: string
@@ -43,6 +44,7 @@ export type Pregunta =
   | { tipo: 'detalle_ticket'; folio: string }
   | { tipo: 'ninguna'; motivo: 'no_reconocida' | 'cuenta_ambigua' | 'falta_cuenta'; opciones?: string[] }
   | PreguntaErp
+  | PreguntaLote
 
 /** minusculas, sin acentos, sin signos; espacios simples. */
 export function normalizar(texto: string): string {
@@ -177,6 +179,11 @@ export function interpretarPregunta(
 
   const periodo = periodoDe(t, hoy)
 
+  // Fase 7B: lotes (trazabilidad, etapa, abiertos, produccion del mes). Con el
+  // texto CRUDO: el codigo "L-12-10.1" lleva un punto que `normalizar` quita.
+  const lote = interpretarLote(texto, periodo, hoy)
+  if (lote) return lote
+
   // 2. Movimientos de una cuenta.
   const pideMovs =
     tiene(t, 'movimientos', 'movimiento', 'entradas', 'salidas') ||
@@ -234,6 +241,7 @@ export const LO_QUE_CONTESTO =
   '- ultimos movimientos de Delirio\n' +
   '- cuantas botellas de 750 hay / que hay en la matriz\n' +
   '- inventario total / insumos / que se esta acabando\n' +
+  '- trazabilidad del lote L-12-10.1 / en que etapa va el lote L-12-10.1 / lotes abiertos / cuanto se produjo este mes\n' +
   'Tambien: cuanto hay en Spin, saldos, movimientos de Efectivo de ayer, ventas de la semana, detalle del ticket 1A2B3C4D, precios, produccion, gastos del mes.'
 
 export function textoDeNinguna(p: Extract<Pregunta, { tipo: 'ninguna' }>): string {

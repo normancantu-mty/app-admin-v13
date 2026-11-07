@@ -448,8 +448,35 @@ def olvidar(chat):
     _etapas.pop(chat, None)
 
 
+# Fase 7B (2026-11-07): el fin de la fermentacion es una etapa mas del chat.
+ETAPAS_DEL_CHAT = ("aditivo_2", "destilacion", "fin_fermentacion")
+NOMBRE_ETAPA = {"aditivo_2": "ADITIVO 2", "destilacion": "DESTILACION", "fin_fermentacion": "FIN DE FERMENTACION"}
+DICHO_ETAPA = {"aditivo_2": "aditivo 2", "destilacion": "destilacion", "fin_fermentacion": "termino la fermentacion"}
+
+
 def pregunta_de(etapa, codigo):
-    return _texto("aditivo_2_pregunta" if etapa == "aditivo_2" else "destilacion_pregunta", codigo=codigo)
+    return _texto(etapa + "_pregunta", codigo=codigo)
+
+
+_HORAS = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|horas?)\b")
+_DIAS_ATRAS = re.compile(r"\bhace\s+(\d{1,2})\s+dias?\b")
+
+
+def leer_fin(texto, hoy=None):
+    """Fin de fermentacion: (fecha, horas|None). 'ayer' / 'antier' / 'hace 2
+    dias' mueven la fecha; sin eso es hoy. **Pura.**"""
+    hoy = hoy or ahora_local().date()
+    t = sin_codigo(texto)
+    atras = 0
+    if re.search(r"\bantier\b|\bantes\s+de\s+ayer\b", t):
+        atras = 2
+    elif re.search(r"\bayer\b", t):
+        atras = 1
+    m = _DIAS_ATRAS.search(t)
+    if m:
+        atras = int(m.group(1))
+    h = _HORAS.search(t)
+    return hoy - dt.timedelta(days=atras), (_num(h.group(1)) if h else None)
 
 
 def empezar(chat, etapa, codigo):
@@ -546,10 +573,19 @@ def avisos(s):
 def resumen(s, hoy=None):
     """EL mensaje de confirmacion de la etapa: todo + la fecha de hoy."""
     hoy = hoy or ahora_local().date()
-    nombre = "ADITIVO 2" if s["etapa"] == "aditivo_2" else "DESTILACION"
-    lineas = ["Revisa antes de guardarlo:", "", "LOTE %s - %s" % (s["codigo"], nombre),
-              "Fecha: %s (hoy)" % lote_plantilla.fecha_para_persona(hoy)]
-    if s["etapa"] == "aditivo_2":
+    nombre = NOMBRE_ETAPA.get(s["etapa"], s["etapa"])
+    lineas = ["Revisa antes de guardarlo:", "", "LOTE %s - %s" % (s["codigo"], nombre)]
+    if s["etapa"] == "fin_fermentacion":
+        fecha = s.get("fecha") or hoy
+        lineas.append("Termino la fermentacion: %s%s" % (lote_plantilla.fecha_para_persona(fecha),
+                                                         " (hoy)" if fecha == hoy else ""))
+        if s.get("horas") is not None:
+            lineas.append("Horas de fermentacion: %s" % _bonito(s["horas"]))
+    else:
+        lineas.append("Fecha: %s (hoy)" % lote_plantilla.fecha_para_persona(hoy))
+    if s["etapa"] == "fin_fermentacion":
+        pass
+    elif s["etapa"] == "aditivo_2":
         lineas.append("Aditivo 2: %s %s" % (_bonito(s["cantidad"]), s.get("unidad") or "kg"))
     else:
         lineas.append("Garrafas: %d" % len(s["garrafas"]))
@@ -632,7 +668,7 @@ def _disparo(texto):
     # al inicio ("ya destilamos el L-..., salieron 2 garrafas, lo anotas?") y
     # los mensajes con datos de etapa si la abren. YAML `etapas.no_abren_etapa`.
     excluido = no_abre_etapa(texto)
-    for etapa in ("aditivo_2", "destilacion"):
+    for etapa in ETAPAS_DEL_CHAT:
         e = (cfg().get("etapas") or {}).get(etapa) or {}
         for patron in e.get("disparadores") or []:
             if re.search(patron, t):
@@ -694,7 +730,7 @@ async def atender(update, chat, texto, confirmar=None, post=None):
         if not codigo:
             await update.effective_message.reply_text(
                 "De cual lote? Dimelo con el codigo, por ejemplo: %s L-19-10.1"
-                % ("aditivo 2" if etapa == "aditivo_2" else "destilacion"))
+                % DICHO_ETAPA.get(etapa, etapa))
             return True
         s = empezar(chat, etapa, codigo)
         if nota:
@@ -730,6 +766,14 @@ async def atender(update, chat, texto, confirmar=None, post=None):
 
 async def _capturar(update, s, texto, primera=False):
     """Mete el texto en la etapa. False si no traia nada de la etapa."""
+    if s["etapa"] == "fin_fermentacion":
+        # No hay dato obligatorio: la fecha es hoy (o 'ayer'...) y las horas, si las dicen.
+        fecha, horas = leer_fin(texto)
+        s["fecha"] = fecha
+        if horas is not None:
+            s["horas"] = horas
+        await _ensenar(update, s)
+        return True
     if s["etapa"] == "aditivo_2":
         cantidad, unidad = leer_masa(texto, con_unidad=primera)
         if cantidad is None:
@@ -772,7 +816,11 @@ async def _capturar(update, s, texto, primera=False):
 
 def cuerpo_de_propuesta(s, chat):
     cuerpo = {"telegram_id": chat, "codigo_lote": s["codigo"], "etapa": s["etapa"]}
-    if s["etapa"] == "aditivo_2":
+    if s["etapa"] == "fin_fermentacion":
+        cuerpo["fecha"] = (s.get("fecha") or ahora_local().date()).isoformat()
+        if s.get("horas") is not None:
+            cuerpo["horas"] = s["horas"]
+    elif s["etapa"] == "aditivo_2":
         # Fase 7A: lo dicho con su unidad; el servidor lo pasa a la del catalogo.
         cuerpo["cantidad"] = s["cantidad"]
         cuerpo["unidad"] = s.get("unidad") or "kg"
