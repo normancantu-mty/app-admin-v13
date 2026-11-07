@@ -480,6 +480,8 @@ function fuentesQueRegistranAvisos(): string[] {
     'app/actions/inventario.ts',
     'app/api/bot/abono/confirmar/route.ts',
     'app/api/bot/gasto/confirmar/route.ts',
+    // 2026-11-07: la compra de insumo del bot (W14 del concepto fiscal).
+    'lib/bot-compra-servidor.ts',
     'app/api/finanzas/nuevo/route.ts',
     'lib/venta-servidor.ts'
   ]

@@ -636,6 +636,8 @@ async def _avisar_aprobaciones(update):
 RUTA_CONFIRMAR_DE = {
     None: "/api/bot/gasto/confirmar",
     "gasto": "/api/bot/gasto/confirmar",
+    # 2026-11-07: compra de insumo dictada como gasto (dinero + almacen).
+    "compra_insumo": "/api/bot/gasto/confirmar",
     "venta": "/api/bot/venta/confirmar",
     "abono": "/api/bot/abono/confirmar",
     "cotizacion": "/api/bot/cotizacion/confirmar",
@@ -1030,10 +1032,15 @@ def _teclado_gasto(dato):
     # La foto que llego en vuelo no se leyo con este gasto: se puede despegar.
     quitar = ([[InlineKeyboardButton("Quitar la foto", callback_data="qf:" + bid)]]
               if dato.get("foto_de_vuelo") else [])
+    # 2026-11-07: gasto de insumo sin saber CUAL insumo. Un boton por candidato
+    # (los ofrecio el servidor); tocarlo lo vuelve compra (dinero + almacen).
+    compra = [[InlineKeyboardButton("Entra al almacen: " + str(o.get("nombre") or "")[:40],
+                                    callback_data="cmpi:%d:%s" % (i, bid))]
+              for i, o in enumerate(dato.get("compra_opciones") or [])]
     if dato.get("cuenta_pendiente"):
         cuentas = list(_teclado_cuentas(dato.get("cuentas") or [], bid).inline_keyboard)
-        return InlineKeyboardMarkup(cuentas + otras + [filas[1], filas[3]] + quitar)
-    return InlineKeyboardMarkup(filas[:1] + otras + filas[1:] + quitar)
+        return InlineKeyboardMarkup(cuentas + otras + compra + [filas[1], filas[3]] + quitar)
+    return InlineKeyboardMarkup(filas[:1] + otras + compra + filas[1:] + quitar)
 
 
 _PIE_DE_GASTO = re.compile(r"^\(la cuenta no la elige el modelo[^\n]*$", re.M)
@@ -1924,7 +1931,8 @@ def _reemplazando(chat, borrador_id):
 
 def _soltar_esperas(chat, borrador_id):
     """Un borrador que se apaga se lleva lo que se esperaba por texto para el."""
-    for espera in (_esperando_monto, _esperando_codigo, _esperando_vigencia):
+    for espera in (_esperando_monto, _esperando_codigo, _esperando_vigencia,
+                   _esperando_cantidad_compra):
         if espera.get(chat) == borrador_id:
             espera.pop(chat, None)
 
@@ -2297,6 +2305,28 @@ class _UpdateQueAnota:
 # CAMPOS ya extraidos (`estado='incompleto'`, y **sin sello**, que es lo que los
 # distingue de un borrador de verdad), y el mensaje nuevo solo los completa.
 _esperando_monto = {}
+# 2026-11-07: el gasto de insumo al que le falta CUANTO para volverse compra.
+# El siguiente texto, si es un numero ("50", "50 kg"), es esa cantidad y **no
+# pasa por el modelo**; si no es numero, sigue su camino normal (la pregunta era
+# opcional: el gasto ya esta propuesto y su VA escribe solo el dinero).
+_esperando_cantidad_compra = {}
+_PATRON_CANTIDAD = re.compile(r"\s*\d+(?:[.,]\d+)?\s*[a-zA-Z]{0,12}\s*")
+
+
+def _marcar_espera_compra(chat, r):
+    """Abre (o cierra) la espera de la cantidad segun lo que contesto el servidor."""
+    if (r or {}).get("compra_falta") == "cantidad" and r.get("borrador_id"):
+        _esperando_cantidad_compra[chat] = r["borrador_id"]
+    else:
+        _esperando_cantidad_compra.pop(chat, None)
+
+
+def _cantidad_de_texto(texto):
+    """'50', '50 kg', '1,5 kilos' -> el texto que lee el servidor, o None. **Pura.**"""
+    t = str(texto or "")
+    if not _PATRON_CANTIDAD.fullmatch(t):
+        return None
+    return re.sub(r"(\d),(\d{1,2})(?!\d)", r"\1.\2", t.strip())
 # Igual que `_esperando_monto`, pero para el codigo de un lote: el boton
 # "Otro codigo" abre la captura y el siguiente texto ES el codigo, sin pasar
 # por el modelo.
@@ -2688,7 +2718,10 @@ async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugerida
         "propuesta": dict(propuesta),
         "sugeridas": list(sugeridas or []),
         "cuenta": dict(cuenta or {}),
+        "compra_opciones": list(r.get("compra_opciones") or []),
+        "compra_falta": r.get("compra_falta"),
     }, **_estado_de_cuenta(cuenta, cuentas))
+    _marcar_espera_compra(chat, r)
     _refrescar_catalogo(r)
     mensaje = r["mensaje"]
     _sacar_de_vuelo(chat, foto)
@@ -3827,6 +3860,11 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # esto, "?comprende?" no se puede medir ni hoy ni dentro de un mes. Es su
     # bot, su maquina y sus propios mensajes.
     hechos = _hechos_de(ruta)
+    # 2026-11-07: con un solo hecho, el mensaje entero es de ese hecho. El
+    # servidor lo usa SOLO para la cantidad de una compra de insumo cuando el
+    # concepto no la trae, y la ensena antes del VA.
+    if isinstance(ruta, dict) and len(hechos) <= 1:
+        ruta["texto_dicho"] = texto
     log.info("enrutado como %s (confianza %s) | dijo: %r | entendido: %r | hechos: %s",
              ruta.get("intencion"), ruta.get("confianza"), texto,
              ruta.get("entendido"), [h.get("intencion") for h in hechos])
@@ -4155,7 +4193,10 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
                 pregunta or "Cuanto fue?")
             return
         foto = _foto_para_lo_dictado(chat)
-        await _proponer_gasto_directo(update, chat, _propuesta_de_gasto(campos, _catalogo),
+        propuesta_gasto = _propuesta_de_gasto(campos, _catalogo)
+        if ruta.get("texto_dicho"):
+            propuesta_gasto["texto_dicho"] = str(ruta["texto_dicho"])[:500]
+        await _proponer_gasto_directo(update, chat, propuesta_gasto,
                                       _cuenta_de_campos(campos), campos.get("categorias_sugeridas"),
                                       foto=foto, de_vuelo=bool(foto))
         return
@@ -4563,6 +4604,16 @@ async def _manejar_texto(update, chat, texto):
                                       id_deudor=dato.get("id_deudor"), cuenta=dato.get("cuenta"))
             return
         await _reproponer(update, chat, {"propuesta": {"monto": monto}})
+        return
+
+    # 2026-11-07: la cantidad de un gasto de insumo, para volverlo compra. Si no
+    # es numero, no se consume: el mensaje sigue su camino normal.
+    espera_cmp = _esperando_cantidad_compra.pop(chat, False)
+    cantidad_cmp = _cantidad_de_texto(texto) if espera_cmp else None
+    if cantidad_cmp is not None:
+        if not await _enfocar_espera(update, chat, espera_cmp):
+            return
+        await _reproponer(update, chat, {"propuesta": {"cantidad_insumo": cantidad_cmp}})
         return
 
     # Contestando una pregunta del alta: el correo, o una comision. **No pasa
@@ -5956,7 +6007,10 @@ async def _reproponer(update, chat, cambios):
             "categorias": r.get("categorias", list(_catalogo)),
             "sugeridas": sugeridas,
             "cuenta": {k: v for k, v in cuenta.items() if v},
+            "compra_opciones": list(r.get("compra_opciones") or []),
+            "compra_falta": r.get("compra_falta"),
         }, **_estado_de_cuenta(cuenta, cuentas))
+    _marcar_espera_compra(chat, r)
     _refrescar_catalogo(r)
     # 2026-11-03: el borrador nuevo sustituye al viejo, y se lleva su foto.
     mensaje = r["mensaje"]
@@ -5975,10 +6029,10 @@ ACCIONES_VA = ("va", "vaan", "vaalt", "vacnv", "vaab", "vavt", "valt", "vact", "
 # Los botones de una lista: `<accion>:<i>:<dueno>`, donde el dueno es un borrador o
 # una pregunta (`_lista_de`). Sin dueno el indice no significa nada.
 _ACCIONES_DE_LISTA = ("setdeu", "setcomp", "setcli", "setprod", "setins", "setfmt", "setalta",
-                      "setcnv", "setanu", "setcorr", "setet", "mbe", "setcat", "dup")
+                      "setcnv", "setanu", "setcorr", "setet", "mbe", "setcat", "dup", "cmpi")
 # Los que vuelven a proponer lo mismo con un dato cambiado: sustituyen a su borrador.
 _ACCIONES_QUE_REEMPLAZAN = ("setcta", "setsug", "setcat", "setdeu", "setcomp", "setcli",
-                            "setprod", "setins", "setfmt", "setalta", "setcnv")
+                            "setprod", "setins", "setfmt", "setalta", "setcnv", "cmpi")
 
 
 _PATRON_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -6577,6 +6631,17 @@ async def _accion_de_boton(update, chat, partes, accion):
             await update.effective_message.reply_text("Esa categoria ya no esta en la lista. Dictamelo otra vez.")
             return
         await _reproponer(update, chat, {"propuesta": {"categoria": nueva, "categoria_nueva": None}})
+    elif accion == "cmpi":
+        # 2026-11-07: "Entra al almacen: <insumo>". El id sale de la lista que
+        # ofrecio el servidor, por indice; el servidor lo vuelve a buscar en el
+        # catalogo antes de proponer la compra.
+        dato = _memoria.get(chat) or {}
+        try:
+            elegido = (dato.get("compra_opciones") or [])[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            await update.effective_message.reply_text("Ese insumo ya no esta en la lista. Dictamelo otra vez.")
+            return
+        await _reproponer(update, chat, {"propuesta": {"id_insumo": elegido.get("id")}})
 
 
 async def _consulta_directa(update, consulta, filtro=None):

@@ -58,6 +58,10 @@ export function tipoDelPayload(payload: unknown): TipoPendiente | null {
       return p.tipo
     case 'alta_entidad':
       return 'alta'
+    // 2026-11-07: la compra de insumo dictada como gasto se confirma por la ruta
+    // del gasto (/api/bot/gasto/confirmar la despacha a la compra).
+    case 'compra_insumo':
+      return 'gasto'
     // Fase 8 D81: agregar a un lote existente se confirma por la MISMA ruta
     // (`/api/bot/lote/confirmar`), asi que para el bot es un lote.
     case 'lote_agregar':

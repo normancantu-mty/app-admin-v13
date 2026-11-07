@@ -32,6 +32,7 @@ import {
   type PayloadGasto
 } from '@/lib/bot-gastos'
 import { registrarAviso } from '@/lib/avisos-server'
+import { confirmarCompraDeBorrador, type BorradorCompra } from '@/lib/bot-compra-servidor'
 
 export const dynamic = 'force-dynamic'
 
@@ -100,6 +101,19 @@ export async function POST(request: Request) {
     const identidad = puerta.autor
 
     const guardado = borrador.payload as unknown as BorradorGuardado
+    // 2026-11-07: la compra de insumo dictada como gasto se confirma por aqui
+    // (el bot no sabe de antemano cual de las dos le salio), pero se escribe con
+    // la MISMA funcion que la pantalla de compra: dinero + entrada al almacen.
+    if (guardado?.tipo === 'compra_insumo') {
+      return confirmarCompraDeBorrador(supabase, {
+        borradorId,
+        selloGuardado: String(borrador.sello ?? ''),
+        selloRecibido,
+        guardado: borrador.payload as unknown as BorradorCompra,
+        identidad,
+        modo: puerta.modo
+      })
+    }
     // AG-02: un borrador de ABONO que llegue aqui se rechaza diciendo la verdad.
     // Sin esta linea caeria por sello roto —el hash de un abono nunca empata con
     // el de un gasto— y de paso lo CANCELARIA, que es un dano real por un

@@ -21,6 +21,18 @@ import {
   VENTANA_DUPLICADO_HORAS,
   type MovimientoReciente
 } from '@/lib/bot-gastos'
+import {
+  avisoDeDuplicado,
+  conOjo,
+  derivarCompra,
+  esCategoriaDeInsumo,
+  mensajeDeCompra,
+  ojoDeGastoDeInsumo,
+  payloadDeCompra,
+  sellarCompra,
+  type Derivacion
+} from '@/lib/bot-compra'
+import { leerInsumosDeCompra } from '@/lib/bot-compra-servidor'
 
 export const dynamic = 'force-dynamic'
 
@@ -89,9 +101,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: normalizada.error }, { status: 422 })
     }
 
+    const fila = normalizada.payload
+
+    // ── 2026-11-07: ¿ES COMPRA DE INSUMO? ──────────────────────────────────
+    // Un gasto de insumo con insumo y cantidad claros deja de ser gasto: se
+    // escribe como la pantalla de compra (dinero + entrada al almacen). Si falta
+    // uno de los dos, sigue siendo gasto y el mensaje dice la diferencia y pide
+    // UNA cosa (`lib/bot-compra.ts`).
+    const pedido = (cuerpo.propuesta ?? {}) as Record<string, unknown>
+    const pideInsumo = typeof pedido.id_insumo === 'string' && pedido.id_insumo !== ''
+    const insumos = esCategoriaDeInsumo(fila.categoria) || pideInsumo ? await leerInsumosDeCompra(supabase) : []
+    const derivacion: Derivacion =
+      insumos.length > 0
+        ? derivarCompra({
+            categoria: fila.categoria,
+            subcategoria: fila.subcategoria,
+            descripcion: normalizada.descripcionOriginal,
+            monto: fila.monto,
+            idInsumoElegido: pedido.id_insumo,
+            cantidadContestada: pedido.cantidad_insumo,
+            textoDicho: pedido.texto_dicho,
+            insumos
+          })
+        : { modo: 'gasto', falta: null }
+    const compra = derivacion.modo === 'compra' ? payloadDeCompra(fila, derivacion, identidad.idEntidad) : null
+
     // ── Duplicados: avisa, no bloquea ───────────────────────────────────────
     const desde = new Date(Date.now() - VENTANA_DUPLICADO_HORAS * 60 * 60 * 1000).toISOString()
-    const fila = normalizada.payload
+    const tipoQueSeEscribe = compra ? 'COMPRA_INSUMOS' : fila.tipo_movimiento
+    const origenQueSeEscribe = compra ? compra.id_cuenta_origen : fila.id_cuenta_origen
     // Se busca en la MISMA columna que va a escribir. Buscar duplicados de una
     // compra de insumos entre los gastos con `id_cuenta_destino` no encontraria
     // nunca nada, y un detector que nunca encuentra nada es indistinguible de
@@ -104,13 +142,13 @@ export async function POST(request: Request) {
       const consulta = supabase
         .from('finanzas_ledger')
         .select('id, monto, categoria, descripcion, fecha_movimiento, usuario_creador')
-        .eq('tipo_movimiento', fila.tipo_movimiento)
+        .eq('tipo_movimiento', tipoQueSeEscribe)
         .eq('status', 'ACTIVO')
         .gte('fecha_movimiento', desde)
 
       return (
-        fila.id_cuenta_origen !== null
-          ? consulta.eq('id_cuenta_origen', fila.id_cuenta_origen)
+        origenQueSeEscribe !== null
+          ? consulta.eq('id_cuenta_origen', origenQueSeEscribe)
           : consulta.eq('id_cuenta_destino', fila.id_cuenta_destino as string)
       ) as unknown as ConsultaPaginable<MovimientoReciente>
     }, 'bot/gasto/proponer: duplicados recientes')
@@ -134,7 +172,11 @@ export async function POST(request: Request) {
         .eq('estado', 'PENDIENTE')
     }
 
-    const sello = sellarPayload(normalizada.payload)
+    const sello = compra ? sellarCompra(compra) : sellarPayload(normalizada.payload)
+    const contextoBot = contextoDelCuerpo(cuerpo.contexto_bot, {
+      cuentas: identidad.cuentas,
+      id_cuenta: idCuenta
+    })
 
     const { data: borrador, error } = await supabase
       .from('bot_borradores')
@@ -142,21 +184,32 @@ export async function POST(request: Request) {
         telegram_id: telegramId,
         chat_id: chatDelBorrador(cuerpo.chat_id, telegramId),
         sello,
-        payload: {
-          fila: normalizada.payload,
-          meta: {
-            id_entidad: identidad.idEntidad,
-            id_cuenta: idCuenta,
-            descripcion_original: normalizada.descripcionOriginal,
-            categoria_nueva: normalizada.categoriaNueva,
-            avisos: normalizada.avisos,
-            duplicado_de: duplicado?.id ?? null,
-            contexto_bot: contextoDelCuerpo(cuerpo.contexto_bot, {
-              cuentas: identidad.cuentas,
-              id_cuenta: idCuenta
-            })
-          }
-        } as unknown as Json
+        payload: (compra && derivacion.modo === 'compra'
+          ? {
+              tipo: 'compra_insumo',
+              compra,
+              meta: {
+                id_entidad: identidad.idEntidad,
+                id_cuenta: idCuenta,
+                descripcion_original: normalizada.descripcionOriginal,
+                insumo: derivacion.insumo.nombre,
+                avisos: normalizada.avisos,
+                duplicado_de: duplicado?.id ?? null,
+                contexto_bot: contextoBot
+              }
+            }
+          : {
+              fila: normalizada.payload,
+              meta: {
+                id_entidad: identidad.idEntidad,
+                id_cuenta: idCuenta,
+                descripcion_original: normalizada.descripcionOriginal,
+                categoria_nueva: normalizada.categoriaNueva,
+                avisos: normalizada.avisos,
+                duplicado_de: duplicado?.id ?? null,
+                contexto_bot: contextoBot
+              }
+            }) as unknown as Json
       })
       .select('id')
       .single()
@@ -174,12 +227,32 @@ export async function POST(request: Request) {
       cuentas: identidad.cuentas,
       categorias: catalogo.map((c) => c.nombre),
       categoria_nueva: normalizada.categoriaNueva,
-      mensaje: mensajeDeConfirmacion(
-        normalizada.payload,
-        { nombreCuenta, nombreEntidad: identidad.nombreEntidad },
-        normalizada.avisos,
-        duplicado
-      )
+      // 2026-11-07: `compra_insumo` cuando al VA se escribe dinero + almacen.
+      tipo: compra ? 'compra_insumo' : 'gasto',
+      // Lo que el bot pregunta UNA vez para volverlo compra (botones o numero).
+      compra_falta: derivacion.modo === 'gasto' ? derivacion.falta : null,
+      compra_opciones:
+        derivacion.modo === 'gasto' && derivacion.falta === 'insumo'
+          ? derivacion.opciones.map((i) => ({ id: i.id, nombre: i.nombre }))
+          : [],
+      mensaje:
+        compra && derivacion.modo === 'compra'
+          ? mensajeDeCompra(
+              compra,
+              derivacion.insumo,
+              derivacion.dicho,
+              { nombreCuenta, nombreEntidad: identidad.nombreEntidad },
+              [...(duplicado ? [avisoDeDuplicado(duplicado)] : []), ...normalizada.avisos]
+            )
+          : conOjo(
+              mensajeDeConfirmacion(
+                normalizada.payload,
+                { nombreCuenta, nombreEntidad: identidad.nombreEntidad },
+                normalizada.avisos,
+                duplicado
+              ),
+              ojoDeGastoDeInsumo(derivacion)
+            )
     })
   } catch (e) {
     console.error('[bot] proponer reviento:', e)
