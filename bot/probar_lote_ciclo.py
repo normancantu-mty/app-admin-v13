@@ -952,6 +952,22 @@ B._olvidar_chat(CHAT)
 B._post_de_verdad = base
 
 
+# ─── 18b. leer_fin con fecha DICHA (auditoria 2026-11-07) ────────────────────
+H18 = dt.date(2026, 11, 7)
+caso("18b. 'termino la fermentacion el 5 de noviembre' -> 2026-11-05",
+     C.leer_fin("termino la fermentacion el 5 de noviembre", H18), (dt.date(2026, 11, 5), None))
+caso("18b. con codigo y horas: '... del L-12-10.1 el 5 de noviembre, 72 horas'",
+     C.leer_fin("termino la fermentacion del L-12-10.1 el 5 de noviembre, 72 horas", H18), (dt.date(2026, 11, 5), 72))
+caso("18b. '5/11' -> 2026-11-05", C.leer_fin("acabo la fermentacion el 5/11", H18)[0], dt.date(2026, 11, 5))
+caso("18b. ISO '2026-11-04'", C.leer_fin("fin de fermentacion 2026-11-04", H18)[0], dt.date(2026, 11, 4))
+caso("18b. sin anio y futuro (28 de diciembre) -> el del anio pasado",
+     C.leer_fin("termino la fermentacion el 28 de diciembre", H18)[0], dt.date(2025, 12, 28))
+caso("18b. la fecha dicha manda sobre 'ayer'", C.leer_fin("ayer no, termino el 3 de nov", H18)[0], dt.date(2026, 11, 3))
+caso("18b. CONTROL: sin fecha sigue siendo hoy", C.leer_fin("termino la fermentacion del L-12-10.1, 72 horas", H18),
+     (H18, 72))
+caso("18b. CONTROL: '31 de febrero' no es fecha -> hoy", C.leer_fin("termino el 31 de febrero", H18)[0], H18)
+
+
 # ─── 19. preguntas de lote: SIN modelo y ANTES del cazador (Fase 7B) ────────
 PREGUNTAS_LOTE = [
     "trazabilidad del lote L-12-10.1",

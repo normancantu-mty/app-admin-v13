@@ -564,6 +564,17 @@ export async function POST(request: Request) {
       }
     }
     if (pregunta.tipo === 'ninguna') {
+      // Auditoria 2026-11-07: los nombres de los candidatos son datos de la
+      // empresa. El permiso va ANTES de ensenarlos: quien no ve todo recibe lo
+      // mismo que en cualquier pregunta de la Fase 6 (acotada / 403), sin nombres.
+      if (pregunta.motivo === 'cliente_ambiguo') {
+        const tipoDestino: Pregunta['tipo'] = pregunta.para === 'movimientos' ? 'movimientos_cliente' : 'deuda_cliente'
+        const permisoAmb = permisoDeConsulta(actor, CONSULTA_DE_PREGUNTA[tipoDestino])
+        if (!permisoAmb.ok) return NextResponse.json({ error: NO_TE_TOCA }, { status: 403 })
+        if (permisoAmb.alcance !== 'todo') {
+          return NextResponse.json({ ok: true, reconocida: false, motivo: 'acotada', texto: ACOTADA, privado: false })
+        }
+      }
       const opciones =
         pregunta.motivo === 'cliente_ambiguo'
           ? { para: pregunta.para, opciones: pregunta.candidatos.map((c: EntidadDePregunta) => ({ id: c.id, nombre: c.nombre })) }

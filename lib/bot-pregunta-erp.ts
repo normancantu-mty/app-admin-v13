@@ -492,7 +492,9 @@ export interface StockDeInsumo {
  * Stock de cada insumo por entidad: el cuerpo de `v_insumos_en_negativo` SIN su
  * `HAVING stock < 0`. Suma en destino lo que es entrada, resta en origen lo que
  * es salida (un traslado cae en las dos), solo ACTIVO/APPROVED, redondeo a 4.
- * La comparacion contra la vista esta en el informe de la Fase 6. **Pura.**
+ * Contrastada con datos reales el 2026-11-07 (SELECT de solo lectura): 15/15
+ * insumos iguales al cuerpo de la vista sin el HAVING; tabla en
+ * Socio/planes/DESDE_EJECUTOR_bot_erp_paridad_web_2026-11-07.md (Auditoria). **Pura.**
  */
 export function stockDeInsumos(
   movs: readonly MovimientoDeInsumo[],
@@ -604,8 +606,15 @@ export function textoSeAcaba(
   const sinExistencia = catalogo.filter((p) => p.tipo === 'TERMINADO' && !termMatriz.has(p.nombre)).map((p) => p.nombre)
   if (sinExistencia.length) lineas.push('', `Terminado sin existencia en la matriz: ${sinExistencia.join(', ')}`)
   if (enMatriz.length) {
-    lineas.push('', 'Lo que menos queda en la matriz (solo el orden, sin umbral):')
-    for (const x of enMatriz.sort((a, b) => a.c - b.c).slice(0, 6)) lineas.push(`   ${x.nombre}: ${cantidad(x.c)} ${x.u}`)
+    // Auditoria 2026-11-07: 180 g no es "menos" que 5 kg ni que 30 pzas. Se
+    // ordena DENTRO de cada unidad, nunca entre unidades.
+    lineas.push('', 'Lo que menos queda en la matriz, por unidad (solo el orden, sin umbral):')
+    const porUnidad = new Map<string, typeof enMatriz>()
+    for (const x of enMatriz) porUnidad.set(x.u, [...(porUnidad.get(x.u) ?? []), x])
+    for (const [u, xs] of [...porUnidad].sort((a, b) => a[0].localeCompare(b[0]))) {
+      lineas.push(`   En ${u}:`)
+      for (const x of xs.sort((a, b) => a.c - b.c).slice(0, 3)) lineas.push(`      ${x.nombre}: ${cantidad(x.c)} ${x.u}`)
+    }
   }
   return lineas.join('\n')
 }

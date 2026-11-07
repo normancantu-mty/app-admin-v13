@@ -119,7 +119,7 @@ function numero(v: unknown): number | null {
 
 export interface PedidoEtapa {
   etapa: unknown
-  /** Lo dicho del aditivo 2. `cantidad` + `unidad` ('kg'|'g'); `kg` es el campo viejo (= cantidad en kg). */
+  /** Lo dicho del aditivo 2. `cantidad` + `unidad` ('kg'|'g'); `kg` es el campo viejo: se RECHAZA pidiendo la unidad (auditoria 2026-11-07). */
   cantidad?: unknown
   unidad?: unknown
   kg?: unknown
@@ -171,9 +171,15 @@ export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): Result
     ...(String(pedido.notas ?? '').trim() !== '' ? { notas: String(pedido.notas).trim().slice(0, 500) } : {})
   }
   if (pedido.etapa === 'aditivo_2') {
+    // Fase 7 (auditoria 2026-11-07): el campo viejo `kg` (bot sin actualizar)
+    // NO se multiplica en silencio: se rechaza pidiendo la unidad. El bot nuevo
+    // manda `cantidad` + `unidad` ("800 g", "1.5 kg").
     const conCantidad = pedido.cantidad !== undefined && pedido.cantidad !== null && pedido.cantidad !== ''
-    const valor = numero(conCantidad ? pedido.cantidad : pedido.kg)
-    const dicha = conCantidad ? String(pedido.unidad ?? '').trim().toLowerCase() : 'kg'
+    if (!conCantidad && pedido.kg !== undefined && pedido.kg !== null && pedido.kg !== '') {
+      return { ok: false, error: 'Dime si el aditivo 2 fue en gramos o en kilos (por ejemplo "800 g" o "1.5 kg").' }
+    }
+    const valor = numero(pedido.cantidad)
+    const dicha = String(pedido.unidad ?? '').trim().toLowerCase()
     if (valor === null || valor <= 0) return { ok: false, error: 'No entendi cuanto aditivo 2 le pusieron.' }
     if (dicha !== 'kg' && dicha !== 'g') {
       return { ok: false, error: 'Dime si el aditivo 2 fue en gramos o en kilos (por ejemplo "800 g" o "1.5 kg").' }

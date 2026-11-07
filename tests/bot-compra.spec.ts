@@ -536,6 +536,18 @@ test.describe('bug en vivo 2026-11-07: compra de aditivo en GRAMOS', () => {
     expect(((b.payload as Fila).compra as Fila)).toMatchObject({ id_insumo: 'i-ad2', cantidad: 1000, costo_total: 500, id_cuenta_origen: 'c-spin' })
   })
 
+  test('el numero que NOMBRA al insumo no es la cantidad, pero el mismo numero como cantidad si (auditoria)', () => {
+    const base = { categoria: 'Costo de producción', subcategoria: null, insumos: INSUMOS_EN_GRAMOS }
+    const b750 = derivarCompra({ ...base, descripcion: '750 botellas de 750', monto: 9000, textoDicho: 'compre 750 botellas de 750 a 9000' })
+    expect(b750.modo === 'compra' && [b750.insumo.id, b750.cantidad]).toEqual(['i-b750', 750])
+    const b250 = derivarCompra({ ...base, descripcion: '250 botellas de 250', monto: 3000, textoDicho: 'compre 250 botellas de 250 a 3000' })
+    expect(b250.modo === 'compra' && [b250.insumo.id, b250.cantidad]).toEqual(['i-b250', 250])
+    // "aditivo 1 en 2008": el 1 es el nombre y el 2008 el monto -> sin cantidad, se pregunta.
+    const ad1 = derivarCompra({ ...base, subcategoria: 'Aditivo 1', descripcion: 'aditivo 1', monto: 2008, textoDicho: 'aditivo 1 en 2008' })
+    expect(ad1).toMatchObject({ modo: 'gasto', falta: 'cantidad' })
+    expect(ad1.modo === 'gasto' && ad1.falta === 'cantidad' && ad1.insumo.id).toBe('i-ad1')
+  })
+
   test('ruta: si el modelo le pone otra categoria, "compra ..." igual va a compra', async () => {
     conGramos()
     const p = await llamar('gasto/proponer', {

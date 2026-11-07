@@ -312,8 +312,10 @@ test.describe('envasado diario (ronda 5, B): nunca abre ni pide un lote', () => 
   })
 })
 
-test.describe('Fase 7A: el dia de produccion con el aditivo 1 en GRAMOS', () => {
-  test('la plantilla manda 8 kg de aditivo 1 con unidad kg -> el borrador lleva 8000 (g); el chile en kg queda igual', async () => {
+test.describe('Fase 7: el dia de produccion con el aditivo 1 en GRAMOS', () => {
+  // Norman 2026-11-07: "no quiero la equivalencia, quiero que sean 180 gramos".
+  // La plantilla pregunta el aditivo 1 EN GRAMOS y lo manda con unidad 'g'.
+  test('la plantilla manda 8 g de aditivo 1 -> el borrador lleva 8 (g), no 8000; el chile en kg queda igual', async () => {
     estadoInicial()
     tablas.lotes = []
     const r = await llamar('lote/proponer', {
@@ -321,7 +323,7 @@ test.describe('Fase 7A: el dia de produccion con el aditivo 1 en GRAMOS', () => 
       chat_id: NORMAN,
       insumos: [
         { insumo: 'chile-guajillo', cantidad: 40, unidad: 'kg' },
-        { insumo: 'mosto-1', cantidad: 8, unidad: 'kg' }
+        { insumo: 'mosto-1', cantidad: 8, unidad: 'g' }
       ],
       envasado: [],
       propuesta: { codigo_lote: 'L-07-11.1' }
@@ -330,8 +332,19 @@ test.describe('Fase 7A: el dia de produccion con el aditivo 1 en GRAMOS', () => 
     const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { lote: { entradas: Fila[] } } }
     expect(b.payload.lote.entradas).toEqual([
       { id_insumo: 'chile-g', cantidad: 40 },
-      { id_insumo: 'ad1', cantidad: 8000 }
+      { id_insumo: 'ad1', cantidad: 8 }
     ])
+  })
+
+  test('solo si lo DIJERON en kilos ("8 kg de aditivo", la plantilla lo pasa a 8000 g) el borrador lleva 8000', async () => {
+    estadoInicial()
+    tablas.lotes = []
+    const r = await llamar('lote/proponer', {
+      telegram_id: NORMAN, chat_id: NORMAN, insumos: [{ insumo: 'mosto-1', cantidad: 8, unidad: 'kg' }], envasado: [], propuesta: { codigo_lote: 'L-07-11.1' }
+    })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { lote: { entradas: Fila[] } } }
+    expect(b.payload.lote.entradas).toEqual([{ id_insumo: 'ad1', cantidad: 8000 }])
   })
 
   test('sin unidad (camino del modelo) la cantidad va tal cual en la unidad del catalogo', async () => {

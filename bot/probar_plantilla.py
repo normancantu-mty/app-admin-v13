@@ -190,9 +190,10 @@ def seguir(texto, doble, dichos, modelo=None):
 
 def aditivo(pet):
     for i in pet.get("insumos") or []:
-        # Fase 7: el SKU del YAML (mosto-1 en produccion), y va con su unidad 'kg'.
+        # Fase 7: el SKU del YAML (mosto-1 en produccion), en GRAMOS (la unidad
+        # del catalogo; Norman 2026-11-07: "quiero que sean 180 gramos").
         if i.get("insumo") == B.lote_plantilla.plantilla().get("aditivo_1_sku"):
-            assert i.get("unidad") == "kg", i
+            assert i.get("unidad") == "g", i
             return i.get("cantidad")
     return None
 
@@ -204,21 +205,21 @@ caso("1. 'empecemos' abre la plantilla SIN modelo", modelo.veces, 0)
 caso("1. la plantilla va encabezada por el codigo L-DD-MM.N de hoy", dichos[0].split("\n")[0], HOY_COD)
 caso("1. ... con las 4 preguntas nuevas, numeradas",
      [l for l in dichos[0].split("\n") if re.match(r"^\d\. ", l)],
-     ["1. Kilos de chile y tipo de chile", "2. Brix chile", "3. Kilos aditivo 1", "4. Brix final"])
+     ["1. Kilos de chile y tipo de chile", "2. Brix chile", "3. Gramos de aditivo 1", "4. Brix final"])
 caso("1. ... sin dias de fermentacion ni tandas",
      ("dias" in dichos[0].lower(), "tanda" in dichos[0].lower()), (False, False))
 caso("1. luego pregunta SOLO lo que falta (<=4)", (dichos[1].startswith("Me falta:"), numeradas(dichos[1])), (True, 3))
 res = dichos[-1]
 caso("1. al final: el resumen con TODO y la fecha de hoy",
      (HOY_COD in res, ("Fecha: %s (hoy)" % HOY_TXT) in res, "Kilos de chile: 40 kg" in res, "Tipo de chile: guajillo" in res,
-      "Brix chile: 12" in res, "Kilos aditivo 1: 3 kg" in res, "Brix final: 18" in res), (True,) * 7)
+      "Brix chile: 12" in res, "Aditivo 1: 3000 g" in res, "Brix final: 18" in res), (True,) * 7)
 caso("1. ... y NADA se propuso antes de Confirmar", len(doble.lotes()), 0)
 caso("1. ... ninguna respuesta con mas de 4 numeradas", max(numeradas(d) for d in dichos) <= 4, True)
 boton("ltok", doble, dichos)
 lotes = doble.lotes()
 pet = lotes[-1] if lotes else {}
 caso("1. Confirmar: UNA propuesta", len(lotes), 1)
-caso("1. ... kilos de chile y aditivo 1 por SKU opaco", (kilos(pet), aditivo(pet)), (40, 3))
+caso("1. ... kilos de chile y aditivo 1 por SKU opaco ('3 kilos' DICHOS -> 3000 g)", (kilos(pet), aditivo(pet)), (40, 3000))
 caso("1. ... Brix chile y final", ((pet.get("propuesta") or {}).get("brix_chile"), (pet.get("propuesta") or {}).get("brix_final")),
      (12, 18))
 caso("1. ... el codigo que se enseno", (pet.get("propuesta") or {}).get("codigo_lote"), HOY_COD)
@@ -271,13 +272,33 @@ pet = (doble.lotes() or [{}])[-1]
 caso("1d. ... dos renglones de insumo por SKU",
      sorted((i.get("insumo"), i.get("cantidad")) for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))),
      [("chile-guajillo", 30), ("chile-guajon", 10)])
-caso("1d. ... y el aditivo 1 sigue", aditivo(pet), 3)
+caso("1d. ... y el aditivo 1 sigue", aditivo(pet), 3000)
 
 # ─── 2. numeradas en un mensaje; "confirmar" dicho ──────────────────────────
 dichos, doble, modelo = conversar(["dame la plantilla del lote", "1. 35 guajon 2. 11.5 3. 2.5 4. 17", "confirmar"])
 pet = (doble.lotes() or [{}])[-1]
 caso("2. numeradas: todo de una", (kilos(pet), aditivo(pet), pet.get("propuesta", {}).get("brix_chile"),
                                    pet.get("propuesta", {}).get("brix_final")), (35, 2.5, 11.5, 17))
+
+# Fase 7 (2026-11-07): el aditivo 1 se pregunta EN GRAMOS (unidad del catalogo).
+# Un numero solo = gramos; la unidad dicha se respeta. Ninguna conversion callada.
+P_ = B.lote_plantilla
+C_AD1 = P_._campo("aditivo_1")
+caso("2b. el YAML pregunta el aditivo 1 en gramos", (C_AD1["unidad"], "gramos" in C_AD1["pregunta"]), ("g", True))
+caso("2b. el rango acepta una receta de 8 g y una de 8 kg (solo avisa)",
+     (C_AD1["rango"][0] <= 8 <= C_AD1["rango"][1], C_AD1["rango"][0] <= 8000 <= C_AD1["rango"][1]), (True, True))
+caso("2b. numeradas '3. 8' -> 8 g", P_.leer("1. 35 guajon 2. 11.5 3. 8 4. 17", [["kg_chile", "tipo_chile"], ["brix_chile"],
+                                                                                   ["aditivo_1"], ["brix_final"]])["campos"]["aditivo_1"], 8)
+caso("2b. numeradas '3. 8 kg' -> 8000 g", P_.leer("1. 35 guajon 2. 11.5 3. 8 kg 4. 17", [["kg_chile", "tipo_chile"], ["brix_chile"],
+                                                                                        ["aditivo_1"], ["brix_final"]])["campos"]["aditivo_1"], 8000)
+caso("2b. solo '8' a la pregunta del aditivo -> 8 g", P_.leer("8", [["aditivo_1"]])["campos"].get("aditivo_1"), 8)
+caso("2b. '800 g de aditivo' -> 800", P_.leer("800 g de aditivo")["campos"].get("aditivo_1"), 800)
+caso("2b. '1.5 kilos de aditivo' -> 1500", P_.leer("1.5 kilos de aditivo")["campos"].get("aditivo_1"), 1500)
+caso("2b. CONTROL: '40 kilos de chile' sigue en kg (40), no en gramos",
+     P_.leer("40 kilos de chile")["campos"].get("kg_chile"), 40)
+caso("2b. peticion: el aditivo va con la unidad del campo",
+     [i for i in P_.campos_para_peticion({"campos": {"aditivo_1": 8}, "codigo": None})["insumos"]],
+     [{"insumo": "mosto-1", "cantidad": 8, "unidad": "g"}])
 caso("2. ... 'confirmar' (dicho o por voz) confirma", doble.confirmados, 1)
 caso("2. ... guajon por su SKU", [i.get("insumo") for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))],
      ["chile-guajon"])

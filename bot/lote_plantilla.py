@@ -81,6 +81,26 @@ def _num(s):
     return int(v) if v == int(v) else v
 
 
+# Fase 7 (2026-11-07): la unidad DICHA en el tramo ("8 kg", "800 g"). Un
+# campo de masa guarda su valor en SU `unidad` (YAML); si lo dijeron en la otra,
+# se pasa, porque lo DIJERON (no se adivina: un numero solo queda tal cual).
+_KILOS = re.compile(r"\d\s*(kilos?|kgs?|kilogramos?)\b")
+_GRAMOS = re.compile(r"\d\s*(g|gr|grs|gramos?)\b")
+
+
+def a_unidad_del_campo(c, valor, tramo):
+    """**Pura.** `valor` dicho en `tramo` -> en la `unidad` del campo `c`."""
+    if not isinstance(valor, (int, float)) or (c or {}).get("unidad") not in ("g", "kg"):
+        return valor
+    t = _plano(tramo)
+    dicha = "kg" if _KILOS.search(t) else "g" if _GRAMOS.search(t) else None
+    if dicha is None or dicha == c["unidad"]:
+        return valor
+    v = valor * 1000 if dicha == "kg" else valor / 1000.0
+    v = round(v, 6)
+    return int(v) if v == int(v) else v
+
+
 def _campo(nombre):
     for c in plantilla()["campos"]:
         if c["nombre"] == nombre:
@@ -281,7 +301,7 @@ def leer(texto, preguntadas=()):
                     continue
                 tomar(m)
                 if c["tipo"] == "numero":
-                    campos.setdefault(c["nombre"], _num(m.group(1)))
+                    campos.setdefault(c["nombre"], a_unidad_del_campo(c, _num(m.group(1)), m.group(0)))
                 elif c["tipo"] == "texto":
                     campos.setdefault(c["nombre"], m.group(1))
     for e in p.get("extras") or []:
@@ -388,12 +408,17 @@ def renglones_de_chile(campos):
     conocidos = chiles_conocidos()
     mezcla = campos.get("chiles")
     if isinstance(mezcla, dict) and mezcla:
-        return [{"insumo": conocidos[k], "cantidad": v, "unidad": "kg"} for k, v in sorted(mezcla.items()) if k in conocidos]
+        return [{"insumo": conocidos[k], "cantidad": v, "unidad": _unidad_chile()} for k, v in sorted(mezcla.items())
+                if k in conocidos]
     tipo = _plano(campos.get("tipo_chile") or "").strip()
     kg = campos.get("kg_chile")
     if kg in (None, "", 0) or tipo not in conocidos:
         return []
-    return [{"insumo": conocidos[tipo], "cantidad": kg, "unidad": "kg"}]
+    return [{"insumo": conocidos[tipo], "cantidad": kg, "unidad": _unidad_chile()}]
+
+
+def _unidad_chile():
+    return (_campo("kg_chile") or {}).get("unidad") or 'kg'
 
 
 def _valores_de_item(nombres, texto):
@@ -411,7 +436,7 @@ def _valores_de_item(nombres, texto):
         c = _campo(nombre) or {}
         if c.get("tipo") == "numero":
             if i_num < len(numeros):
-                salida[nombre] = _num(numeros[i_num])
+                salida[nombre] = a_unidad_del_campo(c, _num(numeros[i_num]), texto)
                 i_num += 1
         elif c.get("tipo") == "texto":
             valor = None
@@ -432,7 +457,7 @@ def _valores_de_item(nombres, texto):
 # ── preguntar ───────────────────────────────────────────────────────────────
 
 # Lo que el enrutador puede traer que la plantilla entiende (el resto se ignora).
-NOMBRES_DE_CAMPO = ("kg_chile", "tipo_chile", "brix_chile", "kg_aditivo_1", "brix_final", "codigo_lote")
+NOMBRES_DE_CAMPO = ("kg_chile", "tipo_chile", "brix_chile", "aditivo_1", "brix_final", "codigo_lote")
 
 
 def faltan(s):
@@ -518,11 +543,12 @@ def campos_para_peticion(s):
     insumos = renglones_de_chile(s["campos"])
     if insumos:
         c.pop("kg_chile", None)  # va como renglon(es) con su SKU, no suelto
-    kg_ad = s["campos"].get("kg_aditivo_1")
-    if kg_ad not in (None, "", 0):
-        # Fase 7A: se dicta en KILOS (pregunta del YAML) y el catalogo lo lleva en
-        # GRAMOS: va con su unidad y el servidor convierte (8 kg -> 8000 g).
-        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "mosto-1", "cantidad": kg_ad, "unidad": "kg"})
+    ad1 = s["campos"].get("aditivo_1")
+    if ad1 not in (None, "", 0):
+        # Fase 7: va en la unidad del campo (YAML, la del catalogo: g). El
+        # servidor la pasa a la del catalogo; con g -> GRAMOS queda igual.
+        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "mosto-1", "cantidad": ad1,
+                        "unidad": (_campo("aditivo_1") or {}).get("unidad") or "g"})
     if insumos:
         c["insumos"] = insumos
     return c

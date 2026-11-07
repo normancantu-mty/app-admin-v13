@@ -460,13 +460,60 @@ def pregunta_de(etapa, codigo):
 
 _HORAS = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|horas?)\b")
 _DIAS_ATRAS = re.compile(r"\bhace\s+(\d{1,2})\s+dias?\b")
+# Auditoria 2026-11-07: la fecha DICHA ("el 5 de noviembre", "5/11",
+# "2026-11-05") manda sobre hoy/ayer. Sin anio: el mas reciente que no sea futuro.
+_MESES = {"enero": 1, "ene": 1, "febrero": 2, "feb": 2, "marzo": 3, "mar": 3, "abril": 4, "abr": 4,
+          "mayo": 5, "may": 5, "junio": 6, "jun": 6, "julio": 7, "jul": 7, "agosto": 8, "ago": 8,
+          "septiembre": 9, "setiembre": 9, "sept": 9, "sep": 9, "octubre": 10, "oct": 10,
+          "noviembre": 11, "nov": 11, "diciembre": 12, "dic": 12}
+_FECHA_MES = re.compile(r"\b(\d{1,2})\s+de\s+(%s)\b(?:\s+(?:de|del)\s+(\d{4}))?"
+                        % "|".join(sorted(_MESES, key=len, reverse=True)))
+_FECHA_ISO = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
+_FECHA_BARRA = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2}|\d{4}))?\b")
+
+
+def fecha_dicha(texto, hoy):
+    """La fecha escrita en el texto, o None. **Pura.**"""
+    t = sin_codigo(texto)
+    trio = None
+    m = _FECHA_ISO.search(t)
+    if m:
+        trio = (int(m.group(1)), int(m.group(2)), int(m.group(3)), True)
+    else:
+        m = _FECHA_MES.search(t)
+        if m:
+            trio = (int(m.group(3)) if m.group(3) else hoy.year, _MESES[m.group(2)], int(m.group(1)), bool(m.group(3)))
+        else:
+            m = _FECHA_BARRA.search(t)
+            if m:
+                anio = m.group(3)
+                anio = (2000 + int(anio) if len(anio) == 2 else int(anio)) if anio else hoy.year
+                trio = (anio, int(m.group(2)), int(m.group(1)), bool(m.group(3)))
+    if not trio:
+        return None
+    anio, mes, dia, con_anio = trio
+    try:
+        f = dt.date(anio, mes, dia)
+    except ValueError:
+        return None
+    if not con_anio and f > hoy:
+        try:
+            f = dt.date(anio - 1, mes, dia)
+        except ValueError:
+            return None
+    return f
 
 
 def leer_fin(texto, hoy=None):
-    """Fin de fermentacion: (fecha, horas|None). 'ayer' / 'antier' / 'hace 2
-    dias' mueven la fecha; sin eso es hoy. **Pura.**"""
+    """Fin de fermentacion: (fecha, horas|None). Una fecha dicha ("el 5 de
+    noviembre") manda; si no, 'ayer' / 'antier' / 'hace 2 dias' mueven la
+    fecha; sin nada es hoy. **Pura.**"""
     hoy = hoy or ahora_local().date()
     t = sin_codigo(texto)
+    h = _HORAS.search(t)
+    dicha = fecha_dicha(texto, hoy)
+    if dicha is not None:
+        return dicha, (_num(h.group(1)) if h else None)
     atras = 0
     if re.search(r"\bantier\b|\bantes\s+de\s+ayer\b", t):
         atras = 2

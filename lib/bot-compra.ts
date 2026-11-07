@@ -120,6 +120,22 @@ export function leerCantidad(texto: unknown, monto?: number | null): CantidadDic
 }
 
 /**
+ * Como `leerCantidad`, pero sin el numero que NOMBRA al insumo: un numero sin
+ * unidad pegado detras de una palabra del nombre ("aditivo 1") es el nombre, no
+ * la cantidad. "750 botellas de 750" si da 750: el primero no va detras de una
+ * palabra del nombre (auditoria 2026-11-07). **Pura.**
+ */
+export function leerCantidadSinNombre(texto: unknown, monto: number | null | undefined, nombreInsumo: string): CantidadDicha | null {
+  const tokens = limpiar(String(texto ?? '')).split(' ').filter((t) => t !== '')
+  const k = claves(nombreInsumo)
+  const candidatos = candidatosDeCantidad(tokens, monto).filter(
+    (x) => !(x.c.unidad === null && k.numeros.has(tokens[x.i]) && k.palabras.has(singular(tokens[x.i - 1] ?? '')))
+  )
+  const conUnidad = candidatos.find((x) => x.c.unidad !== null)
+  return (conUnidad ?? candidatos[0])?.c ?? null
+}
+
+/**
  * Los numeros que nombran QUE insumo ("de 750", "aditivo 1"): ni la cantidad,
  * ni el precio ("a 12"), ni el monto. **Pura.**
  */
@@ -321,14 +337,14 @@ export function derivarCompra(e: EntradaDerivacion): Derivacion {
   }
 
   const contestada = String(e.cantidadContestada ?? '').trim()
-  // Un numero SIN unidad que es parte del nombre del insumo ("aditivo 1") no es
-  // la cantidad: se busca en el mensaje entero (bug en vivo 2026-11-07).
-  const delNombre = (c: CantidadDicha | null) =>
-    c && c.unidad === null && claves(insumo!.nombre).numeros.has(String(c.valor)) ? null : c
+  // Un numero SIN unidad que nombra al insumo ("aditivo 1") no es la cantidad:
+  // se busca en el mensaje entero (bug en vivo 2026-11-07). "750 botellas de
+  // 750" si es 750 (auditoria 2026-11-07).
+  const nombre = insumo.nombre
   const dicho =
     contestada !== ''
       ? leerCantidad(contestada)
-      : delNombre(leerCantidad(e.descripcion, e.monto)) ?? delNombre(leerCantidad(e.textoDicho, e.monto))
+      : leerCantidadSinNombre(e.descripcion, e.monto, nombre) ?? leerCantidadSinNombre(e.textoDicho, e.monto, nombre)
   if (!dicho) return { modo: 'gasto', falta: 'cantidad', insumo, motivo: null }
   const convertida = aUnidadDelInsumo(dicho, insumo.unidad_medida)
   if (!convertida.ok) return { modo: 'gasto', falta: 'cantidad', insumo, motivo: convertida.motivo }

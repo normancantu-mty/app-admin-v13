@@ -19,6 +19,7 @@ import {
   stockDeInsumos,
   textoBotellas,
   textoDeudaCliente,
+  textoSeAcaba,
   type EntidadDePregunta,
   type NombresDelErp,
   type ProductoDePregunta
@@ -148,6 +149,33 @@ test.describe('textos y reglas (puras)', () => {
     expect(textoDeudaCliente(ENTIDADES[1], null)).toContain('no aparece en la cartera')
     expect(textoDeudaCliente(ENTIDADES[1], null)).not.toMatch(/\$\d/)
     expect(textoDeudaCliente(ENTIDADES[1], filaCartera({ id_acreedor: ID.gil }))).toContain('con su distribuidor')
+  })
+
+  test('"lo que menos queda" ordena dentro de cada unidad, nunca gramos contra piezas (auditoria)', () => {
+    const rolDe = new Map([[ID.matriz, 'ADMIN']])
+    const t = textoSeAcaba(
+      [],
+      [{ id_entidad: ID.matriz, entidad: 'Matriz', id_producto: 'p-750', producto: 'Destilado 750', cubeta: 'PAGADO', stock: 30 }],
+      [
+        { id_entidad: ID.matriz, entidad: 'Matriz', id_producto: 'i-ad1', insumo: 'Aditivo 1', unidad_medida: 'GRAMOS', stock: 180 },
+        { id_entidad: ID.matriz, entidad: 'Matriz', id_producto: 'i-ad2', insumo: 'Aditivo 2', unidad_medida: 'GRAMOS', stock: 90 },
+        { id_entidad: ID.matriz, entidad: 'Matriz', id_producto: 'i-ch', insumo: 'Chile Guajillo', unidad_medida: 'KILOGRAMOS', stock: 5 },
+        { id_entidad: ID.matriz, entidad: 'Matriz', id_producto: 'i-co', insumo: 'Corcho', unidad_medida: 'PIEZAS', stock: 900 }
+      ],
+      [],
+      rolDe
+    )
+    const bloque = t.slice(t.indexOf('Lo que menos queda'))
+    expect(bloque).toContain('por unidad')
+    const lineas = bloque.split('\n').map((l) => l.trim())
+    // Cada cosa bajo SU unidad, y dentro de la unidad de menor a mayor.
+    const iG = lineas.indexOf('En g:')
+    const iKg = lineas.indexOf('En kg:')
+    const iPz = lineas.indexOf('En pzas:')
+    expect([iG, iKg, iPz].every((i) => i >= 0), bloque).toBe(true)
+    expect(lineas.slice(iG + 1, iG + 3)).toEqual(['Aditivo 2: 90 g', 'Aditivo 1: 180 g'])
+    expect(lineas[iKg + 1]).toBe('Chile Guajillo: 5 kg')
+    expect(lineas.slice(iPz + 1, iPz + 3)).toEqual(['Destilado 750: 30 pzas', 'Corcho: 900 pzas'])
   })
 
   test('movimientos del cliente con las reglas de v_cartera', () => {
@@ -453,6 +481,18 @@ test.describe('/api/bot/pregunta Fase 6 (PostgREST falso)', () => {
     }
     expect(peticiones).not.toContain('GET v_cartera')
     expect(peticiones).not.toContain('GET v_stock_por_cubeta')
+  })
+
+  test('nombre ambiguo: a quien no ve todo NO se le ensenan los nombres (permiso antes que opciones)', async () => {
+    tablas.entidades.push({ id: ID.gilr, nombre: 'Gilberto Ruiz', rol: 'LOC', id_padre: null, id_nodo_padre: null })
+    const loc = await texto('cuanto debe gilberto', LOCAL)
+    expect(loc.status).toBe(200)
+    expect(loc.j.motivo).toBe('acotada')
+    expect(loc.j.opciones).toBeUndefined()
+    expect(JSON.stringify(loc.j)).not.toContain('Gilberto')
+    const trab = await texto('ultimos movimientos de gilberto', TRABAJADOR)
+    expect(trab.status).toBe(403)
+    expect(JSON.stringify(trab.j)).not.toContain('Gilberto')
   })
 
   test('un TRABAJADOR: 403 (no tiene inventario ni deuda)', async () => {

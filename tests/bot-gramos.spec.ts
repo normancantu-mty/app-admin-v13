@@ -89,9 +89,10 @@ test.describe('aditivo 2 en la unidad del catalogo', () => {
     expect(r.ok && r.payload.entradas[0].cantidad).toBe(1500)
   })
 
-  test('el campo viejo `kg` (bot sin actualizar) se lee como kilos: 4 -> 4000 g', () => {
+  test('el campo viejo `kg` (bot sin actualizar) NO se multiplica en silencio: se pide la unidad', () => {
     const r = normalizarEtapa({ etapa: 'aditivo_2', kg: 4 }, ctx())
-    expect(r.ok && r.payload.entradas[0].cantidad).toBe(4000)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('gramos o en kilos')
   })
 
   test('cantidad sin unidad -> se pregunta, no se adivina', () => {
@@ -109,8 +110,8 @@ test.describe('aditivo 2 en la unidad del catalogo', () => {
     expect(normalizarEtapa({ etapa: 'aditivo_2', cantidad: 100000, unidad: 'g' }, ctx()).ok).toBe(true)
   })
 
-  test('sin unidad del catalogo (llamador viejo) se asume KILOGRAMOS: 2.5 kg = 2.5', () => {
-    const r = normalizarEtapa({ etapa: 'aditivo_2', kg: 2.5 }, ctx({ unidadAditivo: undefined }))
+  test('sin unidad del catalogo (llamador viejo) se asume KILOGRAMOS: 2.5 kg dichos = 2.5', () => {
+    const r = normalizarEtapa({ etapa: 'aditivo_2', cantidad: 2.5, unidad: 'kg' }, ctx({ unidadAditivo: undefined }))
     expect(r.ok && r.payload.entradas[0].cantidad).toBe(2.5)
   })
 })

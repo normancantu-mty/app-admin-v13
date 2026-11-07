@@ -51,8 +51,8 @@ preguntas:
     campos: [kg_chile, tipo_chile]
   - etiqueta: 'Brix chile'
     campos: [brix_chile]
-  - etiqueta: 'Kilos aditivo 1'
-    campos: [kg_aditivo_1]
+  - etiqueta: 'Gramos de aditivo 1'
+    campos: [aditivo_1]
   - etiqueta: 'Brix final'
     campos: [brix_final]
 
@@ -63,6 +63,10 @@ campos:
     obligatorio: true
     tipo: numero
     unidad: kg
+    # `insumo`: de que insumo es la cantidad. Su `unidad` DEBE ser la del
+    # catalogo de ese SKU (tests/bot-plantilla-unidades.spec.ts). 'chiles' = los
+    # SKU de `chiles.conocidos`.
+    insumo: chiles
     rango: [1, 1000]
     patrones:
       - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\s+de\s+chile'
@@ -85,16 +89,23 @@ campos:
     patrones:
       - 'brix\s+(?:del?\s+)?chile\s*(?:de|en|a|:)?\s*(\d+(?:[.,]\d+)?)'
       - 'chile\s+(?:en|a|con|de)\s+(\d+(?:[.,]\d+)?)\s*(?:de\s+)?brix'
-  - nombre: kg_aditivo_1
-    etiqueta: 'Kilos aditivo 1'
-    pregunta: 'Cuantos kilos de aditivo 1?'
+  # Fase 7 (2026-11-07, Norman: "quiero que sean 180 gramos"): el aditivo 1 se
+  # lleva en GRAMOS en el catalogo y se pregunta EN GRAMOS. Un numero solo es
+  # gramos; "8 kg" dicho con su unidad se pasa a gramos (8000) y se ensena en
+  # el resumen antes del Confirmar. Rango de 1 g a 200 kg: no se sabe si la
+  # receta real es de 8 g o de 8 kg (receta_liquido_estandar dice 8), y el
+  # rango solo AVISA.
+  - nombre: aditivo_1
+    etiqueta: 'Aditivo 1'
+    pregunta: 'Cuantos gramos de aditivo 1? (si fueron kilos, dilo: "8 kg")'
     obligatorio: true
     tipo: numero
-    unidad: kg
-    rango: [0.01, 200]
+    unidad: g
+    insumo: aditivo_1_sku
+    rango: [1, 200000]
     patrones:
-      - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\s+(?:de\s+)?aditivo(?:\s*1\b|\s+uno\b)?'
-      - 'aditivo(?:\s*1\b|\s+uno\b)?\s*(?:de|:)?\s*(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\b'
+      - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?|g|gr|grs|gramos?)\s+(?:de\s+)?aditivo(?:\s*1\b|\s+uno\b)?'
+      - 'aditivo(?:\s*1\b|\s+uno\b)?\s*(?:de|:)?\s*(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?|g|gr|grs|gramos?)\b'
   - nombre: brix_final
     etiqueta: 'Brix final'
     pregunta: 'Cuanto Brix final (despues del aditivo 1)?'

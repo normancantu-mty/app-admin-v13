@@ -232,7 +232,7 @@ const GARRAFAS = [
 test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta', () => {
   test('aditivo 2 por SKU opaco: ing-al se resuelve a su insumo; proponer solo escribe el borrador', async () => {
     estadoInicial()
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'l-15-10.1', etapa: 'aditivo_2', kg: 2.5, insumo_sku: 'ing-al' })
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'l-15-10.1', etapa: 'aditivo_2', cantidad: 2.5, unidad: 'kg', insumo_sku: 'ing-al' })
     expect(r.status, JSON.stringify(r.j)).toBe(200)
     expect(escrituras.every((e) => e.endsWith('bot_borradores'))).toBe(true)
     const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { tipo: string; etapa: { entradas: Fila[] } } }
@@ -263,7 +263,7 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
 
   test('un SKU que no existe no inventa insumo -> 422', async () => {
     estadoInicial()
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', kg: 2.5, insumo_sku: 'azucar' })
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 2.5, unidad: 'kg', insumo_sku: 'azucar' })
     expect(r.status).toBe(422)
   })
 
@@ -305,7 +305,7 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
 
   test('sello cambiado -> 409 sin escribir', async () => {
     estadoInicial()
-    const p = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', kg: 2, insumo_sku: 'ing-al' })
+    const p = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 2, unidad: 'kg', insumo_sku: 'ing-al' })
     const c = await llamar('lote/etapa/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: 'f'.repeat(64) })
     expect(c.status).toBe(409)
     expect(rpcs).toEqual([])
@@ -314,7 +314,7 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
   test('etapa ya registrada -> 409 al proponer', async () => {
     estadoInicial()
     tablas.lote_etapas.push({ id: 'e1', id_lote: 'lote-1', etapa: 'aditivo_2' })
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', kg: 2, insumo_sku: 'ing-al' })
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 2, unidad: 'kg', insumo_sku: 'ing-al' })
     expect(r.status).toBe(409)
   })
 })

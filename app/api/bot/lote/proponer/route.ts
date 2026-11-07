@@ -82,7 +82,7 @@ interface InsumoPedido {
   insumo?: unknown
   id_insumo?: unknown
   cantidad?: unknown
-  /** Fase 7A: 'kg' | 'g' si el bot sabe en que se dijo (la plantilla dicta en kilos). Sin ella, la cantidad ya va en la unidad del catalogo. */
+  /** Fase 7A: 'kg' | 'g' si el bot sabe en que se dijo (la plantilla pregunta el aditivo 1 en gramos, la unidad del catalogo; 'kg' solo si se dijo en kilos). Sin ella, la cantidad ya va en la unidad del catalogo. */
   unidad?: unknown
 }
 
