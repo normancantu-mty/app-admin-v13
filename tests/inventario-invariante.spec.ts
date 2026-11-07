@@ -204,6 +204,9 @@ test.describe('B - el cableado sobre el repo real', () => {
     // Fase 9 (D93, 2026-09-23): vuelven a ser 7. El nuevo es la entrada de
     // insumo por chat, `app/api/bot/inventario/confirmar/route.ts`, y llama a
     // la puerta (lo comprueba la prueba de abajo).
+    // 2026-11-07 (bot con paridad de la web): siguen 7. El de
+    // `registrarSalidaCascada` se mudo, sin cambiar, a `lib/salida-cascada.ts`
+    // para que la merma del bot use la MISMA escritura que la web.
     expect(total).toBe(7)
   })
 

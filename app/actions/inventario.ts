@@ -5,26 +5,15 @@ import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import type { Database, TablesInsert } from '@/types/database'
 import { registrarAviso } from '@/lib/avisos-server'
-import type { Cubeta } from '@/lib/inventario-types'
-import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
-import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
-import { fetchTodasLasFilas } from '@/lib/paginacion'
+import { escribirSalidaCascada, type TipoSalidaCascada } from '@/lib/salida-cascada'
 
-/** Las cinco columnas del ledger que decide la cascada. Ver ERP-25. */
-interface MovimientoCascadaRow {
-  tipo_movimiento: string | null
-  cantidad: number | null
-  cubeta: string | null
-  id_entidad_destino: string | null
-  id_entidad_origen: string | null
-}
+// La cascada (y su lectura paginada del ledger, ERP-25) vive en `lib/salida-cascada.ts`.
 
 type TipoLogisticaInversa = 'MERMA' | 'DEVOLUCION_FISICA'
 type InventarioInsert = TablesInsert<'inventario_ledger'>
 
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
-type TipoSalidaCascada = 'SALIDA_VENTA' | 'MERMA' | 'DEVOLUCION_FISICA' | 'SALIDA_CONCESION'
 
 interface RegistrarSalidaCascadaInput {
   id_entidad: string
@@ -286,109 +275,16 @@ export async function registrarSalidaCascada(
     // El autor sale de la sesión, nunca de lo que mande el cliente.
     const usuarioCreador = user.email || entidadOperadora.id
 
-    const { id_entidad, id_producto, cantidad_a_deducir, tipo_movimiento } = input
-
-    if (!id_entidad) {
-      return { success: false, error: 'id_entidad vacío' }
-    }
-
-    if (!id_producto) {
-      return { success: false, error: 'id_producto vacío' }
-    }
-
-    if (!['SALIDA_VENTA', 'MERMA', 'DEVOLUCION_FISICA', 'SALIDA_CONCESION'].includes(tipo_movimiento)) {
-      return { success: false, error: 'tipo_movimiento inválido para deducción en cascada.' }
-    }
-
-    if (!Number.isFinite(cantidad_a_deducir) || cantidad_a_deducir <= 0) {
-      return { success: false, error: 'cantidad_a_deducir debe ser un número mayor a cero.' }
-    }
-
-    // ERP-25: paginado. Aqui el truncamiento no solo ensucia un tablero —
-    // decide CUANTO se resta y DE QUE cubeta. Con el stock PAGADO de menos, la
-    // cascada quema consignado que no tocaba, o revienta con "Stock
-    // insuficiente" sobre mercancia que si existe.
-    const movimientos = await fetchTodasLasFilas<MovimientoCascadaRow>(
-      () =>
-        supabase
-          .from('inventario_ledger')
-          .select('tipo_movimiento, cantidad, cubeta, id_entidad_destino, id_entidad_origen')
-          .eq('status', 'ACTIVO')
-          .eq('id_producto', id_producto)
-          .or(`id_entidad_destino.eq.${id_entidad},id_entidad_origen.eq.${id_entidad}`),
-      'deduccionCascada: inventario_ledger'
-    )
-
-    let stockPagadoActual = 0
-    let stockConsignadoActual = 0
-
-    for (const mov of movimientos) {
-      const cubeta = mov.cubeta as Cubeta
-      if (cubeta !== 'PAGADO' && cubeta !== 'CONSIGNADO') continue
-
-      const cantidad = Number(mov.cantidad) || 0
-      const esEntradaEntidad = mov.id_entidad_destino === id_entidad && isTipoMovimientoEntrada(mov.tipo_movimiento)
-      const esSalidaEntidad = mov.id_entidad_origen === id_entidad && isTipoMovimientoSalida(mov.tipo_movimiento)
-      const delta = esEntradaEntidad ? cantidad : esSalidaEntidad ? -cantidad : 0
-
-      if (cubeta === 'PAGADO') {
-        stockPagadoActual += delta
-      } else {
-        stockConsignadoActual += delta
-      }
-    }
-
-    stockPagadoActual = Math.max(0, stockPagadoActual)
-    stockConsignadoActual = Math.max(0, stockConsignadoActual)
-
-    const { deduccionPagado, deduccionConsignado } = calcularDeduccionCascada({
-      cantidadDeducir: cantidad_a_deducir,
-      stockPagadoActual,
-      stockConsignadoActual
-    })
-
-    const payloadArray: InventarioInsert[] = []
-
-    if (deduccionPagado > 0) {
-      payloadArray.push({
-        id_producto,
-        id_entidad_origen: id_entidad,
-        tipo_movimiento,
-        cubeta: 'PAGADO',
-        cantidad: deduccionPagado,
-        usuario_creador: usuarioCreador
-      })
-    }
-
-    if (deduccionConsignado > 0) {
-      payloadArray.push({
-        id_producto,
-        id_entidad_origen: id_entidad,
-        tipo_movimiento,
-        cubeta: 'CONSIGNADO',
-        cantidad: deduccionConsignado,
-        usuario_creador: usuarioCreador
-      })
-    }
-
-    if (payloadArray.length === 0) {
-      return { success: false, error: 'No se generó ninguna deducción de inventario.' }
-    }
-
-    // `tipo_movimiento` aqui es una variable, no un literal: el compilador no
-    // puede saber si la entidad que trae le corresponde. Por eso la puerta.
-    exigirEntidadDelMovimiento(payloadArray, 'inventario.deduccionCascada')
-
-    const { error: insertError } = await supabase
-      .from('inventario_ledger')
-      .insert(payloadArray)
-
-    if (insertError) {
-      return { success: false, error: insertError.message }
+    // 2026-11-07: la regla de la cascada vive en `lib/salida-cascada.ts`, la
+    // MISMA que usa el bot para la merma. Aqui se queda lo que es de la web:
+    // la sesion de arriba y el revalidate de abajo.
+    const resultado = await escribirSalidaCascada(supabase, { ...input, usuario_creador: usuarioCreador })
+    if (!resultado.success) {
+      return { success: false, error: resultado.error }
     }
 
     revalidatePath('/dashboard/inventario')
-    return { success: true, data: payloadArray }
+    return { success: true, data: resultado.data }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error inesperado al registrar salida en cascada.'
     return { success: false, error: message }

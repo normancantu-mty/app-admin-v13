@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 import socket
 import sys
 import time
@@ -658,6 +659,8 @@ RUTA_CONFIRMAR_DE = {
     # generico (ESPERA_APROBACION -> Aprobar -> su confirmar con el sello).
     "entrega_efectivo": "/api/bot/entrega/confirmar",
     "traspaso": "/api/bot/traspaso/confirmar",
+    # 2026-11-07 (paridad con la web, Fase 3): merma, misma escritura que la web.
+    "merma": "/api/bot/merma/confirmar",
     # 2026-11-03: alta de categoria/subcategoria.
     "alta_categoria": "/api/bot/categoria/confirmar",
 }
@@ -1630,6 +1633,7 @@ _COMO_SE_LLAMA = {
     "categoria": "una categoria nueva",
     "alta_categoria": "una categoria nueva",
     "traspaso": "un traspaso",
+    "merma": "una merma",
 }
 
 
@@ -3857,6 +3861,11 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
                                                       codigo_nuevo=_codigo_nuevo_lote,
                                                       confirmar=_confirmar_plantilla_lote):
         return
+    # 2026-11-07 (paridad con la web, Fase 3): "se rompieron 2 de 750" se lee SIN
+    # modelo. Si el servidor dice que no es merma (no nombra un producto), sigue
+    # el camino de siempre con el mismo mensaje.
+    if not esperando and _habla_de_merma(texto) and await _proponer_merma(update, chat, texto):
+        return
     if await _en_pausa(update):
         return
     a_medias = _tomar_borrador_a_medias(chat)
@@ -5632,6 +5641,61 @@ async def _confirmar_traspaso(update, chat):
         await update.effective_message.reply_text(r.get("error", "No pude escribir el traspaso."))
 
 
+# 2026-11-07: la merma. El patron es el mismo que `PATRON_MERMA` de
+# `lib/bot-merma.ts`; aqui solo ahorra una peticion: quien decide es el servidor.
+_PATRON_MERMA = re.compile(
+    r"\b(merma|mermas|mermo|se\s+(?:me\s+|nos\s+|le\s+|les\s+)?(?:rompi\w*|quebr\w*|cay\w*|derram\w*|estrell\w*)"
+    r"|rot[ao]s?|quebrad[ao]s?|estrellad[ao]s?)\b")
+
+
+def _habla_de_merma(texto):
+    """**Pura.** Sin acentos y en minusculas, como el servidor."""
+    t = unicodedata.normalize("NFD", str(texto or ""))
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
+    return bool(_PATRON_MERMA.search(t))
+
+
+async def _proponer_merma(update, chat, texto):
+    """Devuelve True si el mensaje era una merma (propuesta o pregunta)."""
+    estado, r = _post("/api/bot/merma/proponer", {"telegram_id": chat, "texto": texto})
+    log.info("merma propuesta -> %s ok=%s no_es=%s", estado, (r or {}).get("ok"), (r or {}).get("no_es_merma"))
+    if estado == 200 and r.get("no_es_merma"):
+        return False
+    if estado == 200 and r.get("pregunta"):
+        await update.effective_message.reply_text(r["pregunta"])
+        return True
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponer la merma."))
+        return True
+    _memoria[chat] = {"tipo": "merma", "borrador_id": r["borrador_id"], "sello": r["sello"]}
+    await _ensenar_propuesta(update, chat, r["mensaje"], _teclado_confirmar_traspaso(r["borrador_id"]))
+    return True
+
+
+async def _confirmar_merma(update, chat):
+    """El VA. Solo viajan `{telegram_id, borrador_id, sello}`."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "merma":
+        await update.effective_message.reply_text("No tengo ninguna merma pendiente que escribir.")
+        return
+    estado, r = _post("/api/bot/merma/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("merma confirmada: borrador=%s -> %s filas=%s",
+             dato["borrador_id"], estado, r.get("filas_inventario"))
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        texto = r.get("mensaje") or "Listo. Quedo la merma."
+        if r.get("aviso_marca"):
+            texto += NL + str(r["aviso_marca"])
+        await update.effective_message.reply_text(texto)
+    else:
+        # `espera_aprobacion`: `_anotar_aprobacion` ya puso en `error` a quien se mando.
+        await update.effective_message.reply_text(r.get("error", "No pude escribir la merma."))
+
+
 async def _ensenar_propuesta(update, chat, mensaje, teclado):
     """Ensena una propuesta sellada y la deja guardada JUNTO A SU BORRADOR.
 
@@ -5880,6 +5944,9 @@ async def _confirmar(update, chat, por_boton=False):
     # Sin esta rama, el default de abajo le mandaria el VA a la ruta del gasto.
     if dato.get("tipo") == "traspaso":
         await _confirmar_traspaso(update, chat)
+        return
+    if dato.get("tipo") == "merma":
+        await _confirmar_merma(update, chat)
         return
     # D112: sin esta rama un "va" escrito caia al camino de gasto.
     if dato.get("tipo") == "entrega_efectivo":
