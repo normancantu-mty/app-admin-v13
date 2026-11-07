@@ -21,6 +21,7 @@
 import { sumarDias, fechaHoraParaPersona, fechaParaPersona } from '@/lib/fechas'
 import { efectoEnCuenta, type MovimientoDinero } from '@/lib/v2/dinero'
 import { pesos } from '@/lib/bot-consultas'
+import { interpretarClientesEInventario, type NombresDelErp, type PreguntaErp } from '@/lib/bot-pregunta-erp'
 
 export interface CuentaDePregunta {
   id: string
@@ -41,6 +42,7 @@ export type Pregunta =
   | { tipo: 'ventas_periodo'; periodo: Periodo }
   | { tipo: 'detalle_ticket'; folio: string }
   | { tipo: 'ninguna'; motivo: 'no_reconocida' | 'cuenta_ambigua' | 'falta_cuenta'; opciones?: string[] }
+  | PreguntaErp
 
 /** minusculas, sin acentos, sin signos; espacios simples. */
 export function normalizar(texto: string): string {
@@ -154,7 +156,16 @@ const FOLIO = /(?:^|\s)(?:tck-?)?([0-9a-f]{8})(?:\s|$)/
  * Decide que se pregunto. `cuentas`: las que esta persona puede consultar,
  * leidas de la base. `hoy`: `AAAA-MM-DD` de Mexico. **Pura.**
  */
-export function interpretarPregunta(texto: string, cuentas: readonly CuentaDePregunta[], hoy: string): Pregunta {
+export function interpretarPregunta(
+  texto: string,
+  cuentas: readonly CuentaDePregunta[],
+  hoy: string,
+  /**
+   * Fase 6: entidades y productos de la base. Sin ellos no se reconoce cartera
+   * ni inventario (no hay con que casar un nombre) y todo queda como la Fase 2.
+   */
+  nombres?: NombresDelErp
+): Pregunta {
   const t = normalizar(texto)
   if (t === '') return { tipo: 'ninguna', motivo: 'no_reconocida' }
 
@@ -190,6 +201,17 @@ export function interpretarPregunta(texto: string, cuentas: readonly CuentaDePre
       }
       return { tipo: 'saldo_cuenta', cuenta: nombrada.cuenta }
     }
+  }
+
+  // Fase 6: cartera de un cliente, cartera total, stock, inventario, lo que se
+  // acaba. Va DESPUES de la cuenta nombrada ("movimientos de Efectivo" sigue
+  // siendo de la cuenta) y ANTES de "¿de que cuenta?".
+  if (nombres) {
+    const erp = interpretarClientesEInventario(t, nombres)
+    if (erp) return erp
+  }
+
+  if (pideMovs || pideSaldo) {
     if (pideSaldo && (tiene(t, 'saldos', 'cuentas', 'dinero') || /^(cual es (el|mi) )?saldo$/.test(t))) {
       return { tipo: 'saldos' }
     }
@@ -207,20 +229,28 @@ export function interpretarPregunta(texto: string, cuentas: readonly CuentaDePre
 // ─── Las respuestas (texto ya formateado; el bot solo lo reenvia) ───────────
 
 export const LO_QUE_CONTESTO =
-  'Lo que si te contesto, con el numero de la base:\n' +
-  '- cuanto hay en Spin (o en Efectivo, Gilberto...)\n' +
-  '- saldos (todas tus cuentas)\n' +
-  '- movimientos de Efectivo de ayer / de la semana / del mes\n' +
-  '- ventas de hoy / de la semana / del mes pasado\n' +
-  '- detalle del ticket 1A2B3C4D\n' +
-  '- y lo de siempre: stock, quien me debe, precios, produccion, gastos del mes.'
+  'Lo que si te contesto, con el numero de la base. Por ejemplo:\n' +
+  '- cuanto debe Aeropuerto / quien me debe mas\n' +
+  '- ultimos movimientos de Delirio\n' +
+  '- cuantas botellas de 750 hay / que hay en la matriz\n' +
+  '- inventario total / insumos / que se esta acabando\n' +
+  'Tambien: cuanto hay en Spin, saldos, movimientos de Efectivo de ayer, ventas de la semana, detalle del ticket 1A2B3C4D, precios, produccion, gastos del mes.'
 
 export function textoDeNinguna(p: Extract<Pregunta, { tipo: 'ninguna' }>): string {
   if (p.motivo === 'cuenta_ambigua') {
     return `Esa cuenta puede ser ${(p.opciones ?? []).join(' o ')}. Dime cual, con su nombre completo.`
   }
   if (p.motivo === 'falta_cuenta') {
-    return `¿De que cuenta? Las que puedo leer: ${(p.opciones ?? []).join(', ')}.`
+    return `¿De que cuenta o de que cliente? Las cuentas que puedo leer: ${(p.opciones ?? []).join(', ')}.`
+  }
+  if (p.motivo === 'cliente_ambiguo') {
+    return `¿Cual de ellos? ${p.candidatos.map((c) => c.nombre).join(', ')}.`
+  }
+  if (p.motivo === 'cliente_no_encontrado') {
+    return `No tengo a "${p.dicho}" entre los clientes (distribuidores y locales). Pregunta "quien me debe" para ver la lista.`
+  }
+  if (p.motivo === 'entidad_ambigua') {
+    return `Ese lugar puede ser ${p.opciones.join(' o ')}. Dime cual, con su nombre completo.`
   }
   return 'Esa no la puedo contestar con certeza, y no voy a adivinar una cifra.\n\n' + LO_QUE_CONTESTO
 }

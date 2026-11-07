@@ -1386,8 +1386,41 @@ async def _contestar_pregunta(update, chat, texto, consulta):
     estado, r = _post("/api/bot/pregunta", {"telegram_id": chat, "texto": texto})
     log.info("pregunta por voz/texto: consulta=%s -> %s reconocida=%s",
              consulta, estado, (r or {}).get("reconocida"))
+    return await _responder_pregunta(update, chat, consulta, estado, r)
+
+
+# Fase 6 (2026-11-07): "¿cual de ellos?" con botones. callback `pqd:<uuid>`
+# (deuda) o `pqm:<uuid>` (movimientos): 40 bytes, bajo el tope de 64.
+PREFIJO_PREGUNTA = {"deuda": "pqd", "movimientos": "pqm"}
+PARA_DEL_PREFIJO = {v: k for k, v in PREFIJO_PREGUNTA.items()}
+
+
+def _teclado_de_eleccion(para, opciones):
+    prefijo = PREFIJO_PREGUNTA.get(para, "pqd")
+    filas = [[InlineKeyboardButton(str(o.get("nombre") or "?")[:40], callback_data=prefijo + ":" + str(o.get("id")))]
+             for o in (opciones or [])[:8] if _PATRON_UUID.match(str(o.get("id") or ""))]
+    return InlineKeyboardMarkup(filas) if filas else None
+
+
+async def _boton_de_pregunta(update, chat, accion, id_entidad):
+    """El clic de "¿cual de ellos?": vuelve a `/api/bot/pregunta` con la
+    eleccion. Solo lectura: el servidor revisa permisos con quien apreto."""
+    estado, r = _post("/api/bot/pregunta", {
+        "telegram_id": chat,
+        "eleccion": {"para": PARA_DEL_PREFIJO.get(accion, "deuda"), "id_entidad": id_entidad},
+    })
+    log.info("pregunta por boton: %s -> %s", accion, estado)
+    await _responder_pregunta(update, chat, "otra", estado, r)
+
+
+async def _responder_pregunta(update, chat, consulta, estado, r):
+    r = r or {}
     if estado == 200 and r.get("ok") and r.get("reconocida"):
         await _contestar_texto_de_consulta(update, chat, r)
+        return True
+    if estado == 200 and r.get("ok") and r.get("opciones"):
+        teclado = _teclado_de_eleccion(r.get("para"), r.get("opciones"))
+        await update.effective_message.reply_text(r.get("texto") or "¿Cual de ellos?", reply_markup=teclado)
         return True
     if estado == 200 and r.get("ok"):
         if consulta and consulta != "otra":
@@ -6249,6 +6282,10 @@ async def _manejar_boton(update, chat, q, partes, accion):
     # no esta viva, no se escribe nada: el foco es OTRA propuesta.
     if accion in ("apr", "rch", "apa", "rca"):
         await _boton_de_aprobacion(update, chat, q, accion, partes[1] if len(partes) > 1 else "")
+        return
+    if accion in PARA_DEL_PREFIJO:
+        # Fase 6: botones de una PREGUNTA (solo lectura), no de una propuesta.
+        await _boton_de_pregunta(update, chat, accion, partes[1] if len(partes) > 1 else "")
         return
     # 2026-11-03 (equipo en el grupo): el boton de la propuesta de OTRO no hace
     # nada, y se dice por que. El servidor ya lo cerraba ("Ese borrador no es

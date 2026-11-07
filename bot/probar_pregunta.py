@@ -206,7 +206,51 @@ for etiqueta, falla in (("500", (500, {"error": "Error interno."})),
         caso("%s (%s): la cifra del modelo NO sale" % (etiqueta, consulta),
              any("12,345" in d for d in dichos), False)
 
-# === 6. Ensayo ================================================================
+# === 6. Fase 6: "¿cual de ellos?" con botones, y el clic vuelve a preguntar ===
+ID_GIL = "11111111-2222-4333-8444-555555555555"
+ID_GF = "11111111-2222-4333-8444-666666666666"
+AMBIGUO = (200, {"ok": True, "reconocida": False, "motivo": "cliente_ambiguo", "para": "movimientos",
+                 "texto": "¿Cual de ellos? Gilberto Franco, Gilberto Ruiz.",
+                 "opciones": [{"id": ID_GIL, "nombre": "Gilberto Franco"}, {"id": ID_GF, "nombre": "Gilberto Ruiz"}]})
+doble = PostDoble(AMBIGUO)
+u = UpdateDeTexto(CHAT, "movimientos de gilberto")
+limpiar()
+correr(B.manejar_texto(u, None), doble, dict(intencion="consulta", confianza="alta", entendido="x", campos={},
+                                             consulta="cartera", filtro="gilberto", respuesta="Debe $9,999",
+                                             hechos=[], faltantes=[], pregunta=None))
+teclado = u.message.teclados[-1] if u.message.teclados else None
+datos = [b.callback_data for fila in (teclado.inline_keyboard if teclado else []) for b in fila]
+caso("AMBIGUO: se pregunta cual, con el texto del servidor", u.message.dichos, ["¿Cual de ellos? Gilberto Franco, Gilberto Ruiz."])
+caso("AMBIGUO: un boton por candidato, pqm:<uuid>", datos, ["pqm:" + ID_GIL, "pqm:" + ID_GF])
+caso("AMBIGUO: callback_data cabe en 64 bytes", all(len(d.encode("utf-8")) <= 64 for d in datos), True)
+caso("AMBIGUO: NO sigue a /api/bot/consulta (aunque la consulta sea cartera)", "/api/bot/consulta" in doble.rutas(), False)
+caso("AMBIGUO: la cifra del modelo NO sale", any("9,999" in d for d in u.message.dichos), False)
+
+MOVS = (200, {"ok": True, "reconocida": True, "tipo": "movimientos_cliente",
+              "texto": "ULTIMOS MOVIMIENTOS — Gilberto Franco (DST)", "privado": False})
+doble = PostDoble(MOVS)
+ub = UpdateDeBoton(CHAT, "pqm:" + ID_GIL)
+limpiar()
+correr(B.manejar_boton(ub, None), doble, {})
+caso("BOTON: vuelve a /api/bot/pregunta con la eleccion",
+     doble.cuerpos("/api/bot/pregunta"), [{"telegram_id": CHAT, "eleccion": {"para": "movimientos", "id_entidad": ID_GIL}}])
+caso("BOTON: contesta el texto del servidor", ub.callback_query.message.dichos, ["ULTIMOS MOVIMIENTOS — Gilberto Franco (DST)"])
+caso("BOTON: no escribe (ninguna ruta de proponer/confirmar)",
+     [r for r in doble.rutas() if "proponer" in r or "confirmar" in r], [])
+doble = PostDoble(MOVS)
+ub = UpdateDeBoton(CHAT, "pqd:" + ID_GF)
+limpiar()
+correr(B.manejar_boton(ub, None), doble, {})
+caso("BOTON pqd: la eleccion es de deuda",
+     [c.get("eleccion") for c in doble.cuerpos("/api/bot/pregunta")], [{"para": "deuda", "id_entidad": ID_GF}])
+
+# Acotada (un DST/LOC): el servidor no la contesta con todo; sigue la consulta de su red.
+ACOTADA = (200, {"ok": True, "reconocida": False, "motivo": "acotada", "texto": "Esa la contesto con lo de tu alta"})
+doble = PostDoble(ACOTADA)
+dichos = hablar("cuanto debo", doble, "cartera")
+caso("ACOTADA + cartera: sigue a /api/bot/consulta", "/api/bot/consulta" in doble.rutas(), True)
+
+# === 7. Ensayo ================================================================
 caso("ENSAYO: /api/bot/pregunta sale (solo lectura)",
      B.decision_de_ensayo("/api/bot/pregunta"), "sale_marcada")
 limpiar()
