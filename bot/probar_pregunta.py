@@ -191,10 +191,20 @@ dichos = hablar("ventas de hoy", doble, "ventas")
 caso("403: se dice el error del servidor",
      dichos, ["Esa consulta es de la empresa; tu alta solo alcanza a lo tuyo."])
 
-# === 5. La ruta falla: sigue el camino de siempre, no silencio ================
-doble = PostDoble((500, {"error": "Error interno."}))
-dichos = hablar("stock", doble, "stock")
-caso("500: cae a /api/bot/consulta", dichos, ["STOCK DE LA CONSULTA"])
+# === 5. La ruta falla: se dice, y NO sigue a /consulta ni al modelo ===========
+# Fase 5 (auditoria 2026-11-07): antes un 500 devolvia False y el respaldo
+# `_responder_natural` podia mandar la cifra redactada por el modelo.
+NO_PUDE = "No pude leer el dato del ERP ahora; intenta de nuevo."
+for etiqueta, falla in (("500", (500, {"error": "Error interno."})),
+                        ("TIMEOUT", (0, {"error": "no pude hablarle al ERP: timed out"}))):
+    for consulta in ("otra", "stock"):
+        doble = PostDoble(falla)
+        dichos = hablar("cuanto hay en spin", doble, consulta)
+        caso("%s (%s): dice que no pudo leer" % (etiqueta, consulta), dichos, [NO_PUDE])
+        caso("%s (%s): no llama a /api/bot/consulta" % (etiqueta, consulta),
+             "/api/bot/consulta" in doble.rutas(), False)
+        caso("%s (%s): la cifra del modelo NO sale" % (etiqueta, consulta),
+             any("12,345" in d for d in dichos), False)
 
 # === 6. Ensayo ================================================================
 caso("ENSAYO: /api/bot/pregunta sale (solo lectura)",

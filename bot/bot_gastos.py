@@ -1378,6 +1378,10 @@ async def _contestar_pregunta(update, chat, texto, consulta):
       - consulta conocida (stock, cartera...): False, y sigue `/api/bot/consulta`;
       - "otra" o sin consulta: se contesta el "no la puedo contestar con
         certeza" del servidor, en vez de dejar que el modelo redacte una cifra.
+    Si la ruta FALLA (500, timeout, caida -> estado 0): se dice que no se pudo
+    leer y se acaba aqui. Fase 5 (auditoria 2026-11-07): antes devolvia False y
+    seguia a `_contestar_consulta`, cuyo respaldo `_responder_natural` podia
+    mandar una cifra redactada por el modelo.
     """
     estado, r = _post("/api/bot/pregunta", {"telegram_id": chat, "texto": texto})
     log.info("pregunta por voz/texto: consulta=%s -> %s reconocida=%s",
@@ -1393,8 +1397,13 @@ async def _contestar_pregunta(update, chat, texto, consulta):
     if estado == 403:
         await update.effective_message.reply_text(r.get("error", "Esa consulta no te toca con tu alta."))
         return True
-    # La ruta fallo: que siga el camino de siempre, no un silencio.
-    return False
+    # La ruta fallo: ni silencio ni el modelo. Se dice, y se acaba aqui.
+    log.warning("pregunta: /api/bot/pregunta fallo (%s): %s", estado, (r or {}).get("error"))
+    await update.effective_message.reply_text(MENSAJE_PREGUNTA_FALLO)
+    return True
+
+
+MENSAJE_PREGUNTA_FALLO = "No pude leer el dato del ERP ahora; intenta de nuevo."
 
 
 # Los dos 422 de `app/api/bot/abono/proponer/route.ts` que hablan de la cuenta.

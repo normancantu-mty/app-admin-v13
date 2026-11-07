@@ -126,6 +126,13 @@ class Servidor(object):
                  "nombre": "Destilado Plata 750ml", "ml_por_unidad": 750}]}
         if ruta == "/api/bot/pendiente":
             return 200, {"ok": True, "pendientes": list(self.pendientes)}
+        if ruta == "/api/bot/pregunta":
+            # 2026-11-07 (Fase 5): lo que contesta el servidor real a "cuanto me
+            # debe X": no la reconoce (lib/bot-pregunta.ts no lee cartera), y una
+            # consulta conocida sigue a /api/bot/consulta. Antes este doble daba
+            # 500 y la prueba pasaba por la caida vieja, que ya no existe.
+            return 200, {"ok": True, "reconocida": False, "motivo": "no_reconocida",
+                         "texto": "Esa no la puedo contestar con certeza."}
         if ruta == "/api/bot/consulta":
             return 200, {"ok": True, "texto": "CARTERA de " + str(cuerpo.get("filtro"))}
         if ruta.endswith("/proponer"):
