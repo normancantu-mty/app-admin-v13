@@ -204,7 +204,9 @@ ENSAYO = ensayo_activo()
 RUTAS_SOLO_LECTURA = frozenset(("/api/bot/consulta", "/api/bot/catalogo",
                                 "/api/bot/pendiente",
                                 # Fase 9: quien es quien, y que espera el Aprobar.
-                                "/api/bot/identidad", "/api/bot/aprobacion"))
+                                "/api/bot/identidad", "/api/bot/aprobacion",
+                                # 2026-11-07: preguntas libres (cliente que solo hace GET).
+                                "/api/bot/pregunta"))
 
 # Las `proponer` salen, MARCADAS: el servidor calcula la propuesta real (precios,
 # catalogo, cartera) y no escribe el borrador (`lib/bot-ensayo.ts`).
@@ -1362,6 +1364,34 @@ async def _contestar_consulta(update, chat, consulta, filtro=None):
 
     await _contestar_texto_de_consulta(update, chat, r)
     return True
+
+
+async def _contestar_pregunta(update, chat, texto, consulta):
+    """2026-11-07 (paridad con la web, Fase 2). Devuelve True si contesto.
+
+    El servidor (`/api/bot/pregunta`) interpreta el texto SIN modelo y contesta
+    saldo de una cuenta, saldos, movimientos de una cuenta, ventas de un periodo
+    o el detalle de un ticket. Si no la reconoce:
+      - consulta conocida (stock, cartera...): False, y sigue `/api/bot/consulta`;
+      - "otra" o sin consulta: se contesta el "no la puedo contestar con
+        certeza" del servidor, en vez de dejar que el modelo redacte una cifra.
+    """
+    estado, r = _post("/api/bot/pregunta", {"telegram_id": chat, "texto": texto})
+    log.info("pregunta por voz/texto: consulta=%s -> %s reconocida=%s",
+             consulta, estado, (r or {}).get("reconocida"))
+    if estado == 200 and r.get("ok") and r.get("reconocida"):
+        await _contestar_texto_de_consulta(update, chat, r)
+        return True
+    if estado == 200 and r.get("ok"):
+        if consulta and consulta != "otra":
+            return False
+        await update.effective_message.reply_text(r.get("texto") or "Esa no la puedo contestar con certeza.")
+        return True
+    if estado == 403:
+        await update.effective_message.reply_text(r.get("error", "Esa consulta no te toca con tu alta."))
+        return True
+    # La ruta fallo: que siga el camino de siempre, no un silencio.
+    return False
 
 
 # Los dos 422 de `app/api/bot/abono/proponer/route.ts` que hablan de la cuenta.
@@ -4032,6 +4062,10 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
         # `ruta["consulta"]` en vez de volver a clasificar con el modelo. Y el
         # filtro tal cual: quien lo prueba contra el producto y contra el punto
         # de venta es el servidor, no este proceso.
+        # 2026-11-07: primero la pregunta libre (saldo, movimientos, ventas de un
+        # periodo, ticket); lo que no reconoce sigue a la consulta de siempre.
+        if await _contestar_pregunta(update, chat, texto, ruta.get("consulta")):
+            return
         if await _contestar_consulta(update, chat, ruta.get("consulta"), ruta.get("filtro")):
             return
         await _responder_natural(update, ruta)
