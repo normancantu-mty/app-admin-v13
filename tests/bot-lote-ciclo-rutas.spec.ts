@@ -224,9 +224,9 @@ async function llamar(ruta: string, cuerpo: Record<string, unknown>) {
 }
 
 const GARRAFAS = [
-  { peso_kg: 18.5, grado_alcohol: 52 },
-  { peso_kg: 17, grado_alcohol: 48 },
-  { peso_kg: 10, grado_alcohol: 30 }
+  { litros: 20, peso_kg: 18.5, grado_alcohol: 52 },
+  { litros: 19, peso_kg: 17, grado_alcohol: 48, notas: 'turbia' },
+  { litros: 11, peso_kg: 10, grado_alcohol: 30 }
 ]
 
 test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta', () => {
@@ -293,9 +293,9 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
     expect(rpcs.length).toBe(1)
     expect(rpcs[0].nombre).toBe('registrar_etapa_lote')
     expect(rpcs[0].args.p_garrafas).toEqual([
-      { numero: 1, peso_kg: 18.5, grado_alcohol: 52 },
-      { numero: 2, peso_kg: 17, grado_alcohol: 48 },
-      { numero: 3, peso_kg: 10, grado_alcohol: 30 }
+      { numero: 1, litros: 20, peso_kg: 18.5, grado_alcohol: 52 },
+      { numero: 2, litros: 19, peso_kg: 17, grado_alcohol: 48, notas: 'turbia' },
+      { numero: 3, litros: 11, peso_kg: 10, grado_alcohol: 30 }
     ])
     // El dia de hace 10 dias queda FUERA del periodo (antes de la produccion).
     expect(String(c.j.mensaje)).toContain('Fermentacion: 4 dias')

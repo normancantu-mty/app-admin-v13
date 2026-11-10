@@ -300,26 +300,31 @@ def rutas():
 HOY_TXT = P.fecha_para_persona(C.ahora_local().date())
 u = Update(CHAT)
 boton(u, "ltad2", "L-12-10.1")
-caso("5. boton del recordatorio: pregunta el aditivo 2 en gramos (y como decir kilos)",
-     ("Cuantos gramos de aditivo 2?" in u.message.dichos[-1], '"1.5 kg"' in u.message.dichos[-1]), (True, True))
-# 2026-11-10 (Norman, integracion con D-004): un numero solo son GRAMOS, sin preguntar.
+caso("5. boton del recordatorio: pregunta el aditivo 2 con su unidad (gramos o kilos)",
+     ("Cuanto aditivo 2, con su unidad?" in u.message.dichos[-1], '"1500 g"' in u.message.dichos[-1]), (True, True))
+# 2026-11-10 (Norman: "Preguntar g o kg"): un numero solo NO se adivina.
 texto(u, "4.5")
+caso("5. numero solo: pregunta gramos o kilos, sin resumen",
+     ("4.5 gramos o 4.5 kilos?" in u.message.dichos[-1], "Revisa" in u.message.dichos[-1]), (True, False))
+texto(u, "kilos")
 res = u.message.dichos[-1]
-caso("5. numero solo = gramos: resumen con lote, etapa, fecha de hoy y '4.5 g'",
-     ("LOTE L-12-10.1 - ADITIVO 2" in res, ("Fecha: %s (hoy)" % HOY_TXT) in res, "Aditivo 2: 4.5 g" in res,
-      "gramos o" in res), (True, True, True, False))
+caso("5. contesta 'kilos': resumen con lote, etapa, fecha de hoy y '4.5 kg (4500 g)'",
+     ("LOTE L-12-10.1 - ADITIVO 2" in res, ("Fecha: %s (hoy)" % HOY_TXT) in res, "Aditivo 2: 4.5 kg (4500 g)" in res),
+     (True, True, True))
 caso("5. ... con Confirmar / Corregir", u.message.teclados[-1], ["ltec:x", "ltecc:x"])
 caso("5. ... y NADA salio al servidor antes de Confirmar", [r for r in rutas() if "/etapa/" in r], [])
 boton(u, "ltecc")
-caso("5. Corregir: vuelve a preguntar", "Cuantos gramos de aditivo 2?" in u.message.dichos[-1], True)
+caso("5. Corregir: vuelve a preguntar", "Cuanto aditivo 2, con su unidad?" in u.message.dichos[-1], True)
 caso("5. ... y sigue sin salir nada", [r for r in rutas() if "/etapa/" in r], [])
 texto(u, "250 kg")
 caso("5. fuera de rango AVISA y no bloquea", ("Ojo" in u.message.dichos[-1], "Aditivo 2: 250 kg" in u.message.dichos[-1]),
      (True, True))
 # 800 g = 0.8 kg: dentro del rango en kilos, sin aviso (el rango es fisico).
 texto(u, "800 gramos")
-caso("5. 800 gramos: dentro de rango (se compara en kg), sin Ojo",
+caso("5. 800 gramos: pasa directo, dentro de rango (se compara en kg), sin Ojo",
      ("Ojo" in u.message.dichos[-1], "Aditivo 2: 800 g" in u.message.dichos[-1]), (False, True))
+texto(u, "1500 g")
+caso("5. 1500 g: se ensena tambien en kilos", "Aditivo 2: 1500 g (1.5 kg)" in u.message.dichos[-1], True)
 texto(u, "4 kg")
 boton(u, "ltec")
 prop = [c for r, c in base.llamadas if r == C.RUTA_ETAPA_PROPONER]
@@ -333,23 +338,30 @@ caso("5. ... y lo dice", u.message.dichos[-1].startswith("Listo."), True)
 # destilacion
 u = Update(CHAT)
 boton(u, "ltdes", "L-12-10.1")
-caso("5. destilacion: pregunta garrafas, peso y %", "Cuantas garrafas" in u.message.dichos[-1], True)
-texto(u, "3 garrafas: 18.5 kg 52%, 17 kg 48%")
+caso("5. destilacion: pregunta garrafas, litros, peso y %",
+     ("Cuantas garrafas" in u.message.dichos[-1], "litros" in u.message.dichos[-1]), (True, True))
+texto(u, "3 garrafas: 20 L 18.5 kg 52%, 19 litros 17 kg 48% (Turbia, olía a cobre)")
 caso("5. ... falta una: la pide", ("Me falta" in u.message.dichos[-1], "garrafa 3" in u.message.dichos[-1]), (True, True))
+# 2026-11-10: sin litros la garrafa NO se guarda a medias: se dice que falto.
 texto(u, "10 kg 95%")
+caso("5. ... sin litros: dice que falto y la vuelve a pedir",
+     ("le falto litros" in u.message.dichos[-1], "garrafa 3" in u.message.dichos[-1], len(C.sesion(CHAT)["garrafas"])),
+     (True, True, 2))
+texto(u, "11 L 10 kg 95%")
 res = u.message.dichos[-1]
-caso("5. resumen de destilacion: todas las garrafas y la fecha",
-     ("LOTE L-12-10.1 - DESTILACION" in res, "Garrafas: 3" in res, "Garrafa 1: 18.5 kg a 52.0%" in res,
-      "Garrafa 3: 10.0 kg a 95.0%" in res, ("Fecha: %s (hoy)" % HOY_TXT) in res), (True, True, True, True, True))
+caso("5. resumen de destilacion: todas las garrafas (litros, kg, %, nota) y la fecha",
+     ("LOTE L-12-10.1 - DESTILACION" in res, "Garrafas: 3" in res, "Garrafa 1: 20 L, 18.5 kg a 52%" in res,
+      "Garrafa 2: 19 L, 17 kg a 48% (Turbia, olía a cobre)" in res,
+      "Garrafa 3: 11 L, 10 kg a 95%" in res, ("Fecha: %s (hoy)" % HOY_TXT) in res), (True, True, True, True, True, True))
 caso("5. ... 95% avisa (fuera de 0-80) sin bloquear", "Ojo: la garrafa 3" in res, True)
 caso("5. ... nada salio todavia", rutas().count(C.RUTA_ETAPA_PROPONER), 1)
 base.ahora = local(2026, 10, 19, 10)
 boton(u, "ltec")
 prop = [c for r, c in base.llamadas if r == C.RUTA_ETAPA_PROPONER][-1]
-caso("5. Confirmar destilacion: una fila por garrafa (peso, %)", prop["garrafas"],
-     [{"peso_kg": 18.5, "grado_alcohol": 52.0}, {"peso_kg": 17.0, "grado_alcohol": 48.0},
-      {"peso_kg": 10.0, "grado_alcohol": 95.0}])
-caso("5. ... sin litros (no se inventa densidad)", any("litros" in g for g in prop["garrafas"]), False)
+caso("5. Confirmar destilacion: una fila por garrafa (litros, peso, %, nota)", prop["garrafas"],
+     [{"litros": 20.0, "peso_kg": 18.5, "grado_alcohol": 52.0},
+      {"litros": 19.0, "peso_kg": 17.0, "grado_alcohol": 48.0, "notas": "Turbia, olía a cobre"},
+      {"litros": 11.0, "peso_kg": 10.0, "grado_alcohol": 95.0}])
 
 # ─── 4. la muestra ──────────────────────────────────────────────────────────
 caso("4. al confirmar la destilacion: 'Guarda una muestra del lote'",
@@ -437,9 +449,9 @@ caso("7. 'le pusimos 4 kilos de aditivo 2 al L-12-10.1' (sin modelo): resumen de
 caso("7. ... NO abre la plantilla de lote nuevo", any("Me falta" in d for d in u.message.dichos), False)
 C.olvidar(CHAT)
 u = Update(CHAT)
-texto(u, "oye, ya destilamos el L-12-10.1: 2 garrafas, 18 kg 50% y 10 kg 30%")
+texto(u, "oye, ya destilamos el L-12-10.1: 2 garrafas, 20 L 18 kg 50% y 11 L 10 kg 30%")
 caso("7. frase natural de destilacion con codigo en medio: resumen con 2 garrafas",
-     ("DESTILACION" in u.message.dichos[-1], "Garrafa 2: 10.0 kg a 30.0%" in u.message.dichos[-1]), (True, True))
+     ("DESTILACION" in u.message.dichos[-1], "Garrafa 2: 11 L, 10 kg a 30%" in u.message.dichos[-1]), (True, True))
 C.olvidar(CHAT)
 caso("7. CONTROL 'aditivo 2' en medio SIN codigo no dispara la etapa", C._disparo("cuanto aditivo 2 queda en bodega"),
      (None, None))
@@ -497,6 +509,18 @@ caso("7. CONTROL solo kg_chile -> la plantilla (pregunta lo que falta, sin propo
 caso("7. CONTROL chile + aditivo 1 (SKU del YAML) sin codigo -> la plantilla",
      B._lote_es_de_otro_camino({"insumos": [{"insumo": "chile-guajillo", "cantidad": 80},
                                             {"insumo": "mosto-1", "cantidad": 2}]}), False)
+
+# --- 2026-11-10: leer_garrafas con litros y nota (pura) ----------------------
+caso("G. leer_garrafas: litros, kg y % en cualquier orden, con nota",
+     C.leer_garrafas("2 garrafas: 20 L 18.5 kg 52%, 17 kg 19 litros 48% (Turbia)"),
+     (2, [{"litros": 20.0, "peso_kg": 18.5, "grado_alcohol": 52.0},
+          {"litros": 19.0, "peso_kg": 17.0, "grado_alcohol": 48.0, "notas": "Turbia"}], []))
+caso("G. leer_garrafas: sin litros o sin kg no se adivina (va a incompletas)",
+     C.leer_garrafas("18 kg 50%, 20 L 30%"), (None, [], [(1, ["litros"]), (2, ["kg"])]))
+caso("G. leer_garrafas: '20/18.5/52' = litros/kg/%",
+     C.leer_garrafas("20/18.5/52"), (None, [{"litros": 20.0, "peso_kg": 18.5, "grado_alcohol": 52.0}], []))
+caso("G. leer_garrafas: el codigo del lote no se lee como litros",
+     C.leer_garrafas("L-12-10.1: 20 L 18 kg 50%")[1], [{"litros": 20.0, "peso_kg": 18.0, "grado_alcohol": 50.0}])
 
 # --- Fase 7A: la masa con su unidad (puras) ---------------------------------
 caso("7A. leer_masa '800 g' -> (800, g)", C.leer_masa("800 g"), (800.0, "g"))
@@ -641,12 +665,12 @@ P.olvidar(CHAT)
 # (c) garrafas + temperatura, dentro de la destilacion: las garrafas NO se pierden
 u = Update(CHAT)
 boton(u, "ltdes", "L-19-10.1")
-texto(u, "2 garrafas: 18 kg 50% y 10 kg 30%, el cuarto estaba a 22 grados")
+texto(u, "2 garrafas: 20 L 18 kg 50% y 11 L 10 kg 30%, el cuarto estaba a 22 grados")
 res = [d for d in u.message.dichos if "DESTILACION" in d]
 caso("11c. garrafas + temperatura: el resumen trae las 2 garrafas",
-     (bool(res), bool(res) and "Garrafa 1: 18.0 kg a 50.0%" in res[-1], bool(res) and "Garrafa 2: 10.0 kg a 30.0%" in res[-1]),
+     (bool(res), bool(res) and "Garrafa 1: 20 L, 18 kg a 50%" in res[-1], bool(res) and "Garrafa 2: 11 L, 10 kg a 30%" in res[-1]),
      (True, True, True))
-caso("11c. ... la etapa queda en resumen con 2 garrafas", (C.sesion(CHAT) or {}).get("garrafas"), [(18.0, 50.0), (10.0, 30.0)])
+caso("11c. ... la etapa queda en resumen con 2 garrafas", (C.sesion(CHAT) or {}).get("garrafas"), [{"litros": 20.0, "peso_kg": 18.0, "grado_alcohol": 50.0}, {"litros": 11.0, "peso_kg": 10.0, "grado_alcohol": 30.0}])
 caso("11c. ... y la temperatura en sus Notas, visible antes de Confirmar",
      (bool(res) and "Notas:" in res[-1] and "cuarto estaba a 22 grados" in res[-1], teclas_temp(u), temps(base10)),
      (True, [], []))
@@ -662,7 +686,7 @@ C.olvidar(CHAT)
 base10.etapas.pop(("lote-f", "destilacion"), None)
 u = Update(CHAT)
 boton(u, "ltdes", "L-19-10.1")
-texto(u, "1 garrafa: 18 kg 50%")
+texto(u, "1 garrafa: 20 L 18 kg 50%")
 n = len(base10.llamadas)
 boton(u, "ltec")
 prop = [c for r, c in base10.llamadas[n:] if r == C.RUTA_ETAPA_PROPONER]
@@ -677,8 +701,8 @@ texto(u, "el cuarto esta a 23 grados")
 caso("11d. solo temperatura en la destilacion: lo dice, a notas, no es garrafa",
      ("Lo anoto en las notas de la etapa" in u.message.dichos[-1], list((C.sesion(CHAT) or {}).get("garrafas") or []),
       len((C.sesion(CHAT) or {}).get("notas") or []), temps(base10)), (True, [], 1, []))
-texto(u, "2 garrafas: 18 kg 50% y 10 kg 30%")
-caso("11d. ... y luego las garrafas entran normal", (C.sesion(CHAT) or {}).get("garrafas"), [(18.0, 50.0), (10.0, 30.0)])
+texto(u, "2 garrafas: 20 L 18 kg 50% y 11 L 10 kg 30%")
+caso("11d. ... y luego las garrafas entran normal", (C.sesion(CHAT) or {}).get("garrafas"), [{"litros": 20.0, "peso_kg": 18.0, "grado_alcohol": 50.0}, {"litros": 11.0, "peso_kg": 10.0, "grado_alcohol": 30.0}])
 C.olvidar(CHAT)
 B._olvidar_chat(CHAT)
 # (e) RONDA 5 (B): envasado + "destilamos": NO abre la destilacion ni plantilla;
@@ -867,18 +891,18 @@ for frase in ("ya destilamos el L-19-10.1 y envasamos 40 de 750",
     caso("16. %r: abre la destilacion" % frase, (C.sesion(CHAT) or {}).get("etapa"), "destilacion")
     caso("16. ... y AVISA que el envasado va aparte (no lo anoto)",
          "El envasado dimelo aparte (no lo anote)" in u.message.dichos[-1], True)
-    texto(u, "2 garrafas: 18 kg 50% y 10 kg 30%")
+    texto(u, "2 garrafas: 20 L 18 kg 50% y 11 L 10 kg 30%")
     caso("16. ... el aviso sigue en el resumen", "El envasado dimelo aparte (no lo anote)" in u.message.dichos[-1], True)
 C.olvidar(CHAT)
 B._olvidar_chat(CHAT)
 u = Update(CHAT)
-texto(u, "ya destilamos el L-19-10.1, 2 garrafas: 18 kg 50% y 10 kg 30%, y envasamos 40 de 750")
+texto(u, "ya destilamos el L-19-10.1, 2 garrafas: 20 L 18 kg 50% y 11 L 10 kg 30%, y envasamos 40 de 750")
 caso("16. garrafas + envasado en un mensaje: las 2 garrafas se conservan",
-     list((C.sesion(CHAT) or {}).get("garrafas") or []), [(18.0, 50.0), (10.0, 30.0)])
+     list((C.sesion(CHAT) or {}).get("garrafas") or []), [{"litros": 20.0, "peso_kg": 18.0, "grado_alcohol": 50.0}, {"litros": 11.0, "peso_kg": 10.0, "grado_alcohol": 30.0}])
 caso("16. ... y el resumen avisa del envasado", "El envasado dimelo aparte (no lo anote)" in u.message.dichos[-1], True)
 C.olvidar(CHAT)
 u = Update(CHAT)
-texto(u, "ya destilamos el L-19-10.1, 2 garrafas: 18 kg 50% y 10 kg 30%")
+texto(u, "ya destilamos el L-19-10.1, 2 garrafas: 20 L 18 kg 50% y 11 L 10 kg 30%")
 caso("16. CONTROL sin envasado: sin el aviso", "El envasado dimelo aparte" in u.message.dichos[-1], False)
 C.olvidar(CHAT)
 B._olvidar_chat(CHAT)

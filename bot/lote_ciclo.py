@@ -533,21 +533,55 @@ def empezar(chat, etapa, codigo):
     return _etapas[chat]
 
 
-_PAR = re.compile(
-    r"(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilogramos?)\s*(?:a|al|con|de|,|y|/|-)?\s*(?:un\s+)?"
-    r"(\d+(?:[.,]\d+)?)\s*(?:%|por\s*ciento|grados?|de\s+alcohol)")
-_PAR_BARRA = re.compile(r"(\d+(?:[.,]\d+)?)\s*/\s*(\d+(?:[.,]\d+)?)")
+# 2026-11-10 (Norman: "que capture todo lo que esta en lotes del ERP"): cada
+# garrafa lleva LITROS, peso (kg) y % de alcohol, como la tanda de la web, y una
+# nota opcional entre parentesis. El % cierra la garrafa; los litros y los kilos
+# se buscan, con su unidad, en el tramo que va del % anterior a este (en
+# cualquier orden). Sin unidad un numero no se adivina.
+_GRADO = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:%|por\s*ciento|grados?(?:\s+de\s+alcohol)?|de\s+alcohol)")
+_LITROS = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:l|lt|lts|litros?)\b")
+_KILOS_G = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilogramos?)\b")
+_NOTA = re.compile(r"\s*\(([^)]*)\)")
+_TRIO_BARRA = re.compile(r"(\d+(?:[.,]\d+)?)\s*/\s*(\d+(?:[.,]\d+)?)\s*/\s*(\d+(?:[.,]\d+)?)")
 _CUANTAS = re.compile(r"(\d+)\s*garraf")
 
 
 def leer_garrafas(texto):
-    """'3 garrafas: 18.5 kg 52%, 17 kg 48%' -> (3, [(18.5, 52), (17, 48)]). **Pura.**"""
+    """'2 garrafas: 20 L 18.5 kg 52%, 19 L 17 kg 48% (turbia)' ->
+    (2, [{litros 20, peso_kg 18.5, grado_alcohol 52}, {19, 17, 48, notas 'turbia'}], []).
+    El tercero: las garrafas a las que les falto algo, [(numero, ['litros', 'kg'])].
+    Tambien '20/18.5/52' (litros/kg/%). **Pura.**"""
     t = sin_codigo(texto)
     n = _CUANTAS.search(t)
-    pares = [(_num(a), _num(b)) for a, b in _PAR.findall(t)]
-    if not pares:
-        pares = [(_num(a), _num(b)) for a, b in _PAR_BARRA.findall(t)]
-    return (int(n.group(1)) if n else None), pares
+    # La nota sale del texto ORIGINAL (con mayusculas y acentos): _plano no
+    # quita ni pone parentesis, asi que la k-esima de uno es la k-esima del otro.
+    notas_originales = _NOTA.findall(str(texto or ""))
+    notas_planas = list(_NOTA.finditer(t))
+    garrafas, incompletas = [], []
+    desde = 0
+    for m in _GRADO.finditer(t):
+        tramo = t[desde:m.start(1)]
+        litros = _LITROS.findall(tramo)
+        kilos = _KILOS_G.findall(tramo)
+        desde = m.end()
+        nota = None
+        mn = _NOTA.match(t, desde)
+        if mn:
+            k = next((i for i, x in enumerate(notas_planas) if x.start() == mn.start()), None)
+            nota = (notas_originales[k] if k is not None and k < len(notas_originales) else mn.group(1)).strip()
+            desde = mn.end()
+        falta = [nombre for nombre, v in (("litros", litros), ("kg", kilos)) if not v]
+        if falta:
+            incompletas.append((len(garrafas) + len(incompletas) + 1, falta))
+            continue
+        g = {"litros": _num(litros[-1]), "peso_kg": _num(kilos[-1]), "grado_alcohol": _num(m.group(1))}
+        if nota:
+            g["notas"] = nota[:300]
+        garrafas.append(g)
+    if not garrafas and not incompletas:
+        for a, b, c in _TRIO_BARRA.findall(t):
+            garrafas.append({"litros": _num(a), "peso_kg": _num(b), "grado_alcohol": _num(c)})
+    return (int(n.group(1)) if n else None), garrafas, incompletas
 
 
 _CODIGO = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
@@ -592,6 +626,16 @@ def solo_unidad(texto):
     return _corta(m.group(1)) if m else None
 
 
+def cantidad_con_unidad(cantidad, unidad):
+    """'1500 g (1.5 kg)' / '800 g' / '1.5 kg (1500 g)': lo que se va a guardar, en
+    GRAMOS como el catalogo, y entre parentesis la otra unidad. **Pura.**"""
+    if unidad == "kg":
+        return "%s kg (%s g)" % (_bonito(cantidad), _bonito(round(float(cantidad) * 1000, 6)))
+    if float(cantidad) >= 1000:
+        return "%s g (%s kg)" % (_bonito(cantidad), _bonito(round(float(cantidad) / 1000.0, 6)))
+    return "%s g" % _bonito(cantidad)
+
+
 def en_kg(cantidad, unidad):
     return cantidad / 1000.0 if unidad == "g" else cantidad
 
@@ -605,11 +649,15 @@ def avisos(s):
         kg = en_kg(s["cantidad"], s.get("unidad"))
         if not (a <= kg <= b):
             out.append("Ojo: %s %s de aditivo 2 se sale de lo normal (%s a %s kg). Lo dejo asi; si es error, corrigelo."
-                       % (_bonito(s["cantidad"]), s.get("unidad") or "kg", a, b))
+                       % (_bonito(s["cantidad"]), s.get("unidad") or "g", a, b))
     if s["etapa"] == "destilacion":
+        la, lb = e.get("rango_litros") or [0.1, 60]
         pa, pb = e.get("rango_peso_kg") or [0.1, 60]
         aa, ab = e.get("rango_alcohol") or [0, 80]
-        for i, (peso, grado) in enumerate(s["garrafas"], 1):
+        for i, g in enumerate(s["garrafas"], 1):
+            litros, peso, grado = g["litros"], g["peso_kg"], g["grado_alcohol"]
+            if not (la <= litros <= lb):
+                out.append("Ojo: la garrafa %d tiene %s litros (lo normal: %s a %s). Lo dejo asi." % (i, _bonito(litros), la, lb))
             if not (pa <= peso <= pb):
                 out.append("Ojo: la garrafa %d pesa %s kg (lo normal: %s a %s). Lo dejo asi." % (i, peso, pa, pb))
             if not (aa <= grado <= ab):
@@ -633,11 +681,13 @@ def resumen(s, hoy=None):
     if s["etapa"] == "fin_fermentacion":
         pass
     elif s["etapa"] == "aditivo_2":
-        lineas.append("Aditivo 2: %s %s" % (_bonito(s["cantidad"]), s.get("unidad") or "kg"))
+        lineas.append("Aditivo 2: %s" % cantidad_con_unidad(s["cantidad"], s.get("unidad") or "g"))
     else:
         lineas.append("Garrafas: %d" % len(s["garrafas"]))
-        for i, (peso, grado) in enumerate(s["garrafas"], 1):
-            lineas.append("   Garrafa %d: %s kg a %s%%" % (i, peso, grado))
+        for i, g in enumerate(s["garrafas"], 1):
+            lineas.append("   Garrafa %d: %s L, %s kg a %s%%%s" % (
+                i, _bonito(g["litros"]), _bonito(g["peso_kg"]), _bonito(g["grado_alcohol"]),
+                " (%s)" % g["notas"] if g.get("notas") else ""))
     if s.get("notas"):
         lineas.append("Notas: " + "; ".join(s["notas"])[:300])
     if s.get("aviso_envasado"):
@@ -824,29 +874,45 @@ async def _capturar(update, s, texto, primera=False):
     if s["etapa"] == "aditivo_2":
         cantidad, unidad = leer_masa(texto, con_unidad=primera)
         if cantidad is None:
-            return False
-        # 2026-11-10 (Norman, integracion con D-004): un numero solo son GRAMOS
-        # (la unidad del catalogo); "1.5 kg" dicho con su unidad se respeta y el
-        # servidor lo pasa a gramos. Antes se preguntaba "gramos o kilos?".
-        s["cantidad"], s["unidad"] = cantidad, unidad or "g"
+            # "gramos" despues de un numero pelon: completa la cantidad pendiente.
+            u = solo_unidad(texto) if s.get("sin_unidad") is not None else None
+            if u is None:
+                return False
+            cantidad, unidad = s["sin_unidad"], u
+        # 2026-11-10 (Norman: "si alguien lo mete en gramos que se pase directo,
+        # si lo mete en kg que se pase a gramos"): lo dicho con su unidad se
+        # respeta y el servidor lo pasa a GRAMOS (el catalogo). Un numero sin
+        # unidad NO se adivina: se pregunta "gramos o kilos?".
+        if unidad is None:
+            s["sin_unidad"] = cantidad
+            s["modo"] = "captura"
+            await update.effective_message.reply_text(
+                _texto("aditivo_2_unidad", cantidad=_bonito(cantidad), codigo=s["codigo"]))
+            return True
+        s["cantidad"], s["unidad"], s["sin_unidad"] = cantidad, unidad, None
         await _ensenar(update, s)
         return True
-    n, pares = leer_garrafas(texto)
-    if n is None and not pares:
+    n, nuevas, incompletas = leer_garrafas(texto)
+    if n is None and not nuevas and not incompletas:
         return False
     if n is not None:
         s["n"] = n
-    s["garrafas"].extend((float(p), float(g)) for p, g in pares if p is not None and g is not None)
+    s["garrafas"].extend({k: (float(v) if k != "notas" else v) for k, v in g.items()}
+                         for g in nuevas if None not in (g["litros"], g["peso_kg"], g["grado_alcohol"]))
     tope = int(((cfg().get("etapas") or {}).get("destilacion") or {}).get("tope_garrafas") or 50)
     s["garrafas"] = s["garrafas"][:tope]
     falta = (s["n"] or 0) - len(s["garrafas"])
-    if not s["garrafas"] or falta > 0:
+    if not s["garrafas"] or falta > 0 or incompletas:
         s["modo"] = "captura"
         desde = len(s["garrafas"]) + 1
-        hasta = s["n"] or desde
+        hasta = max(s["n"] or desde, desde)
+        # Lo que vino a medias se dice (no se guarda a medias ni se adivina).
+        medias = ["a una garrafa le falto %s" % " y ".join(f) for _i, f in incompletas]
         await update.effective_message.reply_text(
-            "Me falta%s: el peso (kg) y el %% de alcohol de la garrafa %s%s. Todo en un mensaje, por ejemplo: 17 kg 48%%"
-            % ("n" if hasta > desde else "", desde, ("" if hasta == desde else " a la %d" % hasta)))
+            "%sMe falta%s: los litros, el peso (kg) y el %% de alcohol de la garrafa %s%s. "
+            "Todo en un mensaje, por ejemplo: 19 L 17 kg 48%%"
+            % ((("; ".join(medias)).capitalize() + ". ") if medias else "",
+               "n" if hasta > desde else "", desde, ("" if hasta == desde else " a la %d" % hasta)))
         return True
     if s["n"] is not None and len(s["garrafas"]) > s["n"]:
         s["n"] = len(s["garrafas"])
@@ -863,10 +929,11 @@ def cuerpo_de_propuesta(s, chat):
     elif s["etapa"] == "aditivo_2":
         # Fase 7A: lo dicho con su unidad; el servidor lo pasa a la del catalogo.
         cuerpo["cantidad"] = s["cantidad"]
-        cuerpo["unidad"] = s.get("unidad") or "kg"
+        cuerpo["unidad"] = s.get("unidad") or "g"
         cuerpo["insumo_sku"] = cfg().get("aditivo_2_sku") or "aditivo-2"
     else:
-        cuerpo["garrafas"] = [{"peso_kg": p, "grado_alcohol": g} for p, g in s["garrafas"]]
+        # 2026-11-10: litros, peso, % y la nota de cada garrafa (como la tanda de la web).
+        cuerpo["garrafas"] = [dict(g) for g in s["garrafas"]]
     if s.get("notas"):
         cuerpo["notas"] = "; ".join(s["notas"])[:500]
     return cuerpo

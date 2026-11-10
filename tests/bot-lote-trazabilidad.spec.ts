@@ -77,7 +77,7 @@ function estadoInicial() {
       { id: 'c-n', id_entidad: 'ent-matriz', nombre: 'Efectivo', tipo_fiscalidad: 'NO_FISCAL' },
       { id: 'c-g', id_entidad: 'dst-a', nombre: 'Caja Gil', tipo_fiscalidad: 'NO_FISCAL' }
     ],
-    // Como en produccion el 2026-11-07: los dos aditivos en GRAMOS.
+    // Como en produccion: los dos aditivos en GRAMOS (Norman 2026-11-10: "mejor si los registre como gramos en el erp").
     catalogo_productos: [
       { id: 'chile-g', sku: 'chile-guajillo', nombre: 'Chile Guajillo', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
       { id: 'ad1', sku: 'mosto-1', nombre: 'Aditivo 1', unidad_medida: 'GRAMOS', tipo: 'INSUMO' },
@@ -172,7 +172,9 @@ function aplicarRpc(nombre: string, a: Fila): unknown {
     nueva('lote_etapas', { id_lote: a.p_id_lote, etapa: a.p_etapa, fecha: a.p_fecha, datos: a.p_datos, registrado_por: a.p_usuario })
     for (const e of (a.p_entradas as Fila[]) ?? []) nueva('lote_entradas', { id_lote: a.p_id_lote, id_insumo: e.id_insumo, cantidad: e.cantidad })
     for (const g of (a.p_garrafas as Fila[]) ?? []) {
-      nueva('lote_salidas', { id_lote: a.p_id_lote, numero_tanda: g.numero, litros: null, grado_alcohol: g.grado_alcohol, peso_kg: g.peso_kg })
+      nueva('lote_salidas', {
+        id_lote: a.p_id_lote, numero_tanda: g.numero, litros: g.litros ?? null, grado_alcohol: g.grado_alcohol, peso_kg: g.peso_kg, notas: g.notas ?? null
+      })
     }
     return { id_etapa: 'e-x' }
   }
@@ -333,15 +335,15 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
       codigo_lote: CODIGO,
       etapa: 'destilacion',
       garrafas: [
-        { peso_kg: 20, grado_alcohol: 43 },
-        { peso_kg: 15, grado_alcohol: 8 },
-        { peso_kg: 10, grado_alcohol: 30 }
+        { litros: 22, peso_kg: 20, grado_alcohol: 43 },
+        { litros: 16, peso_kg: 15, grado_alcohol: 8, notas: 'colas' },
+        { litros: 11, peso_kg: 10, grado_alcohol: 30 }
       ]
     })
-    expect(delLote('lote_salidas').map((s) => [s.numero_tanda, s.peso_kg, s.grado_alcohol, s.litros])).toEqual([
-      [1, 20, 43, null],
-      [2, 15, 8, null],
-      [3, 10, 30, null]
+    expect(delLote('lote_salidas').map((s) => [s.numero_tanda, s.litros, s.peso_kg, s.grado_alcohol, s.notas])).toEqual([
+      [1, 22, 20, 43, null],
+      [2, 16, 15, 8, 'colas'],
+      [3, 11, 10, 30, null]
     ])
     expect(delLote('lote_etapas').find((e) => e.etapa === 'destilacion')).toMatchObject({ fecha: HOY, datos: { garrafas: 3 } })
 
@@ -367,9 +369,9 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
       `${fechaParaPersona(HOY)} — ADITIVO 2`,
       '   Aditivo 2: 1500 g (1.5 kg)',
       `${fechaParaPersona(HOY)} — DESTILACION: 3 garrafa(s)`,
-      '   Garrafa 1: 20 kg al 43%',
-      '   Garrafa 2: 15 kg al 8%',
-      '   Garrafa 3: 10 kg al 30%',
+      '   Garrafa 1: 22 L, 20 kg al 43%',
+      '   Garrafa 2: 16 L, 15 kg al 8%',
+      '   Garrafa 3: 11 L, 10 kg al 30%',
       '   Total: 45 kg',
       // 20x0.43 + 15x0.08 + 10x0.30 = 8.6 + 1.2 + 3 = 12.8
       '   Alcohol puro: ~12.8 kg (calculo: peso x grado',

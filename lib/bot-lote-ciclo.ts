@@ -9,9 +9,11 @@
  *   · `aditivo_2`   — el aditivo 2 (SKU opaco, ERP-84) -> `lote_entradas`, en la
  *                     unidad del CATALOGO (Fase 7A: GRAMOS desde 2026-11-07;
  *                     lo dicho en kg o g se convierte, nada mas se adivina).
- *   · `destilacion` — una fila de `lote_salidas` por GARRAFA, con peso (kg) y %
- *                     de alcohol; `litros` va NULL (no hay densidad medida y no
- *                     se inventa una).
+ *   · `destilacion` — una fila de `lote_salidas` por GARRAFA, con litros, peso
+ *                     (kg) y % de alcohol, y una nota opcional (2026-11-10,
+ *                     Norman: "que capture todo lo que esta en lotes del ERP").
+ *                     Antes `litros` iba NULL y sin litros la vista no saca
+ *                     rendimiento, grado ponderado ni costo por ml.
  *   · `fin_fermentacion` — Fase 7B (2026-11-07): la fecha en que termino la
  *                     fermentacion (y sus horas, si las dicen). Escribe la
  *                     CABECERA (`lotes.fecha_fin_fermentacion` /
@@ -42,8 +44,11 @@ export const FUENTES_TEMPERATURA = ['open-meteo exterior'] as const
 /** Topes DUROS del servidor ("esto no se dicta por chat"). Los rangos que solo AVISAN viven en el YAML del bot. */
 export const TOPE_GARRAFAS = 50
 export const TOPE_PESO_GARRAFA_KG = 1000
+export const TOPE_LITROS_GARRAFA = 1000
 export const TOPE_KG_ADITIVO = 100000
 export const GRADO_MAXIMO = 100
+/** El mismo tope que la web (`FormLote`, notas de la tanda). */
+export const TOPE_NOTA_GARRAFA = 300
 
 export interface EntradaEtapa {
   id_insumo: string
@@ -52,8 +57,11 @@ export interface EntradaEtapa {
 
 export interface GarrafaEtapa {
   numero: number
+  litros: number
   peso_kg: number
   grado_alcohol: number
+  /** OPCIONAL: `canonizar` omite la llave ausente. */
+  notas?: string
 }
 
 export interface PayloadEtapa {
@@ -206,14 +214,26 @@ export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): Result
   const garrafas: GarrafaEtapa[] = []
   for (let i = 0; i < crudas.length; i++) {
     const g = (crudas[i] ?? {}) as Record<string, unknown>
+    const litros = numero(g.litros)
     const peso = numero(g.peso_kg)
     const grado = numero(g.grado_alcohol ?? g.grado)
+    // 2026-11-10: los litros son obligatorios. Un bot sin actualizar (sin
+    // `litros`) se rechaza: sin litros la vista no calcula el rendimiento.
+    if (litros === null || litros <= 0) return { ok: false, error: `Me faltan los litros de la garrafa ${i + 1}.` }
+    if (litros > TOPE_LITROS_GARRAFA) return { ok: false, error: `${litros} litros en una garrafa no me cuadra. Revisalo.` }
     if (peso === null || peso <= 0) return { ok: false, error: `No entendi el peso de la garrafa ${i + 1}.` }
     if (peso > TOPE_PESO_GARRAFA_KG) return { ok: false, error: `${peso} kg en una garrafa no me cuadra. Revisalo.` }
     if (grado === null || grado < 0 || grado > GRADO_MAXIMO) {
       return { ok: false, error: `No entendi el % de alcohol de la garrafa ${i + 1}.` }
     }
-    garrafas.push({ numero: i + 1, peso_kg: Number(peso.toFixed(3)), grado_alcohol: Number(grado.toFixed(2)) })
+    const nota = String(g.notas ?? '').trim().slice(0, TOPE_NOTA_GARRAFA)
+    garrafas.push({
+      numero: i + 1,
+      litros: Number(litros.toFixed(3)),
+      peso_kg: Number(peso.toFixed(3)),
+      grado_alcohol: Number(grado.toFixed(2)),
+      ...(nota !== '' ? { notas: nota } : {})
+    })
   }
   return { ok: true, payload: { ...base, entradas: [], garrafas } }
 }
@@ -276,7 +296,9 @@ export function mensajeDeEtapa(p: PayloadEtapa, fechaInicio?: string): string {
     lineas.push(p.unidad_entrada ? `Aditivo 2: ${corto(e.cantidad)} ${p.unidad_entrada}` : `Kilos de aditivo 2: ${corto(e.cantidad)}`)
   }
   if (p.garrafas.length) lineas.push(`Garrafas: ${p.garrafas.length}`)
-  for (const g of p.garrafas) lineas.push(`   Garrafa ${g.numero}: ${corto(g.peso_kg)} kg a ${corto(g.grado_alcohol)}%`)
+  for (const g of p.garrafas) {
+    lineas.push(`   Garrafa ${g.numero}: ${corto(g.litros)} L, ${corto(g.peso_kg)} kg a ${corto(g.grado_alcohol)}%${g.notas ? ` (${g.notas})` : ''}`)
+  }
   if (p.notas) lineas.push(`Notas: ${p.notas}`)
   return lineas.join('\n')
 }

@@ -290,7 +290,9 @@ export function lineaDeTiempo(d: DatosDeLote): EventoDeLote[] {
     const g = resumenGarrafas(d.salidas)
     const detalle: string[] = []
     for (const s of [...d.salidas].sort((a, b) => a.numero_tanda - b.numero_tanda)) {
-      const peso = s.peso_kg !== null ? `${num(Number(s.peso_kg))} kg` : s.litros !== null ? `${num(Number(s.litros))} L` : 'sin peso'
+      // 2026-11-10: el bot ya captura litros Y peso por garrafa; se ensenan los dos.
+      const partes = [s.litros !== null ? `${num(Number(s.litros))} L` : null, s.peso_kg !== null ? `${num(Number(s.peso_kg))} kg` : null]
+      const peso = partes.filter(Boolean).join(', ') || 'sin peso'
       const grado = s.grado_alcohol !== null ? ` al ${num(Number(s.grado_alcohol))}%` : ' (sin grado)'
       detalle.push(`Garrafa ${s.numero_tanda}: ${peso}${grado}`)
     }

@@ -49,23 +49,33 @@ test.describe('normalizarEtapa', () => {
     expect(normalizarEtapa({ etapa: 'aditivo_2', cantidad: 0, unidad: 'kg' }, ctx()).ok).toBe(false)
   })
 
-  test('destilacion: garrafas numeradas por orden, sin litros', () => {
+  // 2026-11-10 (Norman: "que capture todo lo de lotes del ERP"): litros, peso, % y nota por garrafa.
+  test('destilacion: garrafas numeradas por orden, con litros y nota', () => {
     const r = normalizarEtapa(
-      { etapa: 'destilacion', garrafas: [{ peso_kg: '18.5', grado_alcohol: 52 }, { peso_kg: 17, grado: '48' }] },
+      {
+        etapa: 'destilacion',
+        garrafas: [
+          { litros: '20', peso_kg: '18.5', grado_alcohol: 52 },
+          { litros: 19, peso_kg: 17, grado: '48', notas: '  turbia ' }
+        ]
+      },
       ctx()
     )
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.payload.garrafas).toEqual([
-      { numero: 1, peso_kg: 18.5, grado_alcohol: 52 },
-      { numero: 2, peso_kg: 17, grado_alcohol: 48 }
+      { numero: 1, litros: 20, peso_kg: 18.5, grado_alcohol: 52 },
+      { numero: 2, litros: 19, peso_kg: 17, grado_alcohol: 48, notas: 'turbia' }
     ])
-    expect(JSON.stringify(r.payload)).not.toContain('litros')
   })
 
-  test('destilacion: % fuera de 0..100 o peso <= 0 -> error duro', () => {
-    expect(normalizarEtapa({ etapa: 'destilacion', garrafas: [{ peso_kg: 10, grado_alcohol: 120 }] }, ctx()).ok).toBe(false)
-    expect(normalizarEtapa({ etapa: 'destilacion', garrafas: [{ peso_kg: 0, grado_alcohol: 40 }] }, ctx()).ok).toBe(false)
+  test('destilacion: sin litros, % fuera de 0..100 o peso <= 0 -> error duro', () => {
+    const sinLitros = normalizarEtapa({ etapa: 'destilacion', garrafas: [{ peso_kg: 10, grado_alcohol: 40 }] }, ctx())
+    expect(sinLitros.ok).toBe(false)
+    if (!sinLitros.ok) expect(sinLitros.error).toContain('litros de la garrafa 1')
+    expect(normalizarEtapa({ etapa: 'destilacion', garrafas: [{ litros: 12, peso_kg: 10, grado_alcohol: 120 }] }, ctx()).ok).toBe(false)
+    expect(normalizarEtapa({ etapa: 'destilacion', garrafas: [{ litros: 12, peso_kg: 0, grado_alcohol: 40 }] }, ctx()).ok).toBe(false)
+    expect(normalizarEtapa({ etapa: 'destilacion', garrafas: [{ litros: 5000, peso_kg: 10, grado_alcohol: 40 }] }, ctx()).ok).toBe(false)
     expect(normalizarEtapa({ etapa: 'destilacion', garrafas: [] }, ctx()).ok).toBe(false)
   })
 
@@ -74,8 +84,8 @@ test.describe('normalizarEtapa', () => {
   })
 
   test('el sello cambia si cambia una garrafa', () => {
-    const a = normalizarEtapa({ etapa: 'destilacion', garrafas: [{ peso_kg: 10, grado_alcohol: 40 }] }, ctx())
-    const b = normalizarEtapa({ etapa: 'destilacion', garrafas: [{ peso_kg: 10, grado_alcohol: 41 }] }, ctx())
+    const a = normalizarEtapa({ etapa: 'destilacion', garrafas: [{ litros: 12, peso_kg: 10, grado_alcohol: 40 }] }, ctx())
+    const b = normalizarEtapa({ etapa: 'destilacion', garrafas: [{ litros: 12, peso_kg: 10, grado_alcohol: 41 }] }, ctx())
     if (!a.ok || !b.ok) throw new Error('debian ser validas')
     const s = sellarEtapa(a.payload)
     expect(selloEtapaCoincide(a.payload, s)).toBe(true)
@@ -153,7 +163,7 @@ test('ronda 5: notas de etapa opcionales; sin notas el sello es el de antes', as
   const LLAVES_ANTES = ['codigo_lote', 'entradas', 'etapa', 'fecha', 'garrafas', 'id_lote', 'telegram_id', 'usuario_creador'] as const
   const p = {
     id_lote: 'lote-1', codigo_lote: 'L-15-10.1', etapa: 'destilacion' as const, fecha: '2026-10-19', telegram_id: 111,
-    usuario_creador: 'telegram:norman', entradas: [], garrafas: [{ numero: 1, peso_kg: 18, grado_alcohol: 50 }]
+    usuario_creador: 'telegram:norman', entradas: [], garrafas: [{ numero: 1, litros: 20, peso_kg: 18, grado_alcohol: 50 }]
   }
   expect(sellarEtapa(p)).toBe(sellar(p, LLAVES_ANTES))
   const conNotas = { ...p, notas: 'dijeron "cuarto a 22 grados"' }

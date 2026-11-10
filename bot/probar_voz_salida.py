@@ -184,9 +184,9 @@ try:
     u = Update(Mensaje(CHAT, voz=True))
     asyncio.run(B.manejar_voz(u, Contexto()))
     dichos, voces = u.message.dichos, u.message.voces
-    caso("3. por voz: contesto el texto de la plantilla", any("1. Kilos de chile" in d for d in dichos), True)
+    caso("3. por voz: contesto el texto de la plantilla", any("2. Kilos de chile" in d for d in dichos), True)
     caso("3. ... y UNA nota de voz (OGG)", voces, [b"OggS"])
-    caso("3. ... con el MISMO texto que se escribio", SINTETIZADOS[-1:] == [d for d in dichos if "1. Kilos" in d], True)
+    caso("3. ... con el MISMO texto que se escribio", SINTETIZADOS[-1:] == [d for d in dichos if "2. Kilos" in d], True)
     caso("3. ... el 'Te entendi' NO va en audio", len(SINTETIZADOS), 1)
 
     # CONTROL: lo mismo escrito -> la plantilla, sin audio... salvo que es una ronda.
@@ -236,7 +236,7 @@ try:
     SINTETIZADOS.clear()
     u = Update(Mensaje(CHAT, voz=True))
     asyncio.run(B.manejar_voz(u, Contexto()))
-    caso("3c. maestro apagado, por voz: el texto sale", any("1. Kilos de chile" in d for d in u.message.dichos), True)
+    caso("3c. maestro apagado, por voz: el texto sale", any("2. Kilos de chile" in d for d in u.message.dichos), True)
     caso("3c. ... y NO hay audio ni sintesis", (list(u.message.voces), list(SINTETIZADOS)), ([], []))
 finally:
     B.enrutar, B._post = orig3c

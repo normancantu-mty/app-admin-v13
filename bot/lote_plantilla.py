@@ -88,17 +88,58 @@ _KILOS = re.compile(r"\d\s*(kilos?|kgs?|kilogramos?)\b")
 _GRAMOS = re.compile(r"\d\s*(g|gr|grs|gramos?)\b")
 
 
-def a_unidad_del_campo(c, valor, tramo):
-    """**Pura.** `valor` dicho en `tramo` -> en la `unidad` del campo `c`."""
-    if not isinstance(valor, (int, float)) or (c or {}).get("unidad") not in ("g", "kg"):
-        return valor
+def unidad_dicha(tramo):
+    """'8 kg' -> 'kg'; '800 g' -> 'g'; '8' -> None. **Pura.**"""
     t = _plano(tramo)
-    dicha = "kg" if _KILOS.search(t) else "g" if _GRAMOS.search(t) else None
-    if dicha is None or dicha == c["unidad"]:
+    return "kg" if _KILOS.search(t) else "g" if _GRAMOS.search(t) else None
+
+
+def convertir(valor, dicha, unidad):
+    """`valor` en la unidad `dicha` -> en `unidad` (g/kg). **Pura.**"""
+    if not isinstance(valor, (int, float)) or dicha is None or dicha == unidad or unidad not in ("g", "kg"):
         return valor
     v = valor * 1000 if dicha == "kg" else valor / 1000.0
     v = round(v, 6)
     return int(v) if v == int(v) else v
+
+
+def a_unidad_del_campo(c, valor, tramo):
+    """**Pura.** `valor` dicho en `tramo` -> en la `unidad` del campo `c`."""
+    if not isinstance(valor, (int, float)) or (c or {}).get("unidad") not in ("g", "kg"):
+        return valor
+    return convertir(valor, unidad_dicha(tramo), c["unidad"])
+
+
+def _sin_unidad(c, valor, tramo):
+    """2026-11-10 (Norman: "Preguntar g o kg"): un campo con `pedir_unidad`
+    dicho como numero pelon ("8") no se adivina: se pregunta."""
+    return bool((c or {}).get("pedir_unidad")) and isinstance(valor, (int, float)) and unidad_dicha(tramo) is None
+
+
+# 2026-11-10: las fechas del lote (inicio y fin de la fermentacion). La fecha
+# escrita ("8/11", "el 8 de noviembre") la lee `lote_ciclo.fecha_dicha`, la misma
+# que la etapa del fin de fermentacion; aqui se suman hoy/ayer/antier/hace N dias.
+_FECHA_RELATIVA = re.compile(r"\b(hoy|antier|antes\s+de\s+ayer|ayer|hace\s+(\d{1,2})\s+dias?)\b")
+_FECHA_TRAMO = re.compile(r"(?:el\s+)?\d{1,2}\s+de\s+[a-z]+(?:\s+(?:de|del)\s+\d{4})?|\d{1,2}/\d{1,2}(?:/\d{2,4})?"
+                          r"|\d{4}-\d{1,2}-\d{1,2}|\bantier\b|\bantes\s+de\s+ayer\b|\bayer\b|\bhoy\b"
+                          r"|\bhace\s+\d{1,2}\s+dias?\b")
+
+
+def fecha_de(texto, hoy=None):
+    """La fecha que DICE el texto, o None si no dice ninguna. **Pura.**"""
+    import lote_ciclo  # aqui y no arriba: lote_ciclo importa este modulo
+    hoy = hoy or hoy_local()
+    t = _plano(texto)
+    dicha = lote_ciclo.fecha_dicha(t, hoy)
+    if dicha is not None:
+        return dicha
+    m = _FECHA_RELATIVA.search(t)
+    if not m:
+        return None
+    if m.group(2):
+        return hoy - dt.timedelta(days=int(m.group(2)))
+    palabra = m.group(1)
+    return hoy - dt.timedelta(days=0 if palabra == "hoy" else 1 if palabra == "ayer" else 2)
 
 
 def _campo(nombre):
@@ -114,6 +155,17 @@ def preguntas():
     if p.get("preguntas"):
         return list(p["preguntas"])[:MAX_PREGUNTAS]
     return [{"etiqueta": c["etiqueta"], "campos": [c["nombre"]]} for c in p["campos"][:MAX_PREGUNTAS]]
+
+
+def preguntas_despues():
+    """2026-11-10: la segunda tanda (YAML `despues`): Brix final y, opcional, el
+    fin de la fermentacion con sus horas."""
+    return list(plantilla().get("despues") or [])
+
+
+def todas_las_preguntas():
+    """Formulario + segunda tanda: lo que se ensena al Corregir."""
+    return preguntas() + preguntas_despues()
 
 
 def hoy_local(ahora=None):
@@ -213,7 +265,7 @@ def leer(texto, preguntadas=()):
     p = plantilla()
     t = _plano(texto)
     items = _items(preguntadas)
-    campos, notas, tramos = {}, [], []
+    campos, notas, tramos, sin_unidad = {}, [], [], []
 
     def tomar(m):
         tramos.append(m.span())
@@ -227,17 +279,36 @@ def leer(texto, preguntadas=()):
         for i in range(1, len(piezas) - 1, 2):
             idx = int(piezas[i]) - 1
             if 0 <= idx < len(items):
-                campos.update(_valores_de_item(items[idx], piezas[i + 1].strip(" ,;.")))
+                campos.update(_valores_de_item(items[idx], piezas[i + 1].strip(" ,;."), sin_unidad))
         if campos:
             return {"campos": campos, "notas": notas, "omitir": False, "consumio": True,
-                    "resto": "", "dinero": False}
+                    "resto": "", "dinero": False, "sin_unidad": sin_unidad}
 
-    # 2. Un numero solo, cuando se pregunto UNA cosa y su primer campo es numerico.
+    # 2. Un numero solo, cuando de lo preguntado UNA sola pregunta empieza con un
+    #    campo numerico (2026-11-10: "Brix final" + el fin opcional, que es fecha).
     solo = re.match(r"^\s*(\d+(?:[.,]\d+)?)\s*$", t)
-    if solo and len(items) == 1 and (_campo(items[0][0]) or {}).get("tipo") == "numero":
-        campos[items[0][0]] = _num(solo.group(1))
+    numericas = [it for it in items if (_campo(it[0]) or {}).get("tipo") == "numero"]
+    if solo and len(numericas) == 1:
+        nombre = numericas[0][0]
+        campos[nombre] = _num(solo.group(1))
+        if _sin_unidad(_campo(nombre), campos[nombre], t):
+            sin_unidad.append(nombre)
         return {"campos": campos, "notas": notas, "omitir": False, "consumio": True,
-                "resto": "", "dinero": False}
+                "resto": "", "dinero": False, "sin_unidad": sin_unidad}
+
+    # 2b. Una fecha sola ("ayer", "el 8 de noviembre"), cuando de lo preguntado
+    #     UNA sola pregunta empieza con un campo de fecha.
+    fechas = [it for it in items if (_campo(it[0]) or {}).get("tipo") == "fecha"]
+    m_fecha = _FECHA_TRAMO.search(t)
+    if m_fecha and len(fechas) == 1:
+        quedan = (t[:m_fecha.start()] + " " + t[m_fecha.end():]).split()
+        relleno = set((p.get("relleno") or "").split()) | {"fue", "es", "el"}
+        if all(w in relleno for w in re.findall(r"[a-z0-9]+", " ".join(quedan))):
+            f = fecha_de(m_fecha.group(0))
+            if f is not None:
+                campos[fechas[0][0]] = f
+                return {"campos": campos, "notas": notas, "omitir": False, "consumio": True,
+                        "resto": "", "dinero": False, "sin_unidad": sin_unidad}
 
     # 3. Sueltas, por los patrones de cada campo. Un tramo ya tomado por otro
     #    campo no se vuelve a leer ("2 kilos de aditivo" no son kilos de chile).
@@ -299,9 +370,20 @@ def leer(texto, preguntadas=()):
             for m in re.finditer(patron, t):
                 if not libre(m):
                     continue
+                if c["tipo"] == "fecha":
+                    f = fecha_de(m.group(1))
+                    if f is None:
+                        continue
+                    tomar(m)
+                    campos.setdefault(c["nombre"], f)
+                    continue
                 tomar(m)
                 if c["tipo"] == "numero":
-                    campos.setdefault(c["nombre"], a_unidad_del_campo(c, _num(m.group(1)), m.group(0)))
+                    if c["nombre"] not in campos:
+                        valor = _num(m.group(1))
+                        campos[c["nombre"]] = a_unidad_del_campo(c, valor, m.group(0))
+                        if _sin_unidad(c, valor, m.group(0)):
+                            sin_unidad.append(c["nombre"])
                 elif c["tipo"] == "texto":
                     campos.setdefault(c["nombre"], m.group(1))
     for e in p.get("extras") or []:
@@ -332,7 +414,60 @@ def leer(texto, preguntadas=()):
     dinero = bool(_DINERO.search(t))
     consumio = bool(campos or notas or omitir or disparo)
     return {"campos": campos, "notas": notas, "omitir": omitir, "consumio": consumio,
-            "resto": resto_txt if len(sobra) >= 2 else "", "dinero": dinero}
+            "resto": resto_txt if len(sobra) >= 2 else "", "dinero": dinero, "sin_unidad": sin_unidad}
+
+
+# 2026-11-10: la respuesta a "gramos o kilos?". Por campo ("aditivo en kilos,
+# levadura en gramos", con su `clave` del YAML) o por orden ("1. kilos 2.
+# gramos"); una sola unidad para varios campos vale para todos ("gramos").
+# Si viene con numero ("8000 gramos"), manda el numero nuevo.
+_UNIDAD_SUELTA = r"(?:(\d+(?:[.,]\d+)?)\s*)?\b(kilos?|kgs?|kilogramos?|gramos?|grs?|g)\b"
+
+
+def leer_unidades(texto, nombres):
+    """{nombre: (numero|None, 'g'|'kg')} de lo que contesto. **Pura.**"""
+    t = _plano(texto)
+    tomados, out = [], {}
+    for n in nombres:
+        clave = (_campo(n) or {}).get("clave")
+        if not clave:
+            continue
+        m = re.search(r"\b(?:%s)\b\D{0,20}?%s" % (clave, _UNIDAD_SUELTA), t)
+        if m:
+            out[n] = (_num(m.group(1)) if m.group(1) else None, "kg" if m.group(2).startswith("k") else "g")
+            tomados.append(m.span())
+    sueltas = [m for m in re.finditer(_UNIDAD_SUELTA, t)
+               if not any(a <= m.start() < b for a, b in tomados)]
+    quedan = [n for n in nombres if n not in out]
+    if len(sueltas) == 1 and len(quedan) > 1 and sueltas[0].group(1) is None:
+        sueltas = sueltas * len(quedan)
+    for n, m in zip(quedan, sueltas):
+        out[n] = (_num(m.group(1)) if m.group(1) else None, "kg" if m.group(2).startswith("k") else "g")
+    return out
+
+
+def texto_unidades(s):
+    """La pregunta "gramos o kilos?" de lo que llego sin unidad."""
+    nombres = list(s["sin_unidad"])
+    if len(nombres) == 1:
+        n = nombres[0]
+        v = _bonito(s["sin_unidad"][n])
+        return ('%s: %s gramos o %s kilos? Contesta "gramos" o "kilos".'
+                % (_campo(n)["etiqueta"], v, v)), [[n]]
+    lineas = ["Me falta la unidad:"] + [
+        "%d. %s: %s gramos o %s kilos?" % (i, _campo(n)["etiqueta"], _bonito(s["sin_unidad"][n]),
+                                           _bonito(s["sin_unidad"][n]))
+        for i, n in enumerate(nombres, 1)]
+    lineas.append('Contesta por ejemplo: "1. kilos 2. gramos".')
+    return "\n".join(lineas), [[n] for n in nombres]
+
+
+def _bonito(n):
+    try:
+        f = float(n)
+    except (TypeError, ValueError):
+        return str(n)
+    return str(int(f)) if f.is_integer() else str(f)
 
 
 def chiles_conocidos():
@@ -425,17 +560,34 @@ def _unidad_chile():
     return (_campo("kg_chile") or {}).get("unidad") or 'kg'
 
 
-def _valores_de_item(nombres, texto):
+def _valores_de_item(nombres, texto, sin_unidad=None):
     """La respuesta a UNA pregunta numerada -> sus campos. "40 guajillo" en la
     pregunta 1 da kilos (el numero) y tipo (lo que reconoce el patron, o la
-    palabra que sobra)."""
+    palabra que sobra). `sin_unidad` (lista): ahi se apuntan los campos con
+    `pedir_unidad` que llegaron como numero pelon."""
     salida = {}
     if "kg_chile" in nombres:
         mezcla = leer_chiles(texto)
         if mezcla:
             return dict(mezcla["campos"])
-    # Cada numero con SU tramo (hasta el siguiente numero): en "500 g y 2 kilos"
-    # (pregunta 3: aditivo 1 y levadura) el "kilos" es de la levadura, no de los 500.
+    # 2026-11-10: la fecha va primero y su tramo sale del texto: los numeros de
+    # "8/11" no son horas. Las horas, si vienen con su unidad, son esas.
+    for nombre in nombres:
+        if (_campo(nombre) or {}).get("tipo") == "fecha":
+            m = _FECHA_TRAMO.search(texto)
+            if m:
+                f = fecha_de(m.group(0))
+                if f is not None:
+                    salida[nombre] = f
+                texto = texto[:m.start()] + " " + texto[m.end():]
+    if "horas_fermentacion" in nombres:
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|horas?)\b", texto)
+        if m:
+            salida["horas_fermentacion"] = _num(m.group(1))
+            texto = texto[:m.start()] + " " + texto[m.end():]
+        nombres = [n for n in nombres if n != "horas_fermentacion"]
+    # Cada numero con SU tramo (hasta el siguiente numero): en "800 g y 20 g"
+    # (pregunta 3: aditivo 1 y levadura) cada "g" es de su numero, no del otro.
     marcas = list(re.finditer(r"(\d+(?:[.,]\d+)?)", texto))
     i_num = 0
     for nombre in nombres:
@@ -444,7 +596,10 @@ def _valores_de_item(nombres, texto):
             if i_num < len(marcas):
                 fin = marcas[i_num + 1].start() if i_num + 1 < len(marcas) else len(texto)
                 tramo = texto[marcas[i_num].start():fin]
-                salida[nombre] = a_unidad_del_campo(c, _num(marcas[i_num].group(1)), tramo)
+                valor = _num(marcas[i_num].group(1))
+                salida[nombre] = a_unidad_del_campo(c, valor, tramo)
+                if sin_unidad is not None and _sin_unidad(c, valor, tramo):
+                    sin_unidad.append(nombre)
                 i_num += 1
         elif c.get("tipo") == "texto":
             valor = None
@@ -465,7 +620,8 @@ def _valores_de_item(nombres, texto):
 # ── preguntar ───────────────────────────────────────────────────────────────
 
 # Lo que el enrutador puede traer que la plantilla entiende (el resto se ignora).
-NOMBRES_DE_CAMPO = ("kg_chile", "tipo_chile", "brix_chile", "aditivo_1", "kg_levadura", "brix_final", "codigo_lote")
+NOMBRES_DE_CAMPO = ("kg_chile", "tipo_chile", "brix_chile", "aditivo_1", "g_levadura", "brix_final", "codigo_lote",
+                    "horas_fermentacion")
 
 
 def faltan(s):
@@ -484,10 +640,47 @@ def texto_plantilla(codigo=None):
     return "\n".join(lineas)
 
 
-def texto_faltan(nombres):
-    lote = nombres[:MAX_PREGUNTAS]
-    lineas = ["Me falta:"] + ["%d. %s" % (i, _campo(n)["pregunta"]) for i, n in enumerate(lote, 1)]
-    return "\n".join(lineas), [[n] for n in lote]
+def texto_faltan(nombres, opcionales=()):
+    """"Me falta:" con lo obligatorio que falta y, si cabe en la tanda de <=4,
+    las preguntas opcionales (cada una con sus campos)."""
+    lote = [[n] for n in nombres[:MAX_PREGUNTAS]]
+    textos = [_campo(n)["pregunta"] for n in nombres[:MAX_PREGUNTAS]]
+    for q in opcionales:
+        if len(lote) >= MAX_PREGUNTAS:
+            break
+        lote.append(list(q["campos"]))
+        textos.append(q["etiqueta"] + "?")
+    lineas = ["Me falta:"] + ["%d. %s" % (i, x) for i, x in enumerate(textos, 1)]
+    return "\n".join(lineas), lote
+
+
+def opcionales_pendientes(s):
+    """Las preguntas opcionales de la segunda tanda que aun no se hacen."""
+    if s.get("opcionales_preguntados"):
+        return []
+    return [q for q in preguntas_despues()
+            if q.get("opcional") and not any(n in s["campos"] for n in q["campos"])]
+
+
+def avisos_de_fechas(s, hoy=None):
+    """El fin de la fermentacion contra el inicio (solo AVISA; lo que no cuadra
+    no se manda: `campos_para_peticion`)."""
+    hoy = hoy or hoy_local()
+    inicio = s["campos"].get("fecha_inicio") or hoy
+    fin = s["campos"].get("fin_fermentacion")
+    out = []
+    if isinstance(inicio, dt.date) and inicio > hoy:
+        out.append("Ojo: la fecha de inicio (%s) es en el futuro; el sistema no la acepta. Corrigela."
+                   % fecha_para_persona(inicio))
+    if isinstance(fin, dt.date):
+        dias = (fin - inicio).days
+        if dias < 0:
+            out.append("Ojo: el fin de la fermentacion (%s) es antes del inicio (%s). No lo mando; corrigelo."
+                       % (fecha_para_persona(fin), fecha_para_persona(inicio)))
+        elif dias > 31:
+            out.append("Ojo: %d dias de fermentacion es mucho; no lo mando. Si es correcto, registralo en el ERP."
+                       % dias)
+    return out
 
 
 def avisos_de_rango(campos):
@@ -504,11 +697,17 @@ def avisos_de_rango(campos):
 
 
 def _anotar(s, leido):
+    sin = set(leido.get("sin_unidad") or ())
     for k, v in leido["campos"].items():
         s["campos"][k] = v
         s["omitidos"].discard(k)
         if k == "codigo_lote":
             s["codigo_dictado"] = True
+        # Lo que llego sin unidad se pregunta; lo que vuelve con unidad ya no.
+        if k in sin:
+            s.setdefault("sin_unidad", {})[k] = v
+        else:
+            s.setdefault("sin_unidad", {}).pop(k, None)
     s["notas"].extend(n for n in leido["notas"] if n not in s["notas"])
     if leido.get("resto"):
         s["notas"].append(leido["resto"])
@@ -540,45 +739,83 @@ def codigo_de(s):
     return s["campos"].get("codigo_lote") or s.get("codigo")
 
 
-def campos_para_peticion(s):
+def _fecha_inicio_distinta(s, hoy=None):
+    """True si dijeron una fecha de inicio que no es hoy."""
+    f = s["campos"].get("fecha_inicio")
+    return isinstance(f, dt.date) and f != (hoy or hoy_local())
+
+
+def campos_para_peticion(s, hoy=None):
     """Los campos tal como los entiende `_peticion_de_lote` del bot. El aditivo
     1 sale como renglon de insumo con su SKU OPACO (YAML `aditivo_1_sku`)."""
+    hoy = hoy or hoy_local()
     c = {k: v for k, v in s["campos"].items()
-         if k in ("kg_chile", "brix_chile", "brix_final", "dias_fermentacion", "tandas")}
+         if k in ("kg_chile", "brix_chile", "brix_final", "dias_fermentacion", "horas_fermentacion", "tandas")}
+    # 2026-11-10: la fecha de inicio y el fin de la fermentacion. El fin viaja
+    # como dias desde el inicio: `lib/bot-lotes.ts` saca de ahi la fecha de fin
+    # (tope 31). Lo que no cuadra no se manda (ya se aviso en el resumen).
+    inicio = s["campos"].get("fecha_inicio")
+    if isinstance(inicio, dt.date):
+        c["fecha_inicio"] = inicio.isoformat()
+    fin = s["campos"].get("fin_fermentacion")
+    if isinstance(fin, dt.date):
+        dias = (fin - (inicio if isinstance(inicio, dt.date) else hoy)).days
+        if 0 <= dias <= 31:
+            c["dias_fermentacion"] = dias
     codigo = codigo_de(s)
-    if codigo:
+    # Con otra fecha de inicio, el codigo de HOY no le toca: si no lo dictaron,
+    # lo pone el servidor con la fecha de inicio (L-DD-MM.N de ese dia).
+    if codigo and (s.get("codigo_dictado") or not _fecha_inicio_distinta(s, hoy)):
         c["codigo_lote"] = codigo
     insumos = renglones_de_chile(s["campos"])
     if insumos:
         c.pop("kg_chile", None)  # va como renglon(es) con su SKU, no suelto
     ad1 = s["campos"].get("aditivo_1")
     if ad1 not in (None, "", 0):
-        # Fase 7: va en la unidad del campo (YAML, la del catalogo: g). El
-        # servidor la pasa a la del catalogo; con g -> GRAMOS queda igual.
+        # Va en la unidad del campo (YAML, la del catalogo: kg desde el
+        # 2026-11-10). El servidor la pasa a la del catalogo; si coinciden, igual.
         insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "mosto-1", "cantidad": ad1,
-                        "unidad": (_campo("aditivo_1") or {}).get("unidad") or "g"})
-    lev = s["campos"].get("kg_levadura")
+                        "unidad": (_campo("aditivo_1") or {}).get("unidad") or "kg"})
+    lev = s["campos"].get("g_levadura")
     if lev not in (None, "", 0):
-        # D-004 (2026-11-10): levadura y enzimas, en kilos, con su unidad dicha.
+        # D-004 (2026-11-10): levadura y enzimas, en gramos (Norman), con su unidad.
         insumos.append({"insumo": plantilla().get("levadura_sku") or "levadura-enzimas", "cantidad": lev,
-                        "unidad": (_campo("kg_levadura") or {}).get("unidad") or "kg"})
+                        "unidad": (_campo("g_levadura") or {}).get("unidad") or "g"})
     if insumos:
         c["insumos"] = insumos
     return c
 
 
+def _valor_para_persona(c, v):
+    """'8000 g (8 kg)', '12' (Brix), '08/11/2026', '72 horas'."""
+    if isinstance(v, dt.date):
+        return fecha_para_persona(v)
+    unidad = c.get("unidad")
+    if unidad == "g" and isinstance(v, (int, float)) and v >= 1000:
+        return "%s g (%s kg)" % (_bonito(v), _bonito(round(v / 1000.0, 6)))
+    return "%s%s" % (v, (" " + unidad) if unidad and unidad != "Brix" else "")
+
+
 def resumen(s, hoy=None):
-    """EL mensaje de confirmacion: todo lo capturado + la fecha de hoy."""
+    """EL mensaje de confirmacion: todo lo capturado + la fecha de inicio."""
     hoy = hoy or hoy_local()
+    inicio = s["campos"].get("fecha_inicio")
+    distinta = _fecha_inicio_distinta(s, hoy)
+    if distinta and not s.get("codigo_dictado"):
+        codigo = "(el codigo lo pone el sistema con la fecha de inicio)"
+    else:
+        codigo = codigo_de(s) or "(codigo lo pone el sistema)"
     lineas = ["Revisa el lote antes de guardarlo:", "",
-              "LOTE %s" % (codigo_de(s) or "(codigo lo pone el sistema)"),
-              "Fecha: %s (hoy)" % fecha_para_persona(hoy)]
+              "LOTE %s" % codigo,
+              "Fecha de inicio: %s" % (fecha_para_persona(inicio) if distinta else "%s (hoy)" % fecha_para_persona(hoy))]
     for c in plantilla()["campos"]:
+        if c["nombre"] == "fecha_inicio":
+            continue
         v = s["campos"].get(c["nombre"])
         if c["nombre"] in s["omitidos"]:
             lineas.append("%s: pendiente" % c["etiqueta"])
         elif v not in (None, ""):
-            lineas.append("%s: %s%s" % (c["etiqueta"], v, (" " + c["unidad"]) if c.get("unidad") and c["unidad"] != "Brix" else ""))
+            lineas.append("%s: %s" % (c["etiqueta"], _valor_para_persona(c, v)))
     tipo = str(s["campos"].get("tipo_chile") or "").strip()
     mezcla = s["campos"].get("chiles")
     if isinstance(mezcla, dict) and mezcla:
@@ -597,9 +834,10 @@ def resumen(s, hoy=None):
 
 
 def texto_corregir(s):
-    lineas = ["Que corrijo? Contestame con el numero, por ejemplo: 2. 13"]
-    for i, q in enumerate(preguntas(), 1):
-        vals = [str(s["campos"].get(n)) for n in q["campos"] if s["campos"].get(n) not in (None, "")]
+    lineas = ["Que corrijo? Contestame con el numero, por ejemplo: 3. 13"]
+    for i, q in enumerate(todas_las_preguntas(), 1):
+        vals = [_valor_para_persona(_campo(n) or {}, s["campos"].get(n)) for n in q["campos"]
+                if s["campos"].get(n) not in (None, "")]
         lineas.append("%d. %s: %s" % (i, q["etiqueta"], " ".join(vals) if vals else "(vacio)"))
     return "\n".join(lineas)
 
@@ -614,7 +852,7 @@ def _teclado_resumen():
 
 def empezar(chat, campos=None, notas=None, codigo=None):
     campos = dict(campos or {})
-    _sesiones[chat] = {"campos": campos, "notas": list(notas or []), "omitidos": set(),
+    _sesiones[chat] = {"campos": campos, "notas": list(notas or []), "omitidos": set(), "sin_unidad": {},
                        "preguntadas": [list(q["campos"]) for q in preguntas()],
                        "modo": "plantilla", "nacido_en": time.time(), "codigo": codigo,
                        "codigo_dictado": bool(campos.get("codigo_lote"))}
@@ -635,7 +873,7 @@ async def corregir(update, chat):
         await update.effective_message.reply_text("Ya no tengo ese lote a medias. Dictamelo otra vez.")
         return
     s["modo"] = "corregir"
-    s["preguntadas"] = [list(q["campos"]) for q in preguntas()]
+    s["preguntadas"] = [list(q["campos"]) for q in todas_las_preguntas()]
     s["nacido_en"] = time.time()
     await update.effective_message.reply_text(texto_corregir(s))
 
@@ -649,7 +887,8 @@ def preparar_confirmacion(chat, codigo_actual=None):
     s = sesion(chat)
     if not s or s.get("modo") != "resumen":
         return None, "No tengo ningun lote por confirmar. Dictamelo otra vez.", None
-    if not s.get("codigo_dictado") and codigo_actual and codigo_actual != s.get("codigo"):
+    if not s.get("codigo_dictado") and not _fecha_inicio_distinta(s) \
+            and codigo_actual and codigo_actual != s.get("codigo"):
         s["codigo"] = codigo_actual
         return "reconfirmar", s, None
     campos = campos_para_peticion(s)
@@ -684,6 +923,17 @@ async def atender(update, chat, texto, proponer_lote=None, peticion_de=None, des
         # Ronda 5 (B): el envasado es diario y no se liga al lote: la plantilla
         # nunca lo toma (ni lo abre ni lo mete a una abierta). La sesion sigue.
         return False
+    if s is not None and s.get("modo") == "unidad" and s.get("sin_unidad") and desde_enrutador is None:
+        # 2026-11-10: la respuesta a "gramos o kilos?".
+        unidades = leer_unidades(texto, list(s["sin_unidad"]))
+        if unidades:
+            resueltos = {}
+            for n, (numero, dicha) in unidades.items():
+                valor = numero if numero is not None else s["sin_unidad"][n]
+                resueltos[n] = convertir(valor, dicha, (_campo(n) or {}).get("unidad"))
+                s["campos"][n] = resueltos[n]
+                s["sin_unidad"].pop(n, None)
+            return await _seguir(update, s, avisos_de_rango(resueltos))
     leido = leer(texto, s["preguntadas"] if s else ())
     if leido["dinero"] and desde_enrutador is None:
         return False  # habla de dinero: lo decide el enrutador, la sesion sigue viva
@@ -706,7 +956,8 @@ async def atender(update, chat, texto, proponer_lote=None, peticion_de=None, des
         nueva = False
     _anotar(s, leido)
 
-    avisos = avisos_de_rango(leido["campos"])
+    # Lo que llego sin unidad no se compara con el rango hasta saber su unidad.
+    avisos = avisos_de_rango({k: v for k, v in leido["campos"].items() if k not in (leido.get("sin_unidad") or ())})
     if nueva and not s["campos"]:
         s["preguntadas"] = [list(q["campos"]) for q in preguntas()]
         await update.effective_message.reply_text("\n".join(avisos + [texto_plantilla(codigo_de(s))]))
@@ -731,15 +982,33 @@ async def atender(update, chat, texto, proponer_lote=None, peticion_de=None, des
             "Dijiste %s. Cuantos kilos de cada uno? Por ejemplo: '30 kg guajillo y 10 kg guajon', "
             "o 'mitad y mitad'." % s["campos"].get("tipo_chile")]))
         return True
-    if s.get("modo") in ("corregir", "resumen"):
-        await ensenar_resumen(update, s, avisos)
+    return await _seguir(update, s, avisos)
+
+
+async def _seguir(update, s, avisos):
+    """Despues de anotar: la unidad que falte, lo que falte, o el resumen."""
+    if s.get("sin_unidad"):
+        # 2026-11-10 (Norman: "Preguntar g o kg"): antes que nada, la unidad
+        # de lo que llego como numero pelon. Se guarda en gramos.
+        pregunta, s["preguntadas"] = texto_unidades(s)
+        if s.get("modo") in ("corregir", "resumen"):
+            s["volver_a_resumen"] = True
+        s["modo"] = "unidad"
+        s["nacido_en"] = time.time()
+        await update.effective_message.reply_text("\n".join(list(avisos) + [pregunta]))
+        return True
+    if s.get("modo") in ("corregir", "resumen") or s.pop("volver_a_resumen", False):
+        await ensenar_resumen(update, s, list(avisos) + avisos_de_fechas(s))
         return True
     pendientes = faltan(s)
     if pendientes:
-        pregunta, s["preguntadas"] = texto_faltan(pendientes)
+        opcionales = opcionales_pendientes(s)
+        pregunta, s["preguntadas"] = texto_faltan(pendientes, opcionales)
+        if any(list(q["campos"]) in s["preguntadas"] for q in opcionales):
+            s["opcionales_preguntados"] = True
         s["modo"] = "faltan"
         s["nacido_en"] = time.time()
-        await update.effective_message.reply_text("\n".join(avisos + [pregunta]))
+        await update.effective_message.reply_text("\n".join(list(avisos) + [pregunta]))
         return True
-    await ensenar_resumen(update, s, avisos)
+    await ensenar_resumen(update, s, list(avisos) + avisos_de_fechas(s))
     return True
