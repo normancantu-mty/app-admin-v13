@@ -43,6 +43,7 @@ import { fechaParaPersona } from '@/lib/fechas'
 import { desactivarTextoFiscal, TOPE_DESCRIPCION, type PayloadGasto } from '@/lib/bot-gastos'
 import { VENTANA_EDICION_HORAS, VENTANA_EDICION_MS } from '@/lib/constants'
 import { esPataDeTraspaso } from '@/lib/traspaso-pareja'
+import { leerMarcaDeCompra } from '@/lib/compra-grupo'
 
 // ============================================================================
 // 1. EL PAYLOAD Y SU SELLO
@@ -166,6 +167,8 @@ export interface MovimientoAnulable {
   id_ticket: string | null
   /** 2026-11-05: pata de un traspaso; se anula con su pareja y no se recaptura. */
   es_traspaso?: boolean
+  /** 2026-11-08: fila de una compra de varias lineas; se anula con todo su grupo y no se edita. */
+  es_compra_grupo?: boolean
   /**
    * Lo que la fila dice HOY, para poder corregir UN campo sin volver a llamar
    * al modelo. Es el mismo principio que `_reproponer` en el bot: re-extraer la
@@ -237,6 +240,7 @@ export function describirFinanzas(fila: FilaFinanzasAnulable): MovimientoAnulabl
       (fila.id_ticket ? ' — de una VENTA' : ''),
     id_ticket: fila.id_ticket ? String(fila.id_ticket).trim() || null : null,
     ...(esPataDeTraspaso(fila.tipo_movimiento) ? { es_traspaso: true } : {}),
+    ...(leerMarcaDeCompra(fila.descripcion) ? { es_compra_grupo: true } : {}),
     valores: {
       monto,
       categoria: fila.categoria,
@@ -261,6 +265,7 @@ export function describirInventario(fila: FilaInventarioAnulable): MovimientoAnu
     // `notas`. No se deduce aqui — anular una fila de inventario suelta NO
     // arrastra la venta, y decir lo contrario seria mentir en la confirmacion.
     id_ticket: null,
+    ...(leerMarcaDeCompra(fila.notas) ? { es_compra_grupo: true } : {}),
     // Una fila de inventario no se corrige por chat: cambiarle la cantidad
     // reescribe el stock de un producto, y el stock no se guarda como total
     // sino que se replaya desde el ledger entero. Se anula y se recaptura.
@@ -441,6 +446,9 @@ export function mensajeDeAnulacion(
   if (aviso) partes.push('', aviso)
   if (movimiento.es_traspaso) {
     partes.push('', 'Es un traspaso: anulo las DOS filas juntas, la salida y la entrada.')
+  }
+  if (movimiento.es_compra_grupo) {
+    partes.push('', 'Es parte de una compra de varias lineas: anulo la compra COMPLETA (todo el dinero y todo lo que entro al almacen).')
   }
   partes.push('', 'Va?')
   return partes.join('\n')

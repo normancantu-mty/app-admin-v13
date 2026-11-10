@@ -36,6 +36,10 @@ import { TodoJunto } from '@/components/v2/saldos/TodoJunto'
 import { CardVentasCobros } from '@/components/v2/ventas/CardVentasCobros'
 import { leerVentasCobros } from '@/components/v2/ventas/leerVentasCobros'
 import { armarVentasCobros } from '@/lib/v2/ventas-cobros'
+import { CardBotellas } from '@/components/v2/panel/CardBotellas'
+import { leerBotellasPorCliente } from '@/lib/botellas-leer'
+import { CardPulso } from '@/components/v2/panel/CardPulso'
+import { leerPulso } from '@/lib/pulso-leer'
 
 const NOMBRE_CLASE: Record<string, string> = {
   EFECTIVO: 'Efectivo',
@@ -58,7 +62,23 @@ export async function PanelMando() {
   const usuario = await exigirMandoV2()
   const client = await getServerSupabaseClient()
   // La tarjeta de ventas y cobros lee aparte, en la MISMA tanda (sin viaje en serie).
-  const [d, crudoVC, crudoCob] = await Promise.all([leerTablero(client), leerVentasCobros(client), leerCrudoCobranzaPanel(client)])
+  // Botellas por cliente (2026-11-08): la MISMA lectura que el comando /botellas del bot.
+  // Pulso (2026-11-08): cobertura de producto + dias sin surtir; la MISMA lectura que /pulso.
+  const [d, crudoVC, crudoCob, botellasCliente, pulso] = await Promise.all([
+    leerTablero(client),
+    leerVentasCobros(client),
+    leerCrudoCobranzaPanel(client),
+    // Aislada: si esta lectura falla, la tarjeta pinta el aviso y el panel sigue.
+    leerBotellasPorCliente(client).then(
+      (datos) => ({ datos, error: undefined as string | undefined }),
+      (e: unknown) => ({ datos: null, error: e instanceof Error ? e.message : String(e) })
+    ),
+    // Aislada igual que la de botellas.
+    leerPulso(client).then(
+      (datos) => ({ datos, error: undefined as string | undefined }),
+      (e: unknown) => ({ datos: null, error: e instanceof Error ? e.message : String(e) })
+    )
+  ])
   const puedeCapturar = usuario.rol === 'ADMIN'
   const ahora = new Date()
 
@@ -257,6 +277,9 @@ export async function PanelMando() {
         <b>Datos reales de la base local, carga conciliada{corte ? ` (corte ${fechaHoraMx(corte)})` : ''}.</b>
         <span className="muted">Leído {fechaHoraMx(ahora.toISOString())}. Todo se abre aquí mismo, en ventanas.</span>
       </div>
+
+      <CardBotellas datos={botellasCliente.datos} error={botellasCliente.error} />
+      <CardPulso datos={pulso.datos} error={pulso.error} />
 
       <section className="saldos">
         <div className="hd">

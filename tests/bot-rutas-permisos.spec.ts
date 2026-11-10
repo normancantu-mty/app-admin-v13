@@ -64,6 +64,8 @@ import { NORMAN_TELEGRAM_ID } from '@/lib/bot-permisos'
 import * as catP from '@/app/api/bot/categoria/proponer/route'
 import * as catC from '@/app/api/bot/categoria/confirmar/route'
 import * as consultaR from '@/app/api/bot/consulta/route'
+import * as botellasR from '@/app/api/bot/botellas/route'
+import * as pulsoR from '@/app/api/bot/pulso/route'
 import { validarAltaCategoria } from '@/lib/categorias-movimiento'
 
 type Ruta = { POST: (r: Request) => Promise<Response> }
@@ -82,6 +84,8 @@ const RUTAS: Record<string, Ruta> = {
   'entrega/proponer': entregaP, 'entrega/confirmar': entregaC,
   'categoria/proponer': catP, 'categoria/confirmar': catC,
   consulta: consultaR,
+  botellas: botellasR,
+  pulso: pulsoR,
   cancelar
 }
 
@@ -1323,5 +1327,139 @@ test.describe('auditoria 2026-11-03 - categoria/{proponer,confirmar}, consulta g
     const alta = (b.payload as { alta: { requiere_aprobacion: boolean; id_entidad: string } }).alta
     expect(alta.id_entidad).toBe('dst-a')
     expect(alta.requiere_aprobacion).toBe(true)
+  })
+})
+
+// 2026-11-08 - /botellas: la ruta del bot, con la MISMA lectura que la tarjeta del panel.
+test.describe('2026-11-08 - /botellas desde la ruta', () => {
+  test('Norman en grupo -> 200 por privado, agrupado por cliente, sin anulados; DST y LOC -> 403; 0 escrituras', async () => {
+    estadoInicial()
+    const hace1min = new Date(Date.now() - 60 * 1000).toISOString()
+    tablas.catalogo_productos = [
+      { id: 'p750', nombre: 'Destilado Plata 750ml', tipo: 'TERMINADO' },
+      { id: 'p50', nombre: 'Destilado Plata 50ml', tipo: 'TERMINADO' }
+    ]
+    tablas.transacciones_tickets = [
+      {
+        id: 'tk-1', fecha_transaccion: hace1min, status: 'ACTIVO', condicion_pago: 'CONCESION',
+        id_comprador: 'loc-a1', id_vendedor: 'ent-matriz',
+        ticket_detalles: [
+          { id_producto: 'p750', cantidad: 8, subtotal_linea: 3840 },
+          { id_producto: 'p50', cantidad: 48, subtotal_linea: 2688 }
+        ]
+      },
+      {
+        id: 'tk-2', fecha_transaccion: hace1min, status: 'ANULADO', condicion_pago: 'CONTADO',
+        id_comprador: 'loc-a1', id_vendedor: 'ent-matriz',
+        ticket_detalles: [{ id_producto: 'p750', cantidad: 500, subtotal_linea: 1 }]
+      }
+    ]
+    const grupo = -100123
+    const a = await llamar('botellas', { telegram_id: NORMAN, chat_id: grupo })
+    expect(a.status, JSON.stringify(a.j)).toBe(200)
+    expect(a.j.ok).toBe(true)
+    expect(a.j.privado).toBe(true)
+    const texto = String(a.j.texto)
+    expect(texto).toContain('Casa Verde · LOC')
+    expect(texto).toContain('mes 56 (antes 0, +56)')
+    expect(texto).not.toContain('556') // el anulado no cuenta
+    expect(texto).toContain('Sin botellas en las 4 ventanas (2): ')
+    for (const id of [GIL, LOC]) {
+      const r = await llamar('botellas', { telegram_id: id, chat_id: grupo })
+      expect(r.status, `${id} ${JSON.stringify(r.j)}`).toBe(403)
+      expect(r.j.ok).toBeUndefined()
+    }
+    const d = await llamar('botellas', { telegram_id: DESCONOCIDO })
+    expect(d.status).toBe(403)
+    expect(escrituras).toEqual([])
+  })
+
+  test('sin token -> 401, aunque el telegram_id sea el de Norman', async () => {
+    estadoInicial()
+    const sinToken: Record<string, string>[] = [{ 'content-type': 'application/json' }, { 'x-bot-token': 'y'.repeat(32), 'content-type': 'application/json' }]
+    for (const headers of sinToken) {
+      const req = new Request('http://localhost/api/bot/botellas', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ telegram_id: NORMAN })
+      })
+      const r = await RUTAS.botellas.POST(req)
+      expect(r.status).toBe(401)
+    }
+    expect(escrituras).toEqual([])
+  })
+})
+
+// 2026-11-08 - /pulso: la ruta del bot, con la MISMA lectura que la tarjeta "Pulso" del panel.
+test.describe('2026-11-08 - /pulso desde la ruta', () => {
+  test('Norman en grupo -> 200 por privado, cobertura y dias sin surtir; DST, LOC y desconocido -> 403; 0 escrituras', async () => {
+    estadoInicial()
+    const hace1min = new Date(Date.now() - 60 * 1000).toISOString()
+    const hace30d = new Date(Date.now() - 30 * 86_400_000).toISOString()
+    tablas.catalogo_productos = [
+      { id: 'p750', nombre: 'Destilado Plata 750ml', tipo: 'TERMINADO' },
+      { id: 'p50', nombre: 'Destilado Plata 50ml', tipo: 'TERMINADO' }
+    ]
+    tablas.transacciones_tickets = [
+      {
+        id: 'tk-1', fecha_transaccion: hace1min, status: 'ACTIVO', condicion_pago: 'CONCESION',
+        id_comprador: 'loc-a1', id_vendedor: 'ent-matriz',
+        ticket_detalles: [{ id_producto: 'p750', cantidad: 8, subtotal_linea: 3840 }]
+      },
+      {
+        id: 'tk-2', fecha_transaccion: hace1min, status: 'ANULADO', condicion_pago: 'CONTADO',
+        id_comprador: 'dst-b', id_vendedor: 'ent-matriz',
+        ticket_detalles: [{ id_producto: 'p750', cantidad: 500, subtotal_linea: 1 }]
+      }
+    ]
+    tablas.v_stock_por_cubeta = [
+      { id_entidad: 'ent-matriz', id_producto: 'p750', producto: 'Destilado Plata 750ml', cubeta: 'PAGADO', stock: 2 },
+      { id_entidad: 'ent-matriz', id_producto: 'p50', producto: 'Destilado Plata 50ml', cubeta: 'PAGADO', stock: 40 }
+    ]
+    tablas.inventario_ledger = [
+      { id_entidad_destino: 'dst-a', id_producto: 'p750', fecha_movimiento: hace30d, status: 'ACTIVO', tipo_movimiento: 'ENTRADA_CONCESION' },
+      { id_entidad_destino: 'dst-b', id_producto: 'p750', fecha_movimiento: hace1min, status: 'ACTIVO', tipo_movimiento: 'SALIDA_VENTA' }
+    ]
+    const grupo = -100123
+    const a = await llamar('pulso', { telegram_id: NORMAN, chat_id: grupo })
+    expect(a.status, JSON.stringify(a.j)).toBe(200)
+    expect(a.j.ok).toBe(true)
+    expect(a.j.privado).toBe(true)
+    const texto = String(a.j.texto)
+    // Sin SALDO_INICIAL: ventana de 28 dias -> 8 vendidas = 2/sem; 2 en matriz = 1 sem.
+    expect(texto).toContain('750ml: 2 pzas · 2/sem · 1 sem  <- REPONER')
+    expect(texto).toContain('50ml: 40 pzas · 0/sem · sin ventas en la ventana')
+    expect(texto).not.toContain('500')
+    expect(texto).toContain('! Gil · DST: 30 d (entrega sin ticket')
+    expect(texto).toContain('  Casa Verde · LOC: 0 d (compra ')
+    // dst-b: su ticket esta anulado y lo otro no es ENTRADA_CONCESION -> nunca surtido.
+    expect(texto).toContain('Nunca surtidos (1): Otro')
+    for (const id of [GIL, LOC]) {
+      const r = await llamar('pulso', { telegram_id: id, chat_id: grupo })
+      expect(r.status, `${id} ${JSON.stringify(r.j)}`).toBe(403)
+      expect(r.j.ok).toBeUndefined()
+    }
+    const d = await llamar('pulso', { telegram_id: DESCONOCIDO })
+    expect(d.status).toBe(403)
+    // Norman por privado: 200 y no se marca para mandar por privado (ya lo es).
+    const priv = await llamar('pulso', { telegram_id: NORMAN, chat_id: NORMAN })
+    expect(priv.status).toBe(200)
+    expect(priv.j.privado).toBe(false)
+    expect(escrituras).toEqual([])
+  })
+
+  test('sin token -> 401, aunque el telegram_id sea el de Norman', async () => {
+    estadoInicial()
+    const sinToken: Record<string, string>[] = [{ 'content-type': 'application/json' }, { 'x-bot-token': 'y'.repeat(32), 'content-type': 'application/json' }]
+    for (const headers of sinToken) {
+      const req = new Request('http://localhost/api/bot/pulso', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ telegram_id: NORMAN })
+      })
+      const r = await RUTAS.pulso.POST(req)
+      expect(r.status).toBe(401)
+    }
+    expect(escrituras).toEqual([])
   })
 })

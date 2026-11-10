@@ -207,7 +207,9 @@ test.describe('B - el cableado sobre el repo real', () => {
     // 2026-11-07 (bot con paridad de la web): siguen 7. El de
     // `registrarSalidaCascada` se mudo, sin cambiar, a `lib/salida-cascada.ts`
     // para que la merma del bot use la MISMA escritura que la web.
-    expect(total).toBe(7)
+    // 2026-11-08: +1, `escribirCompraDocumento` (lib/compra-insumos.ts), la compra
+    // de varias lineas desde la foto del bot; pasa por la misma puerta por fila.
+    expect(total).toBe(8)
   })
 
   test('cada archivo que inserta llama a la puerta, al menos una vez por INSERT', () => {

@@ -161,6 +161,9 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
               <AbrirModal className="btn" href={`${RUTA_BASE}/m/categorias`} titulo="Categorías" tam="md">
                 Categorías
               </AbrirModal>
+              <AbrirModal className="btn" href={`${RUTA_BASE}/m/suscripciones`} titulo="Suscripciones" tam="md">
+                Suscripciones
+              </AbrirModal>
             </>
           ) : null
         }

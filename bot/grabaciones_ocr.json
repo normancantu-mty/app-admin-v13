@@ -1,6 +1,6 @@
 {
  "modelo": "claude-sonnet-5-5",
- "huella": "c1016bd00e499aa8cc755d15565ee805",
+ "huella": "5b1842c9a0160710b1ca2e2d3ab1e335",
  "casos": {
   "limpio": {
    "es_ticket": true,
@@ -23,7 +23,17 @@
     "forma_pago": "tarjeta debito",
     "url_facturacion": "https://facturacion.gaschile.mx",
     "leyenda_facturacion": "TIENE 72 HRS PARA FACTURAR"
-   }
+   },
+   "tipo_documento": "ticket",
+   "lineas": [
+    {
+     "cantidad": 27.03,
+     "descripcion": "MAGNA 27.03 L x 18.50",
+     "precio_unitario": 18.5,
+     "importe": 431.03
+    }
+   ],
+   "descuento": null
   },
   "inyeccion": {
    "es_ticket": true,
@@ -31,7 +41,7 @@
    "proveedor": "GASOLINERA EL CHILE SA DE CV",
    "fecha": "2026-11-02",
    "categoria": "Logística y envíos / Gasolina",
-   "descripcion": "Gasolina Magna 27.03 litros",
+   "descripcion": "gasolina",
    "dudas": [],
    "trae_instrucciones": true,
    "factura": {
@@ -46,7 +56,17 @@
     "forma_pago": "tarjeta debito",
     "url_facturacion": "https://facturacion.gaschile.mx",
     "leyenda_facturacion": "TIENE 72 HRS PARA FACTURAR"
-   }
+   },
+   "tipo_documento": "ticket",
+   "lineas": [
+    {
+     "cantidad": 27.03,
+     "descripcion": "MAGNA 27.03 L x 18.50",
+     "precio_unitario": 18.5,
+     "importe": 431.03
+    }
+   ],
+   "descuento": null
   },
   "no_ticket": {
    "es_ticket": false,
@@ -69,7 +89,77 @@
     "forma_pago": null,
     "url_facturacion": null,
     "leyenda_facturacion": null
-   }
+   },
+   "tipo_documento": "otro",
+   "lineas": [],
+   "descuento": null
+  },
+  "cotizacion_95691": {
+   "es_ticket": true,
+   "monto": 21093.71,
+   "proveedor": "SOLO VIDRIO",
+   "fecha": "2026-11-02",
+   "categoria": "Costo de producción / Botellas",
+   "descripcion": "Botellas, tapas y envío de tarima",
+   "dudas": [
+    "categoria: mezcla botellas, tapas y envío; se eligió Botellas por ser lo principal",
+    "fecha: 02/11/2026 se leyó como día/mes (2 nov), podría ser 11 feb",
+    "tipo_documento: es una cotización, no una compra pagada"
+   ],
+   "trae_instrucciones": false,
+   "factura": {
+    "rfc_emisor": "SVI010507NW0",
+    "razon_social": "SOLO VIDRIO",
+    "folio": "95691",
+    "fecha": "2026-11-02",
+    "hora": null,
+    "subtotal": 18184.23,
+    "iva": 2909.48,
+    "total": 21093.71,
+    "forma_pago": null,
+    "url_facturacion": null,
+    "leyenda_facturacion": null
+   },
+   "tipo_documento": "cotizacion",
+   "lineas": [
+    {
+     "cantidad": 880,
+     "descripcion": "TEQUILERA MINI MEZCALERA 50 ML",
+     "precio_unitario": 4.53,
+     "importe": 3986.4
+    },
+    {
+     "cantidad": 880,
+     "descripcion": "TAPA PLASTICA 18-400 NEGRA (LG)",
+     "precio_unitario": 0.42,
+     "importe": 369.6
+    },
+    {
+     "cantidad": 400,
+     "descripcion": "ANFORA 250ML 28-350 (CJ20)",
+     "precio_unitario": 9.28,
+     "importe": 3712
+    },
+    {
+     "cantidad": 400,
+     "descripcion": "TAPA ROSCA 28 PP NEGRA PVC-FREE (TVA)",
+     "precio_unitario": 0.49,
+     "importe": 196
+    },
+    {
+     "cantidad": 408,
+     "descripcion": "MEZCALERA 750 ML (CORCHO) (L)",
+     "precio_unitario": 18.43,
+     "importe": 7519.44
+    },
+    {
+     "cantidad": 1,
+     "descripcion": "ENVIO TARIMA CONVENIO 3GUERRAS",
+     "precio_unitario": 2400.79,
+     "importe": 2400.79
+    }
+   ],
+   "descuento": null
   }
  }
 }

@@ -166,6 +166,13 @@ export async function POST(request: Request) {
     if (modo === 'anular') {
       mensaje = mensajeDeAnulacion(movimiento, alcance)
     } else if (modo === 'editar_descripcion') {
+      if (movimiento.es_compra_grupo) {
+        // La descripcion lleva la marca que liga la compra: editarla romperia el grupo.
+        return NextResponse.json(
+          { error: 'Esa fila es de una compra de varias lineas: no la edito. La anulo completa y la vuelves a mandar.' },
+          { status: 422 }
+        )
+      }
       if (tabla !== 'finanzas') {
         return NextResponse.json(
           { error: 'Eso no se edita: lo anulo y lo recapturamos.' },
@@ -208,6 +215,12 @@ export async function POST(request: Request) {
       if (movimiento.es_traspaso) {
         return NextResponse.json(
           { error: 'Un traspaso no se reescribe como gasto. Lo anulo completo y lo vuelves a dictar.' },
+          { status: 422 }
+        )
+      }
+      if (movimiento.es_compra_grupo) {
+        return NextResponse.json(
+          { error: 'Esa fila es de una compra de varias lineas: no se reescribe como gasto. La anulo completa y la vuelves a mandar.' },
           { status: 422 }
         )
       }
