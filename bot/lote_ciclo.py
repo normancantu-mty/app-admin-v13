@@ -469,6 +469,7 @@ def leer_garrafas(texto):
 
 _CODIGO = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
 _KG_CON_UNIDAD = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilogramos?)\b")
+_G_CON_UNIDAD = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:g|grs?|gramos?)\b")
 
 
 def sin_codigo(texto):
@@ -482,13 +483,29 @@ def leer_kg(texto, con_unidad=False):
     return _num(m.group(1)) if m else None
 
 
+def leer_gramos(texto, con_unidad=False):
+    """Aditivo 2 en GRAMOS (unidad del catalogo). '500 g' -> 500; '2 kilos' -> 2000;
+    un numero solo (si no se exige unidad) son gramos. **Pura.**"""
+    t = sin_codigo(texto)
+    m = _G_CON_UNIDAD.search(t)
+    if m:
+        return _num(m.group(1))
+    m = _KG_CON_UNIDAD.search(t)
+    if m:
+        return round(_num(m.group(1)) * 1000, 4)
+    if con_unidad:
+        return None
+    m = re.search(r"(\d+(?:[.,]\d+)?)", t)
+    return _num(m.group(1)) if m else None
+
+
 def avisos(s):
     e = (cfg().get("etapas") or {}).get(s["etapa"]) or {}
     out = []
     if s["etapa"] == "aditivo_2" and s["kg"] is not None:
         a, b = e.get("rango_kg") or [0.01, 200]
         if not (a <= s["kg"] <= b):
-            out.append("Ojo: %s kg de aditivo 2 se sale de lo normal (%s a %s). Lo dejo asi; si es error, corrigelo." % (s["kg"], a, b))
+            out.append("Ojo: %s g de aditivo 2 se sale de lo normal (%s a %s). Lo dejo asi; si es error, corrigelo." % (s["kg"], a, b))
     if s["etapa"] == "destilacion":
         pa, pb = e.get("rango_peso_kg") or [0.1, 60]
         aa, ab = e.get("rango_alcohol") or [0, 80]
@@ -507,7 +524,7 @@ def resumen(s, hoy=None):
     lineas = ["Revisa antes de guardarlo:", "", "LOTE %s - %s" % (s["codigo"], nombre),
               "Fecha: %s (hoy)" % lote_plantilla.fecha_para_persona(hoy)]
     if s["etapa"] == "aditivo_2":
-        lineas.append("Kilos de aditivo 2: %s" % s["kg"])
+        lineas.append("Gramos de aditivo 2: %s" % s["kg"])
     else:
         lineas.append("Garrafas: %d" % len(s["garrafas"]))
         for i, (peso, grado) in enumerate(s["garrafas"], 1):
@@ -688,7 +705,7 @@ async def atender(update, chat, texto, confirmar=None, post=None):
 async def _capturar(update, s, texto, primera=False):
     """Mete el texto en la etapa. False si no traia nada de la etapa."""
     if s["etapa"] == "aditivo_2":
-        kg = leer_kg(texto, con_unidad=primera)
+        kg = leer_gramos(texto, con_unidad=primera)  # s["kg"] guarda GRAMOS (2026-11-10)
         if kg is None:
             return False
         s["kg"] = kg
@@ -721,7 +738,7 @@ def cuerpo_de_propuesta(s, chat):
     cuerpo = {"telegram_id": chat, "codigo_lote": s["codigo"], "etapa": s["etapa"]}
     if s["etapa"] == "aditivo_2":
         cuerpo["kg"] = s["kg"]
-        cuerpo["insumo_sku"] = cfg().get("aditivo_2_sku") or "ing-al"
+        cuerpo["insumo_sku"] = cfg().get("aditivo_2_sku") or "aditivo-2"
     else:
         cuerpo["garrafas"] = [{"peso_kg": p, "grado_alcohol": g} for p, g in s["garrafas"]]
     if s.get("notas"):

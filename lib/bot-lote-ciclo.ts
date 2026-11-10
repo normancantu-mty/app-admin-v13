@@ -142,8 +142,8 @@ export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): Result
   }
   if (pedido.etapa === 'aditivo_2') {
     const kg = numero(pedido.kg)
-    if (kg === null || kg <= 0) return { ok: false, error: 'No entendi cuantos kilos de aditivo 2.' }
-    if (kg > TOPE_KG_ADITIVO) return { ok: false, error: `${kg} kilos de aditivo es demasiado. Revisalo.` }
+    if (kg === null || kg <= 0) return { ok: false, error: 'No entendi cuantos gramos de aditivo 2.' }
+    if (kg > TOPE_KG_ADITIVO) return { ok: false, error: `${kg} gramos de aditivo es demasiado. Revisalo.` }
     if (!ctx.idInsumoAditivo) return { ok: false, error: 'No encontre el insumo del aditivo 2 en el catalogo.' }
     return {
       ok: true,
@@ -175,7 +175,7 @@ function corto(n: number): string {
 /** Lo que el servidor devuelve como `mensaje` de la propuesta (el bot ensena el suyo). */
 export function mensajeDeEtapa(p: PayloadEtapa): string {
   const lineas = [`LOTE ${p.codigo_lote} — ${p.etapa === 'aditivo_2' ? 'ADITIVO 2' : 'DESTILACION'}`, `Fecha: ${fechaParaPersona(p.fecha)}`]
-  for (const e of p.entradas) lineas.push(`Kilos de aditivo 2: ${corto(e.cantidad)}`)
+  for (const e of p.entradas) lineas.push(`Gramos de aditivo 2: ${corto(e.cantidad)}`)
   if (p.garrafas.length) lineas.push(`Garrafas: ${p.garrafas.length}`)
   for (const g of p.garrafas) lineas.push(`   Garrafa ${g.numero}: ${corto(g.peso_kg)} kg a ${corto(g.grado_alcohol)}%`)
   if (p.notas) lineas.push(`Notas: ${p.notas}`)

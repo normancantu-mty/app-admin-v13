@@ -432,7 +432,7 @@ def _valores_de_item(nombres, texto):
 # ── preguntar ───────────────────────────────────────────────────────────────
 
 # Lo que el enrutador puede traer que la plantilla entiende (el resto se ignora).
-NOMBRES_DE_CAMPO = ("kg_chile", "tipo_chile", "brix_chile", "kg_aditivo_1", "brix_final", "codigo_lote")
+NOMBRES_DE_CAMPO = ("kg_chile", "tipo_chile", "brix_chile", "kg_aditivo_1", "kg_levadura", "brix_final", "codigo_lote")
 
 
 def faltan(s):
@@ -520,7 +520,10 @@ def campos_para_peticion(s):
         c.pop("kg_chile", None)  # va como renglon(es) con su SKU, no suelto
     kg_ad = s["campos"].get("kg_aditivo_1")
     if kg_ad not in (None, "", 0):
-        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "ing-az", "cantidad": kg_ad})
+        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "mosto-1", "cantidad": kg_ad})
+    kg_lev = s["campos"].get("kg_levadura")
+    if kg_lev not in (None, "", 0):
+        insumos.append({"insumo": plantilla().get("levadura_sku") or "levadura-enzimas", "cantidad": kg_lev})
     if insumos:
         c["insumos"] = insumos
     return c
