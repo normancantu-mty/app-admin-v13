@@ -25,11 +25,14 @@ import { abrirPuerta, pasarAEspera, reclamarAprobacion, liberarReclamo, marcarCo
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
   CATEGORIA_SIN_CATEGORIZAR_BOT,
+  esCatalogoDeParejas,
+  filaEnCatalogo,
   selloCoincide,
   validarCategoriaNueva,
   type PayloadGasto
 } from '@/lib/bot-gastos'
 import { registrarAviso } from '@/lib/avisos-server'
+import { confirmarCompraDeBorrador, type BorradorCompra } from '@/lib/bot-compra-servidor'
 
 export const dynamic = 'force-dynamic'
 
@@ -98,6 +101,19 @@ export async function POST(request: Request) {
     const identidad = puerta.autor
 
     const guardado = borrador.payload as unknown as BorradorGuardado
+    // 2026-11-07: la compra de insumo dictada como gasto se confirma por aqui
+    // (el bot no sabe de antemano cual de las dos le salio), pero se escribe con
+    // la MISMA funcion que la pantalla de compra: dinero + entrada al almacen.
+    if (guardado?.tipo === 'compra_insumo') {
+      return confirmarCompraDeBorrador(supabase, {
+        borradorId,
+        selloGuardado: String(borrador.sello ?? ''),
+        selloRecibido,
+        guardado: borrador.payload as unknown as BorradorCompra,
+        identidad,
+        modo: puerta.modo
+      })
+    }
     // AG-02: un borrador de ABONO que llegue aqui se rechaza diciendo la verdad.
     // Sin esta linea caeria por sello roto —el hash de un abono nunca empata con
     // el de un gasto— y de paso lo CANCELARIA, que es un dano real por un
@@ -168,9 +184,34 @@ export async function POST(request: Request) {
     // decidir si hubo un pago de impuesto. Una defensa que solo corre en el
     // camino feliz no es una defensa.
     const catalogo = await leerCatalogo(supabase)
-    const esNueva =
+    const enCatalogo = filaEnCatalogo(fila, catalogo)
+
+    // 2026-11-03 - UNA SOLA LISTA. Con `categorias_movimiento` el gasto NO crea
+    // categorias: se agregan desde el ERP o con su propia puerta en el bot. Si
+    // la pareja sellada ya no esta activa (alguien la desactivo entre el VA y
+    // este clic), no se escribe: se dice y se vuelve a dictar.
+    if (
+      esCatalogoDeParejas(catalogo) &&
       fila.categoria !== CATEGORIA_SIN_CATEGORIZAR_BOT &&
-      !catalogo.some((c) => c.nombre === fila.categoria)
+      !enCatalogo
+    ) {
+      await liberarReclamo(supabase, borradorId, puerta.modo)
+      return NextResponse.json(
+        {
+          error:
+            `La categoria "${fila.categoria}${fila.subcategoria ? ' / ' + fila.subcategoria : ''}" ` +
+            'ya no esta activa en la lista. No escribi nada: vuelve a dictar el gasto.'
+        },
+        { status: 409 }
+      )
+    }
+
+    // Solo con el catalogo de RESPALDO (la lista no contesto) sigue vivo el
+    // camino viejo de la categoria nueva en `bot_categorias`.
+    const esNueva =
+      !esCatalogoDeParejas(catalogo) &&
+      fila.categoria !== CATEGORIA_SIN_CATEGORIZAR_BOT &&
+      !enCatalogo
 
     if (esNueva) {
       const juicio = validarCategoriaNueva(fila.categoria, catalogo)

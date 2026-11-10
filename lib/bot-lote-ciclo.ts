@@ -6,10 +6,19 @@
  * El dia de produccion sigue siendo el lote de siempre (`lib/bot-lotes.ts`, con
  * Brix). Lo que viene despues son ETAPAS de un lote que ya existe:
  *
- *   · `aditivo_2`   — kilos del aditivo 2 (SKU opaco, ERP-84) -> `lote_entradas`.
+ *   · `aditivo_2`   — el aditivo 2 (SKU opaco, ERP-84) -> `lote_entradas`, en la
+ *                     unidad del CATALOGO (Fase 7A: GRAMOS desde 2026-11-07;
+ *                     lo dicho en kg o g se convierte, nada mas se adivina).
  *   · `destilacion` — una fila de `lote_salidas` por GARRAFA, con peso (kg) y %
  *                     de alcohol; `litros` va NULL (no hay densidad medida y no
  *                     se inventa una).
+ *   · `fin_fermentacion` — Fase 7B (2026-11-07): la fecha en que termino la
+ *                     fermentacion (y sus horas, si las dicen). Escribe la
+ *                     CABECERA (`lotes.fecha_fin_fermentacion` /
+ *                     `horas_fermentacion`), lo mismo que edita la web en
+ *                     `guardarLoteAction`; NO va a `lote_etapas` (su CHECK solo
+ *                     admite aditivo_2, destilacion y muestra) ni a
+ *                     `registrar_etapa_lote`.
  *   · `muestra`     — quien guardo la muestra y cuando. Sin VA: es una
  *                     constancia, no mueve ni una cifra.
  *
@@ -19,9 +28,11 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
+import { convertirMasa, unidadCorta } from '@/lib/bot-compra'
 import { fechaLocal, fechaParaPersona } from '@/lib/fechas'
+import { TOPE_HORAS_FERMENTACION } from '@/lib/bot-lotes'
 
-export const ETAPAS_CON_VA = ['aditivo_2', 'destilacion'] as const
+export const ETAPAS_CON_VA = ['aditivo_2', 'destilacion', 'fin_fermentacion'] as const
 export type EtapaConVa = (typeof ETAPAS_CON_VA)[number]
 export const TIPOS_RECORDATORIO = ['aditivo_2', 'destilar', 'muestra', 'muestra_2'] as const
 export type TipoRecordatorio = (typeof TIPOS_RECORDATORIO)[number]
@@ -55,6 +66,13 @@ export interface PayloadEtapa {
   entradas: EntradaEtapa[]
   garrafas: GarrafaEtapa[]
   /**
+   * Fase 7A: la unidad corta de `entradas[].cantidad` ('g', 'kg'), la del
+   * catalogo. OPCIONAL por la misma razon que `notas`.
+   */
+  unidad_entrada?: string
+  /** Fase 7B, solo `fin_fermentacion`: las horas dichas. OPCIONAL (sellada si viene). */
+  horas_fermentacion?: number
+  /**
    * Ronda 5: lo que no es de la etapa y se dijo (p. ej. una temperatura: la
    * gente no la dicta, sale de Open-Meteo). OPCIONAL: `canonizar` omite la
    * llave ausente, asi que un borrador sin notas sella igual que antes.
@@ -69,6 +87,7 @@ export const LLAVES_ETAPA = [
   'etapa',
   'fecha',
   'garrafas',
+  'horas_fermentacion',
   'id_lote',
   'notas',
   'telegram_id',
@@ -100,7 +119,13 @@ function numero(v: unknown): number | null {
 
 export interface PedidoEtapa {
   etapa: unknown
+  /** Lo dicho del aditivo 2. `cantidad` + `unidad` ('kg'|'g'); `kg` es el campo viejo: se RECHAZA pidiendo la unidad (auditoria 2026-11-07). */
+  cantidad?: unknown
+  unidad?: unknown
   kg?: unknown
+  /** Solo `fin_fermentacion`: 'YYYY-MM-DD' (hoy si no viene) y horas opcionales. */
+  fecha?: unknown
+  horas?: unknown
   garrafas?: unknown
   notas?: unknown
 }
@@ -114,6 +139,10 @@ export interface ContextoEtapa {
   ahora: Date
   /** El insumo del aditivo 2 ya resuelto por SKU (solo para `aditivo_2`). */
   idInsumoAditivo?: string | null
+  /** Su `unidad_medida` del catalogo. Sin ella se asume KILOGRAMOS (lo de antes de la Fase 7A). */
+  unidadAditivo?: string | null
+  /** Solo `fin_fermentacion`: la fecha de fin que el lote YA tiene (no se pisa desde el chat). */
+  finActual?: string | null
 }
 
 export type ResultadoEtapa =
@@ -127,6 +156,7 @@ export type ResultadoEtapa =
  */
 export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): ResultadoEtapa {
   if (!esEtapaConVa(pedido.etapa)) return { ok: false, error: 'No se que etapa es esa.' }
+  if (pedido.etapa === 'fin_fermentacion') return normalizarFin(pedido, ctx)
   const fecha = fechaLocal(ctx.ahora)
   if (fecha < ctx.fechaInicio) {
     return { ok: false, error: `El lote ${ctx.codigoLote} arranca despues de hoy. No lo escribo.` }
@@ -141,13 +171,33 @@ export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): Result
     ...(String(pedido.notas ?? '').trim() !== '' ? { notas: String(pedido.notas).trim().slice(0, 500) } : {})
   }
   if (pedido.etapa === 'aditivo_2') {
-    const kg = numero(pedido.kg)
-    if (kg === null || kg <= 0) return { ok: false, error: 'No entendi cuantos gramos de aditivo 2.' }
-    if (kg > TOPE_KG_ADITIVO) return { ok: false, error: `${kg} gramos de aditivo es demasiado. Revisalo.` }
+    // Fase 7 (auditoria 2026-11-07): el campo viejo `kg` (bot sin actualizar)
+    // NO se multiplica en silencio: se rechaza pidiendo la unidad. El bot nuevo
+    // manda `cantidad` + `unidad` ("800 g", "1.5 kg").
+    const conCantidad = pedido.cantidad !== undefined && pedido.cantidad !== null && pedido.cantidad !== ''
+    if (!conCantidad && pedido.kg !== undefined && pedido.kg !== null && pedido.kg !== '') {
+      return { ok: false, error: 'Dime si el aditivo 2 fue en gramos o en kilos (por ejemplo "800 g" o "1.5 kg").' }
+    }
+    const valor = numero(pedido.cantidad)
+    const dicha = String(pedido.unidad ?? '').trim().toLowerCase()
+    if (valor === null || valor <= 0) return { ok: false, error: 'No entendi cuanto aditivo 2 le pusieron.' }
+    if (dicha !== 'kg' && dicha !== 'g') {
+      return { ok: false, error: 'Dime si el aditivo 2 fue en gramos o en kilos (por ejemplo "800 g" o "1.5 kg").' }
+    }
+    const kgEquivalentes = dicha === 'g' ? valor / 1000 : valor
+    if (kgEquivalentes > TOPE_KG_ADITIVO) return { ok: false, error: `${valor} ${dicha} de aditivo es demasiado. Revisalo.` }
     if (!ctx.idInsumoAditivo) return { ok: false, error: 'No encontre el insumo del aditivo 2 en el catalogo.' }
+    const unidadCatalogo = ctx.unidadAditivo ?? 'KILOGRAMOS'
+    const conv = convertirMasa(valor, dicha, unidadCatalogo)
+    if (!conv.ok) return { ok: false, error: `No lo convierto: ${conv.motivo}.` }
     return {
       ok: true,
-      payload: { ...base, entradas: [{ id_insumo: ctx.idInsumoAditivo, cantidad: Number(kg.toFixed(4)) }], garrafas: [] }
+      payload: {
+        ...base,
+        entradas: [{ id_insumo: ctx.idInsumoAditivo, cantidad: conv.cantidad }],
+        garrafas: [],
+        unidad_entrada: unidadCorta(unidadCatalogo)
+      }
     }
   }
   const crudas = Array.isArray(pedido.garrafas) ? pedido.garrafas : []
@@ -168,14 +218,63 @@ export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): Result
   return { ok: true, payload: { ...base, entradas: [], garrafas } }
 }
 
+/** Fase 7B: el fin de la fermentacion -> la fecha y las horas que van a la cabecera. */
+function normalizarFin(pedido: PedidoEtapa, ctx: ContextoEtapa): ResultadoEtapa {
+  const hoy = fechaLocal(ctx.ahora)
+  if (ctx.finActual) {
+    return {
+      ok: false,
+      error: `El lote ${ctx.codigoLote} ya tiene fin de fermentacion (${fechaParaPersona(ctx.finActual)}). Si hay que corregirlo, es en la web: Lotes > editar.`
+    }
+  }
+  const dicha = String(pedido.fecha ?? '').trim()
+  if (dicha !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(dicha)) return { ok: false, error: 'No entendi la fecha del fin de la fermentacion.' }
+  const fecha = dicha || hoy
+  if (fecha > hoy) return { ok: false, error: 'Esa fecha de fin es en el futuro. No la escribo.' }
+  if (fecha < ctx.fechaInicio) {
+    return { ok: false, error: `El fin no puede ser antes del inicio del lote ${ctx.codigoLote} (${fechaParaPersona(ctx.fechaInicio)}).` }
+  }
+  const horas = numero(pedido.horas)
+  if (horas !== null && (horas <= 0 || horas > TOPE_HORAS_FERMENTACION)) {
+    return { ok: false, error: 'No entendi cuantas horas de fermentacion.' }
+  }
+  return {
+    ok: true,
+    payload: {
+      id_lote: ctx.idLote,
+      codigo_lote: ctx.codigoLote,
+      etapa: 'fin_fermentacion',
+      fecha,
+      telegram_id: ctx.telegramId,
+      usuario_creador: `telegram:${ctx.etiqueta}`,
+      entradas: [],
+      garrafas: [],
+      ...(horas !== null ? { horas_fermentacion: Number(horas.toFixed(2)) } : {}),
+      ...(String(pedido.notas ?? '').trim() !== '' ? { notas: String(pedido.notas).trim().slice(0, 500) } : {})
+    }
+  }
+}
+
+const NOMBRE_ETAPA: Record<EtapaConVa, string> = {
+  aditivo_2: 'ADITIVO 2',
+  destilacion: 'DESTILACION',
+  fin_fermentacion: 'FIN DE FERMENTACION'
+}
+
 function corto(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(3)))
 }
 
 /** Lo que el servidor devuelve como `mensaje` de la propuesta (el bot ensena el suyo). */
-export function mensajeDeEtapa(p: PayloadEtapa): string {
-  const lineas = [`LOTE ${p.codigo_lote} — ${p.etapa === 'aditivo_2' ? 'ADITIVO 2' : 'DESTILACION'}`, `Fecha: ${fechaParaPersona(p.fecha)}`]
-  for (const e of p.entradas) lineas.push(`Gramos de aditivo 2: ${corto(e.cantidad)}`)
+export function mensajeDeEtapa(p: PayloadEtapa, fechaInicio?: string): string {
+  const lineas = [`LOTE ${p.codigo_lote} — ${NOMBRE_ETAPA[p.etapa]}`, `Fecha: ${fechaParaPersona(p.fecha)}`]
+  if (p.etapa === 'fin_fermentacion' && fechaInicio) {
+    lineas.push(`Fermento ${diasEntre(fechaInicio, p.fecha)} dia(s): del ${fechaParaPersona(fechaInicio)} al ${fechaParaPersona(p.fecha)}`)
+  }
+  if (p.horas_fermentacion !== undefined) lineas.push(`Horas de fermentacion: ${corto(p.horas_fermentacion)}`)
+  for (const e of p.entradas) {
+    lineas.push(p.unidad_entrada ? `Aditivo 2: ${corto(e.cantidad)} ${p.unidad_entrada}` : `Kilos de aditivo 2: ${corto(e.cantidad)}`)
+  }
   if (p.garrafas.length) lineas.push(`Garrafas: ${p.garrafas.length}`)
   for (const g of p.garrafas) lineas.push(`   Garrafa ${g.numero}: ${corto(g.peso_kg)} kg a ${corto(g.grado_alcohol)}%`)
   if (p.notas) lineas.push(`Notas: ${p.notas}`)

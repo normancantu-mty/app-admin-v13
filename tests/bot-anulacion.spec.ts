@@ -7,6 +7,7 @@ import {
   describirFinanzas,
   esAdminDelBot,
   filtroDeAnulables,
+  mensajeDeRecaptura,
   MOVIMIENTOS_OFRECIDOS,
   normalizarDescripcionNueva,
   ordenarAnulables,
@@ -343,6 +344,22 @@ test.describe('AG-06 Fase 5 · el sello de la anulacion', () => {
     recaptura: RECAPTURA,
     descripcion_nueva: null
   }
+
+  // Auditoria 2026-11-04: 2026-11-04T03:00Z son las 21:00 del dia 3 en Mexico.
+  test('la correccion ensena el dia de Mexico, no el de UTC', () => {
+    const movimiento = describirFinanzas({
+      id: 'fila-1',
+      fecha_movimiento: '2026-11-04T03:00:00.000Z',
+      tipo_movimiento: 'GASTO_OPERATIVO',
+      monto: 340,
+      categoria: 'Gasolina',
+      descripcion: 'viaje',
+      id_ticket: null
+    })
+    const nueva = { ...RECAPTURA, fecha_movimiento: '2026-11-04T03:00:00.000Z' }
+    const alcance = { idTicket: null, filasFinanzas: 0, filasInventario: 0 }
+    expect(mensajeDeRecaptura(movimiento, nueva, alcance).split('DESPUES:')[1]).toContain('03/11/2026')
+  })
 
   test('el sello empata consigo mismo', () => {
     expect(selloAnulacionCoincide(BASE, sellarAnulacion(BASE))).toBe(true)

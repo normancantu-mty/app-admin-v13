@@ -16,6 +16,8 @@ import {
   selloCoincide,
   type PayloadGasto
 } from '../lib/bot-gastos'
+import { hoyEnMX } from '../lib/date-format'
+import { fechaParaPersona } from '../lib/fechas'
 
 /**
  * AG-01 Fase 1 — las pruebas del bot de gastos.
@@ -242,6 +244,59 @@ test.describe('lo que el LLM manda NO decide los campos del sistema', () => {
     if (!r.ok) return
     expect(r.payload.fecha_movimiento).toBe(AHORA.toISOString())
     expect(r.avisos.join(' ')).toContain('futura')
+  })
+
+  // Auditoria 2026-11-04: `new Date('2026-09-11')` es medianoche UTC, o sea el dia 10
+  // en Mexico. Se prueba sobre lo que queda escrito, y leido como lo lee cada quien.
+  const escrita = (fecha: string, ahora = AHORA) => {
+    const r = normalizarPropuesta(
+      { monto: 100, categoria: 'Servicios_Basicos', descripcion: 'luz', fecha },
+      IDENTIDAD,
+      ahora
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) throw new Error(r.error)
+    return r
+  }
+
+  test('ayer se escribe ayer: en Mexico, en la consulta y en pantalla', () => {
+    const f = escrita('2026-09-11').payload.fecha_movimiento
+    expect(f).toBe('2026-09-11T18:00:00.000Z')
+    expect(hoyEnMX(new Date(f))).toBe('2026-09-11')
+    expect(f.slice(0, 10)).toBe('2026-09-11') // lib/bot-consultas.ts
+    expect(fechaParaPersona(f)).toBe('11/09/2026')
+  })
+
+  test('el primero del mes no se va al mes anterior', () => {
+    const f = escrita('2026-11-01', new Date('2026-11-04T18:00:00.000Z')).payload.fecha_movimiento
+    expect(hoyEnMX(new Date(f))).toBe('2026-11-01')
+  })
+
+  test('hoy es el instante real, sin aviso', () => {
+    const r = escrita('2026-09-12')
+    expect(r.payload.fecha_movimiento).toBe(AHORA.toISOString())
+    expect(r.avisos.join(' ')).not.toContain('futura')
+  })
+
+  test('de noche, manana en Mexico es futura aunque en UTC ya sea hoy', () => {
+    const noche = new Date('2026-09-13T03:00:00.000Z') // 21:00 del 12 en Mexico
+    expect(escrita('2026-09-12', noche).payload.fecha_movimiento).toBe(noche.toISOString())
+    const r = escrita('2026-09-13', noche)
+    expect(r.payload.fecha_movimiento).toBe(noche.toISOString())
+    expect(r.avisos.join(' ')).toContain('futura')
+  })
+
+  test('un instante completo se conserva: corregir un gasto de noche no lo mueve de dia', () => {
+    // bot/bot_gastos.py `_recaptura_con` manda el `fecha_movimiento` de la fila.
+    const noche = '2026-09-11T03:00:00.000Z' // 21:00 del dia 10 en Mexico
+    const f = escrita('2026-09-11T03:00:00+00:00').payload.fecha_movimiento
+    expect(f).toBe(noche)
+    expect(hoyEnMX(new Date(f))).toBe('2026-09-10')
+  })
+
+  test('un dia que no existe no se convierte en otro dia', () => {
+    const r = escrita('2026-02-31')
+    expect(r.payload.fecha_movimiento).toBe(AHORA.toISOString())
   })
 
   test('el monto se redondea a dos decimales o el sello no empata consigo mismo', () => {

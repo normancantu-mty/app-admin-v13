@@ -262,6 +262,16 @@ export function filtrarMovimientosFirewallAdmin<
   return movimientos.filter((m) => movimientoTocaCuentaAdmin(m, adminAccountSet))
 }
 
+/**
+ * Las tarjetas de egresos. `es_egreso_admin` trae tambien `EGRESO_TRASPASO` y su
+ * pareja no esta en `es_ingreso_admin`: sumada tal cual, mover dinero entre dos
+ * cuentas propias salia como gasto (2026-11-05). La vista se queda como esta,
+ * que corregirla es migracion; aqui se filtra el lector.
+ */
+export function esEgresoDelPeriodo(m: { es_egreso_admin: boolean; tipo_movimiento: string | null }): boolean {
+  return m.es_egreso_admin && m.tipo_movimiento !== 'EGRESO_TRASPASO'
+}
+
 /** Resuelve la cuenta admin afectada por un egreso (GASTO_OPERATIVO usa destino legacy). */
 export function resolveCuentaEgresoAdmin(
   mov: Pick<MovimientoEgresoAdmin, 'tipo_movimiento' | 'id_cuenta_origen' | 'id_cuenta_destino'>
@@ -422,7 +432,7 @@ export async function getFinanzasDashboard(
     const movimientos = await fetchMovimientosClasificados(fechaInicio, fechaFin)
 
     const ingresos = movimientos.filter((m) => m.es_ingreso_admin)
-    const egresos = movimientos.filter((m) => m.es_egreso_admin)
+    const egresos = movimientos.filter(esEgresoDelPeriodo)
 
     const totalIngresos = ingresos.reduce((sum, m) => sum + m.monto, 0)
     const totalEgresos = egresos.reduce((sum, m) => sum + m.monto, 0)
@@ -756,7 +766,10 @@ export async function getAspectosUrgentes(
 const TIPOS_EXCLUIR_DESGLOSE_CATEGORIAS = new Set([
   'INGRESO_COMISION',
   'DEUDA_A_MATRIZ',
-  'COMISION_PASIVA'
+  'COMISION_PASIVA',
+  // Un traspaso no es ingreso ni gasto: solo cambia de cuenta.
+  'INGRESO_TRASPASO',
+  'EGRESO_TRASPASO'
 ])
 
 /** Tipos que cuentan como entrada de dinero en el desglose por categoria. */

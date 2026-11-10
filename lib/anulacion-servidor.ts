@@ -41,6 +41,15 @@ import {
   assertPermiteAnularTicketEnPerfil
 } from '@/lib/ticket-annul-cascade'
 import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
+import {
+  esMarcaDeTraspaso,
+  esPataDeTraspaso,
+  juzgarPareja,
+  MENSAJE_PAREJA_INCOMPLETA,
+  MENSAJE_SIN_MARCA
+} from '@/lib/traspaso-pareja'
+import { juzgarGrupo, leerMarcaDeCompra, type MarcaDeCompra } from '@/lib/compra-grupo'
+import { fetchTodasLasFilas } from '@/lib/paginacion'
 
 export type ClienteDeAnulacion = SupabaseClient<Database>
 
@@ -217,6 +226,104 @@ export interface ResultadoAnulacion {
 }
 
 /**
+ * Las dos patas de un traspaso, en UN update: un statement es una transaccion.
+ * Sin marca, o con la pareja incompleta, no se anula nada. Ver `lib/traspaso-pareja.ts`.
+ */
+async function anularTraspasoCompleto(
+  supabase: ClienteDeAnulacion,
+  marca: string | null | undefined
+): Promise<void> {
+  if (!esMarcaDeTraspaso(marca)) throw new Error(MENSAJE_SIN_MARCA)
+
+  const { data: patas, error: lecturaError } = await supabase
+    .from('finanzas_ledger')
+    .select('id, tipo_movimiento, monto, status')
+    .eq('subcategoria', marca)
+    .order('id')
+    // Una pareja son dos filas: pedir tres alcanza para ver una tercera y rechazarla.
+    .limit(3)
+  if (lecturaError) throw new Error(`Error al leer el traspaso: ${lecturaError.message}`)
+
+  const juicio = juzgarPareja(patas ?? [])
+  if (!juicio.ok) throw new Error(juicio.error)
+
+  const { data: anuladas, error: annullError } = await supabase
+    .from('finanzas_ledger')
+    .update({ status: 'ANULADO' })
+    .in('id', juicio.ids)
+    .eq('status', 'ACTIVO')
+    .select('id')
+  if (annullError) throw new Error(`Error al anular el traspaso: ${annullError.message}`)
+  if ((anuladas?.length ?? 0) !== 2) throw new Error(MENSAJE_PAREJA_INCOMPLETA)
+}
+
+/**
+ * 2026-11-08 — Toda la compra de un documento, o nada (`lib/compra-grupo.ts`).
+ * Lee el grupo por su marca, exige exactamente las filas que la marca declara y
+ * todas activas, aplica la MISMA autorizacion a cada fila, y anula: el dinero en
+ * UN update y las entradas en OTRO. Si el segundo falla, lo dice en voz alta con
+ * el grupo: no hay transaccion entre tablas sin migracion.
+ */
+async function anularCompraCompleta(
+  supabase: ClienteDeAnulacion,
+  actor: ActorDeAnulacion,
+  marca: MarcaDeCompra
+): Promise<void> {
+  const patron = `%${marca.marca}%`
+  // Todas las que lleven la marca (paginado, ERP-25): si hay de mas, el juicio lo ve.
+  const [filasFin, filasInv] = await Promise.all([
+    fetchTodasLasFilas(
+      () =>
+        supabase
+          .from('finanzas_ledger')
+          .select('id, status, usuario_creador, fecha_movimiento')
+          .ilike('descripcion', patron)
+          .order('id'),
+      'Error al leer la compra'
+    ),
+    fetchTodasLasFilas(
+      () =>
+        supabase
+          .from('inventario_ledger')
+          .select('id, status, usuario_creador, fecha_movimiento')
+          .ilike('notas', patron)
+          .order('id'),
+      'Error al leer la compra'
+    )
+  ])
+  for (const f of [...filasFin, ...filasInv]) {
+    assertAnnullmentAllowed(f, { email: actor.email, rol: actor.rol })
+  }
+  const juicio = juzgarGrupo(marca, filasInv, filasFin)
+  if (!juicio.ok) throw new Error(juicio.error)
+
+  const { data: dinero, error: errorDinero } = await supabase
+    .from('finanzas_ledger')
+    .update({ status: 'ANULADO' })
+    .in('id', juicio.idsDinero)
+    .eq('status', 'ACTIVO')
+    .select('id')
+  if (errorDinero) throw new Error(`Error al anular el dinero de la compra: ${errorDinero.message}`)
+  if ((dinero?.length ?? 0) !== juicio.idsDinero.length) {
+    throw new Error(`Se anulo solo una parte del dinero de la compra ${marca.marca}. Revisalo a mano.`)
+  }
+
+  const { data: entradas, error: errorEntradas } = await supabase
+    .from('inventario_ledger')
+    .update({ status: 'ANULADO' })
+    .in('id', juicio.idsEntradas)
+    .eq('status', 'ACTIVO')
+    .select('id')
+  if (errorEntradas || (entradas?.length ?? 0) !== juicio.idsEntradas.length) {
+    console.error('Anulacion de compra a medias: dinero anulado, entradas no.', marca.marca, errorEntradas)
+    throw new Error(
+      `El dinero de la compra quedo anulado pero las entradas al almacen NO ` +
+        `(${errorEntradas?.message ?? 'no se anularon todas'}). Avisa a administracion: grupo ${marca.marca}.`
+    )
+  }
+}
+
+/**
  * Anula UNA fila de `finanzas_ledger`. Si la fila cuelga de un ticket, anula la
  * venta entera — ticket, dinero e inventario — **en una sola transaccion**
  * (`anular_ticket_atomica`, ver `lib/ticket-annul-cascade.ts`).
@@ -240,7 +347,7 @@ export async function anularFinanzas(
 
   const { data: movimientoRaw, error: fetchError } = await supabase
     .from('finanzas_ledger')
-    .select('id, usuario_creador, fecha_movimiento, status, id_entidad_relacionada, id_ticket')
+    .select('id, usuario_creador, fecha_movimiento, status, id_entidad_relacionada, id_ticket, tipo_movimiento, subcategoria, descripcion')
     .eq('id', id)
     .single()
 
@@ -248,7 +355,12 @@ export async function anularFinanzas(
     throw new Error('No se encontró el movimiento financiero.')
   }
 
-  const movimiento = movimientoRaw as FinanzaLedgerRow & { id_entidad_relacionada: string | null }
+  const movimiento = movimientoRaw as FinanzaLedgerRow & {
+    id_entidad_relacionada: string | null
+    tipo_movimiento?: string | null
+    subcategoria?: string | null
+    descripcion?: string | null
+  }
 
   if (movimiento.status === 'ANULADO') {
     throw new Error('El movimiento financiero ya está anulado.')
@@ -288,6 +400,19 @@ export async function anularFinanzas(
     }
     await annulComercialCascadePorTicketId(supabase, idTicket)
     return { success: true, idTicket }
+  }
+
+  // Una pata de traspaso no se anula sola: es dinero que aparece o desaparece.
+  if (esPataDeTraspaso(movimiento.tipo_movimiento)) {
+    await anularTraspasoCompleto(supabase, movimiento.subcategoria)
+    return { success: true, idTicket: null }
+  }
+
+  // 2026-11-08: una fila de una compra de varias lineas no se anula sola.
+  const grupoFin = leerMarcaDeCompra(movimiento.descripcion)
+  if (grupoFin) {
+    await anularCompraCompleta(supabase, actor, grupoFin)
+    return { success: true, idTicket: null }
   }
 
   const { error: annullError } = await supabase
@@ -338,6 +463,13 @@ export async function anularInventario(
 
   if (movimiento.status === 'ANULADO') {
     throw new Error('El movimiento ya está anulado.')
+  }
+
+  // 2026-11-08: una entrada de una compra de varias lineas no se anula sola.
+  const grupoInv = leerMarcaDeCompra(movimiento.notas)
+  if (grupoInv) {
+    await anularCompraCompleta(supabase, actor, grupoInv)
+    return { success: true, idTicket: null }
   }
 
   const notasAnulacion = [movimiento.notas, 'ANULADO'].filter(Boolean).join(' | ')

@@ -27,6 +27,7 @@ Los modelos van FIJADOS con version (E5): cuando el alias `sonnet` cambie de
 version, el bot no cambia de comportamiento sin aviso. Para mover de version se
 cambia AQUI y se vuelve a correr `bot/oro/correr_oro.py`.
 """
+import json
 import os
 import shutil
 import tempfile
@@ -68,6 +69,13 @@ def ejecutable():
     if not ruta:
         raise RuntimeError("no encuentro el ejecutable `claude` en el PATH")
     return ruta
+
+
+def con_esquema(cmd, esquema):
+    """2026-11-04: pide salida estructurada (schema-constrained). Va por argv y
+    `claude` en Windows es un `.cmd`: `probar_clasificador.py` vigila el largo."""
+    return list(cmd) + ["--output-format", "json",
+                        "--json-schema", json.dumps(esquema, separators=(",", ":"))]
 
 
 def comando(modelo, ruta=None):

@@ -32,6 +32,8 @@ export type AccionBot =
   | 'registrar'
   /** FASE 11 (D112): el DST entrega a la matriz el efectivo que cobro de contado. */
   | 'entrega_efectivo'
+  /** 2026-11-03: alta de categoria/subcategoria en `categorias_movimiento`. */
+  | 'categoria'
 
 /**
  * - `si`: escribe con su propio VA.
@@ -43,14 +45,26 @@ export type Veredicto = 'si' | 'aprobacion' | 'no'
 export interface ActorBot {
   rol: string
   requiereAprobacion: boolean
+  /** La persona. Sin ella nadie es Norman (auditoria 2026-11-03, hallazgo 1). */
+  telegramId?: number
 }
 
 /**
- * Norman: ADMIN sin marca. Es el unico que registra quien es quien y el unico
- * cuyo VA escribe directo.
+ * El telegram_id de Norman. Auditoria de c2a04db (2026-11-03): "ADMIN sin
+ * marca" no basta para ser Norman -- una segunda alta ADMIN sin marca (un
+ * error de captura, o una hecha por la web) escribiria directo. Se exige
+ * ademas ESTE id. Medido en `bot_identidades` el 2026-11-03: es la unica
+ * identidad ADMIN sin marca. `bot/bot_gastos.py` lleva el mismo numero
+ * (`NORMAN_TELEGRAM_ID`).
+ */
+export const NORMAN_TELEGRAM_ID = 6571822622
+
+/**
+ * Norman: ADMIN sin marca **y con su telegram_id**. Es el unico que registra
+ * quien es quien y el unico cuyo VA escribe directo.
  */
 export function esNorman(actor: ActorBot): boolean {
-  return actor.rol === 'ADMIN' && !actor.requiereAprobacion
+  return actor.rol === 'ADMIN' && !actor.requiereAprobacion && actor.telegramId === NORMAN_TELEGRAM_ID
 }
 
 /**
@@ -59,7 +73,10 @@ export function esNorman(actor: ActorBot): boolean {
  * `puedeAprobar`, que agrega la regla que mas cierra: nadie aprueba lo suyo.
  */
 export function esAprobador(actor: ActorBot): boolean {
-  return actor.rol === 'ADMIN'
+  // 2026-11-03 (Norman: "hace lo que entendio y luego nada mas espera MI
+  // click"): solo Norman aprueba. Kevin (ADMIN con marca) ya no aprueba lo de
+  // terceros, como decia D106. Se revierte volviendo a `actor.rol === 'ADMIN'`.
+  return esNorman(actor)
 }
 
 export interface PersonaBot extends ActorBot {
@@ -75,8 +92,6 @@ export interface PersonaBot extends ActorBot {
 export function puedeAprobar(aprobador: PersonaBot, autor: PersonaBot): boolean {
   if (!esAprobador(aprobador)) return false
   if (aprobador.telegramId === autor.telegramId) return false
-  const autorEsKevin = autor.rol === 'ADMIN' && autor.requiereAprobacion
-  if (autorEsKevin && aprobador.requiereAprobacion) return false
   return true
 }
 
@@ -89,7 +104,8 @@ const DE_LA_MATRIZ: readonly AccionBot[] = [
   'entrada_insumo',
   'convertir',
   'entidad',
-  'entrega_efectivo'
+  'entrega_efectivo',
+  'categoria'
 ]
 
 /**
@@ -120,12 +136,14 @@ export function permisoDeAccion(actor: ActorBot, accion: AccionBot): Veredicto {
   if (actor.rol === ROL_TRABAJADOR) return DEL_TRABAJADOR.includes(accion) ? 'aprobacion' : 'no'
   if (actor.rol === 'ADMIN') {
     if (!DE_LA_MATRIZ.includes(accion)) return 'no'
-    return actor.requiereAprobacion ? 'aprobacion' : 'si'
+    // Auditoria 2026-11-03: solo Norman escribe con su propio VA; cualquier
+    // otro ADMIN (con o sin marca) propone y espera el Aprobar de Norman.
+    return esNorman(actor) ? 'si' : 'aprobacion'
   }
   if (actor.rol === 'DST') {
-    // El abono de un DST tambien es `si`: lo que lo deja PENDIENTE no es el
-    // permiso sino la categoria (`ABONO_PENDIENTE`, D97), igual que en la app.
-    return DEL_DISTRIBUIDOR.includes(accion) ? 'si' : 'no'
+    // Auditoria 2026-11-03 (hallazgo 2): el DST ya no escribe directo. Norman:
+    // "hace lo que entendio y luego nada mas espera mi click". Antes era `si`.
+    return DEL_DISTRIBUIDOR.includes(accion) ? 'aprobacion' : 'no'
   }
   return 'no'
 }
@@ -140,12 +158,13 @@ export const MENSAJE_NO_PERMITIDO: Record<AccionBot, string> = {
   convertir: 'Convertir una cotizacion en venta por aqui no te toca con tu alta.',
   entidad: 'Dar de alta clientes por aqui no te toca con tu alta.',
   registrar: 'Registrar quien es quien lo hace solo Norman.',
-  entrega_efectivo: 'Registrar entregas de efectivo por aqui no te toca con tu alta.'
+  entrega_efectivo: 'Registrar entregas de efectivo por aqui no te toca con tu alta.',
+  categoria: 'Agregar categorias por aqui no te toca con tu alta.'
 }
 
 // ─── LAS CONSULTAS ──────────────────────────────────────────────────────────
 
-export type ConsultaBot = 'inventario' | 'deuda' | 'precios' | 'ventas' | 'produccion'
+export type ConsultaBot = 'inventario' | 'deuda' | 'precios' | 'ventas' | 'produccion' | 'gastos'
 
 /**
  * - `todo`: todas las entidades.
@@ -162,19 +181,28 @@ export type PermisoDeConsulta =
  * `privado`: en un grupo, la respuesta va al chat privado de quien pregunto y
  * en el grupo solo se dice "Te lo mande por privado". En privado no cambia nada.
  */
+/**
+ * Auditoria 2026-11-03 (hallazgo 5): en un grupo puede haber alguien que no es
+ * del equipo (el informe registro a @giaforce en "Fresnillo · ERP"). Lo mas
+ * simple que cierra la fuga: **toda** respuesta con cifras (precios y stock
+ * incluidos, igual que gastos) va al privado de quien pregunto. QUE ve cada
+ * rol no cambia; solo DONDE se le contesta.
+ */
+const EN_GRUPO_VA_POR_PRIVADO = true
+
 export function permisoDeConsulta(actor: ActorBot, consulta: ConsultaBot): PermisoDeConsulta {
+  const privado = EN_GRUPO_VA_POR_PRIVADO
   if (actor.rol === 'ADMIN') {
     // Norman y Kevin igual: Kevin "consulta todo lo que consulta Norman".
-    const privado = consulta === 'deuda' || consulta === 'ventas' || consulta === 'produccion'
     return { ok: true, alcance: 'todo', privado }
   }
   // WP-6: el trabajador pregunta precios; ninguna cifra agregada.
   if (actor.rol === ROL_TRABAJADOR) {
-    return consulta === 'precios' ? { ok: true, alcance: 'propio', privado: false } : { ok: false }
+    return consulta === 'precios' ? { ok: true, alcance: 'propio', privado } : { ok: false }
   }
-  if (consulta === 'ventas' || consulta === 'produccion') return { ok: false }
-  if (actor.rol === 'DST') return { ok: true, alcance: 'red', privado: false }
-  if (actor.rol === 'LOC') return { ok: true, alcance: 'propio', privado: false }
+  if (consulta === 'ventas' || consulta === 'produccion' || consulta === 'gastos') return { ok: false }
+  if (actor.rol === 'DST') return { ok: true, alcance: 'red', privado }
+  if (actor.rol === 'LOC') return { ok: true, alcance: 'propio', privado }
   return { ok: false }
 }
 

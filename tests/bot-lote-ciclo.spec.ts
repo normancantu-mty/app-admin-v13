@@ -35,7 +35,7 @@ function ctx(extra: Partial<ContextoEtapa> = {}): ContextoEtapa {
 
 test.describe('normalizarEtapa', () => {
   test('aditivo 2: una entrada con el insumo resuelto, fecha de hoy en Mexico', () => {
-    const r = normalizarEtapa({ etapa: 'aditivo_2', kg: '2.5' }, ctx())
+    const r = normalizarEtapa({ etapa: 'aditivo_2', cantidad: '2.5', unidad: 'kg' }, ctx())
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.payload.fecha).toBe('2026-10-22')
@@ -45,8 +45,8 @@ test.describe('normalizarEtapa', () => {
   })
 
   test('aditivo 2 sin insumo en catalogo -> error, no inventa', () => {
-    expect(normalizarEtapa({ etapa: 'aditivo_2', kg: 2 }, ctx({ idInsumoAditivo: null })).ok).toBe(false)
-    expect(normalizarEtapa({ etapa: 'aditivo_2', kg: 0 }, ctx()).ok).toBe(false)
+    expect(normalizarEtapa({ etapa: 'aditivo_2', cantidad: 2, unidad: 'kg' }, ctx({ idInsumoAditivo: null })).ok).toBe(false)
+    expect(normalizarEtapa({ etapa: 'aditivo_2', cantidad: 0, unidad: 'kg' }, ctx()).ok).toBe(false)
   })
 
   test('destilacion: garrafas numeradas por orden, sin litros', () => {
@@ -70,7 +70,7 @@ test.describe('normalizarEtapa', () => {
   })
 
   test('una etapa antes de la produccion -> error', () => {
-    expect(normalizarEtapa({ etapa: 'aditivo_2', kg: 1 }, ctx({ fechaInicio: '2026-10-25' })).ok).toBe(false)
+    expect(normalizarEtapa({ etapa: 'aditivo_2', cantidad: 1, unidad: 'kg' }, ctx({ fechaInicio: '2026-10-25' })).ok).toBe(false)
   })
 
   test('el sello cambia si cambia una garrafa', () => {

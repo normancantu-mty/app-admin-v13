@@ -29,6 +29,7 @@ import type { ClienteServicio, IdentidadBot } from '@/lib/bot-servidor'
 import { resolverIdentidad } from '@/lib/bot-servidor'
 import {
   esAprobador,
+  esNorman,
   puedeAprobar,
   entidadesAlcanzables,
   ROL_TRABAJADOR,
@@ -74,7 +75,11 @@ function puedeAprobarHechos(h: HechosDeLaPuerta): boolean {
 export function decidirPuerta(h: HechosDeLaPuerta): DecisionPuerta {
   if (h.estado === 'PENDIENTE') {
     if (h.dueno !== h.quien) return { ok: false, status: 403, error: 'Ese borrador no es tuyo.' }
-    return { ok: true, modo: h.quienRequiereAprobacion ? 'esperar' : 'directo' }
+    // Auditoria 2026-11-03 (hallazgo 2): `directo` SOLO para Norman. Antes era
+    // "sin marca -> directo", y un DST (o un ADMIN sin marca que no fuera
+    // Norman) escribia con su propio VA.
+    const directo = esNorman({ telegramId: h.quien, rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
+    return { ok: true, modo: directo ? 'directo' : 'esperar' }
   }
   if (h.estado === 'ESPERA_APROBACION') {
     // FASE 10 (D106): nadie aprueba lo suyo. 403, no 409: no es un estado que
@@ -86,9 +91,9 @@ export function decidirPuerta(h: HechosDeLaPuerta): DecisionPuerta {
       return {
         ok: false,
         status: 403,
-        error: esAprobador({ rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
-          ? 'Lo que propone Kevin lo aprueba Norman.'
-          : 'Aprobar lo que propone otro lo hacen Norman y Kevin.'
+        error: esAprobador({ telegramId: h.quien, rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
+          ? 'Lo que propone el equipo lo aprueba Norman.'
+          : 'Aprobar lo que propone otro lo hace solo Norman. Tu clic no escribe nada.'
       }
     }
     return { ok: true, modo: 'aprobar' }
@@ -159,7 +164,7 @@ export async function abrirPuerta(
 }
 
 export function actorDe(identidad: IdentidadBot): ActorBot {
-  return { rol: identidad.rolEntidad, requiereAprobacion: identidad.requiereAprobacion }
+  return { rol: identidad.rolEntidad, requiereAprobacion: identidad.requiereAprobacion, telegramId: identidad.telegramId }
 }
 
 /**

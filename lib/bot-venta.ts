@@ -658,7 +658,7 @@ export function mensajeDeConfirmacionVenta(
   if (payload.condicion_pago === 'CONTADO') {
     lineas.push(`El dinero entra a "${contexto.nombreCuentaDestino}".`)
   } else {
-    lineas.push(`No entra dinero: queda a deber ${pesos(payload.total_cobrado_real)}.`)
+    lineas.push(`No entra dinero: suma ${pesos(payload.total_cobrado_real)} a su deuda.`)
   }
 
   for (const aviso of avisos) lineas.push('', `OJO: ${aviso}`)

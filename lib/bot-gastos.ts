@@ -13,7 +13,7 @@
  */
 
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
-import { fechaParaPersona } from '@/lib/fechas'
+import { fechaParaPersona, instanteDeFechaDictada } from '@/lib/fechas'
 
 // ============================================================================
 // 1. LA LISTA CERRADA
@@ -119,6 +119,122 @@ export interface CategoriaDelCatalogo {
   ayuda?: string
   tipo_movimiento: 'GASTO_OPERATIVO' | 'COMPRA_INSUMOS'
   columna: 'origen' | 'destino'
+  /**
+   * 2026-11-03 - UNA SOLA LISTA. Cuando el catalogo sale de
+   * `categorias_movimiento` (la lista que se edita desde el ERP v2 y desde el
+   * bot), cada entrada es una PAREJA categoria/subcategoria y `nombre` es su
+   * etiqueta `"Categoria / Subcategoria"`. En el catalogo semilla van vacias.
+   */
+  categoria?: string
+  subcategoria?: string
+}
+
+/** Una fila de `categorias_movimiento`, tal como la lee el servidor. */
+export interface FilaCategoriaMovimiento {
+  tipo: string
+  categoria: string
+  subcategoria: string
+  activa: boolean
+  orden?: number | null
+}
+
+/** La etiqueta que ve el modelo y la persona: `"Categoria / Subcategoria"`. */
+export function etiquetaDePareja(categoria: string, subcategoria: string): string {
+  return `${categoria} / ${subcategoria}`
+}
+
+/**
+ * El catalogo del bot SALE de `categorias_movimiento`: solo EGRESO y activas,
+ * en el orden de la lista. Es la misma lista que valida
+ * `app/api/finanzas/nuevo/route.ts` para un egreso de la web, y por eso la
+ * forma de fila es la misma que escribe la web para un egreso:
+ * `GASTO_OPERATIVO` con la cuenta en `id_cuenta_destino`.
+ *
+ * Una pareja cuya etiqueta trae un disparador fiscal (`PAGO IVA`...) NO entra:
+ * el bot no puede asentar por chat algo que `v_pasivo_fiscal` leeria como pago
+ * de impuesto. Hoy (2026-11-03) ninguna de las 55 lo trae; el filtro es para la
+ * que se agregue manana.
+ */
+export function catalogoDesdeCategoriasMovimiento(
+  filas: readonly FilaCategoriaMovimiento[]
+): CategoriaDelCatalogo[] {
+  return [...filas]
+    .filter((f) => f.tipo === 'EGRESO' && f.activa === true)
+    .filter((f) => String(f.categoria ?? '').trim() !== '' && String(f.subcategoria ?? '').trim() !== '')
+    .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
+    .map((f) => ({
+      nombre: etiquetaDePareja(f.categoria, f.subcategoria),
+      ayuda: '',
+      tipo_movimiento: 'GASTO_OPERATIVO' as const,
+      columna: 'destino' as const,
+      categoria: f.categoria,
+      subcategoria: f.subcategoria
+    }))
+    .filter((c) => disparadoresFiscalesEn(c.nombre).length === 0)
+}
+
+/** El catalogo es la lista de parejas (y no la semilla de seis nombres). */
+export function esCatalogoDeParejas(catalogo: readonly CategoriaDelCatalogo[]): boolean {
+  return catalogo.some((c) => typeof c.subcategoria === 'string' && c.subcategoria !== '')
+}
+
+/** Sin acentos, sin mayusculas, espacios colapsados y la diagonal pegada. */
+function claveDeTexto(texto: string): string {
+  return String(texto ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\/\s*/g, '/')
+    .trim()
+}
+
+/**
+ * Resuelve lo que dijo el modelo contra el catalogo. Devuelve la entrada o null.
+ *
+ * Con la semilla: exacto y nada mas (la regla de siempre). Con la lista de
+ * parejas, tres pasos, **todos de igualdad, ninguno de parecido**:
+ *   1. la etiqueta exacta;
+ *   2. la etiqueta sin acentos ni mayusculas (`logistica y envios / diesel`);
+ *   3. solo la subcategoria, **si es unica** en la lista (`Diesel`).
+ * Nada de distancia de edicion: lo que no es igual a algo de la lista es
+ * SIN_CATEGORIZAR, no el vecino mas cercano.
+ */
+export function resolverCategoria(
+  sugerida: unknown,
+  catalogo: readonly CategoriaDelCatalogo[]
+): CategoriaDelCatalogo | null {
+  const limpia = String(sugerida ?? '').trim()
+  if (limpia === '') return null
+  const exacta = catalogo.find((c) => c.nombre === limpia)
+  if (exacta) return exacta
+  if (!esCatalogoDeParejas(catalogo)) return null
+  const clave = claveDeTexto(limpia)
+  const porEtiqueta = catalogo.filter((c) => claveDeTexto(c.nombre) === clave)
+  if (porEtiqueta.length === 1) return porEtiqueta[0]
+  const porSub = catalogo.filter((c) => c.subcategoria && claveDeTexto(c.subcategoria) === clave)
+  if (porSub.length === 1) return porSub[0]
+  return null
+}
+
+/**
+ * La fila sellada sigue en el catalogo VIGENTE? Lo pregunta el confirmar, que
+ * relee la lista: una subcategoria desactivada entre el VA y la escritura no se
+ * escribe.
+ */
+export function filaEnCatalogo(
+  fila: { categoria: string; subcategoria?: string | null; tipo_movimiento?: string },
+  catalogo: readonly CategoriaDelCatalogo[]
+): boolean {
+  if (esCatalogoDeParejas(catalogo)) {
+    return catalogo.some(
+      (c) =>
+        c.categoria === fila.categoria &&
+        c.subcategoria === (fila.subcategoria ?? null) &&
+        (fila.tipo_movimiento === undefined || c.tipo_movimiento === fila.tipo_movimiento)
+    )
+  }
+  return catalogo.some((c) => c.nombre === fila.categoria)
 }
 
 /**
@@ -142,9 +258,7 @@ export function normalizarCategoriaBot(
   sugerida: unknown,
   catalogo: readonly CategoriaDelCatalogo[] = CATALOGO_SEMILLA
 ): string {
-  const limpia = String(sugerida ?? '').trim()
-  const encontrada = catalogo.find((c) => c.nombre === limpia)
-  return encontrada?.nombre ?? CATEGORIA_SIN_CATEGORIZAR_BOT
+  return resolverCategoria(sugerida, catalogo)?.nombre ?? CATEGORIA_SIN_CATEGORIZAR_BOT
 }
 
 export const TOPE_NOMBRE_CATEGORIA = 40
@@ -290,6 +404,7 @@ export const LLAVES_PAYLOAD = [
   'id_cuenta_origen',
   'monto',
   'status',
+  'subcategoria',
   'tipo_movimiento',
   'usuario_creador'
 ] as const
@@ -297,6 +412,11 @@ export const LLAVES_PAYLOAD = [
 export interface PayloadGasto {
   tipo_movimiento: 'GASTO_OPERATIVO' | 'COMPRA_INSUMOS'
   categoria: string
+  /**
+   * 2026-11-03: la subcategoria de `categorias_movimiento`. Entra al sello. En
+   * modo semilla (base sin lista) va en null, igual que antes.
+   */
+  subcategoria?: string | null
   categoria_gasto: null
   descripcion: string
   monto: number
@@ -456,10 +576,28 @@ export function normalizarPropuesta(
   // 1) empata exacto contra el catalogo vivo. 2) SOLO si no empato, se mira si
   // el modelo propuso una categoria NUEVA, y esa pasa por su propia puerta.
   // El orden importa: una categoria nueva jamas puede pisar a una existente.
-  let categoria = normalizarCategoriaBot(propuesta.categoria, catalogo)
+  const deParejas = esCatalogoDeParejas(catalogo)
+  const propuestaNueva = (propuesta as Record<string, unknown>).categoria_nueva
+  let entrada = resolverCategoria(propuesta.categoria, catalogo)
+  // Con la lista de parejas, lo que el bot mando como "nueva" puede ser una
+  // pareja dicha de otra forma (sin acentos, solo la subcategoria): se intenta.
+  if (!entrada && deParejas) entrada = resolverCategoria(propuestaNueva, catalogo)
+  let categoria = entrada?.nombre ?? CATEGORIA_SIN_CATEGORIZAR_BOT
   let categoriaNueva: string | null = null
 
-  if (categoria === CATEGORIA_SIN_CATEGORIZAR_BOT) {
+  if (!entrada && deParejas) {
+    // UNA SOLA LISTA: el gasto NUNCA crea categorias. Se agregan desde el ERP
+    // (Finanzas > Categorias) o con el bot ("agrega la subcategoria ..."), con
+    // su propia puerta y el clic de Norman. Aqui solo se dice como.
+    const dicha = String(propuestaNueva ?? propuesta.categoria ?? '').trim()
+    if (dicha !== '') {
+      avisos.push(
+        `"${dicha.slice(0, 60)}" no esta en la lista de categorias. Si hace falta, agrega la subcategoria ` +
+          'desde el ERP (Finanzas > Categorias) o dile al bot "agrega la subcategoria ... en ...", ' +
+          'y despues reclasificas este gasto.'
+      )
+    }
+  } else if (!entrada) {
     const propuestaNueva = (propuesta as Record<string, unknown>).categoria_nueva
     if (propuestaNueva != null && String(propuestaNueva).trim() !== '') {
       const juicio = validarCategoriaNueva(propuestaNueva, catalogo)
@@ -475,7 +613,9 @@ export function normalizarPropuesta(
     }
   }
 
-  const forma = formaDeFila(categoria, catalogo)
+  const forma = entrada
+    ? { tipo: entrada.tipo_movimiento, columna: entrada.columna }
+    : formaDeFila(categoria, catalogo)
   const faltaCategoria = categoria === CATEGORIA_SIN_CATEGORIZAR_BOT
   if (faltaCategoria) {
     avisos.push(
@@ -509,15 +649,9 @@ export function normalizarPropuesta(
   // La fecha: si el modelo no la resuelve, hoy. Nunca en el futuro — un gasto
   // con fecha futura desaparece de todo filtro "hasta hoy" (mismo razonamiento
   // que el aviso W11).
-  let fecha = ahora
-  const propuestaFecha = String(propuesta.fecha ?? '').trim()
-  if (propuestaFecha !== '') {
-    const parseada = new Date(propuestaFecha)
-    if (!Number.isNaN(parseada.getTime())) {
-      fecha = parseada > ahora ? ahora : parseada
-      if (parseada > ahora) avisos.push('La fecha que entendi es futura; la anclo a hoy.')
-    }
-  }
+  const dictada = instanteDeFechaDictada(propuesta.fecha, ahora)
+  const fecha = dictada?.instante ?? ahora
+  if (dictada?.futura) avisos.push('La fecha que entendi es futura; la anclo a hoy.')
 
   return {
     ok: true,
@@ -527,7 +661,10 @@ export function normalizarPropuesta(
     avisos,
     payload: {
       tipo_movimiento: forma.tipo,
-      categoria,
+      // Con la lista de parejas, la columna `categoria` lleva la CATEGORIA (no la
+      // etiqueta) y `subcategoria` la subcategoria: lo mismo que escribe la web.
+      categoria: entrada?.categoria ?? categoria,
+      subcategoria: entrada?.subcategoria ?? null,
       // NUNCA la descripcion aqui. `app/api/finanzas/nuevo/route.ts:155` si lo
       // hace (`categoria_gasto: descripcion ?? subcategoria`) y es la mitad del
       // agujero fiscal; el bot no hereda esa ambiguedad.
@@ -584,7 +721,7 @@ export function mensajeDeConfirmacion(
     'Esto es lo que voy a escribir. Revisalo:',
     '',
     `MONTO:      $${monto}`,
-    `CATEGORIA:  ${payload.categoria}`,
+    `CATEGORIA:  ${payload.categoria}${payload.subcategoria ? ` / ${payload.subcategoria}` : ''}`,
     `CONCEPTO:   ${payload.descripcion}`,
     `FECHA:      ${dia}`,
     `CUENTA:     ${contexto.nombreCuenta} ${flecha}`,

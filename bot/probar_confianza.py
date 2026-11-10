@@ -65,7 +65,7 @@ UUID = "7c2d9e41-3b55-4a18-9f60-2e8d1c4b7a03"
 # escritura bajo `confianza: baja` es el defecto.
 # Fase 8 (D77): `/api/bot/pendiente` solo lee (la rehidratacion tras reinicio).
 SOLO_LECTURA = ("/api/bot/catalogo", "/api/bot/consulta", "/api/bot/cancelar",
-                "/api/bot/pendiente")
+                "/api/bot/pendiente", B.RUTA_LEER_CUENTAS)
 
 casos = []
 
@@ -197,6 +197,12 @@ LAS_QUE_ESCRIBEN = [
     ("alta", "da de alta a Dulceria Nueva",
      {"nombre": "Dulceria Nueva"}, None),
     ("convertir", "convierte la cotizacion en venta", {}, None),
+    # 2026-11-03: alta de categoria/subcategoria (propone; escribe el clic de Norman).
+    ("categoria", "agrega la subcategoria Diesel en Logistica_Envios",
+     {"categoria": "Logistica_Envios", "subcategoria": "Diesel"}, None),
+    # 2026-11-05: traspaso entre cuentas (propone; escribe el VA).
+    ("traspaso", "pase 5000 de efectivo a spin",
+     {"monto": 5000, "origen_id": UUID, "destino_id": UUID}, None),
     # `confirmar` es la que de verdad aprieta el gatillo, y la que el defecto
     # dejaba pasar: necesita una propuesta sellada en pantalla para despachar.
     # D63 (Fase 7): el texto es un "si" EXPLICITO. Con "sale pues" el bot ya
@@ -229,7 +235,7 @@ for intencion, texto, campos, preparar in LAS_QUE_ESCRIBEN:
     if not doble.escrituras():
         no_escribieron_seguras.append((intencion, doble.llamadas))
 
-caso("VERDE - con `confianza: baja` NINGUNA de las 10 escribe",
+caso("VERDE - con `confianza: baja` NINGUNA de las que escriben escribe",
      escribieron_dudando, [], "")
 caso("ROJO  - con `confianza: alta` las 10 SI llaman su ruta",
      no_escribieron_seguras, [], "")
@@ -238,7 +244,7 @@ caso("ROJO  - con `confianza: alta` las 10 SI llaman su ruta",
 # diez que esta prueba ejercita tienen que ser, exactamente, las que el modulo
 # declara. Si manana alguien agrega una intencion que escribe y no la declara,
 # esto se pone rojo aqui y no seis semanas despues en produccion.
-caso("VERDE - `INTENCIONES_QUE_ESCRIBEN` cubre exactamente las 10 ejercitadas",
+caso("VERDE - `INTENCIONES_QUE_ESCRIBEN` cubre exactamente las ejercitadas",
      sorted(B.INTENCIONES_QUE_ESCRIBEN),
      sorted(i for i, _, _, _ in LAS_QUE_ESCRIBEN), "")
 

@@ -134,6 +134,46 @@ ok, peor, largo = _mide("confirmar_conversion", B._teclado_confirmar_conversion(
 casos.append(("VERDE - confirmar conversion (lleva uuid)", ok, True,
               "peor=%r %d bytes" % (peor, largo)))
 
+# --- 4.sexies (VERDE): las listas con dueno (auditoria 2026-11-04, S5).
+#     `_lista_de` le agrega a cada boton el id de su borrador o de su pregunta, y ese
+#     id es lo que puede romper el tope. Se mide lo que sale de `_lista_de`, con 20
+#     opciones para que el indice sea de dos cifras. El otro chequeo es que ningun
+#     boton de la lista se quede sin dueno: esa fue la falla, no el largo.
+OPCIONES = [dict(nombre=CATEGORIA_LARGA, rol="DST", etiqueta=CATEGORIA_LARGA, detalle="x", estado="VIGENTE",
+                 precio=1, unidad="L", ml=750) for _ in range(20)]
+LISTAS = (("deudores", B._teclado_deudores(OPCIONES)),
+          ("compradores", B._teclado_compradores(OPCIONES, True)),
+          ("clientes", B._teclado_clientes(OPCIONES, True, "Nombre " + CATEGORIA_LARGA)),
+          ("productos", B._teclado_productos(OPCIONES)),
+          ("insumos", B._teclado_insumos(OPCIONES)),
+          ("formatos", B._teclado_formatos(OPCIONES)),
+          ("zonas de alta", B._teclado_alta(OPCIONES)),
+          ("conversion", B._teclado_conversion(OPCIONES)),
+          ("movimientos", B._teclado_movimientos(OPCIONES)),
+          ("campos", B._teclado_campos_corregibles()),
+          ("entregadores", B._teclado_entregadores(OPCIONES)),
+          ("categorias", B._teclado_categorias([CATEGORIA_LARGA] * 20)))
+PREGUNTA = {"tipo": "x_eligiendo"}
+B._guardar_pregunta(1, PREGUNTA)
+for quien, dueno, foco in (("uuid", UUID, {"borrador_id": UUID}), ("pregunta", PREGUNTA["_pid"], PREGUNTA)):
+    dict.__setitem__(B._memoria, 1, foco)
+    for nombre, crudo in LISTAS:
+        atado = B._lista_de(1, crudo)
+        ok, peor, largo = _mide(nombre, atado)
+        sin_dueno = [d for d in _datos(atado) if dueno not in d]
+        casos.append(("VERDE - lista %s, dueno %s" % (nombre, quien), (ok, sin_dueno), (True, []),
+                      "peor=%r %d bytes" % (peor, largo)))
+dict.pop(B._memoria, 1, None)
+
+ajuste = "setaj:" + UUID + ":" + PREGUNTA["_pid"]
+casos.append(("VERDE - setaj:<uuid>:<pregunta>", len(ajuste.encode("utf-8")) <= TOPE, True,
+              "%d bytes" % len(ajuste.encode("utf-8"))))
+
+# Y por eso el id de una pregunta es corto y no otro uuid.
+dos_uuid = "setaj:" + UUID + ":" + UUID
+casos.append(("ROJO  - setaj:<uuid>:<uuid>", len(dos_uuid.encode("utf-8")) > TOPE, True,
+              "%d bytes > %d" % (len(dos_uuid.encode("utf-8")), TOPE)))
+
 # --- 4.quinquies (CONTROL NEGATIVO): la zona NO puede viajar en el dato.
 #     Es la tentacion concreta de D9 -- "total, son dos palabras cortas" -- y con
 #     un uuid de borrador delante ya no cabe. Ademas un texto en el

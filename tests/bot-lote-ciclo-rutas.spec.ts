@@ -14,6 +14,7 @@
  * Postgres efimero: `scripts/probar_migracion_efimera.py` + `supabase/pruebas/lote_v2_comprobar.sql`.
  */
 import { test, expect } from '@playwright/test'
+import { NORMAN_TELEGRAM_ID } from '@/lib/bot-permisos'
 import * as etapaP from '@/app/api/bot/lote/etapa/proponer/route'
 import * as etapaC from '@/app/api/bot/lote/etapa/confirmar/route'
 import * as ciclo from '@/app/api/bot/lote/ciclo/route'
@@ -30,7 +31,8 @@ const ENTORNO_FALSO: Record<string, string> = {
 }
 const entornoOriginal: Record<string, string | undefined> = {}
 
-const NORMAN = 111
+// Auditoria 2026-11-03 (hallazgo 1): Norman es ADMIN sin marca Y su telegram_id.
+const NORMAN = NORMAN_TELEGRAM_ID
 const KEVIN = 222
 const GIL = 333 // DST: los lotes no le tocan
 const PEDRO = 666 // TRABAJADOR
@@ -66,7 +68,9 @@ function estadoInicial() {
     ],
     catalogo_productos: [
       { id: 'ins-az', sku: 'ing-az', nombre: 'Ingrediente Az', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
-      { id: 'ins-al', sku: 'ing-al', nombre: 'Ingrediente Al', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' }
+      { id: 'ins-al', sku: 'ing-al', nombre: 'Ingrediente Al', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
+      // Fase 7A: como en produccion desde el 2026-11-07.
+      { id: 'ins-ad2', sku: 'aditivo-2', nombre: 'Aditivo 2', unidad_medida: 'GRAMOS', tipo: 'INSUMO' }
     ],
     lotes: [
       { id: 'lote-1', codigo_lote: 'L-15-10.1', fecha_inicio: haceDias(4), creado_en: haceDias(4) + 'T15:00:00Z' },
@@ -228,18 +232,38 @@ const GARRAFAS = [
 test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta', () => {
   test('aditivo 2 por SKU opaco: ing-al se resuelve a su insumo; proponer solo escribe el borrador', async () => {
     estadoInicial()
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'l-15-10.1', etapa: 'aditivo_2', kg: 2.5, insumo_sku: 'ing-al' })
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'l-15-10.1', etapa: 'aditivo_2', cantidad: 2.5, unidad: 'kg', insumo_sku: 'ing-al' })
     expect(r.status, JSON.stringify(r.j)).toBe(200)
     expect(escrituras.every((e) => e.endsWith('bot_borradores'))).toBe(true)
     const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { tipo: string; etapa: { entradas: Fila[] } } }
     expect(b.payload.tipo).toBe('lote_etapa')
     expect(b.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-al', cantidad: 2.5 }])
-    expect(String(r.j.mensaje)).toContain('Kilos de aditivo 2: 2.5')
+    expect(String(r.j.mensaje)).toContain('Aditivo 2: 2.5 kg')
+  })
+
+  test('Fase 7A: aditivo 2 en GRAMOS en el catalogo: 1.5 kg dicho -> 1500 en el borrador; 800 g -> 800', async () => {
+    estadoInicial()
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 1.5, unidad: 'kg', insumo_sku: 'aditivo-2' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { etapa: { entradas: Fila[] } } }
+    expect(b.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-ad2', cantidad: 1500 }])
+    expect(String(r.j.mensaje)).toContain('Aditivo 2: 1500 g')
+    estadoInicial()
+    const g = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 800, unidad: 'g', insumo_sku: 'aditivo-2' })
+    const bg = tablas.bot_borradores.find((x) => x.id === g.j.borrador_id) as Fila & { payload: { etapa: { entradas: Fila[] } } }
+    expect(bg.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-ad2', cantidad: 800 }])
+  })
+
+  test('Fase 7A: cantidad sin unidad -> 422, sin borrador', async () => {
+    estadoInicial()
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 4, insumo_sku: 'aditivo-2' })
+    expect(r.status).toBe(422)
+    expect(escrituras).toEqual([])
   })
 
   test('un SKU que no existe no inventa insumo -> 422', async () => {
     estadoInicial()
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', kg: 2.5, insumo_sku: 'azucar' })
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 2.5, unidad: 'kg', insumo_sku: 'azucar' })
     expect(r.status).toBe(422)
   })
 
@@ -281,7 +305,7 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
 
   test('sello cambiado -> 409 sin escribir', async () => {
     estadoInicial()
-    const p = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', kg: 2, insumo_sku: 'ing-al' })
+    const p = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 2, unidad: 'kg', insumo_sku: 'ing-al' })
     const c = await llamar('lote/etapa/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: 'f'.repeat(64) })
     expect(c.status).toBe(409)
     expect(rpcs).toEqual([])
@@ -290,7 +314,7 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
   test('etapa ya registrada -> 409 al proponer', async () => {
     estadoInicial()
     tablas.lote_etapas.push({ id: 'e1', id_lote: 'lote-1', etapa: 'aditivo_2' })
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', kg: 2, insumo_sku: 'ing-al' })
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 2, unidad: 'kg', insumo_sku: 'ing-al' })
     expect(r.status).toBe(409)
   })
 })
@@ -354,17 +378,22 @@ test.describe('ciclo: leer, reclamar una vez, temperatura, muestra', () => {
     expect(fuente.status).toBe(400)
   })
 
-  test('muestra: se anota una vez con quien; la segunda dice que ya estaba; DST no', async () => {
+  // Auditoria 2026-11-03 (hallazgo 6): el boton "muestra guardada" escribe sin
+  // borrador ni puerta; ahora solo con el clic de Norman. Antes Pedro la anotaba.
+  test('muestra: solo Norman la anota, una vez; Pedro, Kevin y el DST -> 403 sin escribir', async () => {
     estadoInicial()
-    const a = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: PEDRO, id_lote: 'lote-1' })
+    for (const id of [PEDRO, KEVIN, GIL]) {
+      const x = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: id, id_lote: 'lote-1' })
+      expect(x.status, `${id} ${JSON.stringify(x.j)}`).toBe(403)
+    }
+    expect(tablas.lote_etapas.filter((e) => e.etapa === 'muestra')).toHaveLength(0)
+    const a = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: NORMAN, id_lote: 'lote-1' })
     const b = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: NORMAN, id_lote: 'lote-1' })
-    expect(a.j.nueva).toBe(true)
+    expect(a.j.nueva, JSON.stringify(a.j)).toBe(true)
     expect(b.j.nueva).toBe(false)
     const filas = tablas.lote_etapas.filter((e) => e.etapa === 'muestra')
     expect(filas.length).toBe(1)
-    expect(filas[0].registrado_por).toBe('telegram:pedro')
-    expect(filas[0].telegram_id).toBe(PEDRO)
-    const g = await llamar('lote/ciclo', { accion: 'muestra', telegram_id: GIL, id_lote: 'lote-1' })
-    expect(g.status).toBe(403)
+    expect(filas[0].registrado_por).toBe('telegram:norman')
+    expect(filas[0].telegram_id).toBe(NORMAN)
   })
 })

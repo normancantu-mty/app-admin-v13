@@ -126,6 +126,13 @@ class Servidor(object):
                  "nombre": "Destilado Plata 750ml", "ml_por_unidad": 750}]}
         if ruta == "/api/bot/pendiente":
             return 200, {"ok": True, "pendientes": list(self.pendientes)}
+        if ruta == "/api/bot/pregunta":
+            # 2026-11-07 (Fase 5): lo que contesta el servidor real a "cuanto me
+            # debe X": no la reconoce (lib/bot-pregunta.ts no lee cartera), y una
+            # consulta conocida sigue a /api/bot/consulta. Antes este doble daba
+            # 500 y la prueba pasaba por la caida vieja, que ya no existe.
+            return 200, {"ok": True, "reconocida": False, "motivo": "no_reconocida",
+                         "texto": "Esa no la puedo contestar con certeza."}
         if ruta == "/api/bot/consulta":
             return 200, {"ok": True, "texto": "CARTERA de " + str(cuerpo.get("filtro"))}
         if ruta.endswith("/proponer"):
@@ -185,6 +192,14 @@ def vivos():
     return [d["borrador_id"] for d in B._pendientes_de(CHAT)]
 
 
+def viva_de(tipo):
+    """El borrador vivo de ESE tipo. 2026-11-03: el orden en que el bot propone
+    depende de si el modelo marco faltantes en la venta (sampling): se busca por
+    tipo, no por posicion, para que la prueba mida la plomeria y no el orden."""
+    hallados = [d["borrador_id"] for d in B._pendientes_de(CHAT) if B._tipo_de(d) == tipo]
+    return hallados[0] if len(hallados) == 1 else None
+
+
 def confirmados():
     """Los `/confirmar` que la puerta de ensayo NO dejo salir: (ruta, borrador)."""
     return [(r, c.get("borrador_id")) for r, c in B.no_salieron if r.endswith("/confirmar")]
@@ -217,15 +232,17 @@ salida = g("d80_mensaje_2026_09_19")
 dichos = texto(G.EL_MENSAJE_2026_09_19, salida)
 prop = SERVIDOR[0].proponer()
 caso("D80 - el mensaje del 2026-09-19: DOS propuestas (venta y gasto)",
-     [r for r, _ in prop], ["/api/bot/venta/proponer", "/api/bot/gasto/proponer"],
+     sorted(r for r, _ in prop), ["/api/bot/gasto/proponer", "/api/bot/venta/proponer"],
      str(dichos))
+de_venta = [c for r, c in prop if r.endswith("/venta/proponer")]
+de_gasto = [c for r, c in prop if r.endswith("/gasto/proponer")]
 caso("D80 - las dos quedan vivas, cada una con su VA", len(vivos()), 2)
-caso("D79 - la primera sale como mensaje NUEVO (el servidor cancela lo viejo)",
-     "conservar_pendientes" in prop[0][1], False)
+caso("2026-11-04 - la primera tambien conserva: un mensaje nuevo ya no cancela",
+     prop[0][1].get("conservar_pendientes"), True)
 caso("D79 - la segunda CONSERVA la primera", prop[1][1].get("conservar_pendientes"), True)
 caso("D80 - el gasto es el de $45, la venta la de $599",
-     (prop[1][1]["propuesta"]["monto"], prop[0][1]["propuesta"]["monto"]), (45, 599))
-bid_venta, bid_gasto = vivos()
+     (de_gasto[0]["propuesta"]["monto"], de_venta[0]["propuesta"]["monto"]), (45, 599))
+bid_venta, bid_gasto = viva_de("venta"), viva_de("gasto")
 boton("vavt:" + bid_venta)
 boton("va:" + bid_gasto)
 caso("D80 - las DOS llegan a /confirmar (en ensayo: no salen), cada una con su id",
@@ -278,21 +295,26 @@ dichos = texto("va")
 caso("D79 - CONTROL: con UNA viva, el 'va' escrito confirma como siempre",
      [r for r, _ in confirmados()], ["/api/bot/venta/confirmar"], str(dichos))
 
-# El "no" escrito con dos vivas: se apagan las dos.
+# El "no" escrito con dos vivas: antes se apagaban las dos (D79). Desde el 2026-11-04
+# (Norman: "que los trate de forma independiente"; auditoria S7) se pregunta cual.
 limpiar()
 texto(G.EL_MENSAJE_2026_09_19, g("d80_mensaje_2026_09_19"))
 dos = vivos()
 dichos = texto("no")
-caso("D79 - 'no' escrito con DOS vivas las cancela a las dos", sorted(cancelados()), sorted(dos))
-caso("D79 - ...y no queda ninguna viva", vivos(), [])
+caso("S7 - 'no' escrito con DOS vivas no apaga ninguna", (cancelados(), sorted(vivos())), ([], sorted(dos)))
+caso("S7 - ...y pregunta cual", any("toca la que cancelo" in d for d in dichos), True, str(dichos))
+boton("no:" + dos[0])
+caso("S7 - ...y el boton apaga SOLO esa", (cancelados(), vivos()), ([dos[0]], [dos[1]]))
 
 # Un VA de una propuesta que ya NO esta viva no confirma la que este en el foco.
 limpiar()
 texto("vendi una botella de 750", g("d49_un_solo_hecho"))
 viejo = vivos()[0]
 texto("vendi una botella de 750", g("d49_un_solo_hecho"))
+caso("2026-11-04 - dos mensajes: las dos propuestas conviven", len(vivos()), 2)
+boton("no:" + viejo)
 dichos = boton("vavt:" + viejo)
-caso("D79 - el VA de una propuesta reemplazada NO escribe la vigente", confirmados(), [],
+caso("D79 - el VA de una propuesta caida NO escribe la vigente", confirmados(), [],
      str(dichos))
 caso("D79 - CONTROL: el VA de la vigente si llega", (boton("vavt:" + vivos()[0]) is not None
                                                     and [r for r, _ in confirmados()]),
@@ -348,7 +370,7 @@ caso("D74 - ...y el reproponer conserva (no mata otras)", despues.get("conservar
 # Con venta Y gasto en pantalla, "la venta fue a concesion" toca SOLO la venta.
 limpiar()
 texto(G.EL_MENSAJE_2026_09_19, g("d80_mensaje_2026_09_19"))
-bid_venta, bid_gasto = vivos()
+bid_venta, bid_gasto = viva_de("venta"), viva_de("gasto")
 texto("la venta fue a concesion", g("d74_dos_en_pantalla_concesion"))
 caso("D74 - con dos en pantalla, ajusta la venta y deja vivo el gasto",
      (bid_gasto in vivos(), bid_venta in vivos(), len(vivos())), (True, False, 2))
@@ -371,7 +393,7 @@ texto("vendi una de 750 a publico", g("d80_control_eco"))
 texto("vendi otras 2 de 750 a publico", g("d74_control_otra_venta"))
 ultima = SERVIDOR[0].proponer()[-1][1]
 caso("D74 - CONTROL: 'vendi otras 2' es una venta NUEVA (2 piezas), no un ajuste",
-     (ultima["productos"][0]["cantidad"], "conservar_pendientes" in ultima), (2, False))
+     (ultima["productos"][0]["cantidad"], len(vivos())), (2, 2))
 
 # ════════════════ D73 + D76: la memoria corta y la cartera de UNO ════════════
 limpiar()

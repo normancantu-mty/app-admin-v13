@@ -83,12 +83,15 @@ export function mensajeDeAltaMiembro(a: {
     '',
     `   ${a.nombre}  ->  ${a.entidad} (${a.rol})`
   ]
-  if (a.requiereAprobacion) {
-    lineas.push('', `Propone todo lo que propones tu, pero su VA espera TU Aprobar.`)
+  if (a.rol === 'ADMIN') {
+    lineas.push('', 'Propone todo lo que propones tu.')
   } else if (a.rol === 'DST') {
-    lineas.push('', 'Vende, cotiza y abona a su nombre; sus abonos te llegan para aprobar.')
+    lineas.push('', 'Vende, cotiza y abona a su nombre.')
   } else if (a.rol === 'LOC') {
     lineas.push('', 'Solo consulta lo suyo (inventario, lo que debe, precios).')
+  }
+  if (a.requiereAprobacion) {
+    lineas.push('', 'Su VA espera TU Aprobar: nada se escribe sin tu clic.')
   }
   lineas.push('', 'Contesta VA para registrarlo.')
   return lineas.join('\n')

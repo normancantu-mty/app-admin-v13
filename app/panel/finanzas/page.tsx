@@ -155,9 +155,17 @@ export default async function FinanzasV2({ searchParams }: { searchParams: Promi
         sub="Cuentas de la matriz, movimientos, egresos, impuestos y aprobaciones"
         acciones={
           esAdmin ? (
-            <AbrirModal className="btn p" href={`${RUTA_BASE}/m/gasto`} titulo="Registrar gasto" tam="md">
-              + Gasto
-            </AbrirModal>
+            <>
+              <AbrirModal className="btn p" href={`${RUTA_BASE}/m/gasto`} titulo="Registrar gasto" tam="md">
+                + Gasto
+              </AbrirModal>
+              <AbrirModal className="btn" href={`${RUTA_BASE}/m/categorias`} titulo="Categorías" tam="md">
+                Categorías
+              </AbrirModal>
+              <AbrirModal className="btn" href={`${RUTA_BASE}/m/suscripciones`} titulo="Suscripciones" tam="md">
+                Suscripciones
+              </AbrirModal>
+            </>
           ) : null
         }
       />

@@ -212,7 +212,8 @@ try:
     salida["r"] = (False, "el modelo devolvio error: overloaded")
     u5, c5 = decir("pague 100 de luz")
     caso("CONTROL error que no es tope: el mensaje de siempre", u5.message.dichos[0].startswith("No pude leer ese mensaje"), True)
-    caso("CONTROL ... no pausa y si se marca", (B._pausa["hasta"], c5 in base.marcadas), (None, True))
+    # 2026-11-04: un fallo del modelo ya no cuenta como atendido (probar_fallo_modelo.py).
+    caso("CONTROL ... no pausa y NO se marca", (B._pausa["hasta"], c5 in base.marcadas), (None, False))
 finally:
     B.enrutar, B._post = orig
     B._pausa.update(hasta=None, guardados=0)

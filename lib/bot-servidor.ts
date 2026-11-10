@@ -24,7 +24,12 @@ import { createClient } from '@supabase/supabase-js'
 import { clienteDeEnsayo, esPeticionDeEnsayo } from './bot-ensayo'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
-import { CATALOGO_SEMILLA, type CategoriaDelCatalogo } from '@/lib/bot-gastos'
+import {
+  CATALOGO_SEMILLA,
+  catalogoDesdeCategoriasMovimiento,
+  type CategoriaDelCatalogo,
+  type FilaCategoriaMovimiento
+} from '@/lib/bot-gastos'
 import { aCentavos, aPesos, netearAbonosSinPedido } from '@/lib/abonos'
 import type { TicketAbierto } from '@/lib/bot-abonos'
 import type { CompradorDeVenta, ProductoConPrecios } from '@/lib/bot-venta'
@@ -207,13 +212,32 @@ export async function resolverIdentidad(
 }
 
 /**
- * El catalogo VIVO de categorias. Si la base no contesta, devuelve la semilla
- * en vez de una lista vacia: una lista vacia mandaria **todo** a
- * `SIN_CATEGORIZAR` en silencio, que es peor que trabajar con seis categorias.
+ * El catalogo VIVO de categorias.
+ *
+ * 2026-11-03 - UNA SOLA LISTA. La fuente es `categorias_movimiento` (EGRESO,
+ * activas): la misma que se edita desde el ERP v2 (Finanzas > Categorias) y
+ * desde el bot ("agrega la subcategoria ..."). Antes el bot leia
+ * `bot_categorias`, otra lista con otros nombres (0 de 6 coincidian), y lo que
+ * Norman agregaba en el ERP no le llegaba al gasto del bot.
+ *
+ * `bot_categorias` queda SOLO de respaldo, igual que la semilla: si la lista no
+ * contesta, el bot sigue trabajando en vez de mandar todo a SIN_CATEGORIZAR.
  */
 export async function leerCatalogo(
   supabase: ClienteServicio
 ): Promise<CategoriaDelCatalogo[]> {
+  const lista = await supabase
+    .from('categorias_movimiento')
+    .select('tipo, categoria, subcategoria, activa, orden')
+    .eq('tipo', 'EGRESO')
+    .eq('activa', true)
+    .order('orden')
+  if (!lista.error && Array.isArray(lista.data)) {
+    const deParejas = catalogoDesdeCategoriasMovimiento(lista.data as FilaCategoriaMovimiento[])
+    if (deParejas.length > 0) return deParejas
+  }
+  if (lista.error) console.error('[bot] no pude leer categorias_movimiento, uso el respaldo:', lista.error)
+
   const { data, error } = await supabase
     .from('bot_categorias')
     .select('nombre, ayuda, tipo_movimiento, columna')

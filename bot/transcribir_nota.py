@@ -86,6 +86,15 @@ def _cargar():
     global _MODELO, _DISPOSITIVO
     if _MODELO is not None:
         return _MODELO
+    # 2026-11-04: una nota de 7.6 s se quedo mas de 15 min en GPU con la tarjeta
+    # al 100% por el TTS y el Whisper del Socio. No lanzo error, asi que la caida
+    # a CPU no se disparo, y como PTB atiende en fila el bot entero dejo de
+    # contestar. En CPU la misma nota tardo 16.7 s. BOT_WHISPER_GPU=1 regresa a GPU.
+    if os.environ.get("BOT_WHISPER_GPU") != "1":
+        _MODELO = _construir("cpu", "int8")
+        _DISPOSITIVO = "cpu"
+        log.info("transcripcion en CPU (int8)")
+        return _MODELO
     _registrar_dlls_nvidia()
     try:
         _MODELO = _construir("cuda", "float16")

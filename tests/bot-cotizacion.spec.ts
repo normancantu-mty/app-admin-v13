@@ -543,7 +543,7 @@ test.describe('el bot de cotizaciones', () => {
 
   test('cambiar la vigencia NO vuelve a pasar por el modelo', () => {
     expect(BOT).toContain('_esperando_vigencia')
-    const bloque = BOT.slice(BOT.indexOf('if _esperando_vigencia.pop'))
+    const bloque = BOT.slice(BOT.indexOf('espera = _esperando_vigencia.pop'))
     const hasta = bloque.slice(0, bloque.indexOf('\n    # Si veniamos'))
     expect(hasta).toContain('_proponer_cotizacion')
     expect(hasta).not.toContain('enrutar(')

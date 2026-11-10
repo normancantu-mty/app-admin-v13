@@ -86,7 +86,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Tu alta cambio desde que propusiste esto. Vuelve a dictarlo.' }, { status: 409 })
     }
 
-    const queEs = `${etapa.etapa === 'aditivo_2' ? 'el aditivo 2' : 'la destilacion'} del lote ${etapa.codigo_lote}`
+    const queEs = `${etapa.etapa === 'aditivo_2' ? 'el aditivo 2' : etapa.etapa === 'destilacion' ? 'la destilacion' : 'el fin de la fermentacion'} del lote ${etapa.codigo_lote}`
     if (puerta.modo === 'esperar') {
       return pasarAEspera(supabase, borradorId, identidad, queEs)
     }
@@ -94,6 +94,51 @@ export async function POST(request: Request) {
     if (reclamo) return reclamo
 
     const sinTipos = supabase as unknown as SupabaseClient
+
+    // Fase 7B: el fin de la fermentacion escribe la CABECERA, como la web
+    // (`guardarLoteAction`), y solo si el lote aun no tiene fin: el UPDATE lleva
+    // `fecha_fin_fermentacion is null`, asi que dos confirmaciones no se pisan.
+    if (etapa.etapa === 'fin_fermentacion') {
+      const { data: hecho, error: errFin } = await sinTipos
+        .from('lotes')
+        .update({
+          fecha_fin_fermentacion: etapa.fecha,
+          ...(etapa.horas_fermentacion !== undefined ? { horas_fermentacion: etapa.horas_fermentacion } : {})
+        })
+        .eq('id', etapa.id_lote)
+        .is('fecha_fin_fermentacion', null)
+        .select('id, fecha_inicio')
+      const filas = (hecho ?? []) as { id: string; fecha_inicio: string }[]
+      if (errFin || filas.length !== 1) {
+        await liberarReclamo(supabase, borradorId, puerta.modo)
+        console.error('[bot] no se pudo registrar el fin de fermentacion', etapa.codigo_lote, errFin)
+        return NextResponse.json(
+          { error: errFin ? 'No pude escribirlo. No quedo nada a medias.' : `El lote ${etapa.codigo_lote} ya tenia fin de fermentacion. No escribi nada.` },
+          { status: errFin ? 500 : 409 }
+        )
+      }
+      const avisoFin = await marcarConfirmado(supabase, borradorId, etapa.id_lote)
+      const inicio = filas[0].fecha_inicio
+      const { data: diasT } = await sinTipos
+        .from('temperatura_diaria')
+        .select('fecha, fuente, t_min, t_max, t_prom')
+        .gte('fecha', inicio)
+        .lte('fecha', etapa.fecha)
+      const resumenFin = resumenTemperatura((diasT ?? []) as DiaTemperatura[], inicio, etapa.fecha)
+      return NextResponse.json({
+        ...(avisoFin ? { aviso_marca: avisoFin } : {}),
+        ok: true,
+        id_lote: etapa.id_lote,
+        codigo_lote: etapa.codigo_lote,
+        etapa: etapa.etapa,
+        fermentacion: { desde: inicio, hasta: etapa.fecha, horas: etapa.horas_fermentacion ?? null, temperatura: resumenFin },
+        mensaje:
+          `Quedo el fin de la fermentacion del lote ${etapa.codigo_lote}.` +
+          (etapa.horas_fermentacion !== undefined ? ` Horas: ${etapa.horas_fermentacion}.` : '') +
+          '\n' + mensajeDeFermentacion(inicio, etapa.fecha, resumenFin)
+      })
+    }
+
     const { error } = await sinTipos.rpc('registrar_etapa_lote', {
       p_id_lote: etapa.id_lote,
       p_etapa: etapa.etapa,
@@ -103,7 +148,11 @@ export async function POST(request: Request) {
       p_entradas: etapa.entradas,
       p_garrafas: etapa.garrafas,
       p_datos: {
-        ...(etapa.etapa === 'aditivo_2' ? { kg: etapa.entradas[0]?.cantidad ?? null } : { garrafas: etapa.garrafas.length }),
+        // Fase 7A: la cantidad con SU unidad (el aditivo 2 va en gramos); antes
+        // la llave era `kg` y con GRAMOS habria dicho "kg: 1500".
+        ...(etapa.etapa === 'aditivo_2'
+          ? { cantidad: etapa.entradas[0]?.cantidad ?? null, unidad: etapa.unidad_entrada ?? 'kg' }
+          : { garrafas: etapa.garrafas.length }),
         ...(etapa.notas ? { notas: etapa.notas } : {})
       }
     })

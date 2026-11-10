@@ -135,9 +135,10 @@ export async function POST(request: Request) {
       etiqueta,
       id_entidad: entidad.id,
       id_cuenta_destino: idCuenta,
-      // A la Matriz, SIEMPRE con aprobacion: un segundo aprobador no se crea
-      // desde un chat (lo mas cerrado; va como pregunta en el informe).
-      requiere_aprobacion: entidad.rol === 'ADMIN',
+      // Auditoria 2026-11-03 (hallazgo 2): TODA alta hecha desde el bot nace
+      // con aprobacion, sea de la Matriz, DST o LOC. Ningun no-Norman escribe
+      // sin el clic de Norman. Antes solo la Matriz la llevaba.
+      requiere_aprobacion: true,
       creado_por: `telegram:${identidad.etiqueta}`
     }
 

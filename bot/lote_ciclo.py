@@ -426,6 +426,14 @@ def _num(s):
     return lote_plantilla._num(s)
 
 
+def _bonito(n):
+    try:
+        f = float(n)
+    except (TypeError, ValueError):
+        return str(n)
+    return str(int(f)) if f.is_integer() else str(f)
+
+
 def sesion(chat):
     s = _etapas.get(chat)
     if not s:
@@ -440,12 +448,87 @@ def olvidar(chat):
     _etapas.pop(chat, None)
 
 
+# Fase 7B (2026-11-07): el fin de la fermentacion es una etapa mas del chat.
+ETAPAS_DEL_CHAT = ("aditivo_2", "destilacion", "fin_fermentacion")
+NOMBRE_ETAPA = {"aditivo_2": "ADITIVO 2", "destilacion": "DESTILACION", "fin_fermentacion": "FIN DE FERMENTACION"}
+DICHO_ETAPA = {"aditivo_2": "aditivo 2", "destilacion": "destilacion", "fin_fermentacion": "termino la fermentacion"}
+
+
 def pregunta_de(etapa, codigo):
-    return _texto("aditivo_2_pregunta" if etapa == "aditivo_2" else "destilacion_pregunta", codigo=codigo)
+    return _texto(etapa + "_pregunta", codigo=codigo)
+
+
+_HORAS = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|horas?)\b")
+_DIAS_ATRAS = re.compile(r"\bhace\s+(\d{1,2})\s+dias?\b")
+# Auditoria 2026-11-07: la fecha DICHA ("el 5 de noviembre", "5/11",
+# "2026-11-05") manda sobre hoy/ayer. Sin anio: el mas reciente que no sea futuro.
+_MESES = {"enero": 1, "ene": 1, "febrero": 2, "feb": 2, "marzo": 3, "mar": 3, "abril": 4, "abr": 4,
+          "mayo": 5, "may": 5, "junio": 6, "jun": 6, "julio": 7, "jul": 7, "agosto": 8, "ago": 8,
+          "septiembre": 9, "setiembre": 9, "sept": 9, "sep": 9, "octubre": 10, "oct": 10,
+          "noviembre": 11, "nov": 11, "diciembre": 12, "dic": 12}
+_FECHA_MES = re.compile(r"\b(\d{1,2})\s+de\s+(%s)\b(?:\s+(?:de|del)\s+(\d{4}))?"
+                        % "|".join(sorted(_MESES, key=len, reverse=True)))
+_FECHA_ISO = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
+_FECHA_BARRA = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2}|\d{4}))?\b")
+
+
+def fecha_dicha(texto, hoy):
+    """La fecha escrita en el texto, o None. **Pura.**"""
+    t = sin_codigo(texto)
+    trio = None
+    m = _FECHA_ISO.search(t)
+    if m:
+        trio = (int(m.group(1)), int(m.group(2)), int(m.group(3)), True)
+    else:
+        m = _FECHA_MES.search(t)
+        if m:
+            trio = (int(m.group(3)) if m.group(3) else hoy.year, _MESES[m.group(2)], int(m.group(1)), bool(m.group(3)))
+        else:
+            m = _FECHA_BARRA.search(t)
+            if m:
+                anio = m.group(3)
+                anio = (2000 + int(anio) if len(anio) == 2 else int(anio)) if anio else hoy.year
+                trio = (anio, int(m.group(2)), int(m.group(1)), bool(m.group(3)))
+    if not trio:
+        return None
+    anio, mes, dia, con_anio = trio
+    try:
+        f = dt.date(anio, mes, dia)
+    except ValueError:
+        return None
+    if not con_anio and f > hoy:
+        try:
+            f = dt.date(anio - 1, mes, dia)
+        except ValueError:
+            return None
+    return f
+
+
+def leer_fin(texto, hoy=None):
+    """Fin de fermentacion: (fecha, horas|None). Una fecha dicha ("el 5 de
+    noviembre") manda; si no, 'ayer' / 'antier' / 'hace 2 dias' mueven la
+    fecha; sin nada es hoy. **Pura.**"""
+    hoy = hoy or ahora_local().date()
+    t = sin_codigo(texto)
+    h = _HORAS.search(t)
+    dicha = fecha_dicha(texto, hoy)
+    if dicha is not None:
+        return dicha, (_num(h.group(1)) if h else None)
+    atras = 0
+    if re.search(r"\bantier\b|\bantes\s+de\s+ayer\b", t):
+        atras = 2
+    elif re.search(r"\bayer\b", t):
+        atras = 1
+    m = _DIAS_ATRAS.search(t)
+    if m:
+        atras = int(m.group(1))
+    h = _HORAS.search(t)
+    return hoy - dt.timedelta(days=atras), (_num(h.group(1)) if h else None)
 
 
 def empezar(chat, etapa, codigo):
-    _etapas[chat] = {"etapa": etapa, "codigo": codigo, "kg": None, "n": None, "garrafas": [], "notas": [],
+    _etapas[chat] = {"etapa": etapa, "codigo": codigo, "cantidad": None, "unidad": None, "sin_unidad": None,
+                     "n": None, "garrafas": [], "notas": [],
                      "modo": "captura", "nacido_en": time.time()}
     return _etapas[chat]
 
@@ -469,7 +552,10 @@ def leer_garrafas(texto):
 
 _CODIGO = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
 _KG_CON_UNIDAD = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilogramos?)\b")
-_G_CON_UNIDAD = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:g|grs?|gramos?)\b")
+# Fase 7A (2026-11-07): el aditivo 2 se lleva en GRAMOS en el catalogo. Se lee
+# la masa CON su unidad; un numero pelon no se adivina (se pregunta g o kg).
+_MASA = re.compile(r"(\d+(?:[.,]\d+)?)\s*(kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?)\b")
+_SOLO_UNIDAD = re.compile(r"^\W*(?:son\s+|en\s+|fueron\s+)?(kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?)\W*$")
 
 
 def sin_codigo(texto):
@@ -483,29 +569,43 @@ def leer_kg(texto, con_unidad=False):
     return _num(m.group(1)) if m else None
 
 
-def leer_gramos(texto, con_unidad=False):
-    """Aditivo 2 en GRAMOS (unidad del catalogo). '500 g' -> 500; '2 kilos' -> 2000;
-    un numero solo (si no se exige unidad) son gramos. **Pura.**"""
+def _corta(u):
+    return "kg" if u.startswith("k") else "g"
+
+
+def leer_masa(texto, con_unidad=False):
+    """'800 g' -> (800, 'g'); '1.5 kilos' -> (1.5, 'kg'); '4' -> (4, None)
+    (o (None, None) si `con_unidad`). **Pura.**"""
     t = sin_codigo(texto)
-    m = _G_CON_UNIDAD.search(t)
+    m = _MASA.search(t)
     if m:
-        return _num(m.group(1))
-    m = _KG_CON_UNIDAD.search(t)
-    if m:
-        return round(_num(m.group(1)) * 1000, 4)
+        return _num(m.group(1)), _corta(m.group(2))
     if con_unidad:
-        return None
+        return None, None
     m = re.search(r"(\d+(?:[.,]\d+)?)", t)
-    return _num(m.group(1)) if m else None
+    return (_num(m.group(1)), None) if m else (None, None)
+
+
+def solo_unidad(texto):
+    """'gramos' / 'son kilos' -> 'g' / 'kg'; otra cosa -> None. **Pura.**"""
+    m = _SOLO_UNIDAD.match(_plano(texto))
+    return _corta(m.group(1)) if m else None
+
+
+def en_kg(cantidad, unidad):
+    return cantidad / 1000.0 if unidad == "g" else cantidad
 
 
 def avisos(s):
     e = (cfg().get("etapas") or {}).get(s["etapa"]) or {}
     out = []
-    if s["etapa"] == "aditivo_2" and s["kg"] is not None:
+    if s["etapa"] == "aditivo_2" and s.get("cantidad") is not None:
+        # El rango del YAML esta en KILOS (es fisico); lo dicho en g se compara en kg.
         a, b = e.get("rango_kg") or [0.01, 200]
-        if not (a <= s["kg"] <= b):
-            out.append("Ojo: %s g de aditivo 2 se sale de lo normal (%s a %s). Lo dejo asi; si es error, corrigelo." % (s["kg"], a, b))
+        kg = en_kg(s["cantidad"], s.get("unidad"))
+        if not (a <= kg <= b):
+            out.append("Ojo: %s %s de aditivo 2 se sale de lo normal (%s a %s kg). Lo dejo asi; si es error, corrigelo."
+                       % (_bonito(s["cantidad"]), s.get("unidad") or "kg", a, b))
     if s["etapa"] == "destilacion":
         pa, pb = e.get("rango_peso_kg") or [0.1, 60]
         aa, ab = e.get("rango_alcohol") or [0, 80]
@@ -520,11 +620,20 @@ def avisos(s):
 def resumen(s, hoy=None):
     """EL mensaje de confirmacion de la etapa: todo + la fecha de hoy."""
     hoy = hoy or ahora_local().date()
-    nombre = "ADITIVO 2" if s["etapa"] == "aditivo_2" else "DESTILACION"
-    lineas = ["Revisa antes de guardarlo:", "", "LOTE %s - %s" % (s["codigo"], nombre),
-              "Fecha: %s (hoy)" % lote_plantilla.fecha_para_persona(hoy)]
-    if s["etapa"] == "aditivo_2":
-        lineas.append("Gramos de aditivo 2: %s" % s["kg"])
+    nombre = NOMBRE_ETAPA.get(s["etapa"], s["etapa"])
+    lineas = ["Revisa antes de guardarlo:", "", "LOTE %s - %s" % (s["codigo"], nombre)]
+    if s["etapa"] == "fin_fermentacion":
+        fecha = s.get("fecha") or hoy
+        lineas.append("Termino la fermentacion: %s%s" % (lote_plantilla.fecha_para_persona(fecha),
+                                                         " (hoy)" if fecha == hoy else ""))
+        if s.get("horas") is not None:
+            lineas.append("Horas de fermentacion: %s" % _bonito(s["horas"]))
+    else:
+        lineas.append("Fecha: %s (hoy)" % lote_plantilla.fecha_para_persona(hoy))
+    if s["etapa"] == "fin_fermentacion":
+        pass
+    elif s["etapa"] == "aditivo_2":
+        lineas.append("Aditivo 2: %s %s" % (_bonito(s["cantidad"]), s.get("unidad") or "kg"))
     else:
         lineas.append("Garrafas: %d" % len(s["garrafas"]))
         for i, (peso, grado) in enumerate(s["garrafas"], 1):
@@ -606,7 +715,7 @@ def _disparo(texto):
     # al inicio ("ya destilamos el L-..., salieron 2 garrafas, lo anotas?") y
     # los mensajes con datos de etapa si la abren. YAML `etapas.no_abren_etapa`.
     excluido = no_abre_etapa(texto)
-    for etapa in ("aditivo_2", "destilacion"):
+    for etapa in ETAPAS_DEL_CHAT:
         e = (cfg().get("etapas") or {}).get(etapa) or {}
         for patron in e.get("disparadores") or []:
             if re.search(patron, t):
@@ -668,7 +777,7 @@ async def atender(update, chat, texto, confirmar=None, post=None):
         if not codigo:
             await update.effective_message.reply_text(
                 "De cual lote? Dimelo con el codigo, por ejemplo: %s L-19-10.1"
-                % ("aditivo 2" if etapa == "aditivo_2" else "destilacion"))
+                % DICHO_ETAPA.get(etapa, etapa))
             return True
         s = empezar(chat, etapa, codigo)
         if nota:
@@ -704,11 +813,22 @@ async def atender(update, chat, texto, confirmar=None, post=None):
 
 async def _capturar(update, s, texto, primera=False):
     """Mete el texto en la etapa. False si no traia nada de la etapa."""
+    if s["etapa"] == "fin_fermentacion":
+        # No hay dato obligatorio: la fecha es hoy (o 'ayer'...) y las horas, si las dicen.
+        fecha, horas = leer_fin(texto)
+        s["fecha"] = fecha
+        if horas is not None:
+            s["horas"] = horas
+        await _ensenar(update, s)
+        return True
     if s["etapa"] == "aditivo_2":
-        kg = leer_gramos(texto, con_unidad=primera)  # s["kg"] guarda GRAMOS (2026-11-10)
-        if kg is None:
+        cantidad, unidad = leer_masa(texto, con_unidad=primera)
+        if cantidad is None:
             return False
-        s["kg"] = kg
+        # 2026-11-10 (Norman, integracion con D-004): un numero solo son GRAMOS
+        # (la unidad del catalogo); "1.5 kg" dicho con su unidad se respeta y el
+        # servidor lo pasa a gramos. Antes se preguntaba "gramos o kilos?".
+        s["cantidad"], s["unidad"] = cantidad, unidad or "g"
         await _ensenar(update, s)
         return True
     n, pares = leer_garrafas(texto)
@@ -736,8 +856,14 @@ async def _capturar(update, s, texto, primera=False):
 
 def cuerpo_de_propuesta(s, chat):
     cuerpo = {"telegram_id": chat, "codigo_lote": s["codigo"], "etapa": s["etapa"]}
-    if s["etapa"] == "aditivo_2":
-        cuerpo["kg"] = s["kg"]
+    if s["etapa"] == "fin_fermentacion":
+        cuerpo["fecha"] = (s.get("fecha") or ahora_local().date()).isoformat()
+        if s.get("horas") is not None:
+            cuerpo["horas"] = s["horas"]
+    elif s["etapa"] == "aditivo_2":
+        # Fase 7A: lo dicho con su unidad; el servidor lo pasa a la del catalogo.
+        cuerpo["cantidad"] = s["cantidad"]
+        cuerpo["unidad"] = s.get("unidad") or "kg"
         cuerpo["insumo_sku"] = cfg().get("aditivo_2_sku") or "aditivo-2"
     else:
         cuerpo["garrafas"] = [{"peso_kg": p, "grado_alcohol": g} for p, g in s["garrafas"]]

@@ -57,6 +57,7 @@ import {
   type PayloadVenta
 } from '@/lib/bot-venta'
 import { registrarVenta, type OperadorDeVenta } from '@/lib/venta-servidor'
+import { leerCartera } from '@/lib/vistas'
 
 export const dynamic = 'force-dynamic'
 
@@ -247,11 +248,24 @@ export async function POST(request: Request) {
     // D107: la marca se revisa; si falla, el reclamo se queda (no se repite).
     const avisoMarca = await marcarConfirmado(supabase, borradorId, resultado.ticketId)
 
+    // La venta ya esta escrita: si esta lectura falla no se tumba la respuesta.
+    // `null` hace que el bot diga que no pudo leerla, en vez de callar el total.
+    let deudaTotal: number | null = null
+    if (venta.condicion_pago === 'CONCESION') {
+      try {
+        const filas = (await leerCartera(supabase)).filter((f) => f.id_entidad === venta.id_comprador)
+        if (filas.length > 0) deudaTotal = filas.reduce((suma, f) => suma + Number(f.deuda), 0)
+      } catch (e) {
+        console.error('venta/confirmar: no pude leer la deuda total', e)
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
       ticket_id: resultado.ticketId,
       total: venta.total_cobrado_real,
+      deuda_total: deudaTotal,
       condicion_pago: venta.condicion_pago,
       nombre_comprador: guardado.meta?.nombre_comprador ?? 'Publico en General',
       // FASE 1b: de donde saca el bot el comprobante. **Es una ruta relativa y

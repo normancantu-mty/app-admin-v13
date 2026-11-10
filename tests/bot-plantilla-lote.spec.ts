@@ -57,13 +57,15 @@ test('ronda 5: la ruta ya NO ofrece abrir un lote desde un envasado', () => {
 // de fermentacion ni tandas). El comportamiento lo mide bot/probar_plantilla.py.
 test('la plantilla del lote es DATOS: el YAML trae los campos nuevos, sus rangos y el formato del codigo', () => {
   const y = readFileSync(join(__dirname, '..', 'bot', 'plantillas', 'lote.yaml'), 'utf8')
-  for (const c of ['kg_chile', 'tipo_chile', 'brix_chile', 'kg_aditivo_1', 'brix_final']) expect(y).toContain('nombre: ' + c)
+  for (const c of ['kg_chile', 'tipo_chile', 'brix_chile', 'aditivo_1', 'brix_final']) expect(y).toContain('nombre: ' + c)
   for (const c of ['dias_fermentacion', 'tandas']) expect(y).not.toContain('nombre: ' + c)
   expect(y).toContain('rango: [1, 1000]')
   expect(y).toContain("formato_codigo: 'L-{dd}-{mm}.{n}'")
   // Ronda 6: Norman decidio el 2026-10-19 (plan v3 §8): aditivo 1 = ing-az, aditivo 2 = ing-al; sin marca.
-  expect(y).toMatch(/^aditivo_1_sku: 'ing-az'$/m)
-  expect(y).toMatch(/^aditivo_2_sku: 'ing-al'$/m)
+  // Fase 7 (2026-11-07): 'ing-az'/'ing-al' no existen en el catalogo de produccion;
+  // los SKU reales de "Aditivo 1" y "Aditivo 2" son 'mosto-1' y 'aditivo-2'.
+  expect(y).toMatch(/^aditivo_1_sku: 'mosto-1'$/m)
+  expect(y).toMatch(/^aditivo_2_sku: 'aditivo-2'$/m)
   expect(y).toContain('Decidido por Norman el 2026-10-19')
   expect(y).not.toContain('CONFIRMAR CON NORMAN')
 })

@@ -4,6 +4,7 @@ import {
   permisoDeConsulta,
   puedeAprobar,
   esAprobador,
+  NORMAN_TELEGRAM_ID,
   ROL_TRABAJADOR,
   type AccionBot
 } from '../lib/bot-permisos'
@@ -38,17 +39,20 @@ test('ninguna cifra agregada: solo precios', () => {
   for (const c of ['inventario', 'deuda', 'ventas', 'produccion'] as const) {
     expect(permisoDeConsulta(TRABAJADOR, c).ok).toBe(false)
   }
-  expect(permisoDeConsulta(TRABAJADOR, 'precios')).toEqual({ ok: true, alcance: 'propio', privado: false })
+  // Auditoria 2026-11-03 (hallazgo 5): en grupo, todo por privado.
+  expect(permisoDeConsulta(TRABAJADOR, 'precios')).toEqual({ ok: true, alcance: 'propio', privado: true })
   // CONTROL: Kevin sigue viendo todo.
   expect(permisoDeConsulta(KEVIN, 'inventario').ok).toBe(true)
 })
 
-test('no aprueba; Norman y Kevin si aprueban lo suyo', () => {
+test('no aprueba; solo Norman aprueba lo suyo (Kevin no, 2026-11-03)', () => {
   const t = { telegramId: 333, ...TRABAJADOR }
   expect(esAprobador(TRABAJADOR)).toBe(false)
   expect(puedeAprobar(t, { telegramId: 9, rol: 'DST', requiereAprobacion: false })).toBe(false)
-  expect(puedeAprobar({ telegramId: 111, rol: 'ADMIN', requiereAprobacion: false }, t)).toBe(true)
-  expect(puedeAprobar({ telegramId: 222, ...KEVIN }, t)).toBe(true)
+  expect(puedeAprobar({ telegramId: NORMAN_TELEGRAM_ID, rol: 'ADMIN', requiereAprobacion: false }, t)).toBe(true)
+  // Auditoria 2026-11-03 (hallazgo 1): un ADMIN sin marca que no es Norman no aprueba.
+  expect(puedeAprobar({ telegramId: 111, rol: 'ADMIN', requiereAprobacion: false }, t)).toBe(false)
+  expect(puedeAprobar({ telegramId: 222, ...KEVIN }, t)).toBe(false)
 })
 
 test('el aviso de falta de empaque no le ensena el stock', () => {

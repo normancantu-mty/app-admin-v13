@@ -45,6 +45,10 @@ sys.path.insert(0, str(RAIZ))
 import enrutador as E  # noqa: E402
 
 ARCHIVO = RAIZ / "grabaciones_enrutador.json"
+# 2026-11-04: el bot ya le pasa las cuentas vivas al modelo. Aqui van las de la foto
+# del set de oro: sin ellas, lo grabado no seria lo que el bot corre.
+CUENTAS = [{"id": c["id"], "nombre": c["nombre"]} for c in json.loads(
+    (RAIZ / "oro" / "catalogo_2026-11-04.json").read_text(encoding="utf-8"))["cuentas"]]
 
 # Fase 8 (D74): lo que esta en pantalla lleva el CONTENIDO. Los dos mensajes
 # son los que devolvio el servidor real (ruta `proponer` en ensayo, 2026-09-22),
@@ -64,13 +68,18 @@ MENSAJE_GASTO = (
 
 def en_pantalla_de(tipo, mensaje):
     """La linea de `_en_pantalla` para UNA propuesta viva (misma regla)."""
-    como = {"venta": "una venta", "gasto": "un gasto", "abono": "un abono"}[tipo]
+    como = {"venta": "una venta", "gasto": "un gasto", "abono": "un abono",
+            "traspaso": "un traspaso"}[tipo]
     return "propuesta de " + como + " esperando su VA: " + " ".join(mensaje.split())[:320]
 
 
 VENTA_EN_PANTALLA = en_pantalla_de("venta", MENSAJE_VENTA)
 GASTO_EN_PANTALLA = en_pantalla_de("gasto", MENSAJE_GASTO)
 VENTA_Y_GASTO_EN_PANTALLA = VENTA_EN_PANTALLA + "\n" + GASTO_EN_PANTALLA
+TRASPASO_EN_PANTALLA = en_pantalla_de("traspaso", (
+    "Esto es lo que voy a escribir. Revisalo:\n\nTRASPASO ENTRE CUENTAS\n"
+    "MONTO:      $25,000.00\nDE:         Cuenta Gilberto\nA:          Cuenta Spin\n\n"
+    "Contesta VA para escribirlo, o dime que cambio."))
 
 # D73: historiales (hace_min, dijo, contesto), como los arma el bot.
 HIST_CARTERA_AEROPUERTO = [
@@ -91,6 +100,20 @@ EL_MENSAJE_2026_09_19 = (
 # (clave, texto, en_pantalla[, extra]). La clave dice de que `D` viene y a que grupo
 # pertenece; las pruebas filtran por prefijo.
 FRASES = [
+    # 2026-11-05: traspaso entre cuentas propias. La primera es la frase real.
+    ("tr_1_frase_real", "Transferencia de la cuenta de Gilberto a la Spin $25,000 pesos.", None),
+    ("tr_2_pase", "pase 5 mil de efectivo a spin", None),
+    ("tr_3_a_transferencias", "traspaso de 1,200 de la caja a la cuenta de transferencias", None),
+    ("tr_4_desde_transferencias", "movi 700 de transferencias a efectivo", None),
+    ("tr_5_destino_desconocido", "movi 3000 de spin a la cuenta de kevin", None),
+    ("tr_6_falta_origen", "haz un traspaso de 500 a spin", None),
+    ("tr_7_ambigua", "pasa 800 de la G a efectivo", None),
+    ("tr_8_no_abono", "Aeropuerto me pago 5,000 por transferencia", None),
+    ("tr_9_abono_con_cuenta", "Delirio me deposito 2000 por transferencia a Spin", None),
+    ("tr_10_no_gasto", "le transferi 3,000 a Solo Vidrio por las botellas", None),
+    ("tr_11_ajuste", "no, que sean 20 mil", TRASPASO_EN_PANTALLA),
+    ("tr_12_efectivo_de_aeropuerto", "pase 500 del efectivo de Aeropuerto a Spin", None),
+    ("tr_13_ajuste_de_cuenta", "no, mejor a efectivo", TRASPASO_EN_PANTALLA),
     # ── D50: "el mismo cliente" (auditoria Fase 6, §8.1: las cinco) ──────────
     ("d50_1_mismo_cliente", "cotizame para el mismo cliente 35 grandes, 43 chicas y 25 mini", None),
     ("d50_2_olvidalo_textual", "Olvidalo, ahora cotizame por favor para el mismo cliente 35 grandes, 43 chicas y 25 mini.", None),
@@ -185,6 +208,14 @@ FRASES = [
     ("f0_control_nota_con_gasto", "pague 300 de gasolina, por cierto el tambo 2 huele raro", None),
     ("f0_control_nota_con_lote", "revise el lote L-1012, dia 9, grado 3.2, huele bien", None),
     ("f0_control_nota_gracias", "gracias", None),
+    # -- 2026-11-03 (bot para el equipo): la frase de Norman, gastos y categorias.
+    ("e1103_cuantas_botellas_quedan", "cuantas botellas quedan", None),
+    ("e1103_grupo_luis_botellas", "cuantas botellas quedan?", None, {"hablante": "Luis"}),
+    ("e1103_cuanto_gastamos_mes", "cuanto llevamos gastado este mes?", None),
+    ("e1103_agrega_subcategoria", "agrega la subcategoria Diesel en Logistica_Envios", None),
+    ("e1103_categoria_nueva", "crea la categoria Mantenimiento de planta con subcategoria Soldadura", None),
+    # CONTROL: un gasto con monto no es alta de categoria.
+    ("e1103_control_gasto_diesel", "gaste 300 en diesel", None),
 ]
 
 
@@ -215,8 +246,13 @@ def grabada(clave):
     return dict(frases[clave]["salida"])
 
 
-def _productos():
-    """El catalogo real, de la ruta de solo lectura. Con `x-bot-ensayo: 1`."""
+def _catalogo_real():
+    """El catalogo real, de la ruta de solo lectura. Con `x-bot-ensayo: 1`.
+
+    Devuelve (productos, categorias). Las categorias de gasto salen de
+    `categorias_movimiento` (2026-11-03): del mismo `/api/bot/catalogo` si el
+    servidor ya las manda, o de `GRABAR_CATEGORIAS` (un JSON con la lista de
+    etiquetas "Categoria / Subcategoria") si el servidor es anterior."""
     token = os.environ.get("BOT_API_TOKEN", "")
     api = os.environ.get("BOT_API_URL", "http://localhost:3000")
     pet = urllib.request.Request(
@@ -228,7 +264,12 @@ def _productos():
     productos = cuerpo.get("productos") or []
     if not productos:
         raise RuntimeError("el catalogo vino vacio: sin el, las grabaciones no son las del bot")
-    return productos
+    categorias = cuerpo.get("categorias") or []
+    if not categorias and os.environ.get("GRABAR_CATEGORIAS"):
+        categorias = json.loads(io.open(os.environ["GRABAR_CATEGORIAS"], encoding="utf-8").read())
+    if not categorias:
+        raise RuntimeError("sin categorias de gasto: las grabaciones no serian las del bot")
+    return productos, categorias
 
 
 def grabar(solo_faltantes=False):
@@ -237,8 +278,7 @@ def grabar(solo_faltantes=False):
     regrabar las otras."""
     previas = cargar()["frases"] if solo_faltantes else dict()
     pendientes = [f for f in FRASES if f[0] not in previas]
-    productos = _productos()
-    categorias = list(E.CATEGORIAS_SEMILLA)
+    productos, categorias = _catalogo_real()
 
     def una(frase):
         clave, texto, en_pantalla = frase[:3]
@@ -248,7 +288,7 @@ def grabar(solo_faltantes=False):
             if espera:
                 time.sleep(espera)
             ok, r = E.enrutar(texto, None, categorias, None, productos, en_pantalla,
-                              historial=historial, hablante=hablante)
+                              historial=historial, hablante=hablante, cuentas=CUENTAS)
             if ok:
                 grabacion = {"texto": texto, "en_pantalla": en_pantalla, "salida": r}
                 if historial:
@@ -268,8 +308,9 @@ def grabar(solo_faltantes=False):
         "grabado_en": time.strftime("%Y-%m-%d %H:%M:%S"),
         "llamadas": len(pendientes),
         "segundos": round(time.time() - t0, 1),
-        "contexto": "catalogo de productos real (/api/bot/catalogo), CATEGORIAS_SEMILLA, "
-                    "sin deudores, sin borrador a medias",
+        "contexto": ("catalogo de productos real (/api/bot/catalogo), categorias de "
+                     "categorias_movimiento (%d), cuentas de oro/catalogo_2026-11-04.json, "
+                     "sin deudores, sin borrador a medias" % len(categorias)),
         "frases": frases,
     }
     io.open(ARCHIVO, "w", encoding="utf-8", newline="\n").write(

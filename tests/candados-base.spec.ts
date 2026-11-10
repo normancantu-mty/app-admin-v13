@@ -249,19 +249,26 @@ test.describe('La identidad ya no se resuelve por correo', () => {
     // Solo el CUERPO de la funcion, entre los dos `$$`. El `COMMENT ON FUNCTION`
     // que va despues si nombra `entidades.email` — para explicar por que se
     // quito — y no puede contar como uso.
+    // El delimitador puede ser `$$` o con etiqueta (`$function$`: asi lo deja
+    // `apply_migration` cuando la migracion se recupera de la base, ERP-83).
     const desdeLaFuncion = sql.slice(sql.indexOf('FUNCTION public.mi_entidad_id()'))
-    const abre = desdeLaFuncion.indexOf('$$')
-    const cierra = desdeLaFuncion.indexOf('$$', abre + 2)
-    const cuerpo = desdeLaFuncion.slice(abre + 2, cierra)
+    const delim = desdeLaFuncion.match(/\$[a-z_]*\$/i)
+    const abre = delim ? desdeLaFuncion.indexOf(delim[0]) : -1
+    const cierra = delim ? desdeLaFuncion.indexOf(delim[0], abre + delim[0].length) : -1
+    const cuerpo = desdeLaFuncion.slice(abre + (delim ? delim[0].length : 0), cierra)
 
     // Se compara SIN el sello de tiempo: el sello lo pone el servidor al
     // aplicar, no el archivo. Congelarlo aqui volveria a poner roja esta prueba
     // el dia que las migraciones se resincronicen (paso el 2026-09-12).
+    // 2026-11-10: `accesos` (aplicada el 2026-11-04) la redefinio: primero
+    // `accesos.auth_id`, luego `entidades.auth_id`. Tampoco usa el correo.
+    // Una redefinicion NUEVA tiene que agregarse aqui a mano, a proposito.
     expect(
       ultima.replace(/^\d{14}_/, ''),
-      'la ultima redefinicion no es la que quita el correo'
-    ).toBe('identidad_solo_por_auth_id.sql')
+      'la ultima redefinicion no es una de las revisadas sin correo'
+    ).toBe('accesos.sql')
     expect(abre, 'no se encontro el cuerpo de la funcion').toBeGreaterThan(-1)
+    expect(cierra, 'no se encontro el cierre del cuerpo').toBeGreaterThan(abre)
     expect(cuerpo).toContain('auth_id = auth.uid()')
     expect(cuerpo.toLowerCase()).not.toContain('email')
   })

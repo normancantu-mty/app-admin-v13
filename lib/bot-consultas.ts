@@ -18,7 +18,7 @@ import type { FilaCarteraVista, FilaStockPorCubeta, FilaVentasPorMes } from '@/l
 import { fechaHoraParaPersona } from '@/lib/fechas'
 
 /** Lo que el modelo puede pedir. Lista cerrada, igual que las categorias. */
-export const CONSULTAS = ['stock', 'cartera', 'ventas', 'produccion', 'precios'] as const
+export const CONSULTAS = ['stock', 'cartera', 'ventas', 'produccion', 'precios', 'gastos'] as const
 export type TipoConsulta = (typeof CONSULTAS)[number]
 
 export function esConsultaValida(x: unknown): x is TipoConsulta {
@@ -251,6 +251,64 @@ export function textoVentas(filas: readonly FilaVentasPorMes[]): string {
     lineas.push(
       `   contado ${pesos(Number(f.vendido_contado ?? 0))} · concesion ${pesos(Number(f.vendido_concesion ?? 0))}`
     )
+  }
+  return lineas.join('\n')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-11-03 — GASTOS DEL MES. Mismo patron: el servidor suma y formatea; el
+// modelo solo eligio la consulta. Lee `finanzas_ledger` (GASTO_OPERATIVO y
+// COMPRA_INSUMOS, los `TIPOS_GASTO` de lib/v2/dinero.ts), sin los anulados.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface FilaGasto {
+  tipo_movimiento: string
+  monto: number | string | null
+  categoria: string | null
+  subcategoria: string | null
+  status: string | null
+  fecha_movimiento: string | null
+  descripcion: string | null
+}
+
+const TIPOS_DE_GASTO = new Set(['GASTO_OPERATIVO', 'COMPRA_INSUMOS'])
+
+/** Los gastos vivos del mes `AAAA-MM` (hora de Mexico ya resuelta por quien llama). **Pura.** */
+export function gastosDelMes(filas: readonly FilaGasto[], mes: string, mesDe: (iso: string) => string): FilaGasto[] {
+  return filas.filter(
+    (f) =>
+      TIPOS_DE_GASTO.has(f.tipo_movimiento) &&
+      String(f.status ?? '').toUpperCase() !== 'ANULADO' &&
+      !!f.fecha_movimiento &&
+      mesDe(f.fecha_movimiento) === mes
+  )
+}
+
+/** Texto de "cuanto llevamos gastado": total, por categoria (y subcategoria), y los ultimos 5. **Pura.** */
+export function textoGastos(filas: readonly FilaGasto[], mesLegible: string, filtro?: string | null): string {
+  const q = (filtro ?? '').trim().toLowerCase()
+  const visibles = q
+    ? filas.filter((f) => `${f.categoria ?? ''} ${f.subcategoria ?? ''} ${f.descripcion ?? ''}`.toLowerCase().includes(q))
+    : filas
+  if (visibles.length === 0) {
+    return q ? `No hay gastos de "${filtro}" en ${mesLegible}.` : `No hay gastos registrados en ${mesLegible}.`
+  }
+  const total = visibles.reduce((s, f) => s + Number(f.monto ?? 0), 0)
+  const porCategoria = new Map<string, number>()
+  for (const f of visibles) {
+    const clave = (f.categoria || '(sin categoria)') + (f.subcategoria ? ` / ${f.subcategoria}` : '')
+    porCategoria.set(clave, (porCategoria.get(clave) ?? 0) + Number(f.monto ?? 0))
+  }
+  const lineas = [`GASTOS de ${mesLegible}${q ? ` (${filtro})` : ''}: ${pesos(total)} en ${visibles.length} movimiento${visibles.length === 1 ? '' : 's'}`, '']
+  for (const [cat, monto] of [...porCategoria.entries()].sort((a, b) => b[1] - a[1])) {
+    lineas.push(`${cat}: ${pesos(monto)}`)
+  }
+  const ultimos = [...visibles]
+    .sort((a, b) => String(b.fecha_movimiento).localeCompare(String(a.fecha_movimiento)))
+    .slice(0, 5)
+  lineas.push('', 'Ultimos:')
+  for (const f of ultimos) {
+    lineas.push(`   ${String(f.fecha_movimiento).slice(0, 10)} · ${pesos(Number(f.monto ?? 0))} · ${f.categoria ?? ''}${f.descripcion ? ' · ' + f.descripcion : ''}`)
   }
   return lineas.join('\n')
 }

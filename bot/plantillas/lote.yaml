@@ -26,10 +26,13 @@ formato_codigo: 'L-{dd}-{mm}.{n}'
 
 # Los aditivos van por SKU OPACO (ERP-84): nunca por su nombre real.
 # Decidido por Norman el 2026-10-19 (plan v3 §8): aditivo 1 = ing-az, aditivo 2 = ing-al.
-# 2026-11-10 (Cris, D-004): alineado al catalogo vivo. Los aditivos van en GRAMOS
-# (unidad del catalogo); la levadura en kilos. Antes: ing-az / ing-al (ya no existen).
+# Fase 7 (2026-11-07): 'ing-az'/'ing-al' NO existen en el catalogo de produccion
+# (SELECT del 2026-11-07: los SKU son 'mosto-1' = "Aditivo 1" y 'aditivo-2' =
+# "Aditivo 2"); con ellos el aditivo 1 del dia de produccion no se resolvia y la
+# etapa del aditivo 2 respondia "No encontre el insumo". Se apunta a los reales.
 aditivo_1_sku: 'mosto-1'
 aditivo_2_sku: 'aditivo-2'
+# 2026-11-10 (Cris, D-004): la levadura y enzimas entra en la pregunta 3, en kilos.
 levadura_sku: 'levadura-enzimas'
 
 # Frases que ABREN la plantilla sin pasar por el modelo. Se buscan al inicio
@@ -51,7 +54,7 @@ preguntas:
   - etiqueta: 'Brix chile'
     campos: [brix_chile]
   - etiqueta: 'Gramos aditivo 1 y kilos de levadura y enzimas'
-    campos: [kg_aditivo_1, kg_levadura]
+    campos: [aditivo_1, kg_levadura]
   - etiqueta: 'Brix final'
     campos: [brix_final]
 
@@ -62,6 +65,10 @@ campos:
     obligatorio: true
     tipo: numero
     unidad: kg
+    # `insumo`: de que insumo es la cantidad. Su `unidad` DEBE ser la del
+    # catalogo de ese SKU (tests/bot-plantilla-unidades.spec.ts). 'chiles' = los
+    # SKU de `chiles.conocidos`.
+    insumo: chiles
     rango: [1, 1000]
     patrones:
       - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\s+de\s+chile'
@@ -84,23 +91,31 @@ campos:
     patrones:
       - 'brix\s+(?:del?\s+)?chile\s*(?:de|en|a|:)?\s*(\d+(?:[.,]\d+)?)'
       - 'chile\s+(?:en|a|con|de)\s+(\d+(?:[.,]\d+)?)\s*(?:de\s+)?brix'
-  - nombre: kg_aditivo_1
-    # El nombre interno sigue siendo kg_aditivo_1, pero el valor va en GRAMOS.
-    etiqueta: 'Gramos aditivo 1'
-    pregunta: 'Cuantos gramos de aditivo 1?'
+  # Fase 7 (2026-11-07, Norman: "quiero que sean 180 gramos"): el aditivo 1 se
+  # lleva en GRAMOS en el catalogo y se pregunta EN GRAMOS. Un numero solo es
+  # gramos; "8 kg" dicho con su unidad se pasa a gramos (8000) y se ensena en
+  # el resumen antes del Confirmar. Rango de 1 g a 200 kg: no se sabe si la
+  # receta real es de 8 g o de 8 kg (receta_liquido_estandar dice 8), y el
+  # rango solo AVISA.
+  - nombre: aditivo_1
+    etiqueta: 'Aditivo 1'
+    pregunta: 'Cuantos gramos de aditivo 1? (si fueron kilos, dilo: "8 kg")'
     obligatorio: true
     tipo: numero
     unidad: g
-    rango: [1, 50000]
+    insumo: aditivo_1_sku
+    rango: [1, 200000]
     patrones:
-      - '(\d+(?:[.,]\d+)?)\s*(?:gramos?|grs?|g)\s+(?:de\s+)?aditivo(?:\s*1\b|\s+uno\b)?'
-      - 'aditivo(?:\s*1\b|\s+uno\b)?\s*(?:de|:)?\s*(\d+(?:[.,]\d+)?)\s*(?:gramos?|grs?|g)\b'
+      - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?|g|gr|grs|gramos?)\s+(?:de\s+)?aditivo(?:\s*1\b|\s+uno\b)?'
+      - 'aditivo(?:\s*1\b|\s+uno\b)?\s*(?:de|:)?\s*(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?|g|gr|grs|gramos?)\b'
+  # D-004 (Cris, 2026-11-10): segunda cantidad de la pregunta 3 ("3. 500 2").
   - nombre: kg_levadura
     etiqueta: 'Kilos de levadura y enzimas'
     pregunta: 'Cuantos kilos de levadura y enzimas?'
     obligatorio: true
     tipo: numero
     unidad: kg
+    insumo: levadura_sku
     rango: [0.01, 100]
     patrones:
       - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?)\s+(?:de\s+)?(?:levadura|enzimas?)'
@@ -121,9 +136,9 @@ campos:
 # guajon" -> dos renglones. Un chile que no es ninguno de los dos: se avisa y se
 # pregunta (una vez).
 chiles:
+  # 2026-11-10 (D-004): todo el chile se carga a chile-guajillo, que es el que
+  # v_lote_rendimiento suma como kg_chile (el ERP ya lo captura como «Chile»).
   conocidos:
-    # 2026-11-10 (D-004): todo el chile se carga a chile-guajillo, que es el que
-    # v_lote_rendimiento suma como kg_chile (el ERP ya lo captura como «Chile»).
     guajillo: chile-guajillo
     guajon: chile-guajillo
   # Cada par (kilos, tipo) de una mezcla. Grupo 1: kilos; grupo 2: tipo.
@@ -247,7 +262,7 @@ etapas:
     - '\W*\bque\s+crees\b\W*'
     - '\W*\bsabes\s+que\b\W*'
     - '\W*\bcomo\s+quedamos\b\W*'
-  datos_de_etapa: '\bgarraf\w*|\d+(?:[.,]\d+)?\s*(?:kg|kgs|kilos?|kilogramos?|g|grs?|gramos?)\b|%|\bpor\s*ciento\b'
+  datos_de_etapa: '\bgarraf\w*|\d+(?:[.,]\d+)?\s*(?:kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?)\b|%|\bpor\s*ciento\b'
   # Ronda 5: la parte de envasados salio a `envasado_diario` (arriba).
   no_abren_etapa:
     - '\?'
@@ -258,7 +273,9 @@ etapas:
     # En cualquier parte del mensaje, SOLO si el mismo mensaje trae un codigo L-.
     disparadores_con_codigo:
       - '\baditivo\s*(2|dos)\b'
-    rango_kg: [1, 50000]   # en GRAMOS desde 2026-11-10 (el nombre se queda)
+    # En KILOS aunque el catalogo lleve el aditivo en GRAMOS (Fase 7A): lo dicho
+    # en g se compara en kg. Solo AVISA.
+    rango_kg: [0.01, 200]
   destilacion:
     disparadores:
       - '^\W*(registra\w*\s+(la\s+)?|ya\s+|hoy\s+)?destil(amos|e|o|ando|acion)\b'
@@ -268,10 +285,23 @@ etapas:
     rango_peso_kg: [0.1, 60]
     rango_alcohol: [0, 80]
     tope_garrafas: 50
+  # Fase 7B (2026-11-07): el fin de la fermentacion. Escribe la cabecera del lote
+  # (fecha_fin_fermentacion y horas), como la web.
+  fin_fermentacion:
+    disparadores:
+      - '^\W*(ya\s+|hoy\s+|ayer\s+)?(termino|acabo|se\s+acabo|paro|se\s+paro|finalizo)\s+(la\s+)?fermentacion\b'
+      - '^\W*(registra\w*\s+(el\s+)?)?fin\s+de\s+(la\s+)?fermentacion\b'
+      - '^\W*(ya\s+)?(dejo\s+de|termino\s+de|acabo\s+de)\s+fermentar\b'
+    disparadores_con_codigo:
+      - '\b(termino|acabo|paro|finalizo)\s+(la\s+)?fermentacion\b'
+      - '\bfin\s+de\s+(la\s+)?fermentacion\b'
+      - '\b(dejo\s+de|termino\s+de|acabo\s+de)\s+fermentar\b'
 
 textos:
-  aditivo_2_recordatorio: 'Lote {codigo}: hoy toca el aditivo 2 (dia {dia} desde la produccion). Cuantos gramos le pusieron?'
-  aditivo_2_pregunta: 'Lote {codigo} - aditivo 2. Cuantos gramos de aditivo 2?'
+  aditivo_2_recordatorio: 'Lote {codigo}: hoy toca el aditivo 2 (dia {dia} desde la produccion). Cuantos gramos le pusieron? (si fueron kilos, dilo: "1.5 kg")'
+  aditivo_2_pregunta: 'Lote {codigo} - aditivo 2. Cuantos gramos de aditivo 2? (si fueron kilos, dilo: "1.5 kg")'
+  aditivo_2_unidad: 'Lote {codigo} - aditivo 2: {cantidad} gramos o {cantidad} kilos? Contesta "gramos" o "kilos".'
+  fin_fermentacion_pregunta: 'Lote {codigo} - fin de fermentacion. Cuando termino (hoy, ayer, hace 2 dias) y, si las llevaron, cuantas horas fermento?'
   destilar_recordatorio: 'Lote {codigo}: ya paso el reposo ({dias} dias desde el aditivo 2). Ya toca destilar.'
   destilacion_pregunta: "Lote {codigo} - destilacion. Cuantas garrafas salieron, y de cada una el peso (kg) y el % de alcohol?\nEjemplo: 3 garrafas: 18.5 kg 52%, 17 kg 48%, 10 kg 30%"
   muestra: 'Guarda una muestra del lote {codigo}.'

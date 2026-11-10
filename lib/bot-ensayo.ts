@@ -50,6 +50,12 @@ interface Resultado {
 
 const METODOS_QUE_ESCRIBEN = new Set(['insert', 'update', 'upsert', 'delete'])
 
+/**
+ * Las UNICAS rpc que pasan: `saldo_cuenta` es una lectura pura (2026-11-05), y sin
+ * ella el traspaso no podria ensenar su propuesta real. Todo lo demas sigue negado.
+ */
+const RPC_DE_SOLO_LECTURA = new Set(['saldo_cuenta'])
+
 /** Las escrituras que se habrian hecho, para quien quiera leerlas (pruebas). */
 export const escriturasNegadas: { tabla: string; metodo: string }[] = []
 
@@ -123,7 +129,10 @@ export function clienteDeEnsayo<T extends object>(real: T): T {
         }
       }
       if (prop === 'rpc') {
-        return (nombre: string) => escrituraSimulada(`rpc:${nombre}`, 'rpc')
+        return (nombre: string, ...resto: unknown[]) => {
+          if (!RPC_DE_SOLO_LECTURA.has(nombre)) return escrituraSimulada(`rpc:${nombre}`, 'rpc')
+          return (objetivo as unknown as { rpc(...a: unknown[]): unknown }).rpc(nombre, ...resto)
+        }
       }
       const valor = Reflect.get(objetivo, prop, receptor)
       return typeof valor === 'function' ? valor.bind(objetivo) : valor

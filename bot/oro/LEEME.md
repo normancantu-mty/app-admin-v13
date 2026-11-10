@@ -36,6 +36,13 @@ Capa medida: `enrutador.enrutar()` (claude -p --model sonnet) con `BOT_ENSAYO=1`
 Limites de la medicion: el enrutador de hoy no emite destinatario ni pendientes (siempre 0).
 Los mensajes multiples se encadenan con historial/borrador; "ajustar" fusiona sobre el ultimo hecho.
 
+## Set del clasificador (2026-11-04)
+`casos_clasificador.jsonl`: 36 frases (reales de `bitacora` y del log, y trampas) que miden cuenta,
+cuenta oida sin casar, categoria en el top 3, fecha, tipo, monto y descripcion limpia. Corre al final
+de `correr_oro.py` salvo con `--sin-clasificador`. `catalogo_2026-11-04.json` es la foto fija de
+cuentas y categorias con que compiten antes y despues: desde d2a660b la semilla esta vacia y el set
+corria sin categorias.
+
 ## Linea base 2026-10-17 (`resultados_2026-10-17.json`)
 Precision estricta 0.685 · exhaustividad estricta 0.396 · falsos positivos en charla 0/37 (0.0).
 Comparacion completa: precision 0.416, exhaustividad 0.240.

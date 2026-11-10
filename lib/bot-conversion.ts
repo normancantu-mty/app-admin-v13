@@ -377,7 +377,7 @@ export function mensajeDeConversion(
   l.push(
     ctx.condicionPago === 'CONTADO'
       ? `Contado, entra a ${ctx.nombreCuenta}.`
-      : `Concesion: no entra dinero, queda a deber ${pesos(payload.total_cobrado_real)}.`
+      : `Concesion: no entra dinero, suma ${pesos(payload.total_cobrado_real)} a su deuda.`
   )
 
   for (const aviso of ctx.avisos) l.push(aviso)

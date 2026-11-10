@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     const supabase = clienteDeServicio(request)
     const quien = await resolverIdentidad(supabase, telegramId)
     if (!quien || !esAprobador(actorDe(quien))) {
-      return NextResponse.json({ error: 'Aprobar abonos lo hacen Norman y Kevin.' }, { status: 403 })
+      return NextResponse.json({ error: 'Aprobar abonos lo hace solo Norman.' }, { status: 403 })
     }
 
     const { data: borrador } = await supabase
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
           error:
             Number(borrador.telegram_id) === quien.telegramId
               ? 'Nadie aprueba lo suyo: ese abono lo aprueba otro.'
-              : 'Lo que propone Kevin lo aprueba Norman.'
+              : 'Lo que propone el equipo lo aprueba Norman.'
         },
         { status: 403 }
       )

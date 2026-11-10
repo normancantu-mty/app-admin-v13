@@ -18,17 +18,13 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import type { TablesInsert } from '@/types/database'
-import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
+import { escribirCompraInsumos } from '@/lib/compra-insumos'
 import {
   getServerSupabaseClient,
   resolverSesionOperador
 } from '@/lib/server-session'
 import { registrarAviso } from '@/lib/avisos-server'
 import { resolverCuentaOrigenPorDefecto, type CuentaCandidata } from '@/lib/avisos'
-
-type InventarioInsert = TablesInsert<'inventario_ledger'>
-type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 
 export interface InsumoCompra {
   id: string
@@ -175,125 +171,24 @@ export async function registrarCompraInsumosAction(
       }
     }
 
-    const cantidad = Number(payload?.cantidad)
+    // 2026-11-07: la validacion y las dos escrituras viven en
+    // `lib/compra-insumos.ts`, que es lo MISMO que llama el bot de Telegram.
+    // Aqui se queda lo que es de la web: la sesion, la cuenta por defecto (W13)
+    // y el revalidate.
+    const resultado = await escribirCompraInsumos(supabase, {
+      idInsumo,
+      cantidad: Number(payload?.cantidad),
+      costoTotal: Number(payload?.costoTotal),
+      idCuentaOrigen: idCuentaOrigenResuelta,
+      idEntidad: sesion.entidadId,
+      usuarioCreador: sesion.email // de la sesion, NUNCA del cliente
+    })
+    if (!resultado.ok) {
+      return { success: false, error: resultado.error }
+    }
+    const filaFinanzas = { id: resultado.idFinanzas }
+    const insumo = { nombre: resultado.insumo }
     const costoTotal = Number(payload?.costoTotal)
-    if (!Number.isFinite(cantidad) || cantidad <= 0) {
-      return { success: false, error: 'La cantidad debe ser mayor a cero.' }
-    }
-    if (!Number.isFinite(costoTotal) || costoTotal <= 0) {
-      return { success: false, error: 'El costo total debe ser mayor a cero.' }
-    }
-
-    const { data: insumo, error: insumoError } = await supabase
-      .from('catalogo_productos')
-      .select('id, nombre, tipo')
-      .eq('id', idInsumo)
-      .eq('tipo', 'INSUMO')
-      .maybeSingle()
-
-    if (insumoError) {
-      return { success: false, error: `No se pudo leer el insumo: ${insumoError.message}` }
-    }
-    if (!insumo) {
-      return { success: false, error: 'El producto no existe o no es un insumo.' }
-    }
-
-    // La cuenta de origen tiene que ser de la entidad de la sesion: es
-    // exactamente lo que ofrecia el formulario, ahora verificado en servidor.
-    const { data: cuenta, error: cuentaError } = await supabase
-      .from('cuentas_financieras')
-      .select('id, id_entidad')
-      .eq('id', idCuentaOrigenResuelta)
-      .maybeSingle()
-
-    if (cuentaError) {
-      return { success: false, error: `No se pudo leer la cuenta: ${cuentaError.message}` }
-    }
-    if (!cuenta || cuenta.id_entidad !== sesion.entidadId) {
-      return { success: false, error: 'La cuenta de origen no pertenece a tu entidad.' }
-    }
-
-    // --- PASO A: entra el insumo.
-    //
-    // ERP-16 · `id_entidad_destino`. El insumo entra al almacen de la entidad
-    // que lo compro, y esa entidad no es negociable: doce lineas arriba este
-    // mismo archivo rechaza la captura si la cuenta de origen no le pertenece
-    // (`cuenta.id_entidad !== sesion.entidadId`). El dinero ya salia de la
-    // entidad de la sesion; la mercancia se quedaba sin dueno.
-    //
-    // Hasta hoy este campo iba nulo, y NO es que el tablero lo ignorara: lo lee
-    // como si fuera la Matriz (`!destino || destino.rol === 'ADMIN'`, en
-    // app/dashboard/inventario/page.tsx). Con una sola entidad ADMIN el default
-    // acertaba por accidente. Con locales que compren lo suyo, la compra del
-    // local engordaba el inventario de la Matriz sin error y sin aviso.
-    const inventarioPayload: InventarioInsert = {
-      id_producto: idInsumo,
-      tipo_movimiento: 'ENTRADA_COMPRA',
-      cantidad,
-      id_entidad_destino: sesion.entidadId,
-      usuario_creador: sesion.email, // de la sesion, NUNCA del cliente
-      status: 'ACTIVO'
-    }
-
-    exigirEntidadDelMovimiento(inventarioPayload, 'compras.registrarCompraInsumoAction')
-
-    const { data: filaInventario, error: inventarioError } = await supabase
-      .from('inventario_ledger')
-      .insert(inventarioPayload)
-      .select('id')
-      .single()
-
-    if (inventarioError || !filaInventario) {
-      return {
-        success: false,
-        error: `Error al registrar la entrada de inventario: ${inventarioError?.message ?? 'sin detalle'}`
-      }
-    }
-
-    // --- PASO B: sale el dinero. Si falla, el PASO A se anula.
-    const finanzasPayload: FinanzaInsert = {
-      id_cuenta_origen: idCuentaOrigenResuelta,
-      tipo_movimiento: 'COMPRA_INSUMOS',
-      categoria: 'Insumos',
-      monto: costoTotal,
-      usuario_creador: sesion.email,
-      status: 'ACTIVO'
-    }
-
-    const { data: filaFinanzas, error: finanzasError } = await supabase
-      .from('finanzas_ledger')
-      .insert(finanzasPayload)
-      .select('id')
-      .maybeSingle()
-
-    if (finanzasError) {
-      const { error: errorCompensacion } = await supabase
-        .from('inventario_ledger')
-        .update({
-          status: 'ANULADO',
-          notas: 'ANULADO: falló el registro del gasto de la compra'
-        })
-        .eq('id', filaInventario.id)
-
-      if (errorCompensacion) {
-        console.error(
-          'Compensacion fallida en compra de insumos. Fila de inventario huerfana:',
-          filaInventario.id,
-          errorCompensacion.message
-        )
-        return {
-          success: false,
-          error:
-            `No se pudo registrar el gasto (${finanzasError.message}) Y TAMPOCO revertir la ` +
-            `entrada de inventario. Avisa a administración: movimiento ${filaInventario.id}.`
-        }
-      }
-
-      return {
-        success: false,
-        error: `No se pudo registrar el gasto: ${finanzasError.message}. La entrada de inventario se revirtió; no quedó nada a medias.`
-      }
-    }
 
     if (avisoCuentaOrigen) {
       await registrarAviso(supabase, {
@@ -301,7 +196,7 @@ export async function registrarCompraInsumosAction(
         idEntidad: sesion.entidadId,
         mensaje: avisoCuentaOrigen.mensaje,
         tabla: 'finanzas_ledger',
-        idRegistro: filaFinanzas?.id,
+        idRegistro: filaFinanzas.id ?? undefined,
         datosCapturados: { ...avisoCuentaOrigen.capturado, insumo: insumo.nombre, costo_total: costoTotal }
       })
       revalidatePath('/dashboard/avisos')

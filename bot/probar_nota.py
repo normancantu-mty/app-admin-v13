@@ -163,7 +163,7 @@ fila = base.filas.get(clave) or {}
 caso("2. la nota quedo en la bitacora (la fila del mensaje)", bool(fila), True)
 caso("2. ... etiquetada como nota", (fila.get("etiquetas") or {}).get("tipo"), "nota")
 caso("2. ... con el lote 7", str((fila.get("etiquetas") or {}).get("lote", "")).strip(), "7")
-caso("2. cero rutas del ERP que escriben", [r for r in doble.rutas if any(x in r for x in ESCRIBEN)], [])
+caso("2. cero rutas del ERP que escriben", [r for r in doble.rutas if any(x in r for x in ESCRIBEN) and r != B.RUTA_LEER_CUENTAS], [])
 caso("2. contesta corto (una linea, <=60)", (len(u.message.dichos), len(u.message.dichos[0]) <= 60 if u.message.dichos else None),
      (1, True))
 caso("2. ... y dice que lo anoto", u.message.dichos[0].startswith("Anotado") if u.message.dichos else None, True)
@@ -172,7 +172,7 @@ caso("2. no deja nada esperando VA", B._memoria.get(CHAT), None)
 u, base, doble = decir("a Casa Verde le gusto mucho la chica, quieren probar la mini", nc, 7002)
 fila = base.filas.get(bitacora.clave_de_update(u)) or {}
 caso("2. la del cliente lleva la etiqueta cliente", "casa verde" in str((fila.get("etiquetas") or {}).get("cliente", "")).lower(), True)
-caso("2. ... y tampoco escribe", [r for r in doble.rutas if any(x in r for x in ESCRIBEN)], [])
+caso("2. ... y tampoco escribe", [r for r in doble.rutas if any(x in r for x in ESCRIBEN) and r != B.RUTA_LEER_CUENTAS], [])
 
 u, base, doble = decir("pague 300 de gasolina, por cierto el tambo 2 huele raro", g, 7003)
 caso("CONTROL el gasto con observacion SI llega a la ruta del gasto",

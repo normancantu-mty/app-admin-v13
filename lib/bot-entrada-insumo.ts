@@ -60,9 +60,9 @@ export const TOPE_ENTRADA = 100000
 
 const PALABRAS_HAY = /\b(tengo|tenemos|tienes|hay|quedan|queda|son|conte|contamos|contaron|contadas|en total)\b/
 const PALABRAS_LLEGO = /\b(llegaron|llego|llegan|compre|compramos|compraron|entraron|entro|trajeron)\b/
-const VACIAS =new Set(['de', 'del', 'la', 'el', 'los', 'las', 'ml', 'vacia', 'vacias', 'y', 'con'])
+export const VACIAS = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'ml', 'vacia', 'vacias', 'y', 'con'])
 
-function limpiar(texto: string): string {
+export function limpiar(texto: string): string {
   return texto
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -76,13 +76,13 @@ function limpiar(texto: string): string {
     .trim()
 }
 
-function singular(palabra: string): string {
+export function singular(palabra: string): string {
   if (palabra.length > 4 && palabra.endsWith('ces')) return palabra.slice(0, -3) + 'z' // luces
   if (palabra.length > 3 && palabra.endsWith('s')) return palabra.slice(0, -1)
   return palabra
 }
 
-function claves(nombre: string): { palabras: Set<string>; numeros: Set<string> } {
+export function claves(nombre: string): { palabras: Set<string>; numeros: Set<string> } {
   const palabras = new Set<string>()
   const numeros = new Set<string>()
   for (const t of limpiar(nombre).split(' ')) {

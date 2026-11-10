@@ -28,20 +28,24 @@ modelo licencia para cambiar campos que nadie pidio cambiar.
 """
 
 import asyncio
+import contextlib
+import contextvars
 import datetime as dt
 import functools
 import json
 import logging
 import os
 import re
+import unicodedata
 import socket
 import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
-from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
+from telegram.ext import (Application, BaseHandler, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, TypeHandler, filters)
 from telegram.request import HTTPXRequest
 from telegram.error import BadRequest, NetworkError, TimedOut  # noqa: E402
@@ -54,8 +58,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # mismo mensaje se podia leer de dos maneras distintas segun por donde entrara,
 # y cual mandaba dependia del orden de unos `if`.
 from enrutador import (  # noqa: E402
-    CATEGORIAS_SEMILLA, FORMAS_DEL_MISMO, MAX_HECHOS, TIPOS_DE_HECHO, enrutar,
-    es_afirmacion_explicita)
+    CATEGORIAS_SEMILLA, CAUSA_LOGIN, FORMAS_DEL_MISMO, MAX_HECHOS, SOLO_EGRESOS, TIPOS_DE_HECHO,
+    alias_de, enrutar, es_afirmacion_explicita)
+import enrutador  # noqa: E402  2026-11-03: `_sin_secretos` y las causas del OCR
 # Cazador F0 (2026-10-17): el codigo nuevo vive en modulos nuevos; aqui solo se
 # enchufan. `bitacora` esta APAGADA hasta que `main()` la prende.
 import bitacora  # noqa: E402
@@ -63,6 +68,10 @@ import lote_plantilla  # noqa: E402  Cazador F0 (WP-7a)
 import lote_ciclo  # noqa: E402  Lote v2: aditivo 2, destilacion, muestra, temperatura
 import voz_salida  # noqa: E402  Cazador F0 (WP-V)
 import tope  # noqa: E402  Cazador F0 (item 6)
+import comprobantes  # noqa: E402  2026-11-03: la foto de cada ticket
+import grupos_silenciosos  # noqa: E402  2026-11-03: grupos donde el bot solo escucha
+import ocr_ticket  # noqa: E402  2026-11-03: lectura del ticket con vision
+import suscripciones  # noqa: E402  2026-11-09: la pregunta de cada mes y /suscripciones
 
 NL = chr(10)
 RAIZ = Path(__file__).resolve().parent
@@ -76,6 +85,9 @@ INTERVALO_LATIDO = 15 * 60
 API = os.environ.get("ERP_API_URL", "http://localhost:3000").rstrip("/")
 TOKEN_API = os.environ.get("BOT_API_TOKEN", "")
 TOKEN_TG = os.environ.get("BOT_GASTOS_TELEGRAM_TOKEN", "")
+# El unico cuyo clic escribe (2026-11-03). Lo que manda es el servidor
+# (`esAprobador` en lib/bot-permisos.ts); aqui solo cambia el texto del aviso.
+NORMAN_TELEGRAM_ID = 6571822622
 
 class _TapaSecretos(logging.Filter):
     """Tapa el token de Telegram en CUALQUIER linea que pase por el log.
@@ -194,7 +206,13 @@ ENSAYO = ensayo_activo()
 RUTAS_SOLO_LECTURA = frozenset(("/api/bot/consulta", "/api/bot/catalogo",
                                 "/api/bot/pendiente",
                                 # Fase 9: quien es quien, y que espera el Aprobar.
-                                "/api/bot/identidad", "/api/bot/aprobacion"))
+                                "/api/bot/identidad", "/api/bot/aprobacion",
+                                # 2026-11-07: preguntas libres (cliente que solo hace GET).
+                                "/api/bot/pregunta",
+                                # 2026-11-08: /botellas (solo lee tickets).
+                                "/api/bot/botellas",
+                                # 2026-11-08: /pulso (solo lee tickets, stock y entregas).
+                                "/api/bot/pulso"))
 
 # Las `proponer` salen, MARCADAS: el servidor calcula la propuesta real (precios,
 # catalogo, cartera) y no escribe el borrador (`lib/bot-ensayo.ts`).
@@ -244,6 +262,33 @@ def _respuesta_de_ensayo(ruta, cuerpo):
     }
 
 
+# 2026-11-04: las cuentas vivas de quien escribe. La web no se toca y ninguna ruta
+# de lectura las da; `gasto/proponer` en ensayo es de solo lectura y si las trae.
+RUTA_LEER_CUENTAS = "/api/bot/gasto/proponer?leer=cuentas"
+TTL_CUENTAS = 600
+_cuentas_leidas = {}
+
+
+def _cuentas_vivas(chat):
+    """`[{id, nombre}]` de esta persona. Si el servidor falla, lo ultimo que se supo
+    o `[]`: **el bot no se cae por esto**, y sin lista trabaja como antes."""
+    persona = _persona(chat)
+    leidas = _cuentas_leidas.get(persona)
+    if leidas and (time.time() - leidas[0]) < TTL_CUENTAS:
+        return leidas[1]
+    estado, r = _post(RUTA_LEER_CUENTAS, {
+        "telegram_id": chat, "conservar_pendientes": True,
+        "propuesta": {"monto": 1, "descripcion": "lectura de cuentas"}})
+    crudas = r.get("cuentas") if estado == 200 and isinstance(r, dict) and r.get("ok") else None
+    cuentas = [{"id": c["id"], "nombre": c.get("nombre")} for c in crudas or []
+               if isinstance(c, dict) and c.get("id")]
+    if cuentas:
+        _cuentas_leidas[persona] = (time.time(), cuentas)
+        return cuentas
+    log.warning("no pude leer las cuentas vivas: %s", estado)
+    return leidas[1] if leidas else []
+
+
 def _post(ruta, cuerpo):
     """Llama a la app. Devuelve (status, objeto).
 
@@ -252,9 +297,9 @@ def _post(ruta, cuerpo):
     antepone el aviso, para que ninguna propuesta de un ensayo se confunda con
     una del bot real.
 
-    Fase 8 (D79): toda `proponer` sale con `conservar_pendientes: true` SALVO la
-    primera propuesta de un mensaje nuevo (`_modo_propuesta == "nuevo"`), que
-    conserva el comportamiento de siempre: el servidor cancela lo pendiente.
+    Fase 8 (D79), corregido el 2026-11-04: toda `proponer` sale con
+    `conservar_pendientes: true`. Una propuesta nueva ya no cancela la pendiente:
+    conviven, cada una con su VA.
     """
     cuerpo = _con_conservar(ruta, cuerpo)
     # Fase 9 (D94): la clave de RAM se separa AQUI, en un solo lugar, en
@@ -268,17 +313,21 @@ def _post(ruta, cuerpo):
     estado, r = _post_de_verdad(ruta, cuerpo)
     if ENSAYO and isinstance(r, dict) and isinstance(r.get("mensaje"), str):
         r["mensaje"] = AVISO_ENSAYO + "\n" + r["mensaje"]
-    _anotar_aprobacion(clave, r)
+    if ruta != RUTA_LEER_CUENTAS:
+        _anotar_aprobacion(clave, r)
     return estado, r
 
 
 def _con_conservar(ruta, cuerpo):
-    """El cuerpo de una `proponer`, con `conservar_pendientes` si toca. **Pura
-    salvo por leer `_modo_propuesta`.**"""
+    """El cuerpo de una `proponer`, con `conservar_pendientes`. **Pura.**
+
+    2026-11-04: hasta hoy el primer hecho de un mensaje nuevo salia sin la bandera
+    y el servidor cancelaba lo pendiente (D79: dos pendientes hacian ambiguo un
+    "va"). Norman dicto un gasto y 8 s despues un abono, el abono le cancelo el
+    gasto, y el boton viejo contesto sobre el abono. Ahora conviven: la ambiguedad
+    del "va" la resuelve `_varias_vivas`, no la perdida de una propuesta."""
     limpia = str(ruta or "").split("?")[0].rstrip("/")
     if not limpia.endswith(SUFIJO_PROPONER) or not isinstance(cuerpo, dict):
-        return cuerpo
-    if _modo_propuesta.get(cuerpo.get("telegram_id")) == "nuevo":
         return cuerpo
     return dict(cuerpo, conservar_pendientes=True)
 
@@ -287,7 +336,8 @@ def _post_de_verdad(ruta, cuerpo):
     """El unico lugar que habla HTTP con la app."""
     datos = json.dumps(cuerpo).encode("utf-8")
     cabeceras = {"Content-Type": "application/json", "x-bot-token": TOKEN_API}
-    if ENSAYO:
+    # La lectura de cuentas va SIEMPRE en ensayo: lee de verdad y no escribe nada.
+    if ENSAYO or ruta == RUTA_LEER_CUENTAS:
         cabeceras["x-bot-ensayo"] = "1"
     pet = urllib.request.Request(
         API + ruta, data=datos, method="POST", headers=cabeceras,
@@ -511,7 +561,7 @@ def _rotulo_de_grupo(clave, texto, teclado=None):
     nombre = _nombre_de(_persona(clave))
     datos = [b.callback_data or "" for fila in getattr(teclado, "inline_keyboard", None) or ()
              for b in fila]
-    if any(d.split(":", 1)[0] in ACCIONES_VA for d in datos):
+    if any(d.split(":", 1)[0] in ACCIONES_VA + _VA_DE_LISTA for d in datos):
         return "Propuesto por " + nombre + NL + NL + texto
     if texto.startswith("Listo."):
         return texto + NL + "Confirmado por " + nombre + "."
@@ -544,6 +594,11 @@ def _anotar_aprobacion(clave, r):
         "mensaje": str(r.get("mensaje_aprobador") or "Hay algo esperando tu Aprobar."),
         "abono": abono and not espera,
     })
+    if espera:
+        try:
+            comprobantes.anotar_espera(r["borrador_id"])
+        except Exception as e:
+            log.warning("no pude anotar la espera de %s: %s", r["borrador_id"], e)
 
 
 def _teclado_aprobar(borrador_id, abono=False):
@@ -589,6 +644,8 @@ async def _avisar_aprobaciones(update):
 RUTA_CONFIRMAR_DE = {
     None: "/api/bot/gasto/confirmar",
     "gasto": "/api/bot/gasto/confirmar",
+    # 2026-11-07: compra de insumo dictada como gasto (dinero + almacen).
+    "compra_insumo": "/api/bot/gasto/confirmar",
     "venta": "/api/bot/venta/confirmar",
     "abono": "/api/bot/abono/confirmar",
     "cotizacion": "/api/bot/cotizacion/confirmar",
@@ -606,6 +663,11 @@ RUTA_CONFIRMAR_DE = {
     # FASE 11 (D112): la entrega de efectivo del DST se aprueba por el camino
     # generico (ESPERA_APROBACION -> Aprobar -> su confirmar con el sello).
     "entrega_efectivo": "/api/bot/entrega/confirmar",
+    "traspaso": "/api/bot/traspaso/confirmar",
+    # 2026-11-07 (paridad con la web, Fase 3): merma, misma escritura que la web.
+    "merma": "/api/bot/merma/confirmar",
+    # 2026-11-03: alta de categoria/subcategoria.
+    "alta_categoria": "/api/bot/categoria/confirmar",
 }
 
 
@@ -644,6 +706,10 @@ async def _boton_de_aprobacion(update, clave, q, accion, bid):
         if estado != 200 or not r.get("ok"):
             await decir(r.get("error", "No pude rechazarlo."))
             return
+        try:
+            comprobantes.anotar_rechazo(bid)
+        except Exception as e:
+            log.warning("no pude anotar el rechazo de %s: %s", bid, e)
         await decir("Rechazado. No se escribio nada.")
         # Fase 10 (D106): Norman o Kevin; el nombre lo da el servidor.
         quien = r.get("rechazado_por") or _nombre_de(_persona(clave))
@@ -663,8 +729,11 @@ async def _boton_de_aprobacion(update, clave, q, accion, bid):
     if estado != 200 or not r2.get("ok"):
         await decir(r2.get("error", "No pude escribirlo. No se escribio nada."))
         return
+    # 2026-11-03: si lo aprobado traia foto, se liga a ESE borrador.
+    pie = await asyncio.to_thread(_ligar_comprobante, bid, r2.get("id"))
     # D107: si la marca final fallo, quien aprobo lo sabe (no se repite).
-    await decir("Aprobado. Quedo escrito." + ((NL + str(r2["aviso_marca"])) if r2.get("aviso_marca") else ""))
+    await decir("Aprobado. Quedo escrito." + pie
+                + ((NL + str(r2["aviso_marca"])) if r2.get("aviso_marca") else ""))
     await _avisar_en(update, r.get("chat_id"),
                      "Aprobado por " + str(r.get("aprobador") or _nombre_de(_persona(clave)))
                      + ": lo que propuso " + str(r.get("autor") or "")
@@ -726,7 +795,8 @@ async def _proponer_miembro(update, clave, miembro, texto, id_entidad=None):
             str(o.get("nombre")) + (" (" + str(o.get("rol")) + ")" if o.get("rol") else ""),
             callback_data="mbe:" + str(i))] for i, o in enumerate(opciones)]
         await update.effective_message.reply_text(
-            r.get("mensaje") or "¿De cual es?", reply_markup=InlineKeyboardMarkup(filas))
+            r.get("mensaje") or "¿De cual es?",
+            reply_markup=_lista_de(clave, InlineKeyboardMarkup(filas)))
         return
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(r.get("error", "No pude proponer el registro."))
@@ -761,6 +831,44 @@ async def _confirmar_miembro(update, clave):
     await update.effective_message.reply_text(r.get("mensaje") or "Listo. Quedo registrado.")
 
 
+# ─── 2026-11-03: ALTA DE CATEGORIA / SUBCATEGORIA ───────────────────────────
+async def _proponer_categoria(update, clave, cuerpo):
+    estado, r = _post("/api/bot/categoria/proponer", cuerpo)
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponer la categoria."))
+        return
+    _memoria[clave] = {"tipo": "alta_categoria", "borrador_id": r["borrador_id"], "sello": r["sello"]}
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, agregala", callback_data="vacat:" + r["borrador_id"])],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + r["borrador_id"])],
+    ])
+    await _ensenar_propuesta(update, clave, r["mensaje"], teclado)
+
+
+async def _confirmar_categoria(update, clave):
+    dato = _memoria.get(clave)
+    if not dato or dato.get("tipo") != "alta_categoria":
+        await update.effective_message.reply_text("No tengo ninguna categoria pendiente.")
+        return
+    estado, r = _post("/api/bot/categoria/confirmar", {
+        "telegram_id": clave, "borrador_id": dato["borrador_id"], "sello": dato["sello"]})
+    log.info("alta de categoria: borrador=%s -> %s", dato["borrador_id"], estado)
+    if estado != 200 or not r.get("ok"):
+        # `espera_aprobacion` (alguien del equipo): `_anotar_aprobacion` ya le
+        # puso el texto "se lo mande a Norman" en `error`.
+        await update.effective_message.reply_text(r.get("error", "No pude agregarla."))
+        return
+    _memoria.pop(clave, None)
+    # La categoria nueva tiene que llegar al extractor YA, no en 10 minutos:
+    # se caduca la lectura del catalogo y la siguiente frase la relee.
+    global _productos_leidos_en
+    _productos_leidos_en = 0.0
+    texto = r.get("mensaje") or "Listo. Quedo agregada."
+    if r.get("aviso_marca"):
+        texto += NL + str(r["aviso_marca"])
+    await update.effective_message.reply_text(_rotulo_de_grupo(clave, texto))
+
+
 async def _contestar_texto_de_consulta(update, clave, r):
     """D96: lo que la tabla manda "por privado", en un grupo, va al chat privado
     de quien pregunto; en el grupo solo se dice que se mando."""
@@ -770,9 +878,7 @@ async def _contestar_texto_de_consulta(update, clave, r):
             await update.effective_message.reply_text("Te lo mande por privado.")
         except Exception as e:
             log.warning("no pude mandar por privado a %s: %s", _persona(clave), e)
-            await update.effective_message.reply_text(
-                "Eso va por privado y no te lo pude mandar: escribele /start al bot en "
-                "privado una vez y vuelve a preguntar.")
+            await update.effective_message.reply_text(abreme_en_privado(update.get_bot()))
         return
     await update.effective_message.reply_text(r["texto"])
 
@@ -906,7 +1012,92 @@ def _teclado_confirmar_conversion(borrador_id):
     ])
 
 
-def _teclado_categorias(categorias):
+def _cuenta_de_campos(campos):
+    """Lo que el enrutador entendio de la cuenta, listo para la propuesta. **Pura.**"""
+    c = {"id_cuenta": campos.get("cuenta_id"), "oida": campos.get("cuenta_oida"),
+         "solo_paga": campos.get("cuenta_solo_paga")}
+    return {k: v for k, v in c.items() if v}
+
+
+def _sin_solo_egresos(chat, cuenta):
+    """Una cuenta de solo egresos no recibe dinero: ni abono ni venta. El enrutador
+    solo la filtra si el modelo dijo `sobre` (S9, y la venta de la segunda auditoria
+    del 2026-11-04); aqui ya se sabe a que propuesta va el cambio."""
+    if (cuenta or {}).get("id_cuenta") not in SOLO_EGRESOS:
+        return cuenta
+    return {"solo_paga": next((c.get("nombre") for c in _cuentas_vivas(chat)
+                               if c.get("id") == cuenta["id_cuenta"]), "Esa cuenta")}
+
+
+def _teclado_gasto(dato):
+    """El teclado del gasto, con lo que el modelo dejo por resolver.
+
+    Las sugeridas que no quedaron puestas van como boton (la primera ya esta en
+    la propuesta). Si la cuenta falta **no hay VA**: primero se escoge."""
+    bid = dato["borrador_id"]
+    filas = list(_teclado_confirmar(bid).inline_keyboard)
+    actual = (dato.get("propuesta") or {}).get("categoria")
+    otras = [[InlineKeyboardButton(n, callback_data="setsug:%d:%s" % (i, bid))]
+             for i, n in enumerate(dato.get("sugeridas") or []) if n != actual]
+    # La foto que llego en vuelo no se leyo con este gasto: se puede despegar.
+    quitar = ([[InlineKeyboardButton("Quitar la foto", callback_data="qf:" + bid)]]
+              if dato.get("foto_de_vuelo") else [])
+    # 2026-11-07: gasto de insumo sin saber CUAL insumo. Un boton por candidato
+    # (los ofrecio el servidor); tocarlo lo vuelve compra (dinero + almacen).
+    compra = [[InlineKeyboardButton("Entra al almacen: " + str(o.get("nombre") or "")[:40],
+                                    callback_data="cmpi:%d:%s" % (i, bid))]
+              for i, o in enumerate(dato.get("compra_opciones") or [])]
+    if dato.get("cuenta_pendiente"):
+        cuentas = list(_teclado_cuentas(dato.get("cuentas") or [], bid).inline_keyboard)
+        return InlineKeyboardMarkup(cuentas + otras + compra + [filas[1], filas[3]] + quitar)
+    return InlineKeyboardMarkup(filas[:1] + otras + compra + filas[1:] + quitar)
+
+
+_PIE_DE_GASTO = re.compile(r"^\(la cuenta no la elige el modelo[^\n]*$", re.M)
+_PIE_DE_ABONO = re.compile(r"^\(las cuentas no las elige el modelo[^\n]*$", re.M)
+_LINEA_CUENTA = re.compile(r"^CUENTA:[^\n]*$", re.M)
+_ENTRA_A = re.compile(r'y entra a "[^"\n]*"\.')
+_CIERRE = "Contesta VA para escribirlo, o dime que cambio."
+PIE_CUENTA_DICHA = "(la cuenta la dijiste tu; si esta mal la cambias con el boton)"
+
+
+def _por_que_preguntamos(dato):
+    if dato.get("cuenta_solo_paga"):
+        return '"%s" solo paga, no recibe dinero. ' % dato["cuenta_solo_paga"]
+    if dato.get("cuenta_oida"):
+        return 'No encontre "%s" en tus cuentas. ' % dato["cuenta_oida"]
+    return ""
+
+
+def _mensaje_con_cuenta(dato, mensaje):
+    """El texto del servidor, con la cuenta como de verdad quedo. **Pura.**
+
+    El pie del servidor decia que la cuenta no la elige el modelo, y ya puede
+    salir de lo dicho. Se reescribe aqui porque la web no se toca;
+    `probar_clasificador.py` amarra estos textos contra los `lib/bot-*.ts`."""
+    if dato.get("cuenta_pendiente"):
+        duda = _por_que_preguntamos(dato)
+        if dato.get("tipo") == "abono":
+            mensaje = _ENTRA_A.sub("y entra a: cual? Escoge abajo.", mensaje)
+        else:
+            mensaje = _LINEA_CUENTA.sub("CUENTA:     cual? Escoge abajo.", mensaje)
+        mensaje = _PIE_DE_GASTO.sub(duda.strip(), _PIE_DE_ABONO.sub(duda.strip(), mensaje))
+        return mensaje.replace(_CIERRE, "Escoge la cuenta y te pongo el VA.")
+    if dato.get("cuenta_dicha"):
+        return _PIE_DE_GASTO.sub(PIE_CUENTA_DICHA, _PIE_DE_ABONO.sub(PIE_CUENTA_DICHA, mensaje))
+    return mensaje
+
+
+def _estado_de_cuenta(cuenta, cuentas):
+    """Los campos del borrador que dicen como quedo la cuenta. **Pura.** Con una
+    sola cuenta no hay nada que preguntar."""
+    cuenta = cuenta or {}
+    dicha = bool(cuenta.get("id_cuenta"))
+    return {"cuenta_dicha": dicha, "cuenta_pendiente": not dicha and len(cuentas or []) > 1,
+            "cuenta_oida": cuenta.get("oida"), "cuenta_solo_paga": cuenta.get("solo_paga")}
+
+
+def _teclado_categorias(categorias, borrador_id=None):
     """Las categorias van POR INDICE, por la misma razon que cuentas y deudores.
 
     Lo que habia antes era "setcat:<uuid de borrador>:<nombre>": 44 bytes fijos
@@ -923,28 +1114,37 @@ def _teclado_categorias(categorias):
     `_memoria[chat]["categorias_ofrecidas"]`: asi el boton no puede nombrar una
     categoria que el servidor no acabe de declarar viva.
     """
-    filas = [[InlineKeyboardButton(nombre, callback_data="setcat:" + str(i))]
+    # 2026-11-04: con borrador, el boton dice de cual propuesta es.
+    cola = ":" + borrador_id if borrador_id else ""
+    filas = [[InlineKeyboardButton(nombre, callback_data="setcat:" + str(i) + cola)]
              for i, nombre in enumerate(categorias)]
     # -1 es "ninguna". Va como indice y no como palabra para que el handler
     # tenga UN solo formato que interpretar.
     filas.append([InlineKeyboardButton("Ninguna (dejar sin categorizar)",
-                                       callback_data="setcat:-1")])
+                                       callback_data="setcat:-1" + cola)])
     return InlineKeyboardMarkup(filas)
 
 
-def _teclado_confirmar_abono(borrador_id):
+def _teclado_confirmar_abono(borrador_id, dato=None):
     """El mismo VA de la Fase 1, con los campos que de verdad se corrigen aqui.
 
     No hay "cambiar categoria" porque un abono no tiene: lo que se equivoca es
-    el DEUDOR o el MONTO. Y no hay "cambiar cuenta" del deudor porque esa la
-    resuelve el servidor y es una sola (medido el 2026-09-12).
+    el DEUDOR o el MONTO. La cuenta del deudor la resuelve el servidor y es una
+    sola (medido el 2026-09-12); la que SI se escoge, desde el 2026-11-04, es a
+    cual de las de la matriz entra. Si falta, **no hay VA**: primero se escoge.
     """
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("VA, escribelo", callback_data="vaab:" + borrador_id)],
-        [InlineKeyboardButton("Otro deudor", callback_data="deu:" + borrador_id),
-         InlineKeyboardButton("Cambiar monto", callback_data="montoab:" + borrador_id)],
-        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
-    ])
+    dato = dato or {}
+    cuentas = dato.get("cuentas") or []
+    fijas = [[InlineKeyboardButton("Otro deudor", callback_data="deu:" + borrador_id),
+              InlineKeyboardButton("Cambiar monto", callback_data="montoab:" + borrador_id)]]
+    if dato.get("cuenta_pendiente"):
+        filas = list(_teclado_cuentas(cuentas, borrador_id).inline_keyboard) + fijas
+    else:
+        filas = [[InlineKeyboardButton("VA, escribelo", callback_data="vaab:" + borrador_id)]] + fijas
+        if len(cuentas) > 1:
+            filas.append([InlineKeyboardButton("Cambiar cuenta", callback_data="cta:" + borrador_id)])
+    filas.append([InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)])
+    return InlineKeyboardMarkup(filas)
 
 
 def _teclado_deudores(opciones):
@@ -960,7 +1160,7 @@ def _teclado_deudores(opciones):
     return InlineKeyboardMarkup(filas)
 
 
-def _teclado_cuentas(cuentas):
+def _teclado_cuentas(cuentas, borrador_id=None):
     """Las cuentas van POR INDICE, no por uuid.
 
     Dos razones, y las dos importan. La de bulto: `callback_data` topa en 64
@@ -968,8 +1168,13 @@ def _teclado_cuentas(cuentas):
     el indice solo puede apuntar a algo que el servidor ya declaro usable en
     esta propuesta, asi que el proceso del bot no tiene forma de nombrar una
     cuenta que no este en esa lista.
+
+    2026-11-04: con `borrador_id` el boton apunta a SU propuesta ("setcta:<i>:<id>",
+    45 bytes): con dos gastos dictados juntos, la pregunta de cuenta del primero
+    ya no es el foco.
     """
-    filas = [[InlineKeyboardButton(c["nombre"], callback_data="setcta:" + str(i))]
+    cola = ":" + borrador_id if borrador_id else ""
+    filas = [[InlineKeyboardButton(c["nombre"], callback_data="setcta:" + str(i) + cola)]
              for i, c in enumerate(cuentas)]
     return InlineKeyboardMarkup(filas)
 
@@ -1169,7 +1374,96 @@ async def _contestar_consulta(update, chat, consulta, filtro=None):
     return True
 
 
-async def _proponer_abono(update, chat, propuesta, id_deudor=None, nombre=None):
+async def _contestar_pregunta(update, chat, texto, consulta):
+    """2026-11-07 (paridad con la web, Fase 2). Devuelve True si contesto.
+
+    El servidor (`/api/bot/pregunta`) interpreta el texto SIN modelo y contesta
+    saldo de una cuenta, saldos, movimientos de una cuenta, ventas de un periodo
+    o el detalle de un ticket. Si no la reconoce:
+      - consulta conocida (stock, cartera...): False, y sigue `/api/bot/consulta`;
+      - "otra" o sin consulta: se contesta el "no la puedo contestar con
+        certeza" del servidor, en vez de dejar que el modelo redacte una cifra.
+    Si la ruta FALLA (500, timeout, caida -> estado 0): se dice que no se pudo
+    leer y se acaba aqui. Fase 5 (auditoria 2026-11-07): antes devolvia False y
+    seguia a `_contestar_consulta`, cuyo respaldo `_responder_natural` podia
+    mandar una cifra redactada por el modelo.
+    """
+    estado, r = _post("/api/bot/pregunta", {"telegram_id": chat, "texto": texto})
+    log.info("pregunta por voz/texto: consulta=%s -> %s reconocida=%s",
+             consulta, estado, (r or {}).get("reconocida"))
+    return await _responder_pregunta(update, chat, consulta, estado, r)
+
+
+# Fase 6 (2026-11-07): "¿cual de ellos?" con botones. callback `pqd:<uuid>`
+# (deuda) o `pqm:<uuid>` (movimientos): 40 bytes, bajo el tope de 64.
+PREFIJO_PREGUNTA = {"deuda": "pqd", "movimientos": "pqm"}
+PARA_DEL_PREFIJO = {v: k for k, v in PREFIJO_PREGUNTA.items()}
+
+
+def _teclado_de_eleccion(para, opciones):
+    prefijo = PREFIJO_PREGUNTA.get(para, "pqd")
+    filas = [[InlineKeyboardButton(str(o.get("nombre") or "?")[:40], callback_data=prefijo + ":" + str(o.get("id")))]
+             for o in (opciones or [])[:8] if _PATRON_UUID.match(str(o.get("id") or ""))]
+    return InlineKeyboardMarkup(filas) if filas else None
+
+
+async def _boton_de_pregunta(update, chat, accion, id_entidad):
+    """El clic de "¿cual de ellos?": vuelve a `/api/bot/pregunta` con la
+    eleccion. Solo lectura: el servidor revisa permisos con quien apreto."""
+    estado, r = _post("/api/bot/pregunta", {
+        "telegram_id": chat,
+        "eleccion": {"para": PARA_DEL_PREFIJO.get(accion, "deuda"), "id_entidad": id_entidad},
+    })
+    log.info("pregunta por boton: %s -> %s", accion, estado)
+    await _responder_pregunta(update, chat, "otra", estado, r)
+
+
+async def _responder_pregunta(update, chat, consulta, estado, r):
+    r = r or {}
+    if estado == 200 and r.get("ok") and r.get("reconocida"):
+        await _contestar_texto_de_consulta(update, chat, r)
+        return True
+    if estado == 200 and r.get("ok") and r.get("opciones"):
+        teclado = _teclado_de_eleccion(r.get("para"), r.get("opciones"))
+        await update.effective_message.reply_text(r.get("texto") or "¿Cual de ellos?", reply_markup=teclado)
+        return True
+    if estado == 200 and r.get("ok"):
+        if consulta and consulta != "otra":
+            return False
+        await update.effective_message.reply_text(r.get("texto") or "Esa no la puedo contestar con certeza.")
+        return True
+    if estado == 403:
+        await update.effective_message.reply_text(r.get("error", "Esa consulta no te toca con tu alta."))
+        return True
+    # La ruta fallo: ni silencio ni el modelo. Se dice, y se acaba aqui.
+    log.warning("pregunta: /api/bot/pregunta fallo (%s): %s", estado, (r or {}).get("error"))
+    await update.effective_message.reply_text(MENSAJE_PREGUNTA_FALLO)
+    return True
+
+
+MENSAJE_PREGUNTA_FALLO = "No pude leer el dato del ERP ahora; intenta de nuevo."
+
+
+# Los dos 422 de `app/api/bot/abono/proponer/route.ts` que hablan de la cuenta.
+ERROR_CUENTA_DE_MATRIZ = "La cuenta de la matriz la escoge Norman"
+ERROR_CUENTA_AJENA = "Esa cuenta no es tuya o esta vetada"
+
+
+def _cerrar_preguntas_de_abono(chat, monto):
+    """La lista de un abono por ese mismo monto queda contestada: su boton viejo ya
+    no crea un segundo abono (D2, segunda auditoria del 2026-11-04). Un monto distinto
+    es otro abono y su lista sigue viva (S5). El precio: dos abonos reales por el
+    mismo monto, y el de la lista vieja se dicta otra vez; nada se escribe."""
+    for pid, pregunta in list((_preguntas.get(chat) or {}).items()):
+        if (pregunta.get("tipo") == "abono_eligiendo"
+                and _mismo_monto((pregunta.get("propuesta") or {}).get("monto"), monto)):
+            _preguntas[chat].pop(pid, None)
+            if _apartado.get(chat) is pregunta:
+                _apartado.pop(chat, None)
+
+
+async def _proponer_abono(update, chat, propuesta, id_deudor=None, nombre=None, cuenta=None,
+                          ya_avisado=False):
     """Fase 2. Devuelve True si propuso un abono (o si pidio elegir deudor).
 
     EL MODELO NO ELIGE A NADIE: el enrutador devuelve un NOMBRE y el servidor lo
@@ -1192,19 +1486,38 @@ async def _proponer_abono(update, chat, propuesta, id_deudor=None, nombre=None):
         cuerpo["id_deudor"] = id_deudor
     else:
         cuerpo["deudor"] = nombre_dicho
+    # 2026-11-04: la cuenta dicha. Un DST no la escoge (el servidor da 422): ahi se
+    # propone sin ella, que es lo de siempre, y se dice.
+    cuenta = dict(cuenta or {})
+    if cuenta.get("id_cuenta"):
+        cuerpo["id_cuenta"] = cuenta["id_cuenta"]
+    cuerpo["contexto_bot"] = _contexto_para_base(cuenta, propuesta)
 
     estado, r = _post("/api/bot/abono/proponer", cuerpo)
+    # Solo los dos errores que son de la CUENTA. Cualquier otro 422 (deudor, origen
+    # igual a destino) se dice tal cual: reintentar sin cuenta tiraba la cuenta dicha
+    # en silencio (auditoria 2026-11-04). Los textos son los de la ruta.
+    error = str(r.get("error") or "") if estado == 422 and isinstance(r, dict) else ""
+    if cuerpo.get("id_cuenta") and (ERROR_CUENTA_DE_MATRIZ in error or ERROR_CUENTA_AJENA in error):
+        cuerpo.pop("id_cuenta")
+        cuenta.pop("id_cuenta")
+        if ERROR_CUENTA_AJENA in error:
+            # La dijo y no es suya: se pregunta, no se escoge otra callando.
+            cuenta["oida"] = cuenta.get("oida") or "esa cuenta"
+        cuerpo["contexto_bot"] = _contexto_para_base(cuenta, propuesta)
+        estado, r = _post("/api/bot/abono/proponer", cuerpo)
     _refrescar_deudores(r)
     log.info("abono propuesto: deudor=%s monto=%s -> %s",
              nombre_dicho or id_deudor, propuesta.get("monto"), estado)
 
     if estado == 200 and r.get("hay_que_elegir"):
+        _cerrar_preguntas_de_abono(chat, propuesta.get("monto"))
         _memoria[chat] = {"tipo": "abono_eligiendo",
                           "opciones": r.get("opciones", list(_deudores)),
-                          "propuesta": propuesta}
+                          "propuesta": propuesta, "cuenta": cuenta}
         await update.effective_message.reply_text(
             r.get("mensaje", "Quien te pago?"),
-            reply_markup=_teclado_deudores(r.get("opciones", [])))
+            reply_markup=_lista_de(chat, _teclado_deudores(r.get("opciones", []))))
         return True
 
     if estado != 200 or not r.get("ok"):
@@ -1214,18 +1527,38 @@ async def _proponer_abono(update, chat, propuesta, id_deudor=None, nombre=None):
         await update.effective_message.reply_text(r.get("error", "No pude proponer el abono."))
         return True
 
-    _memoria[chat] = {
+    _cerrar_preguntas_de_abono(chat, propuesta.get("monto"))
+    # S12, igual que el gasto: el mismo abono dictado dos veces no se agrega callando.
+    # Se compara despues de proponer porque quien sabe que "Pepe" y "el de Pepe" son
+    # la misma persona es el servidor. El borrador de sobra se apaga antes de ensenarlo.
+    # Dentro de `_reemplazando` es un cambio a una propuesta, no un dictado nuevo.
+    igual = None if ya_avisado or _reemplazo.get(chat) else next(
+        (v for v in _pendientes_de(chat) if _mismo_abono(
+            propuesta, r.get("id_deudor"), r.get("nombre_deudor") or nombre, v)), None)
+    if igual is not None:
+        _cancelar_en_base(chat, r["borrador_id"])
+        await _preguntar_duplicado(update, chat, igual, "abono", {
+            "propuesta": dict(propuesta), "cuenta": dict(cuenta),
+            "abono": {"id_deudor": r.get("id_deudor"), "nombre": nombre}})
+        return True
+    # Una cuenta de solo egresos no recibe: ni se ofrece.
+    cuentas = [c for c in r.get("cuentas") or [] if c.get("id") not in SOLO_EGRESOS]
+    _memoria[chat] = dict({
         "tipo": "abono",
         "borrador_id": r["borrador_id"],
         "sello": r["sello"],
         "id_deudor": r.get("id_deudor"),
+        "nombre_deudor": r.get("nombre_deudor"),
         "propuesta": propuesta,
         # La lista completa viaja con el borrador para que "Otro deudor" no
         # tenga que volver a preguntarle al servidor.
         "opciones": r.get("opciones", list(_deudores)),
-    }
-    await _ensenar_propuesta(
-        update, chat, r["mensaje"], _teclado_confirmar_abono(r["borrador_id"]))
+        "cuentas": cuentas,
+        "cuenta": cuenta,
+    }, **_estado_de_cuenta(cuenta, cuentas))
+    dato = _memoria.get(chat)
+    await _ensenar_propuesta(update, chat, _mensaje_con_cuenta(dato, r["mensaje"]),
+                             _teclado_confirmar_abono(r["borrador_id"], dato))
     return True
 
 
@@ -1317,6 +1650,11 @@ def _catalogo_de_productos(chat):
     if _productos and (ahora - _productos_leidos_en) < TTL_PRODUCTOS:
         return _productos
     estado, r = _post("/api/bot/catalogo", {"telegram_id": chat})
+    if estado == 200 and r.get("ok"):
+        # 2026-11-03 - UNA SOLA LISTA: el vocabulario de categorias de gasto
+        # viene de `categorias_movimiento` en la misma lectura. Asi una
+        # subcategoria agregada en el ERP llega al extractor en <= TTL_PRODUCTOS.
+        _refrescar_catalogo(r)
     if estado == 200 and r.get("ok") and r.get("productos"):
         _productos = r["productos"]
         _productos_leidos_en = ahora
@@ -1339,6 +1677,11 @@ _COMO_SE_LLAMA = {
     "conversion": "una conversion",
     "entrega_efectivo": "una entrega de efectivo",
     "entrega": "una entrega de efectivo",
+    "categoria": "una categoria nueva",
+    "alta_categoria": "una categoria nueva",
+    "traspaso": "un traspaso",
+    "merma": "una merma",
+    "compra_documento": "una compra de factura",
 }
 
 
@@ -1374,6 +1717,8 @@ def _en_pantalla(chat, esperando=""):
     for vivo in _pendientes_de(chat):
         mostrado = vivo.get("mostrado")
         contenido = _texto_plano(mostrado[1]) if mostrado else ""
+        if contenido and vivo.get("comprobante"):
+            contenido = enrutador.dato_de_ticket(contenido)
         renglones.append("propuesta de " + _COMO_SE_LLAMA.get(_tipo_de(vivo), "captura")
                          + " esperando su VA" + (": " + contenido if contenido else ""))
     dato = _memoria.get(chat)
@@ -1419,6 +1764,9 @@ def _cancelar_de_verdad(chat, borrador_id):
     Devuelve el texto que hay que contestarle a la persona.
     """
     texto = "Cancelado. No escribi nada."
+    pregunta = dict.get(_memoria, chat)
+    if not borrador_id and isinstance(pregunta, dict) and not pregunta.get("borrador_id"):
+        texto = _texto_al_soltar(chat, pregunta)
     try:
         if borrador_id:
             estado, r = _post("/api/bot/cancelar", {
@@ -1442,35 +1790,38 @@ def _cancelar_de_verdad(chat, borrador_id):
         #
         # Fase 8 (D79): con varias propuestas vivas, se apaga LA QUE SE NOMBRO.
         # Si no es la del foco, sale del registro y el foco se queda.
-        # D92: cancelar tambien suelta el envasado que esperaba empaque.
-        _esperando_empaque.pop(chat, None)
+        # D92: cancelar tambien suelta el envasado que esperaba empaque, pero
+        # cancelar OTRA propuesta no tiene por que tirarlo.
+        cancelado = (_pendientes.get(chat) or {}).get(borrador_id) or {}
+        if not borrador_id or _tipo_de(cancelado) in ("lote", "entrada_insumo"):
+            _esperando_empaque.pop(chat, None)
         foco = _memoria.get(chat)
         foco_bid = foco.get("borrador_id") if isinstance(foco, dict) else ""
-        if borrador_id and foco_bid and borrador_id != foco_bid:
+        if borrador_id:
+            _soltar_esperas(chat, borrador_id)
+        if borrador_id and borrador_id != foco_bid:
             (_pendientes.get(chat) or {}).pop(borrador_id, None)
-        else:
+        elif borrador_id or not foco_bid:
             _memoria.pop(chat, None)
+        # Sin id y con una propuesta sellada en el foco no se toca nada: apagarla
+        # solo en RAM dejaba la fila PENDIENTE y su VA muerto (auditoria, S7).
     return texto
 
 
-def _cancelar_todo(chat):
-    """El "no" ESCRITO con dos o mas propuestas vivas: se apagan todas.
-
-    Un "no" suelto no dice cual, y dejar vivas las otras seria adivinar al
-    reves. Se apagan en la base una por una (la misma ruta de siempre) y la cola
-    de hechos por capturar se vacia. Devuelve el texto para Norman.
-    """
-    vivos = _pendientes_de(chat)
-    for vivo in vivos:
-        _cancelar_de_verdad(chat, vivo.get("borrador_id"))
-    _pendientes.pop(chat, None)
-    dict.pop(_memoria, chat, None)
-    _apartado.pop(chat, None)
-    cola = _cola.pop(chat, None)
-    texto = "Cancele las %d propuestas. No escribi nada." % len(vivos)
-    if cola and cola.get("hechos"):
-        texto += " Y lo que faltaba por capturar tampoco lo capturo."
-    return texto
+def _texto_al_soltar(chat, pregunta):
+    """Soltar una pregunta no cancela las propuestas que siguen vivas: el texto no
+    puede dar a entender lo contrario (segunda auditoria del 2026-11-04)."""
+    if pregunta.get("tipo") == "duplicado_eligiendo":
+        igual = (_pendientes.get(chat) or {}).get(pregunta.get("igual"))
+        # 2026-11-03: dicto el gasto y luego mando su ticket: la foto va con el dicho.
+        pegada = igual and _adjuntar_comprobante(chat, igual.get("borrador_id"), pregunta.get("foto"))
+        return "Va, no lo agregue." + (
+            " Sigue pendiente " + _etiqueta_de(igual) + ", con su VA." if igual else "") + (
+            " Le pegue la foto del ticket." if pegada else "")
+    if _pendientes_de(chat):
+        return ("Va, eso lo deje y no escribi nada. Lo que tenias pendiente sigue ahi, "
+                "cada propuesta con su VA.")
+    return "Cancelado. No escribi nada."
 
 
 def _borrador_vivo(chat):
@@ -1542,17 +1893,19 @@ class _Memoria(dict):
     """
 
     def __setitem__(self, chat, dato):
-        viejo = dict.get(self, chat)
         if isinstance(dato, dict):
             if dato.get("borrador_id") and dato.get("sello"):
-                _registrar(chat, dato, viejo)
-            elif isinstance(viejo, dict):
+                _registrar(chat, dato)
+            else:
                 # Una pregunta con botones sobre una propuesta viva (p. ej.
                 # "Otro comprador" que vuelve con `hay_que_elegir`) hereda a
-                # quien va a reemplazar cuando se selle.
-                reemplaza = viejo.get("borrador_id") or viejo.get("_reemplaza")
+                # quien va a reemplazar cuando se selle. **Solo dentro de
+                # `_reemplazando`**: una pregunta nueva no tiene a quien reemplazar.
+                reemplaza = _reemplazo.get(chat)
                 if reemplaza:
                     dato["_reemplaza"] = reemplaza
+                if str(dato.get("tipo") or "").endswith("_eligiendo"):
+                    _guardar_pregunta(chat, dato)
         dict.__setitem__(self, chat, dato)
 
     def pop(self, chat, *defecto):
@@ -1562,6 +1915,8 @@ class _Memoria(dict):
         bid = dato.get("borrador_id") if isinstance(dato, dict) else None
         if bid:
             (_pendientes.get(chat) or {}).pop(bid, None)
+        elif isinstance(dato, dict) and dato.get("_pid"):
+            (_preguntas.get(chat) or {}).pop(dato["_pid"], None)
         siguiente = _apartado.pop(chat, None)
         if siguiente is None:
             vivos = _pendientes_de(chat)
@@ -1578,11 +1933,23 @@ _pendientes = {}
 # El foco a medias (pregunta o captura incompleta) que se aparto porque Norman
 # toco el boton de OTRA propuesta. Vuelve al foco cuando esa se resuelve.
 _apartado = {}
-# "nuevo": la primera propuesta de un mensaje nuevo (el servidor cancela lo
-# pendiente, como siempre). Cualquier otro valor: conservar.
-_modo_propuesta = {}
-# Las propuestas que un mensaje nuevo dejo canceladas: se DICEN al ensenar la
-# nueva (D49: nada se pierde callado).
+# 2026-11-04 (auditoria, S3/S4): aqui vivia `_modo_propuesta`, un modo global por
+# chat que decidia si una propuesta sumaba o reemplazaba. Se quedaba colgado cuando
+# un hecho no llegaba a sellarse, y lo que reemplazaba era "lo que hubiera en el
+# foco". Ahora por defecto TODO se suma, y solo reemplaza quien lo declara por id.
+# `chat -> borrador_id` que va a reemplazar la propuesta en curso. Solo existe
+# dentro de `_reemplazando`: no puede quedarse colgado.
+_reemplazo = {}
+# Las preguntas con botones vivas: `chat -> {pid: dato}`. Aun no tienen borrador,
+# pero sus botones si necesitan un dueno: sin el, el indice de una lista vieja se
+# aplicaba a lo que hubiera en el foco.
+_preguntas = {}
+# `chat real -> {id del mensaje: borrador_id}`: que propuesta se ensenó en cada
+# mensaje. Sirve para contestar a una propuesta aunque su mensaje no traiga teclado.
+_mensajes = {}
+TOPE_MENSAJES = 300
+# Desde 2026-11-04 un mensaje nuevo no cancela nada y esto queda vacio; se conserva
+# el aviso porque D49 sigue: lo que se apague solo, se dice.
 _caidos = {}
 # Los hechos de un mismo mensaje que esperan turno: {"hechos": [...], "en": t}.
 _cola = {}
@@ -1607,33 +1974,84 @@ def _cancelar_en_base(chat, borrador_id):
     log.info("reemplazado: borrador=%s telegram=%s -> %s", borrador_id, chat, estado)
 
 
-def _registrar(chat, dato, viejo):
-    """Anota un borrador recien sellado. Tres casos, y cada uno es una regla:
+def _registrar(chat, dato):
+    """Anota un borrador recien sellado. Dos casos, y el dato los distingue:
 
-    - mensaje NUEVO (`_modo_propuesta == "nuevo"`): la `proponer` salio sin
-      `conservar_pendientes`, asi que el servidor ya cancelo todo lo pendiente.
-      El registro se vacia igual, y lo que cayo se dice (`_caidos`). Las
-      siguientes propuestas del MISMO mensaje ya conservan.
-    - REFINAMIENTO (el foco era una propuesta viva, o una pregunta sobre ella):
-      la nueva la sustituye. La vieja se apaga en la base explicitamente,
-      porque esta `proponer` salio conservando.
-    - si no, se agrega (el segundo hecho de un mensaje, o la pieza que faltaba).
+    - por defecto se SUMA (2026-11-04, Norman: conviven, cada una con su VA).
+    - si esta dentro de `_reemplazando(chat, id)`, sustituye a ESE id y a ningun
+      otro. La vieja se apaga en la base explicitamente, porque esta `proponer`
+      salio conservando.
+
+    Lo que hubiera en el foco no decide nada: era la causa comun de S3 y S4.
     """
     reg = _pendientes.setdefault(chat, {})
     bid = dato["borrador_id"]
     dato.setdefault("_sellado_en", time.time())
-    if _modo_propuesta.get(chat) == "nuevo":
-        caidos = [d for b, d in reg.items() if b != bid]
-        reg.clear()
-        _modo_propuesta[chat] = "agrega"
-        if caidos:
-            _caidos[chat] = caidos
-    elif isinstance(viejo, dict):
-        reemplaza = viejo.get("borrador_id") or viejo.get("_reemplaza")
-        if reemplaza and reemplaza != bid and reemplaza in reg:
-            reg.pop(reemplaza, None)
-            _cancelar_en_base(chat, reemplaza)
+    reemplaza = _reemplazo.get(chat)
+    if reemplaza and reemplaza != bid and reemplaza in reg:
+        reg.pop(reemplaza, None)
+        _soltar_esperas(chat, reemplaza)
+        _cancelar_en_base(chat, reemplaza)
     reg[bid] = dato
+
+
+@contextlib.contextmanager
+def _reemplazando(chat, borrador_id):
+    """Lo que se selle aqui dentro sustituye a `borrador_id`. Al salir, por la
+    razon que sea (el `proponer` fallo, pregunto, reventó), no queda nada puesto."""
+    previo = _reemplazo.get(chat)
+    if borrador_id:
+        _reemplazo[chat] = borrador_id
+    try:
+        yield
+    finally:
+        if previo:
+            _reemplazo[chat] = previo
+        else:
+            _reemplazo.pop(chat, None)
+
+
+def _soltar_esperas(chat, borrador_id):
+    """Un borrador que se apaga se lleva lo que se esperaba por texto para el."""
+    for espera in (_esperando_monto, _esperando_codigo, _esperando_vigencia,
+                   _esperando_cantidad_compra):
+        if espera.get(chat) == borrador_id:
+            espera.pop(chat, None)
+
+
+def _guardar_pregunta(chat, dato):
+    """Le da su id a una pregunta con botones. Sus botones lo llevan (`_lista_de`)."""
+    dato["_pid"] = "q" + uuid.uuid4().hex[:8]
+    dato["_nacida_en"] = time.time()
+    _preguntas.setdefault(chat, {})[dato["_pid"]] = dato
+
+
+def _lista_de(chat, teclado):
+    """Ata cada boton de una lista al objeto en el foco: su borrador o su pregunta.
+
+    2026-11-04 (auditoria, S5): `setdeu:<i>` no decia de quien era, asi que el indice
+    de una lista vieja se aplicaba a lo que hubiera en el foco. Se hace aqui y no en
+    cada `_teclado_*` para que una lista nueva no se pueda olvidar. Con un uuid el
+    `callback_data` mas largo (`setcomp:<i>:<uuid>`) no pasa de 48 bytes."""
+    dato = dict.get(_memoria, chat)
+    dueno = ""
+    if isinstance(dato, dict):
+        dueno = dato.get("borrador_id") or dato.get("_pid") or ""
+    if not dueno:
+        return teclado
+    filas = []
+    for fila in teclado.inline_keyboard:
+        nueva = []
+        for boton in fila:
+            data = str(boton.callback_data or "")
+            partes = data.split(":")
+            if data == "no:x":
+                data = "no:" + dueno if _PATRON_UUID.match(dueno) else "no:x:" + dueno
+            elif partes[0] in _ACCIONES_DE_LISTA and len(partes) == 2:
+                data = data + ":" + dueno
+            nueva.append(InlineKeyboardButton(boton.text, callback_data=data))
+        filas.append(nueva)
+    return InlineKeyboardMarkup(filas)
 
 
 def _soltar_foco(chat):
@@ -1650,9 +2068,12 @@ def _enfocar(chat, borrador_id):
     reg = _pendientes.get(chat) or {}
     dato = reg.get(borrador_id)
     if dato is None:
+        dato = _pregunta_viva(chat, borrador_id)
+    if dato is None:
         return False
     foco = dict.get(_memoria, chat)
-    if isinstance(foco, dict) and foco.get("borrador_id") == borrador_id:
+    if foco is dato or (isinstance(foco, dict) and foco.get("borrador_id")
+                        and foco.get("borrador_id") == borrador_id):
         return True
     if isinstance(foco, dict) and not foco.get("borrador_id"):
         _apartado[chat] = foco
@@ -1660,14 +2081,31 @@ def _enfocar(chat, borrador_id):
     return True
 
 
+def _pregunta_viva(chat, pid):
+    preguntas = _preguntas.get(chat) or {}
+    dato = preguntas.get(pid)
+    if dato is not None and time.time() - float(dato.get("_nacida_en") or 0) > VIDA_DEL_BORRADOR:
+        preguntas.pop(pid, None)
+        return None
+    return dato
+
+
+def _enfocar_pregunta(chat, tipo):
+    """Pone en el foco la pregunta de ese tipo mas reciente. True si la habia."""
+    for dato in reversed(list((_preguntas.get(chat) or {}).values())):
+        if dato.get("tipo") == tipo:
+            return _enfocar(chat, dato["_pid"])
+    return False
+
+
 def _rehidratar(chat):
     """D77: tras un reinicio, los borradores PENDIENTE de menos de 30 min vuelven.
 
     Una vez por chat y por proceso. Sin esto, el boton VA de una propuesta que
     sigue en la pantalla de Norman contestaba "no tengo nada pendiente" despues
-    de cualquier reinicio del vigilante. Solo se trae lo que confirmar necesita
-    (`borrador_id`, `sello`, tipo): el payload vive en la base y alli se queda.
-    Devuelve cuantos rehidrato.
+    de cualquier reinicio del vigilante. Se trae lo que confirmar necesita
+    (`borrador_id`, `sello`, tipo) y, en gasto y abono, el `contexto` con el que
+    se propuso (`_restaurar_contexto`). Devuelve cuantos rehidrato.
     """
     if chat in _rehidratado:
         return 0
@@ -1688,11 +2126,22 @@ def _rehidratar(chat):
         dato = {"borrador_id": bid, "sello": sello, "rehidratado": True}
         if tipo != "gasto":
             dato["tipo"] = tipo
+        if tipo in ("gasto", "abono"):
+            _restaurar_contexto(chat, dato, p.get("contexto"))
         try:
             nacido = dt.datetime.fromisoformat(str(p.get("creado_en"))).timestamp()
         except ValueError:
             nacido = ahora
         dato["_sellado_en"] = nacido
+        # La foto no viaja con el borrador: su lazo vive en el indice local. Sin
+        # esto, tras un reinicio su descripcion volvia al enrutador sin marca y la
+        # propuesta perdia el boton de quitar la foto.
+        foto = comprobantes.de_borrador(bid)
+        if foto:
+            dato["comprobante"] = foto
+            vuelo = comprobantes.foto_de_vuelo(bid)
+            if vuelo:
+                dato["foto_de_vuelo"] = vuelo
         reg[bid] = dato
     if reg and dict.get(_memoria, chat) is None:
         dict.__setitem__(_memoria, chat, list(reg.values())[-1])
@@ -1701,12 +2150,51 @@ def _rehidratar(chat):
     return len(reg)
 
 
+def _restaurar_contexto(chat, dato, contexto):
+    """La cuenta de un gasto o abono rehidratado. **Lo que no se sabe, se pregunta.**
+
+    2026-11-04 (auditoria, S1): el rehidratado perdia `cuenta_pendiente` y un "va"
+    escribia la cuenta default, que nadie dijo. Ahora `bot_borradores` guarda con que
+    se propuso. Un borrador de antes de este cambio no lo trae: se trata como
+    pendiente, y como no tiene su `propuesta` no se puede volver a proponer.
+    """
+    abono = dato.get("tipo") == "abono"
+    if not isinstance(contexto, dict) or not contexto:
+        cuentas = [c for c in _cuentas_vivas(chat)
+                   if not abono or c.get("id") not in SOLO_EGRESOS]
+        # Con una sola cuenta no hay nada que preguntar. Con cero, tampoco se sabe.
+        dato.update(_estado_de_cuenta({}, cuentas), cuentas=cuentas,
+                    cuenta_pendiente=len(cuentas) != 1)
+        return
+    cuentas = [c for c in contexto.get("cuentas") or []
+               if isinstance(c, dict) and not (abono and c.get("id") in SOLO_EGRESOS)]
+    cuenta = contexto.get("cuenta") if isinstance(contexto.get("cuenta"), dict) else {}
+    dato.update(_estado_de_cuenta(cuenta, cuentas), cuentas=cuentas, cuenta=dict(cuenta),
+                id_cuenta=contexto.get("id_cuenta"))
+    if isinstance(contexto.get("propuesta"), dict):
+        dato["propuesta"] = dict(contexto["propuesta"])
+    if abono:
+        dato.update(id_deudor=contexto.get("id_deudor"), opciones=list(_deudores),
+                    nombre_deudor=contexto.get("nombre_deudor"))
+    else:
+        dato.update(sugeridas=list(contexto.get("sugeridas") or []),
+                    categorias=list(_catalogo))
+
+
+def _contexto_para_base(cuenta, propuesta, sugeridas=None):
+    """Lo que el servidor guarda junto al borrador para `_restaurar_contexto`.
+    No entra al sello ni a la fila: si esto se pierde, se pregunta la cuenta."""
+    return {"cuenta": dict(cuenta or {}), "propuesta": dict(propuesta or {}),
+            "sugeridas": list(sugeridas or [])}
+
+
 def _olvidar_chat(chat):
     """Todo el estado de conversacion de un chat, fuera. Lo usan las pruebas
     para que un caso no herede el registro del anterior."""
-    for d in (_pendientes, _apartado, _modo_propuesta, _caidos, _cola,
+    for d in (_pendientes, _apartado, _preguntas, _reemplazo, _caidos, _cola,
               _historial, _eventos):
         d.pop(chat, None)
+    _mensajes.pop(_chat_de(chat), None)
     _rehidratado.discard(chat)
     dict.pop(_memoria, chat, None)
 
@@ -1722,9 +2210,40 @@ _historial = {}
 _eventos = {}
 
 
+# Hasta donde `_etiqueta_de` deja una descripcion.
+LARGO_ETIQUETA = 24
+# True mientras el bot habla de lo que leyo en un ticket (`_hablando_de_ticket`).
+_texto_de_ticket = contextvars.ContextVar("texto_de_ticket", default=False)
+
+
+@contextlib.contextmanager
+def _hablando_de_ticket(si=True):
+    marca = _texto_de_ticket.set(bool(si) or _texto_de_ticket.get())
+    try:
+        yield
+    finally:
+        _texto_de_ticket.reset(marca)
+
+
+def _cita_un_ticket(chat, texto):
+    """¿Cita una propuesta que salio de un ticket? Pasa fuera de ese turno, con
+    `_etiqueta_de`, que RECORTA la descripcion: se compara contra lo recortado, y
+    con los espacios como los deja `_texto_plano`."""
+    for d in _pendientes_de(chat):
+        detalle = _texto_plano(str((d.get("propuesta") or {}).get("descripcion") or "")[:LARGO_ETIQUETA])
+        if d.get("comprobante") and detalle and detalle in texto:
+            return True
+    return False
+
+
 def _anotar(chat, texto):
-    """Lo que el bot le dijo a Norman en este turno, para el historial."""
+    """Lo que el bot le dijo a Norman en este turno, para el historial. Lo que
+    viene de un ticket va marcado: de aqui vuelve a entrar al enrutador. La cita se
+    busca ANTES del tope de 240: "Sigue pendiente" puede caer al final del mensaje."""
+    de_ticket = _texto_de_ticket.get() or _cita_un_ticket(chat, _texto_plano(texto, 100000))
     texto = _texto_plano(texto, 240)
+    if texto and de_ticket:
+        texto = enrutador.dato_de_ticket(texto)
     if texto:
         _eventos.setdefault(_chat_de(chat), []).append(texto)
 
@@ -1868,6 +2387,28 @@ class _UpdateQueAnota:
 # CAMPOS ya extraidos (`estado='incompleto'`, y **sin sello**, que es lo que los
 # distingue de un borrador de verdad), y el mensaje nuevo solo los completa.
 _esperando_monto = {}
+# 2026-11-07: el gasto de insumo al que le falta CUANTO para volverse compra.
+# El siguiente texto, si es un numero ("50", "50 kg"), es esa cantidad y **no
+# pasa por el modelo**; si no es numero, sigue su camino normal (la pregunta era
+# opcional: el gasto ya esta propuesto y su VA escribe solo el dinero).
+_esperando_cantidad_compra = {}
+_PATRON_CANTIDAD = re.compile(r"\s*\d+(?:[.,]\d+)?\s*[a-zA-Z]{0,12}\s*")
+
+
+def _marcar_espera_compra(chat, r):
+    """Abre (o cierra) la espera de la cantidad segun lo que contesto el servidor."""
+    if (r or {}).get("compra_falta") == "cantidad" and r.get("borrador_id"):
+        _esperando_cantidad_compra[chat] = r["borrador_id"]
+    else:
+        _esperando_cantidad_compra.pop(chat, None)
+
+
+def _cantidad_de_texto(texto):
+    """'50', '50 kg', '1,5 kilos' -> el texto que lee el servidor, o None. **Pura.**"""
+    t = str(texto or "")
+    if not _PATRON_CANTIDAD.fullmatch(t):
+        return None
+    return re.sub(r"(\d),(\d{1,2})(?!\d)", r"\1.\2", t.strip())
 # Igual que `_esperando_monto`, pero para el codigo de un lote: el boton
 # "Otro codigo" abre la captura y el siguiente texto ES el codigo, sin pasar
 # por el modelo.
@@ -2101,7 +2642,8 @@ async def _responder_natural(update, ruta):
     elif intencion == "reporte":
         aviso = "Todavia no tengo el reporte del dia. Por ahora: /ventas, /stock o /cartera."
     elif intencion == "consulta":
-        aviso = "Eso todavia no lo se consultar. Hoy puedo: stock, cartera, ventas y produccion."
+        aviso = ("Eso todavia no lo se consultar. Hoy puedo: inventario (cuantas botellas quedan), "
+                 "gastos del mes, cartera, ventas, produccion y precios.")
     else:
         # Aqui caen `charla` y el "no entendi", que son justo los dos caminos
         # donde una cadena fija se siente un formulario. Si el modelo redacto
@@ -2126,16 +2668,98 @@ def _propuesta_de_gasto(campos, catalogo):
         if str(c).strip().lower() == nombre.lower():
             existente = c
             break
+    # El proveedor no tiene columna: va en el concepto si no venia ya ahi.
+    descripcion, proveedor = campos.get("descripcion"), campos.get("proveedor")
+    if proveedor and str(proveedor).lower() not in str(descripcion or "").lower():
+        descripcion = "%s (%s)" % (descripcion, proveedor) if descripcion else proveedor
     return {
         "monto": campos.get("monto"),
         "categoria": existente,
         "categoria_nueva": None if (existente or not nombre) else nombre,
-        "descripcion": campos.get("descripcion"),
+        "descripcion": descripcion,
         "fecha": campos.get("fecha"),
     }
 
 
-async def _proponer_gasto_directo(update, chat, propuesta):
+async def _ensenar_gasto(update, chat, mensaje):
+    dato = _memoria.get(chat)
+    await _ensenar_propuesta(update, chat, _mensaje_con_cuenta(dato, mensaje), _teclado_gasto(dato))
+
+
+def _mismo_monto(a, b):
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return False
+
+
+def _dia_de(propuesta):
+    """El dia de una propuesta. Sin fecha es hoy: es lo que entiende el enrutador
+    (`dt.date.today()`) y lo que pone el servidor."""
+    return str(propuesta.get("fecha") or dt.date.today().isoformat())[:10]
+
+
+def _sin_ruido(x):
+    return " ".join(str(x or "").lower().split())
+
+
+def _mismo_gasto(propuesta, viva):
+    """True si la propuesta viva parece ser este mismo gasto. Un falso positivo
+    cuesta una pregunta; un falso negativo, escribirlo dos veces."""
+    if _tipo_de(viva) != "gasto":
+        return False
+    otra = viva.get("propuesta") or {}
+    if not _mismo_monto(otra.get("monto"), propuesta.get("monto")):
+        return False
+    if _dia_de(otra) != _dia_de(propuesta):
+        return False
+    a, b = _sin_ruido(propuesta.get("descripcion")), _sin_ruido(otra.get("descripcion"))
+    return bool(a and b and (a in b or b in a))
+
+
+def _mismo_abono(propuesta, id_deudor, nombre, viva):
+    """Lo mismo para un abono: mismo monto, mismo dia y mismo deudor. El deudor se
+    compara por uuid si los dos lo traen; si no, por el nombre dicho."""
+    if _tipo_de(viva) != "abono":
+        return False
+    otra = viva.get("propuesta") or {}
+    if not _mismo_monto(otra.get("monto"), propuesta.get("monto")):
+        return False
+    if _dia_de(otra) != _dia_de(propuesta):
+        return False
+    if id_deudor and viva.get("id_deudor"):
+        return id_deudor == viva["id_deudor"]
+    a, b = _sin_ruido(nombre), _sin_ruido(viva.get("nombre_deudor"))
+    return bool(a and b and (a in b or b in a))
+
+
+def _mismo_traspaso(propuesta, viva):
+    """Lo mismo para un traspaso: mismo monto, mismo dia y las mismas dos cuentas,
+    cada una en su lado. Un rehidratado no trae su propuesta y no se compara."""
+    if _tipo_de(viva) != "traspaso":
+        return False
+    otra = viva.get("propuesta") or {}
+    if not _mismo_monto(otra.get("monto"), propuesta.get("monto")):
+        return False
+    if _dia_de(otra) != _dia_de(propuesta):
+        return False
+    return (otra.get("origen_id"), otra.get("destino_id")) == (
+        propuesta.get("origen_id"), propuesta.get("destino_id"))
+
+
+async def _preguntar_duplicado(update, chat, igual, que, dato):
+    """Ya hay una viva que parece esta: no se agrega sin preguntar (S12)."""
+    _memoria[chat] = dict(dato, tipo="duplicado_eligiendo", igual=igual["borrador_id"])
+    await update.effective_message.reply_text(
+        "Ya tengo pendiente " + _etiqueta_de(igual) + ", y esto parece lo mismo. "
+        "No lo agregue. Es otro " + que + "?",
+        reply_markup=_lista_de(chat, InlineKeyboardMarkup([
+            [InlineKeyboardButton("Si, es otro: agregalo", callback_data="dup:si")],
+            [InlineKeyboardButton("Es el mismo", callback_data="no:x")]])))
+
+
+async def _proponer_gasto_directo(update, chat, propuesta, cuenta=None, sugeridas=None,
+                                  ya_avisado=False, foto=None, de_vuelo=False):
     """Propone un gasto cuyos campos ya vienen resueltos por el enrutador.
 
     Es el mismo destino que `_proponer` -- la puerta sellada del servidor --
@@ -2143,26 +2767,51 @@ async def _proponer_gasto_directo(update, chat, propuesta):
     Ahorrar esa llamada es lo que hace que el bot conteste rapido, y la
     velocidad es parte de lo que Norman pidio: "Telegram tiene que ser lo mas
     conciso posible".
+
+    `foto` es la que se pega a este borrador; nunca se toma sola de la cola en
+    vuelo (lo decide `_foto_para_lo_dictado`). `de_vuelo` dice que no se leyo con
+    este gasto: la propuesta lo avisa y trae el boton para despegarla.
     """
-    estado, r = _post("/api/bot/gasto/proponer", {
-        "telegram_id": chat,
-        "propuesta": propuesta,
-    })
+    igual = None if ya_avisado else next(
+        (v for v in _pendientes_de(chat) if _mismo_gasto(propuesta, v)), None)
+    if igual is not None:
+        # S12: dos VA sobre lo mismo escriben dos filas. Se avisa ANTES de agregarlo.
+        _sacar_de_vuelo(chat, foto)
+        await _preguntar_duplicado(update, chat, igual, "gasto", {
+            "propuesta": dict(propuesta), "cuenta": dict(cuenta or {}),
+            "sugeridas": list(sugeridas or []), "foto": foto, "de_vuelo": de_vuelo})
+        return True
+    cuerpo = {"telegram_id": chat, "propuesta": propuesta,
+              "contexto_bot": _contexto_para_base(cuenta, propuesta, sugeridas)}
+    if (cuenta or {}).get("id_cuenta"):
+        cuerpo["id_cuenta"] = cuenta["id_cuenta"]
+    estado, r = _post("/api/bot/gasto/proponer", cuerpo)
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(r.get("error", "No pude proponerlo."))
         return False
 
-    _memoria[chat] = {
+    cuentas = r.get("cuentas", [])
+    _memoria[chat] = dict({
         "borrador_id": r["borrador_id"],
         "sello": r["sello"],
-        "cuentas": r.get("cuentas", []),
+        "cuentas": cuentas,
         "id_cuenta": r.get("id_cuenta"),
         "categorias": r.get("categorias", list(_catalogo)),
         "propuesta": dict(propuesta),
-    }
+        "sugeridas": list(sugeridas or []),
+        "cuenta": dict(cuenta or {}),
+        "compra_opciones": list(r.get("compra_opciones") or []),
+        "compra_falta": r.get("compra_falta"),
+    }, **_estado_de_cuenta(cuenta, cuentas))
+    _marcar_espera_compra(chat, r)
     _refrescar_catalogo(r)
-    await _ensenar_propuesta(
-        update, chat, r["mensaje"], _teclado_confirmar(r["borrador_id"]))
+    mensaje = r["mensaje"]
+    _sacar_de_vuelo(chat, foto)
+    if _adjuntar_comprobante(chat, r["borrador_id"], foto, de_vuelo):
+        mensaje = str(mensaje) + NL + NL + _pie_de_propuesta(1)
+        if de_vuelo:
+            mensaje += " Si no es de este gasto, toca Quitar la foto."
+    await _ensenar_gasto(update, chat, mensaje)
     return True
 
 
@@ -2268,7 +2917,7 @@ async def _proponer_venta(update, chat, peticion):
         else:
             teclado = _teclado_compradores(opciones, bool(r.get("permite_publico")))
         await update.effective_message.reply_text(
-            r.get("mensaje", "Cual es?"), reply_markup=teclado)
+            r.get("mensaje", "Cual es?"), reply_markup=_lista_de(chat, teclado))
         return True
 
     if estado != 200 or not r.get("ok"):
@@ -2282,7 +2931,8 @@ async def _proponer_venta(update, chat, peticion):
         "borrador_id": r["borrador_id"],
         "sello": r["sello"],
         "peticion": peticion,
-        "cuentas": r.get("cuentas", []),
+        # Una cuenta de solo egresos no recibe: ni se ofrece (igual que en el abono).
+        "cuentas": [c for c in r.get("cuentas") or [] if c.get("id") not in SOLO_EGRESOS],
         "id_cuenta": r.get("id_cuenta"),
         # La lista completa viaja con el borrador para que "Otro comprador" no
         # tenga que volver a preguntarle al servidor.
@@ -2291,6 +2941,16 @@ async def _proponer_venta(update, chat, peticion):
     await _ensenar_propuesta(
         update, chat, r["mensaje"], _teclado_confirmar_venta(r["borrador_id"]))
     return True
+
+
+def _aviso_de_concesion(r):
+    """Lo de esta venta y la deuda TOTAL del comprador. El total de la venta solo
+    no es lo que debe: Norman oyo "quedo a deber 8,256" de quien debia 15,256."""
+    aviso = "Listo. Esta venta: " + "{:,.2f}".format(float(r.get("total") or 0)) + "."
+    deuda = r.get("deuda_total")
+    if deuda is None:
+        return aviso + " No pude leer su deuda total."
+    return aviso + " Deuda total de " + str(r.get("nombre_comprador")) + ": " + "{:,.2f}".format(float(deuda)) + "."
 
 
 async def _confirmar_venta(update, chat):
@@ -2314,7 +2974,7 @@ async def _confirmar_venta(update, chat):
 
     _memoria.pop(chat, None)
     if r.get("condicion_pago") == "CONCESION":
-        aviso = "Listo. Quedo a deber " + "{:,.2f}".format(float(r.get("total") or 0)) + "."
+        aviso = _aviso_de_concesion(r)
     else:
         aviso = "Listo. Quedo escrita."
     await update.effective_message.reply_text(aviso)
@@ -2363,12 +3023,17 @@ def _peticion_de_lote(campos):
                 continue
             nombre = c.get("insumo") or c.get("nombre")
             if nombre:
-                insumos.append({"insumo": nombre, "cantidad": c.get("cantidad")})
+                linea = {"insumo": nombre, "cantidad": c.get("cantidad")}
+                # Fase 7A: la plantilla dice en que unidad se dicto (kg); el
+                # servidor lo pasa a la del catalogo (el aditivo va en GRAMOS).
+                if c.get("unidad") in ("kg", "g"):
+                    linea["unidad"] = c.get("unidad")
+                insumos.append(linea)
 
     kg = campos.get("kg_chile")
     ya_hay_chile = any("chile" in str(i.get("insumo")).lower() for i in insumos)
     if kg not in (None, "", 0) and not ya_hay_chile:
-        insumos.append({"insumo": "chile-guajillo", "cantidad": kg})
+        insumos.append({"insumo": "chile-guajillo", "cantidad": kg, "unidad": "kg"})
 
     tandas = []
     for t in (campos.get("tandas") or []):
@@ -2399,7 +3064,7 @@ def _lote_es_de_otro_camino(campos):
     Entonces va al camino F0/D81 de `_proponer_lote`, que agrega al existente."""
     if campos.get("codigo_lote") not in (None, ""):
         return True
-    propios = (str(lote_plantilla.plantilla().get("aditivo_1_sku") or "ing-az").lower(),)
+    propios = (str(lote_plantilla.plantilla().get("aditivo_1_sku") or "mosto-1").lower(),)
     for c in (campos.get("insumos") or []):
         if not isinstance(c, dict):
             continue
@@ -2439,7 +3104,7 @@ async def _proponer_lote(update, chat, peticion, auto=False):
         }
         teclado = _teclado_insumos(opciones) if campo == "insumo" else _teclado_formatos(opciones)
         await update.effective_message.reply_text(
-            r.get("mensaje", "Cual es?"), reply_markup=teclado)
+            r.get("mensaje", "Cual es?"), reply_markup=_lista_de(chat, teclado))
         return True
 
     if estado == 200 and r.get("falta_empaque"):
@@ -2720,7 +3385,7 @@ async def _proponer_cotizacion(update, chat, peticion):
             teclado = _teclado_clientes(opciones, bool(r.get("permite_prospecto")),
                                         r.get("nombre_dicho") or "")
         await update.effective_message.reply_text(
-            r.get("mensaje", "Cual es?"), reply_markup=teclado)
+            r.get("mensaje", "Cual es?"), reply_markup=_lista_de(chat, teclado))
         return True
 
     if estado != 200 or not r.get("ok"):
@@ -2805,13 +3470,17 @@ def _recaptura_con(valores, campo, nuevo):
     regala ventana de edicion, porque la ventana se cuenta desde
     `fecha_movimiento`. Por eso `mensajeDeRecaptura` la ensena antes del "va":
     para que se pueda cazar ahi y no en el corte.
+
+    2026-11-04: va el instante entero. `[:10]` era el dia en UTC: un gasto de las 21:00
+    en Mexico ya es manana en UTC, y al corregirlo se iba al dia siguiente. Antes lo
+    tapaba de casualidad que `new Date('AAAA-MM-DD')` restaba ese mismo dia.
     """
     valores = valores or {}
     propuesta = {
         "monto": valores.get("monto"),
         "categoria": valores.get("categoria"),
         "descripcion": valores.get("descripcion"),
-        "fecha": (valores.get("fecha") or "")[:10] or None,
+        "fecha": valores.get("fecha") or None,
     }
     propuesta[campo] = nuevo
     return propuesta
@@ -2880,7 +3549,7 @@ async def _proponer_alta(update, chat, cuerpo):
                           "peticion": dict(cuerpo),
                           "opciones": opciones}
         await update.effective_message.reply_text(
-            r.get("mensaje", "Cual?"), reply_markup=_teclado_alta(opciones))
+            r.get("mensaje", "Cual?"), reply_markup=_lista_de(chat, _teclado_alta(opciones)))
         return True
 
     # --- Hace falta un texto ----------------------------------------------
@@ -2952,7 +3621,7 @@ async def _proponer_conversion(update, chat, cuerpo):
                           "peticion": dict(cuerpo),
                           "opciones": opciones}
         await update.effective_message.reply_text(
-            r.get("mensaje", "Cual?"), reply_markup=_teclado_conversion(opciones))
+            r.get("mensaje", "Cual?"), reply_markup=_lista_de(chat, _teclado_conversion(opciones)))
         return True
 
     if estado != 200 or not r.get("ok"):
@@ -3028,7 +3697,7 @@ async def _proponer_anulacion(update, chat, cuerpo, accion="anular"):
                           "accion": accion,
                           "opciones": opciones}
         await update.effective_message.reply_text(
-            r.get("mensaje", "Cual?"), reply_markup=_teclado_movimientos(opciones))
+            r.get("mensaje", "Cual?"), reply_markup=_lista_de(chat, _teclado_movimientos(opciones)))
         return True
 
     if estado != 200 or not r.get("ok"):
@@ -3107,6 +3776,10 @@ INTENCIONES_QUE_ESCRIBEN = (
     "gasto", "abono", "venta", "lote", "cotizacion",
     # Fase 5. Escriben igual que las de arriba, aunque la fila la elija un boton.
     "anular", "corregir", "alta", "convertir",
+    # 2026-11-03: agregar categoria/subcategoria (propone; escribe el clic de Norman).
+    "categoria",
+    # 2026-11-05: mover dinero entre dos cuentas propias.
+    "traspaso",
     # Y la que de verdad aprieta el gatillo: `confirmar` es el paso que convierte
     # el borrador sellado en INSERT. El sello protege el CONTENIDO -- el monto es
     # el que Norman vio en pantalla -- pero no protege el DISPARADOR.
@@ -3118,7 +3791,7 @@ INTENCIONES_QUE_ESCRIBEN = (
 # que valga la pena recordar, y pisar `_memoria` con ellas seria un defecto**:
 # ahi vive la propuesta sellada que esta en pantalla, y sobreescribirla con un
 # borrador vacio la mataria justo cuando Norman iba a decir que va.
-INTENCIONES_CON_BORRADOR = ("gasto", "abono", "venta", "lote", "cotizacion", "alta")
+INTENCIONES_CON_BORRADOR = ("gasto", "abono", "venta", "lote", "cotizacion", "alta", "traspaso")
 
 
 ETIQUETAS_DE_NOTA = ("lote", "persona", "cliente", "tema")
@@ -3178,12 +3851,30 @@ async def _en_pausa(update, hasta=None):
     return True
 
 
+def aviso_modelo_caido(error):
+    """Lo que se le dice en el mismo chat cuando el modelo falla. **Pura.**"""
+    comandos = ("Si corre prisa, /stock, /cartera, /ventas y /abono no pasan por el "
+                "modelo y siguen funcionando.")
+    if getattr(error, "causa", None) == CAUSA_LOGIN:
+        return ("No pude leer ese mensaje: se vencio el login de Claude en la PC. "
+                "Norman: hay que correr `claude login` ahi. No escribi nada y el mensaje "
+                "quedo guardado sin procesar; cuando vuelva, dimelo otra vez. " + comandos)
+    return ("No pude leer ese mensaje: se me cayo el modelo. No escribi nada y quedo "
+            "guardado sin procesar. Dimelo otra vez. " + comandos)
+
+
 async def _enrutar_y_despachar(update, chat, texto, esperando=""):
     """Ronda 5 (decision de Norman, 2026-10-19): la gente NO dicta temperatura;
     sale SOLO de Open-Meteo. Ya no hay interceptor de temperatura antes del
     modelo: si la mencionan con una plantilla o una etapa abierta, va a sus
     notas (`lote_plantilla` / `lote_ciclo`); si no, el mensaje sigue entero su
     camino normal."""
+    # 2026-11-09 (ronda 2): la NOTA DE VOZ entra por aqui, no por
+    # `_manejar_texto`. Si se esperaba el monto de una suscripcion ("Otro monto",
+    # o los pesos de una en USD), "480 pesos." dictado lo resuelve sin modelo. En
+    # texto la espera ya se consumio en `_manejar_texto` (el pop deja vacio).
+    if await suscripciones.atender_texto(update, chat, texto, _post):
+        return
     await _enrutar_y_despachar_mensaje(update, chat, texto, esperando)
 
 
@@ -3223,11 +3914,22 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # Cazador F0 (WP-7a): "hoy empezamos lote" y las respuestas a la plantilla
     # se leen SIN modelo (`bot/plantillas/lote.yaml`). Si el mensaje no es de
     # la plantilla, `atender` devuelve False y sigue el camino de siempre.
+    # Fase 7B (2026-11-07): "trazabilidad del lote X", "en que etapa va el lote
+    # X", "lotes abiertos", "cuanto se produjo este mes" se contestan SIN modelo
+    # y ANTES del cazador de lote (que lee "...del L-12-10.1" como registro). Si
+    # el servidor no la reconoce (p. ej. master sin Fase 7B), sigue lo de siempre.
+    if not esperando and _pregunta_de_lote(texto) and await _contestar_pregunta(update, chat, texto, "produccion"):
+        return
     if not esperando and await lote_ciclo.atender(update, chat, texto, _confirmar_etapa_lote, post=_post):
         return
     if not esperando and await lote_plantilla.atender(update, chat, texto, _proponer_lote, _peticion_de_lote,
                                                       codigo_nuevo=_codigo_nuevo_lote,
                                                       confirmar=_confirmar_plantilla_lote):
+        return
+    # 2026-11-07 (paridad con la web, Fase 3): "se rompieron 2 de 750" se lee SIN
+    # modelo. Si el servidor dice que no es merma (no nombra un producto), sigue
+    # el camino de siempre con el mismo mensaje.
+    if not esperando and _habla_de_merma(texto) and await _proponer_merma(update, chat, texto):
         return
     if await _en_pausa(update):
         return
@@ -3236,6 +3938,7 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # D73 (Fase 8): el historial corto del chat viaja marcado como pasado.
     # D100 (Fase 9): en un grupo, el modelo sabe QUIEN le escribe.
     extra = {"hablante": _nombre_de(_persona(chat))} if _en_grupo(chat) else {}
+    extra["cuentas"] = await asyncio.to_thread(_cuentas_vivas, chat)
     ok, ruta = await asyncio.to_thread(
         enrutar, texto, a_medias, list(_catalogo),
         _nombres_deudores(), productos, _en_pantalla(chat, esperando),
@@ -3246,10 +3949,13 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
         return
     if not ok:
         log.warning("el enrutador fallo: %s", ruta)
-        await update.effective_message.reply_text(
-            "No pude leer ese mensaje: se me cayo el modelo. Dimelo otra vez. "
-            "Si corre prisa, /stock, /cartera, /ventas y /abono no pasan por el "
-            "modelo y siguen funcionando.")
+        # 2026-11-04: el fallo NO cuenta como atendido. `procesado` se queda en
+        # false (la misma cola de la pausa) y el aviso dice lo que paso. Antes
+        # `manejar_voz` lo marcaba `true` y la voz de las 10:02 se perdio.
+        clave = bitacora.clave_de_update(update)
+        if clave:
+            bitacora.EN_PAUSA.add(clave)
+        await update.effective_message.reply_text(aviso_modelo_caido(ruta))
         return
 
     # D33: **el texto crudo, junto a su enrutamiento.** Hasta hoy el log
@@ -3258,6 +3964,11 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # esto, "?comprende?" no se puede medir ni hoy ni dentro de un mes. Es su
     # bot, su maquina y sus propios mensajes.
     hechos = _hechos_de(ruta)
+    # 2026-11-07: con un solo hecho, el mensaje entero es de ese hecho. El
+    # servidor lo usa SOLO para la cantidad de una compra de insumo cuando el
+    # concepto no la trae, y la ensena antes del VA.
+    if isinstance(ruta, dict) and len(hechos) <= 1:
+        ruta["texto_dicho"] = texto
     log.info("enrutado como %s (confianza %s) | dijo: %r | entendido: %r | hechos: %s",
              ruta.get("intencion"), ruta.get("confianza"), texto,
              ruta.get("entendido"), [h.get("intencion") for h in hechos])
@@ -3267,6 +3978,14 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # bot (ni lo contesta ni lo menciona) no se contesta.
     if _en_grupo(chat) and intencion == "charla" and not _le_hablan_al_bot(update):
         log.info("grupo %s: charla entre personas, no contesto", _chat_de(chat))
+        return
+    if reclama_ticket(texto, ruta):
+        log.info("pedido de ticket que escapo de pide_ticket: %r", texto)
+        await _mostrar_ticket(update, chat, texto)
+        return
+    if niega_tickets(texto, ruta):
+        log.info("el modelo nego los tickets, corrijo: %r", ruta.get("respuesta"))
+        await update.effective_message.reply_text(AVISO_SI_HAY_TICKETS)
         return
 
     # ── D30: LA CONFIANZA DEJA DE CALCULARSE PARA TIRARSE ───────────────────
@@ -3343,11 +4062,7 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
         # escribe ninguna fila, apaga un borrador. Bloquearlo por dudar dejaria
         # vivo justo lo que Norman acaba de rechazar.
         lote_plantilla.olvidar(chat)  # WP-7a
-        if len(_pendientes_de(chat)) >= 2:
-            await update.effective_message.reply_text(_cancelar_todo(chat))
-            return
-        await update.effective_message.reply_text(
-            _cancelar_de_verdad(chat, _borrador_vivo(chat)))
+        await _cancelar_lo_dicho(update, chat)
         return
 
     if intencion == "ajustar":
@@ -3361,11 +4076,6 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     if hechos:
         await _despachar_hechos(update, chat, ruta, hechos, completando=a_medias is not None)
         return
-
-    if intencion in ("anular", "corregir", "alta", "convertir"):
-        # Una accion nueva, como un hecho nuevo: su propuesta cancela lo que
-        # estaba esperando VA (el comportamiento de siempre).
-        _modo_propuesta[chat] = "nuevo"
 
     if intencion == "anular":
         # FASE 5. El enrutador NO dice cual: lo dice la persona, con un boton,
@@ -3398,6 +4108,23 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
         await _proponer_alta(update, chat, peticion)
         return
 
+    if intencion == "categoria":
+        # 2026-11-03. El modelo solo aporta los dos nombres; la regla (que no
+        # se repita, que una categoria nueva no dispare el pasivo fiscal) la
+        # aplica el servidor, igual que en la pantalla.
+        cat = str(campos.get("categoria") or "").strip()
+        sub = str(campos.get("subcategoria") or "").strip()
+        if not cat or not sub:
+            _recordar_a_medias(chat, "categoria", campos)
+            await update.effective_message.reply_text(
+                ruta.get("pregunta") or ("En que categoria, y como se llama la subcategoria nueva?"
+                                         if not cat else "Como se llama la subcategoria nueva?"))
+            return
+        tipo = "INGRESO" if str(campos.get("tipo") or "").upper() == "INGRESO" else "EGRESO"
+        await _proponer_categoria(update, chat, {"telegram_id": chat, "tipo": tipo,
+                                                 "categoria": cat, "subcategoria": sub})
+        return
+
     if intencion == "convertir":
         # PASO 6. El folio, si lo dijo, solo sirve para no ensenar la lista; y
         # aun asi la fila se busca por id, no por folio dictado. Si no lo dijo,
@@ -3409,6 +4136,10 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
         # `ruta["consulta"]` en vez de volver a clasificar con el modelo. Y el
         # filtro tal cual: quien lo prueba contra el producto y contra el punto
         # de venta es el servidor, no este proceso.
+        # 2026-11-07: primero la pregunta libre (saldo, movimientos, ventas de un
+        # periodo, ticket); lo que no reconoce sigue a la consulta de siempre.
+        if await _contestar_pregunta(update, chat, texto, ruta.get("consulta")):
+            return
         if await _contestar_consulta(update, chat, ruta.get("consulta"), ruta.get("filtro")):
             return
         await _responder_natural(update, ruta)
@@ -3458,8 +4189,7 @@ async def _despachar_hechos(update, chat, ruta, hechos, completando=False):
     solo cuando la respuesta llega (`_seguir_cola`).
 
     Un mensaje NUEVO (no la respuesta a una pregunta) suelta la cola del
-    anterior, y lo dice. Y su primera propuesta cancela lo que estaba esperando
-    VA (`_modo_propuesta = "nuevo"`), como siempre.
+    anterior, y lo dice. Su propuesta se suma a las que esperan VA (2026-11-04).
     """
     vieja = _cola.pop(chat, None)
     vigente = bool(vieja and (time.time() - vieja.get("en", 0)) <= VIDA_DEL_BORRADOR
@@ -3471,7 +4201,6 @@ async def _despachar_hechos(update, chat, ruta, hechos, completando=False):
         await update.effective_message.reply_text(
             "Lo que quedaba por capturar (" + _nombres_de_hechos(vieja["hechos"])
             + ") lo deje: no lo escribi. Si va, dimelo otra vez.")
-    _modo_propuesta[chat] = "agrega" if completando else "nuevo"
 
     # Completos primero; el orden de los incompletos es el dictado.
     ordenados = ([h for h in hechos if not h.get("faltantes")]
@@ -3519,6 +4248,10 @@ async def _despachar_lista(update, chat, hechos, ruta=None):
             dict.__setitem__(_memoria, chat, vivos[-1])
 
 
+# Lo que sale de la cola se dicto ANTES: no es el gasto que la foto esta esperando.
+_desde_cola = contextvars.ContextVar("desde_cola", default=False)
+
+
 async def _seguir_cola(update, chat):
     """Si quedaron hechos en cola y el bot ya no espera respuesta, siguen."""
     cola = _cola.get(chat)
@@ -3530,8 +4263,11 @@ async def _seguir_cola(update, chat):
     if _esperando_respuesta(chat):
         return
     _cola.pop(chat, None)
-    _modo_propuesta[chat] = "agrega"
-    await _despachar_lista(update, chat, list(cola.get("hechos") or []), None)
+    marca = _desde_cola.set(True)
+    try:
+        await _despachar_lista(update, chat, list(cola.get("hechos") or []), None)
+    finally:
+        _desde_cola.reset(marca)
 
 
 async def _despachar_hecho(update, chat, hecho, ruta=None):
@@ -3564,7 +4300,13 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
             await update.effective_message.reply_text(
                 pregunta or "Cuanto fue?")
             return
-        await _proponer_gasto_directo(update, chat, _propuesta_de_gasto(campos, _catalogo))
+        foto = _foto_para_lo_dictado(chat)
+        propuesta_gasto = _propuesta_de_gasto(campos, _catalogo)
+        if ruta.get("texto_dicho"):
+            propuesta_gasto["texto_dicho"] = str(ruta["texto_dicho"])[:500]
+        await _proponer_gasto_directo(update, chat, propuesta_gasto,
+                                      _cuenta_de_campos(campos), campos.get("categorias_sugeridas"),
+                                      foto=foto, de_vuelo=bool(foto))
         return
 
     if intencion == "abono":
@@ -3578,9 +4320,13 @@ async def _despachar_hecho(update, chat, hecho, ruta=None):
                 pregunta or "De cuanto fue el abono?")
             return
         if await _proponer_abono(update, chat, _propuesta_de_abono(campos),
-                                 nombre=campos.get("deudor")):
+                                 nombre=campos.get("deudor"), cuenta=_cuenta_de_campos(campos)):
             return
         await _responder_natural(update, ruta)
+        return
+
+    if intencion == "traspaso":
+        await _atender_traspaso(update, chat, campos, pregunta)
         return
 
     if intencion == "venta":
@@ -3730,13 +4476,17 @@ def _vacio(valor):
     return valor is None or valor == "" or valor == [] or valor == {}
 
 
-async def _ajustar(update, chat, ruta):
+async def _ajustar(update, chat, ruta, blanco_id=None):
     """D74: una correccion a lo que esta EN PANTALLA se SUMA, no empieza de cero.
 
     "fue venta a concesion" despues de proponer una venta: se toma la peticion
     de ESA propuesta, se le cambian SOLO los campos que dijo, y se vuelve a
-    proponer. La propuesta vieja se apaga (`_registrar`, refinamiento). **El
-    modelo no reescribe la venta: dice que campo cambia.**
+    proponer. La propuesta vieja se apaga (`_reemplazando`). **El modelo no
+    reescribe la venta: dice que campo cambia.**
+
+    2026-11-04 (auditoria, S10): con dos o mas candidatas y sin reply no se toma la
+    del foco: se pregunta cual, y el cambio espera en la pregunta. `blanco_id` es la
+    respuesta a esa pregunta.
     """
     campos = dict(ruta.get("campos") or {})
     if ruta.get("confianza") == "baja":
@@ -3744,24 +4494,28 @@ async def _ajustar(update, chat, ruta):
             ruta.get("pregunta") or "Que le cambio, exactamente?")
         return
     sobre = str(campos.pop("sobre", "") or "").strip().lower()
-    vivos = _pendientes_de(chat)
-    blanco = None
+    # 2026-11-04: si contesta a una propuesta, el cambio es para esa.
+    if await _contesta_a_muerta(update, chat):
+        return
+    candidatas = [d for d in _pendientes_de(chat) if not sobre or _tipo_de(d) == sobre]
     foco = _memoria.get(chat)
-    if isinstance(foco, dict) and foco.get("borrador_id") and (
-            not sobre or _tipo_de(foco) == sobre):
-        blanco = foco
-    if blanco is None:
-        for d in reversed(vivos):
-            if not sobre or _tipo_de(d) == sobre:
-                blanco = d
-                break
+    nombrado = blanco_id or _borrador_del_reply(update, chat)
+    blanco = (_pendientes.get(chat) or {}).get(nombrado)
+    # La misma guarda que el "va" y el "no": contestar a un mensaje que no se ata a
+    # ninguna propuesta no se lleva a la unica viva (T18, segunda auditoria).
+    a_ciegas = not blanco_id and (nombrado == _ES_LA_PREGUNTA_CUAL
+                                  or _contesta_a_ninguna(update, chat))
+    if blanco is None and len(candidatas) == 1 and not a_ciegas:
+        blanco = candidatas[0]
+    if blanco is None and (len(candidatas) >= 2 or (candidatas and a_ciegas)):
+        await _preguntar_cual_ajuste(update, chat, ruta, candidatas)
+        return
     if blanco is None:
         if isinstance(foco, dict) and foco.get("estado") == "incompleto":
             # Una captura a medias: el cambio se suma a lo que ya se sabia.
             juntos = dict(foco.get("campos") or {})
             juntos.update({k: v for k, v in campos.items() if not _vacio(v)})
             _soltar_foco(chat)
-            _modo_propuesta[chat] = "agrega"
             await _despachar_lista(update, chat, [{
                 "intencion": foco.get("intencion"), "campos": juntos,
                 "faltantes": [], "pregunta": None, "confianza": "alta"}], ruta)
@@ -3771,12 +4525,30 @@ async def _ajustar(update, chat, ruta):
         return
 
     _enfocar(chat, blanco["borrador_id"])
-    if blanco.get("rehidratado"):
+    if blanco.get("rehidratado") and "propuesta" not in blanco:
         await update.effective_message.reply_text(
             "Esa propuesta la recupere de la base despues de un reinicio y no tengo "
             "su detalle para cambiarla. Cancelala y dictamela otra vez.")
         return
-    _modo_propuesta[chat] = "agrega"
+    with _reemplazando(chat, blanco["borrador_id"]):
+        await _aplicar_ajuste(update, chat, blanco, campos)
+
+
+async def _preguntar_cual_ajuste(update, chat, ruta, candidatas):
+    """Dos o mas a las que les podria tocar el cambio: ninguna se toca a ciegas."""
+    _memoria[chat] = {"tipo": "ajuste_eligiendo", "ruta": dict(ruta)}
+    pid = dict.get(_memoria, chat)["_pid"]
+    filas = [[InlineKeyboardButton(r[:60], callback_data="setaj:" + d["borrador_id"] + ":" + pid)]
+             for d, r in zip(candidatas, _rotulos(candidatas))]
+    filas.append([InlineKeyboardButton("Mejor no", callback_data="no:x:" + pid)])
+    await update.effective_message.reply_text(
+        "Tengo %d propuestas a las que les podria tocar ese cambio. A cual se lo hago?"
+        % len(candidatas) if len(candidatas) > 1 else
+        "No se a que propuesta contestas. Tengo esta esperando: se lo hago a ella?",
+        reply_markup=InlineKeyboardMarkup(filas))
+
+
+async def _aplicar_ajuste(update, chat, blanco, campos):
     tipo = _tipo_de(blanco)
     if tipo == "venta":
         peticion = dict(blanco.get("peticion") or {})
@@ -3795,7 +4567,15 @@ async def _ajustar(update, chat, ruta):
             for llave in ("id_comprador", "publico"):
                 peticion.pop(llave, None)
             peticion["comprador"] = campos["comprador"]
+        cuenta = _sin_solo_egresos(chat, _cuenta_de_campos(campos))
+        if cuenta.get("id_cuenta"):
+            peticion["id_cuenta"] = cuenta["id_cuenta"]
         await _proponer_venta(update, chat, peticion)
+        if cuenta and not cuenta.get("id_cuenta"):
+            await update.effective_message.reply_text(
+                "La cuenta no la cambie: " + _por_que_preguntamos({
+                    "cuenta_oida": cuenta.get("oida"), "cuenta_solo_paga": cuenta.get("solo_paga")})
+                + "Escogela con el boton Cambiar cuenta.")
     elif tipo == "gasto":
         cambios = {k: campos[k] for k in ("monto", "descripcion", "fecha")
                    if not _vacio(campos.get(k))}
@@ -3803,16 +4583,26 @@ async def _ajustar(update, chat, ruta):
             p = _propuesta_de_gasto({"categoria": campos["categoria"]}, _catalogo)
             cambios["categoria"] = p["categoria"]
             cambios["categoria_nueva"] = p["categoria_nueva"]
-        await _reproponer(update, chat, {"propuesta": cambios})
+        ajuste = {"propuesta": cambios}
+        if campos.get("categorias_sugeridas"):
+            ajuste["sugeridas"] = campos["categorias_sugeridas"]
+        cuenta = _cuenta_de_campos(campos)
+        if cuenta.get("id_cuenta"):
+            ajuste["id_cuenta"] = cuenta["id_cuenta"]
+        elif cuenta:
+            ajuste["cuenta_duda"] = cuenta
+        await _reproponer(update, chat, ajuste)
     elif tipo == "abono":
         propuesta = dict(blanco.get("propuesta") or {})
         for llave in ("monto", "metodo_pago", "fecha"):
             if not _vacio(campos.get(llave)):
                 propuesta[llave] = campos[llave]
+        cuenta = _sin_solo_egresos(chat, _cuenta_de_campos(campos) or blanco.get("cuenta") or {})
         if campos.get("deudor"):
-            await _proponer_abono(update, chat, propuesta, nombre=campos["deudor"])
+            await _proponer_abono(update, chat, propuesta, nombre=campos["deudor"], cuenta=cuenta)
         else:
-            await _proponer_abono(update, chat, propuesta, id_deudor=blanco.get("id_deudor"))
+            await _proponer_abono(update, chat, propuesta, id_deudor=blanco.get("id_deudor"),
+                                  cuenta=cuenta)
     elif tipo == "cotizacion":
         peticion = dict(blanco.get("peticion") or {})
         nueva = _peticion_de_cotizacion(campos)
@@ -3826,6 +4616,24 @@ async def _ajustar(update, chat, ruta):
         propuesta.update(nueva["propuesta"])
         peticion["propuesta"] = propuesta
         await _proponer_cotizacion(update, chat, peticion)
+    elif tipo == "traspaso":
+        if campos.get("cuenta_id"):
+            # "mejor de Spin" sin decir de que lado: no se adivina. Se queda viva.
+            await update.effective_message.reply_text(
+                "Esa cuenta va de origen o de destino? Dimelo asi: de Spin, o a Spin.")
+            return
+        # Una cuenta que no se ubico no puede dejar la vieja como si nada: repropondria
+        # lo mismo y pareceria que hizo caso. La propuesta se queda viva.
+        sin_ubicar = next((campos[lado + "_oida"] for lado in ("origen", "destino")
+                           if campos.get(lado + "_oida") and not campos.get(lado + "_id")), None)
+        if sin_ubicar:
+            await update.effective_message.reply_text(
+                'No ubico "' + str(sin_ubicar) + '" entre tus cuentas: la propuesta sigue '
+                "igual. Dime la cuenta con su nombre.")
+            return
+        juntos = dict(blanco.get("campos") or {})
+        juntos.update({k: v for k, v in campos.items() if not _vacio(v)})
+        await _atender_traspaso(update, chat, juntos)
     else:
         await update.effective_message.reply_text(
             "Eso no lo puedo cambiar asi. Cancela la propuesta y dictamela otra vez.")
@@ -3850,7 +4658,20 @@ async def manejar_texto(update, context):
         _cerrar_turno(chat, texto)
 
 
+async def _enfocar_espera(update, chat, espera):
+    """Pone en el foco el borrador al que le corresponde el valor que acaba de
+    llegar. Si ya no vive, lo dice y devuelve False: el valor no cae en otro."""
+    if not isinstance(espera, str) or _enfocar(chat, espera):
+        return True
+    await update.effective_message.reply_text(YA_NO_ACTIVA)
+    return False
+
+
 async def _manejar_texto(update, chat, texto):
+    # 2026-11-09: el monto de una suscripcion que se estaba esperando ("Otro
+    # monto", o una en USD). Si no es un numero, la espera se suelta y sigue.
+    if await suscripciones.atender_texto(update, chat, texto, _post):
+        return
     # "va" escrito, no solo el boton: el usuario ocasional contesta como habla.
     if texto.lower() in ("va", "si", "sí", "correcto", "asi es", "dale"):
         await _confirmar(update, chat)
@@ -3858,16 +4679,13 @@ async def _manejar_texto(update, chat, texto):
     if texto.lower() in ("no", "cancela", "cancelar"):
         # D1: por texto el id no viene en la mano. Sale de la propuesta viva,
         # y se lee ANTES de que `_cancelar_de_verdad` limpie la memoria.
-        if len(_pendientes_de(chat)) >= 2:
-            await update.message.reply_text(_cancelar_todo(chat))
-            return
-        await update.message.reply_text(
-            _cancelar_de_verdad(chat, _borrador_vivo(chat)))
+        await _cancelar_lo_dicho(update, chat)
         return
 
     # Corrigiendo el monto de una propuesta viva: entra el numero y se
     # repropone con ese campo cambiado. **No pasa por el modelo.**
-    if _esperando_monto.pop(chat, False):
+    espera = _esperando_monto.pop(chat, False)
+    if espera:
         limpio = texto.replace("$", "").replace(",", "").replace("pesos", "").strip()
         try:
             monto = float(limpio)
@@ -3883,16 +4701,31 @@ async def _manejar_texto(update, chat, texto):
             await _enrutar_y_despachar(update, chat, texto,
                                        esperando="de cuanto era, solo el numero")
             return
+        # 2026-11-04 (auditoria, S2): el valor cae en el borrador del boton que lo
+        # pidio, no en lo que este en el foco cuando llegue.
+        if not await _enfocar_espera(update, chat, espera):
+            return
         dato = _memoria.get(chat) or {}
         if dato.get("tipo") == "abono":
             propuesta = dict(dato.get("propuesta") or {})
             propuesta["monto"] = monto
             # Se repropone con el MISMO deudor ya resuelto (por uuid), no con el
             # nombre: cambiar el monto no puede cambiar a quien se le abona.
-            await _proponer_abono(update, chat, propuesta,
-                                  id_deudor=dato.get("id_deudor"))
+            with _reemplazando(chat, dato.get("borrador_id")):
+                await _proponer_abono(update, chat, propuesta,
+                                      id_deudor=dato.get("id_deudor"), cuenta=dato.get("cuenta"))
             return
         await _reproponer(update, chat, {"propuesta": {"monto": monto}})
+        return
+
+    # 2026-11-07: la cantidad de un gasto de insumo, para volverlo compra. Si no
+    # es numero, no se consume: el mensaje sigue su camino normal.
+    espera_cmp = _esperando_cantidad_compra.pop(chat, False)
+    cantidad_cmp = _cantidad_de_texto(texto) if espera_cmp else None
+    if cantidad_cmp is not None:
+        if not await _enfocar_espera(update, chat, espera_cmp):
+            return
+        await _reproponer(update, chat, {"propuesta": {"cantidad_insumo": cantidad_cmp}})
         return
 
     # Contestando una pregunta del alta: el correo, o una comision. **No pasa
@@ -3901,6 +4734,10 @@ async def _manejar_texto(update, chat, texto):
     # escogieron con boton, y esos dos salieron del lenguaje natural a proposito.
     campo_alta = _esperando_alta.pop(chat, None)
     if campo_alta:
+        foco = _memoria.get(chat) or {}
+        if foco.get("tipo") != "alta_eligiendo" and not _enfocar_pregunta(chat, "alta_eligiendo"):
+            await update.message.reply_text("Ya no tengo esa alta. Empecemos otra vez.")
+            return
         dato = _memoria.get(chat) or {}
         peticion = dict(dato.get("peticion") or {})
         peticion["telegram_id"] = chat
@@ -3916,6 +4753,8 @@ async def _manejar_texto(update, chat, texto):
     # Corrigiendo un movimiento YA ESCRITO: entra el valor nuevo y se propone
     # la correccion. **Tampoco pasa por el modelo.**
     cual = _esperando_correccion.pop(chat, None)
+    if cual and (_memoria.get(chat) or {}).get("tipo") != "correccion_eligiendo":
+        _enfocar_pregunta(chat, "correccion_eligiendo")
     if cual == "monto":
         limpio = texto.replace("$", "").replace(",", "").replace("pesos", "").strip()
         try:
@@ -3934,7 +4773,10 @@ async def _manejar_texto(update, chat, texto):
 
     # Cambiando el codigo de un lote vivo: entra el texto y se repropone con
     # ese campo cambiado. **Tampoco pasa por el modelo.**
-    if _esperando_codigo.pop(chat, False):
+    espera = _esperando_codigo.pop(chat, False)
+    if espera:
+        if not await _enfocar_espera(update, chat, espera):
+            return
         dato = _memoria.get(chat) or {}
         peticion = dict(dato.get("peticion") or {})
         if not peticion:
@@ -3943,12 +4785,14 @@ async def _manejar_texto(update, chat, texto):
         propuesta = dict(peticion.get("propuesta") or {})
         propuesta["codigo_lote"] = texto.strip()
         peticion["propuesta"] = propuesta
-        await _proponer_lote(update, chat, peticion)
+        with _reemplazando(chat, dato.get("borrador_id")):
+            await _proponer_lote(update, chat, peticion)
         return
 
     # Cambiando la vigencia de una cotizacion viva. **Tampoco pasa por el
     # modelo.** El tope de dias lo pone el servidor, no esta linea.
-    if _esperando_vigencia.pop(chat, False):
+    espera = _esperando_vigencia.pop(chat, False)
+    if espera:
         digitos = "".join(c for c in texto if c.isdigit())
         dias = int(digitos) if digitos else 0
         if dias <= 0:
@@ -3956,6 +4800,8 @@ async def _manejar_texto(update, chat, texto):
             await update.message.chat.send_action("typing")
             await _enrutar_y_despachar(update, chat, texto,
                                        esperando="cuantos dias de vigencia le pongo a la cotizacion")
+            return
+        if not await _enfocar_espera(update, chat, espera):
             return
         dato = _memoria.get(chat) or {}
         peticion = dict(dato.get("peticion") or {})
@@ -3966,7 +4812,8 @@ async def _manejar_texto(update, chat, texto):
         propuesta = dict(peticion.get("propuesta") or {})
         propuesta["vigencia_dias"] = dias
         peticion["propuesta"] = propuesta
-        await _proponer_cotizacion(update, chat, peticion)
+        with _reemplazando(chat, dato.get("borrador_id")):
+            await _proponer_cotizacion(update, chat, peticion)
         return
 
     # D92: contestando "que paso con el empaque?". **No pasa por el modelo.**
@@ -3975,7 +4822,13 @@ async def _manejar_texto(update, chat, texto):
     foco_empaque = _memoria.get(chat) or {}
     if chat in _esperando_empaque and (not foco_empaque.get("borrador_id")
                                        or foco_empaque.get("tipo") == "entrada_insumo"):
-        await _proponer_entrada(update, chat, texto)
+        with _reemplazando(chat, foco_empaque.get("borrador_id")):
+            await _proponer_entrada(update, chat, texto)
+        return
+
+    # 2026-11-03: "muestrame el ticket de la gasolina". No pasa por el modelo.
+    if pide_ticket(texto) and (not _en_grupo(chat) or _MENCIONA_TICKET.search(comprobantes.plano(texto))):
+        await _mostrar_ticket(update, chat, texto)
         return
 
     # Si veniamos preguntando un dato que faltaba, quien lo recoge es el
@@ -3993,6 +4846,9 @@ async def _manejar_texto(update, chat, texto):
 TIMEOUTS_DESCARGA = {"read_timeout": 60, "write_timeout": 60, "connect_timeout": 15, "pool_timeout": 15}
 REINTENTOS_DESCARGA = 1
 AVISO_VOZ_NO_BAJO = "No pude bajar tu nota de voz (Telegram no la entrego a tiempo). Mandala otra vez, o escribemelo."
+# PTB atiende los mensajes en fila: una transcripcion colgada calla al bot entero.
+TOPE_TRANSCRIPCION = 240
+AVISO_VOZ_NO_TRANSCRIBIO = "No alcance a transcribir tu nota de voz. Mandala otra vez, o escribemelo."
 
 
 async def _bajar_voz(bot, file_id, destino):
@@ -4029,11 +4885,19 @@ async def manejar_voz(update, context):
     # esto Whisper llega a un nombre propio de la cartera sin haberlo oido
     # nunca. La lista se arma aqui y no en el transcriptor porque la autoridad
     # sobre que existe es del servidor, no del proceso del bot.
-    dato = _memoria.get(chat) or {}
-    vocab = list(_catalogo)
+    # 2026-11-04: las cuentas y sus alias van PRIMERO y siempre, no solo si ya
+    # habia una propuesta: son lo que Whisper deforma, y el vocabulario tiene tope.
+    vocab = []
+    for c in await asyncio.to_thread(_cuentas_vivas, chat):
+        vocab += [c.get("nombre")] + alias_de(c)
+    vocab += list(_catalogo)
     vocab += [d.get("nombre") for d in (_deudores or []) if isinstance(d, dict)]
-    vocab += [c.get("nombre") for c in (dato.get("cuentas") or []) if isinstance(c, dict)]
-    ok, texto = await asyncio.to_thread(transcribir, str(destino), [v for v in vocab if v])
+    try:
+        ok, texto = await asyncio.wait_for(asyncio.to_thread(transcribir, str(destino), [v for v in vocab if v]), TOPE_TRANSCRIPCION)
+    except asyncio.TimeoutError:
+        log.warning("nota de voz: la transcripcion paso de %d s", TOPE_TRANSCRIPCION)
+        await update.message.reply_text(AVISO_VOZ_NO_TRANSCRIBIO)
+        return
     if not ok:
         await update.message.reply_text(str(texto))
         return
@@ -4051,7 +4915,12 @@ async def manejar_voz(update, context):
     # abono, fallaba; y contestaba el mensaje de ayuda. Todo lo que las fases 3 y
     # 4 agregaron existia solo para quien escribiera, y Norman dicta.
     try:
-        await _enrutar_y_despachar(update, chat, texto)
+        # 2026-11-03: Norman dicta. "Muestrame el ticket" por voz es lo mismo que
+        # por texto, y tampoco pasa por el modelo.
+        if pide_ticket(texto) and (not _en_grupo(chat) or _MENCIONA_TICKET.search(comprobantes.plano(texto))):
+            await _mostrar_ticket(update, chat, texto)
+        else:
+            await _enrutar_y_despachar(update, chat, texto)
         # R1 (auditoria F0): procesado=true SOLO si el handler termino. Si revienta,
         # la fila se queda procesado=false (en la cola), no en el finally.
         # Lote v2 (c): tambien la fila `:transcripcion`, que se quedaba en false.
@@ -4064,8 +4933,595 @@ async def manejar_voz(update, context):
 
 
 # ===========================================================================
+# 2026-11-03 -- LA FOTO DEL TICKET DE COMPRA (ejecutor del Socio, fotos).
+# ===========================================================================
+#
+# Norman, por voz: "empezar a ponerle foto del ticket de compra, para tener todo
+# en control, agregar al ERP las fotos... se puede hacer un OCR para leer toda
+# la imagen, y en cuanto te pidamos que factures algo, pues ya lo facturas".
+#
+# El camino: foto -> se GUARDA en disco ya (`comprobantes.guardar_foto`) -> se
+# lee con vision (`ocr_ticket.leer`, el mismo `claude -p` de minimo privilegio)
+# -> el bot dice lo que leyo (texto armado por el codigo) -> propone el gasto
+# por la MISMA puerta sellada que el texto (`_proponer_gasto_directo`) -> solo
+# el clic de Norman lo escribe -> al escribirse, la foto queda ligada al
+# `id_movimiento` (`_ligar_comprobante`), venga el clic por el VA de Norman o
+# por su Aprobar a lo de otro.
+#
+# Los campos para pedir la factura despues (RFC, folio, URL de facturacion...)
+# viajan en el indice local y, al ligarse, a la tabla `comprobantes_gasto`; la
+# foto se comprime y va al bucket privado `tickets_gasto`. El disco queda de
+# respaldo. `COMPROBANTES_EN_SUPABASE=0` apaga la subida.
+COMPROBANTES_EN_SUPABASE = os.environ.get("COMPROBANTES_EN_SUPABASE", "1").strip().lower() in VALORES_SI
+BOT_USUARIO_TG = os.environ.get("BOT_USUARIO_TG", "ERPFresnilloBot")
+AVISO_FOTO_NO_BAJO = "No pude bajar tu foto (Telegram no la entrego a tiempo). Mandala otra vez."
+AVISO_FOTO_EN_PAUSA = "La foto quedo guardada. Cuando regrese, mandala otra vez y la leo."
+TOPE_FOTO = 10 * 1024 * 1024
+VIDA_COMPROBANTE_EN_VUELO = 600
+REINTENTOS_POR_SUBIDA = 5
+# La foto normal va POR ID: `_proponer_gasto_directo(..., foto=clave)` la pega al
+# borrador que acaba de sellar. Esto es solo para los TRES casos donde el gasto
+# todavia no existe: el modelo no pudo leerla, no se leyo el total, o el ERP
+# rechazo la propuesta. {clave de chat: [(clave de la foto, cuando), ...]}, la mas
+# vieja primero, porque cada foto espera su propio gasto y la segunda no borra a
+# la primera. Dura 10 minutos y la toma UN solo gasto, y solo uno DICTADO por esa
+# misma persona (`_foto_para_lo_dictado`). La clave de chat ya separa a la gente
+# dentro de un grupo. La propuesta lo dice antes del VA y trae "Quitar la foto".
+_comprobante_en_vuelo = {}
+
+
+def abreme_en_privado(bot=None):
+    """El texto para quien nunca abrio chat privado con el bot (Telegram no deja
+    que un bot le escriba primero a nadie). Sin cifras: va en el grupo."""
+    try:
+        usuario = getattr(bot, "username", None) or BOT_USUARIO_TG
+    except Exception:  # PTB: un Bot sin initialize() lanza RuntimeError aqui
+        usuario = BOT_USUARIO_TG
+    return "\u00c1breme en privado una vez (t.me/" + str(usuario) + ") y me lo vuelves a pedir."
+
+
+def aviso_ocr_fallo(error):
+    """Lo que se dice en el chat cuando el modelo no leyo la foto. **Pura.**
+
+    El texto del error NO sale aqui: es salida del CLI, y este mensaje tambien
+    llega a un grupo. Ese texto, ya sin secretos, va al log y al indice."""
+    causa = getattr(error, "causa", None)
+    if causa == CAUSA_LOGIN:
+        motivo = "se vencio el login de Claude en la PC. Norman: hay que correr `claude login` ahi."
+    elif causa == enrutador.CAUSA_TIEMPO:
+        motivo = "el modelo tardo demasiado."
+    else:
+        motivo = "se me cayo el modelo."
+    return ("No pude leer el ticket: " + motivo + " La foto quedo guardada: dime el gasto "
+            "en texto y se la pego.")
+
+
+async def _bajar_foto(bot, file_id):
+    """Los bytes de la foto, o None. Misma politica que la voz (E-612):
+    timeouts explicitos y UN reintento de red."""
+    for intento in range(REINTENTOS_DESCARGA + 1):
+        try:
+            archivo = await bot.get_file(file_id, **TIMEOUTS_DESCARGA)
+            return bytes(await archivo.download_as_bytearray(**TIMEOUTS_DESCARGA))
+        except BadRequest as e:  # subclase de NetworkError: va ANTES, y no se reintenta
+            log.warning("foto: no se pudo bajar (%s): %s", type(e).__name__, e)
+            return None
+        except (NetworkError, TimedOut) as e:
+            log.warning("foto: intento %d de bajarla fallo (%s)", intento + 1, type(e).__name__)
+        except Exception as e:
+            log.warning("foto: no se pudo bajar (%s): %s", type(e).__name__, e)
+            return None
+    return None
+
+
+def _foto_del_mensaje(mensaje):
+    """(file_id, file_unique_id, mime) de la foto MAS GRANDE, o de una imagen
+    mandada como archivo (JPG/PNG/WEBP). None si no hay imagen. **Pura.**"""
+    fotos = getattr(mensaje, "photo", None) or ()
+    if fotos:
+        f = fotos[-1]
+        return f.file_id, getattr(f, "file_unique_id", None), "image/jpeg"
+    doc = getattr(mensaje, "document", None)
+    mime = str(getattr(doc, "mime_type", "") or "").lower()
+    if doc is not None and mime in comprobantes.EXTENSION:
+        return doc.file_id, getattr(doc, "file_unique_id", None), mime
+    return None
+
+
+def _pie_de_propuesta(fotos):
+    return "Va con la foto del ticket." if fotos == 1 else "Va con las %d fotos del ticket." % fotos
+
+
+def _foto_a_vuelo(chat, clave_foto, primero=False):
+    """La foto se queda esperando su gasto. `primero`: la que el bot acaba de
+    pedir que le completen ("cuanto fue?") va antes que las que ya esperaban."""
+    _sacar_de_vuelo(chat, clave_foto)
+    fotos = _comprobante_en_vuelo.setdefault(chat, [])
+    fotos.insert(0 if primero else len(fotos), (clave_foto, time.time()))
+
+
+def _foto_en_vuelo(chat):
+    """La clave de la foto que lleva mas tiempo esperando su gasto en este chat, o
+    None. No la saca: la saca quien de verdad la pegue a un borrador."""
+    ahora = time.time()
+    vivas = [f for f in _comprobante_en_vuelo.get(chat) or []
+             if ahora - f[1] <= VIDA_COMPROBANTE_EN_VUELO]
+    if not vivas:
+        _comprobante_en_vuelo.pop(chat, None)
+        return None
+    _comprobante_en_vuelo[chat] = vivas
+    return vivas[0][0]
+
+
+def _sacar_de_vuelo(chat, clave_foto):
+    """Saca ESA foto y ninguna otra."""
+    quedan = [f for f in _comprobante_en_vuelo.get(chat) or [] if f[0] != clave_foto]
+    if quedan:
+        _comprobante_en_vuelo[chat] = quedan
+    else:
+        _comprobante_en_vuelo.pop(chat, None)
+
+
+def _foto_para_lo_dictado(chat):
+    """La foto que le toca a un gasto que esta persona acaba de dictar. Un hecho
+    que sale de la cola se dicto antes de la foto: ese no se la lleva."""
+    return None if _desde_cola.get() else _foto_en_vuelo(chat)
+
+
+def _adjuntar_comprobante(chat, borrador_id, clave_foto, de_vuelo=False):
+    """Pega la foto a ESE borrador (por id, nunca al foco). Devuelve la clave de
+    la foto o None. Escribe solo en el indice LOCAL: el ERP no se toca hasta el
+    clic."""
+    if not clave_foto or not borrador_id:
+        return None
+    for dato in ((_pendientes.get(chat) or {}).get(borrador_id), dict.get(_memoria, chat)):
+        if isinstance(dato, dict) and dato.get("borrador_id") == borrador_id:
+            dato["comprobante"] = clave_foto
+            if de_vuelo:
+                dato["foto_de_vuelo"] = clave_foto
+    try:
+        comprobantes.anotar_borrador(clave_foto, borrador_id, de_vuelo)
+    except Exception as e:
+        log.warning("no pude anotar la foto %s con el borrador %s: %s", clave_foto, borrador_id, e)
+        return None
+    return clave_foto
+
+
+async def _quitar_foto(update, chat, borrador_id):
+    """Despega de la propuesta la foto que le llego en vuelo. La foto no se borra
+    (es un ticket guardado) y no vuelve a volar: no se la lleva el gasto que sigue.
+    Lee el indice y no la RAM: el boton sobrevive a un reinicio del bot."""
+    clave = await asyncio.to_thread(comprobantes.foto_de_vuelo, borrador_id)
+    if not clave:
+        await update.effective_message.reply_text("Esa propuesta ya no trae foto por quitar.")
+        return
+    await asyncio.to_thread(comprobantes.despegar, clave, borrador_id)
+    for dato in ((_pendientes.get(chat) or {}).get(borrador_id), dict.get(_memoria, chat)):
+        if isinstance(dato, dict) and dato.get("borrador_id") == borrador_id:
+            dato.pop("foto_de_vuelo", None)
+            dato.pop("comprobante", None)
+            mostrado = dato.get("mostrado")
+            if mostrado:
+                dato["mostrado"] = (mostrado[0], str(mostrado[1]).split(NL + NL + "Va con ")[0],
+                                    _teclado_gasto(dato))
+    await update.effective_message.reply_text(
+        "Quite la foto de esta propuesta. Sigue guardada y este VA ya no la liga.")
+
+
+def _subir_comprobante(clave_foto):
+    """Con la bandera puesta: sube la foto ligada al ERP. Si falla, se queda en
+    disco y `bot/subir_comprobantes.py` la sube despues. Nunca lanza. Cada fallo
+    se cuenta: `pendientes_de_subir` pone atras a las que no suben."""
+    try:
+        cuerpo = comprobantes.cuerpo_para_subir(clave_foto)
+        if cuerpo is None:
+            error = "sin archivo o sin movimiento"
+        else:
+            estado, r = _post("/api/bot/comprobante/subir", cuerpo)
+            if estado == 200 and isinstance(r, dict) and r.get("ok"):
+                comprobantes.anotar_subido(clave_foto, r.get("ruta"))
+                return True
+            error = "%s: %s" % (estado, (r or {}).get("error"))
+    except Exception as e:
+        error = repr(e)
+    log.warning("foto %s: no se subio: %s", clave_foto, enrutador._sin_secretos(error))
+    try:
+        comprobantes.anotar_fallo_subida(clave_foto, error)
+    except Exception as e:
+        log.warning("foto %s: no pude contar el fallo: %s", clave_foto, e)
+    return False
+
+
+def _ligar_comprobante(borrador_id, id_movimiento):
+    """El gasto YA se escribio (clic de Norman): su foto, si traia, queda ligada
+    al movimiento y se sube. Devuelve la frase para el mensaje de "Listo" ("" si
+    no traia foto). Nunca lanza: el gasto ya esta escrito y eso no se deshace por
+    un archivo."""
+    try:
+        fotos = comprobantes.ligar(borrador_id, id_movimiento)
+    except Exception as e:
+        log.warning("no pude ligar la foto del borrador %s: %s", borrador_id, e)
+        return ""
+    if not fotos:
+        return ""
+    log.info("fotos %s ligadas al movimiento %s", fotos, id_movimiento)
+    pie = (" La foto del ticket quedo ligada al movimiento." if len(fotos) == 1
+           else " Las %d fotos del ticket quedaron ligadas al movimiento." % len(fotos))
+    if not COMPROBANTES_EN_SUPABASE:
+        return pie
+    if not all([_subir_comprobante(c) for c in fotos]):
+        return pie + " No subio al ERP todavia: quedo en la PC y se reintenta."
+    # Esta si subio, asi que el ERP esta de pie: se sube lo que quedo atras.
+    for atrasada in comprobantes.pendientes_de_subir()[:REINTENTOS_POR_SUBIDA]:
+        _subir_comprobante(atrasada)
+    return pie
+
+
+async def manejar_foto(update, context):
+    """La foto de un ticket, en privado o en grupo, con o sin texto."""
+    chat = _clave_de(update)
+    if not await _puerta_de_grupo(update, chat):
+        return
+    if not await _puerta_de_privado(update, chat):
+        return
+    mensaje = update.message
+    texto = str(getattr(mensaje, "caption", None) or "").strip()
+    foto = _foto_del_mensaje(mensaje)
+    if foto is None:
+        await mensaje.reply_text("Esa imagen no la puedo leer. Mandala como foto (JPG o PNG).")
+        return
+    datos = await _bajar_foto(context.bot, foto[0])
+    if not datos:
+        await mensaje.reply_text(AVISO_FOTO_NO_BAJO)
+        return
+    if len(datos) > TOPE_FOTO:
+        await mensaje.reply_text("Esa foto pesa mas de 10 MB. Mandala mas chica.")
+        return
+    update = _UpdateQueAnota(update, chat)
+    try:
+        # Revisar si ya existe depende del ERP; guardar la foto, no. Si la revision
+        # falla, la foto se guarda: un aviso de duplicado perdido se corrige, un
+        # ticket perdido no.
+        try:
+            previas = await asyncio.to_thread(comprobantes.previas, comprobantes.huella(datos), foto[1])
+            if await _ticket_ya_existe(update, chat, previas):
+                await bitacora.marcar_procesado(update)
+                return
+            for r in previas:
+                _sacar_de_vuelo(_clave(r["chat_id"], r["telegram_id"]), r["clave"])
+        except Exception as e:
+            log.warning("foto: no pude revisar si ya existia: %s", enrutador._sin_secretos(repr(e)))
+        clave_foto = await asyncio.to_thread(
+            comprobantes.guardar_foto, datos, foto[2], _persona(chat), _chat_de(chat),
+            texto or None, foto[1])
+        log.info("foto %s de %s en %s (%d bytes)", clave_foto, _persona(chat), _chat_de(chat), len(datos))
+        await asyncio.to_thread(_rehidratar, chat)
+        with _hablando_de_ticket():
+            await _leer_y_proponer_ticket(update, chat, clave_foto, datos, foto[2], texto)
+        await bitacora.marcar_procesado(update)
+        await _seguir_cola(update, chat)
+        await _avisar_aprobaciones(update)
+    finally:
+        _cerrar_turno(chat, "[mando la foto de un ticket]" + ((" " + texto) if texto else ""))
+
+
+async def _ticket_ya_existe(update, chat, previas):
+    """True si esta misma foto ya se escribio o ya espera su VA o su Aprobar, y lo
+    dice. Sin esto el mismo ticket mandado por otra persona, o despues de aprobado,
+    eran dos gastos con dos VA. Sin cifras: esto tambien llega a un grupo. Una foto
+    que no se leyo, que se cancelo o que se rechazo no cuenta: se vuelve a procesar."""
+    for r in previas:
+        tid = r["telegram_id"]
+        await asyncio.to_thread(_identidad_de, tid)
+        quien = "tu" if int(tid) == int(_persona(chat)) else _nombre_de(tid)
+        if r.get("id_movimiento"):
+            await update.effective_message.reply_text(
+                "Ese ticket ya quedo escrito en el ERP (lo mando " + quien + "). No propuse nada. "
+                "Si lo anularon, dictamelo en texto.")
+            return True
+        clave = _clave(r["chat_id"], tid)
+        await asyncio.to_thread(_rehidratar, clave)
+        vivos = set(d.get("borrador_id") for d in _pendientes_de(clave))
+        if r.get("espera") or vivos.intersection(r.get("borradores") or ()):
+            await update.effective_message.reply_text(
+                "Ese ticket ya esta propuesto (lo mando " + quien + ") y sigue esperando su VA "
+                "o el Aprobar de Norman. No lo agregue.")
+            return True
+    return False
+
+
+async def _escribiendo(update):
+    """El "escribiendo..." es cortesia: un TimedOut aqui no se traga la foto, que
+    es como se perdieron las notas de voz de E-612. Solo se anota."""
+    try:
+        await update.effective_message.chat.send_action("typing")
+    except Exception as e:
+        log.warning("foto: send_action fallo (%s): %s", type(e).__name__, e)
+
+
+async def _leer_y_proponer_ticket(update, chat, clave_foto, datos, mime, texto):
+    decir = update.effective_message.reply_text
+    # El modelo no se llama en pausa: es la misma regla del texto y la voz.
+    if await _en_pausa(update):
+        await decir(AVISO_FOTO_EN_PAUSA)
+        return
+    await _escribiendo(update)
+    # El vocabulario vivo de categorias (categorias_movimiento), como el texto.
+    await asyncio.to_thread(_catalogo_de_productos, chat)
+    ok, t = await asyncio.to_thread(ocr_ticket.leer, datos, mime, texto, list(_catalogo))
+    if not ok:
+        await asyncio.to_thread(comprobantes.anotar_error, clave_foto, t)
+        log.warning("foto %s: no se pudo leer: %s", clave_foto, enrutador._sin_secretos(t))
+        if isinstance(t, tope.Tope):
+            await _en_pausa(update, t.hasta)
+            await decir(AVISO_FOTO_EN_PAUSA)
+            return
+        _foto_a_vuelo(chat, clave_foto)
+        await decir(aviso_ocr_fallo(t))
+        return
+    await asyncio.to_thread(comprobantes.anotar_ocr, clave_foto, t)
+    log.info("foto %s: es_ticket=%s monto=%s dudas=%d instrucciones=%s", clave_foto,
+             t.get("es_ticket"), t.get("monto"), len(t.get("dudas") or []),
+             t.get("trae_instrucciones"))
+    if not t.get("es_ticket"):
+        if _en_grupo(chat):
+            return  # una foto cualquiera en el grupo no merece respuesta
+        await decir("Esa foto no parece un ticket de compra. La guarde, pero no propuse "
+                    "nada. Si es un gasto, dimelo en texto.")
+        return
+    # 2026-11-08: con renglones, primero la compra de varias lineas (UN resumen).
+    documento = ocr_ticket.documento_de_compra(t)
+    if documento and await _proponer_compra_documento(update, chat, documento, clave_foto, ticket=t):
+        return
+    await _gasto_de_siempre_con_ticket(update, chat, t, clave_foto)
+
+
+async def _gasto_de_siempre_con_ticket(update, chat, t, clave_foto):
+    """La propuesta de gasto de una foto de ticket, la de siempre (antes del
+    2026-11-08 era el final de `_leer_y_proponer_ticket`)."""
+    decir = update.effective_message.reply_text
+    await decir(ocr_ticket.resumen(t))
+    if t.get("monto") is None:
+        _foto_a_vuelo(chat, clave_foto, primero=True)
+        _recordar_a_medias(chat, "gasto", {
+            "descripcion": ocr_ticket.descripcion_para_el_ledger(t),
+            "fecha": t.get("fecha"), "categoria": t.get("categoria"), "_de_ticket": True})
+        await decir("No lei el total. Cuanto fue?")
+        return
+    if not await _proponer_gasto_directo(update, chat, ocr_ticket.propuesta_de_gasto(t),
+                                         foto=clave_foto):
+        _foto_a_vuelo(chat, clave_foto)
+
+
+# El mensaje tiene que ABRIR con el pedido y seguir de inmediato con el ticket.
+# La auditoria tumbo la version que buscaba las dos palabras en cualquier lugar: 9
+# de 11 frases perdian su gasto ("gaste 340 de gasolina, quiero subir el ticket").
+# La re-auditoria tumbo la lista corta de verbos: 12 de 19 pedidos reales caian al
+# enrutador, y el modelo NEGABA tener la funcion. Y 7 capturas se tragaban: abrian
+# con verbo de pedir ("mandame el ticket del diesel 1500 pesos efectivo").
+_PIDE_TICKET = re.compile(
+    r"^(?:(?:oye|hey|hola|buenas|este|bot|porfa|por favor|a ver)[, ]+)*"
+    r"(?:muestrame|muestra|ensename|ensena|mandame|manda|pasame|pasa|reenviame|reenvia|enviame|envia"
+    r"|dame|regresame|devuelveme|ver|quiero ver|quiero|necesito ver|necesito|ocupo|busca|buscame|dejame ver|a ver"
+    r"|donde esta|donde estan|donde quedo|donde quedaron|tienes|me (?:muestras|ensenas|mandas|pasas|reenvias|envias|das)"
+    r"|(?:me )?(?:puedes|podrias) (?:mostrar|ensenar|mandar|pasar|reenviar|enviar|buscar)(?:me)?)"
+    r"\s+(?:(?:el|la|los|las|ese|esa|esos|este|esta|estos|mi|mis|ultimo|ultima|ultimos|todos|todas|otra vez)\s+)*"
+    r"(?:foto\s+(?:del?\s+)?(?:(?:el|la|ese|este)\s+)?)?"
+    r"(?:tickets?|comprobantes?|fotos?)\b(.*)$", re.S)
+_OTRA_INTENCION = re.compile(
+    r"\b(?:y|e|pero|como|gaste|gastamos|pague|pagamos|compre|compramos|registra\w*|anota\w*"
+    r"|sube|subir|alta|factura\w*|saldo|cartera|stock|debe\w*|cuanto|cuantos|vend\w*"
+    r"|fue|son|era|costo|salio|pago|cargue|cargo|meti|puse|efectivo|pesos|deposito|abono)\b"
+    r"|\ba\s+\w+|\ben la (?:manana|tarde|noche)\b")
+_CORTESIA = ("porfa", "por favor", "plis", "please", "gracias", "bot")
+# "..., el de ayer": lo que sigue a la coma todavia dice cual ticket.
+# "el ticket de 12345 pesos" busca por monto: ese "pesos" no es una captura. El de
+# "el ticket de la gasolina 500 pesos" si: ahi el monto no viene justo despues.
+_MONTO_BUSCADO = re.compile(r"^\s*(?:de|por)\s+\$?[\d.,]+\s+pesos\b")
+_ACLARA_CUAL = re.compile(r"^(?:(?:el|la|los|las)\s+)?(?:de|del|ultimo|ultima)\b")
+
+
+def _sigue_siendo_el_pedido(trozo):
+    return not trozo or trozo in _CORTESIA or bool(_ACLARA_CUAL.match(trozo))
+
+
+def pide_ticket(texto):
+    """"muestrame el ticket del gasto de gasolina". **Pura.** No pasa por el
+    modelo: buscar una foto no necesita criterio, y asi tampoco cambia el PROMPT.
+
+    True SOLO si el mensaje no trae otra intencion: un gasto tragado aqui se pierde.
+    En la duda es False y lo lee el enrutador. Un pedido que escape de aqui no se
+    queda en la negativa del modelo: lo recoge `reclama_ticket`."""
+    plano = comprobantes.plano(texto).strip(" \t\r\n¿¡")
+    encontrado = _PIDE_TICKET.match(plano)
+    if not encontrado:
+        return False
+    resto = encontrado.group(1)
+    # La coma de "1,500" y el punto de "99.50" no separan nada.
+    trozos = [t.strip() for t in re.split(r"[;:?!]+|[,.](?!\d)", resto)]
+    if not all(_sigue_siendo_el_pedido(t) for t in trozos[1:]):
+        return False
+    return not _OTRA_INTENCION.search(_MONTO_BUSCADO.sub("", resto))
+
+
+# Lo que escapa de `pide_ticket` llega al modelo, y el PROMPT no sabe de tickets:
+# medido con el enrutador real, 9 de 12 formas contestaban "No puedo mostrarte
+# tickets" o "No guardo tickets". "Se va al modelo" no era una salida segura.
+_MENCIONA_TICKET = re.compile(r"\b(?:tickets?|comprobantes?)\b")
+_VE_TICKET = re.compile(
+    r"\b(?:muestrame|muestra|mostrar\w*|ensename|ensena|ensenar\w*|dame|mandame|pasame|reenviame"
+    r"|regresame|devuelveme|veo|ver|busca|buscame|cual|donde|recuerdas|tienes)\b")
+_PREGUNTA_AL_ERP = re.compile(r"\b(?:cuanto|cuantos|cuantas|saldo|cartera|debe\w*|stock|vend\w*)\b")
+_NIEGA_TICKETS = re.compile(r"\bno (?:puedo|tengo|guardo|manejo|llevo|hay|cuento)\b[^.?!]{0,50}\b(?:tickets?|comprobantes?|fotos?)\b")
+AVISO_SI_HAY_TICKETS = ("Si guardo las fotos de los tickets. Pidemelas con el monto, el proveedor "
+                        "o el folio: \"muestrame el ticket de la gasolina\".")
+
+
+def reclama_ticket(texto, ruta):
+    """El modelo no tomo accion sobre un mensaje de tickets y si pide verlo. **Pura.**"""
+    plano = comprobantes.plano(texto)
+    return bool(_sin_hechos_de_ticket(plano, ruta) and _VE_TICKET.search(plano)
+                and not _PREGUNTA_AL_ERP.search(plano))
+
+
+def niega_tickets(texto, ruta):
+    """El modelo dice que no hay tickets: es falso, y no lo va a decir el bot. **Pura.**"""
+    return bool(_sin_hechos_de_ticket(comprobantes.plano(texto), ruta)
+                and _NIEGA_TICKETS.search(comprobantes.plano(ruta.get("respuesta"))))
+
+
+def _sin_hechos_de_ticket(plano, ruta):
+    return (ruta.get("intencion") in ("charla", "consulta") and ruta.get("consulta") != "gastos" and not _hechos_de(ruta)
+            and bool(_MENCIONA_TICKET.search(plano)))
+
+
+
+def _pie_de_ticket(r):
+    t = r.get("ticket") or {}
+    f = t.get("factura") or {}
+    piezas = []
+    if f.get("folio"):
+        piezas.append("Ticket " + str(f["folio"]))
+    piezas.append(str(t.get("proveedor") or "proveedor sin leer"))
+    if t.get("fecha"):
+        piezas.append(str(t["fecha"]))
+    if isinstance(t.get("monto"), (int, float)):
+        piezas.append("$" + format(t["monto"], ",.2f"))
+    lineas = [" | ".join(piezas)]
+    if r.get("id_movimiento"):
+        lineas.append("Ligado al movimiento " + str(r["id_movimiento"]))
+    else:
+        lineas.append("Todavia sin escribir en el ERP (no tiene el clic de Norman).")
+    if f.get("rfc_emisor"):
+        lineas.append("RFC " + str(f["rfc_emisor"]))
+    if f.get("url_facturacion") and not t.get("trae_instrucciones"):
+        lineas.append("Facturar en: " + str(f["url_facturacion"]))
+    return NL.join(lineas)
+
+
+async def _mostrar_ticket(update, chat, texto):
+    """Reenvia la foto del ticket que mejor casa con `texto`. Solo la Matriz
+    (ADMIN): los gastos son suyos. En grupo, por privado (trae cifras)."""
+    decir = update.effective_message.reply_text
+    ident = await asyncio.to_thread(_identidad_de, _persona(chat))
+    if ident is None:
+        await decir("No pude revisar quien eres (el ERP no contesto). No hice nada.")
+        return
+    if not ident.get("registrado"):
+        await decir("No te tengo dado de alta. No hice nada.")
+        return
+    if ident.get("rol") != "ADMIN":
+        await decir("Los tickets de gastos solo los ve la Matriz.")
+        return
+    encontrados, terminos = await asyncio.to_thread(comprobantes.buscar, texto)
+    encontrados = [(p, r) for p, r in encontrados
+                   if (r.get("ticket") or {}).get("es_ticket") or r.get("error")]
+    if not encontrados:
+        await decir("No encontre ese ticket. Dime el folio, el monto o el proveedor."
+                    if terminos else "Todavia no tengo ningun ticket guardado.")
+        return
+    puntos, r = encontrados[0]
+    pie = _pie_de_ticket(r)
+    # Un ticket largo son varias fotos del mismo movimiento: van todas.
+    hermanas = [x for _p, x in encontrados[1:]
+                if r.get("id_movimiento") and x.get("id_movimiento") == r["id_movimiento"]]
+    otros = [x for p, x in encontrados[1:]
+             if p == puntos and not any(x is h for h in hermanas)][:4] if terminos else []
+    if otros:
+        pie += NL + NL + "Hay otros parecidos: " + "; ".join(
+            _pie_de_ticket(x).split(NL)[0] for x in otros) + ". Dime el folio."
+    destino = int(_persona(chat)) if _en_grupo(chat) else int(_chat_de(chat))
+    for foto, leyenda in [(r, pie)] + [(h, _pie_de_ticket(h)) for h in hermanas]:
+        ruta = comprobantes.ruta_de(foto)
+        try:
+            with open(ruta, "rb") as fh:
+                datos = fh.read()
+        except Exception as e:
+            log.warning("ticket %s: no pude leer el archivo: %s", foto.get("clave"), e)
+            await decir("Tengo el ticket anotado pero no encuentro la foto en disco.")
+            return
+        try:
+            await update.get_bot().send_photo(destino, photo=datos, caption=leyenda[:1000],
+                                              filename=foto.get("archivo") or "ticket.jpg")
+        except Exception as e:
+            log.warning("ticket %s: no lo pude mandar a %s: %s", foto.get("clave"), destino, e)
+            if _en_grupo(chat):
+                await decir(abreme_en_privado(update.get_bot()))
+            else:
+                await decir("No pude mandarte la foto del ticket. Intenta otra vez.")
+            return
+        log.info("ticket %s mandado a %s", foto.get("clave"), destino)
+    if _en_grupo(chat):
+        await decir("Te lo mande por privado.")
+
+
+# ===========================================================================
+# 2026-11-03 -- GRUPOS SILENCIOSOS ("Fresnillo - Equipo"): el bot escucha y
+# no habla. La lista y la regla viven en `grupos_silenciosos.py`.
+# ===========================================================================
+def _datos_del_bot(update):
+    try:
+        bot = update.get_bot()
+    except Exception:
+        return BOT_USUARIO_TG, None
+    try:
+        usuario = bot.username
+    except Exception:
+        usuario = None
+    try:
+        id_bot = bot.id
+    except Exception:
+        id_bot = None
+    return usuario or BOT_USUARIO_TG, id_bot
+
+
+def debe_callar(update):
+    usuario, id_bot = _datos_del_bot(update)
+    return grupos_silenciosos.decidir(update, usuario, id_bot)
+
+
+async def _callar(update, context):
+    chat = getattr(update, "effective_chat", None)
+    log.info("grupo silencioso %s: update anotado en la bitacora, no se procesa",
+             getattr(chat, "id", None))
+
+
+class _Silencio(BaseHandler):
+    """El PRIMER handler del grupo 0 de `main()`. La bitacora (grupo -1) ya
+    anoto el update; si el chat es silencioso, este lo atiende sin hacer nada y,
+    como en un grupo de PTB solo corre el primer handler que acepta, ningun otro
+    (texto, voz, foto, comandos, entrada de miembros) lo ve."""
+
+    def __init__(self):
+        super().__init__(_callar)
+
+    def check_update(self, update):
+        if not isinstance(update, Update):
+            return None
+        return True if debe_callar(update) else None
+
+
+# ===========================================================================
 # PASO 5 — confirmar. Aqui no hay LLM, y no puede haberlo.
 # ===========================================================================
+
+async def _falta_la_cuenta(update, dato):
+    """True si esta propuesta aun no sabe su cuenta, y ya se le dijo a la persona.
+    La misma puerta para el "va" escrito y para el boton: un boton viejo no la salta."""
+    if not dato.get("cuenta_pendiente"):
+        return False
+    if dato.get("rehidratado") and ("propuesta" not in dato or not dato.get("cuentas")):
+        # S1: un borrador de antes de guardar el contexto, tras un reinicio. La
+        # cuenta nunca se dijo, y sin su propuesta no se puede volver a proponer.
+        await update.effective_message.reply_text(
+            "Esa propuesta la recupere despues de un reinicio y no se de que cuenta "
+            "es. No escribi nada. Cancelala y dictamela otra vez diciendo la cuenta.")
+        return True
+    await update.effective_message.reply_text(
+        _por_que_preguntamos(dato) + "De cual cuenta? Escoge una.",
+        reply_markup=_teclado_cuentas(dato.get("cuentas") or [], dato.get("borrador_id")))
+    return True
+
 
 async def _confirmar_abono(update, chat):
     """El "va" de un abono. Aqui tampoco hay LLM, y no puede haberlo: solo
@@ -4073,6 +5529,8 @@ async def _confirmar_abono(update, chat):
     dato = _memoria.get(chat)
     if not dato or dato.get("tipo") != "abono":
         await update.effective_message.reply_text("No tengo ningun abono pendiente que escribir.")
+        return
+    if await _falta_la_cuenta(update, dato):
         return
     estado, r = _post("/api/bot/abono/confirmar", {
         "telegram_id": chat,
@@ -4135,7 +5593,7 @@ async def _proponer_entrega(update, chat, monto, nombre=None, id_entidad=None):
         _memoria[chat] = {"tipo": "entrega_eligiendo", "monto": monto, "opciones": opciones}
         await update.effective_message.reply_text(
             r.get("mensaje") or "De quien es la entrega?",
-            reply_markup=_teclado_entregadores(opciones))
+            reply_markup=_lista_de(chat, _teclado_entregadores(opciones)))
         return
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(r.get("error", "No pude proponer la entrega."))
@@ -4170,6 +5628,316 @@ async def _confirmar_entrega(update, chat):
         await update.effective_message.reply_text(r.get("error", "No pude registrar la entrega."))
 
 
+# 2026-11-05: traspaso entre cuentas propias. El servidor decide todo lo que importa
+# (lista cerrada, solo egresos, saldos); aqui solo se pregunta lo que falta.
+
+def _teclado_confirmar_traspaso(borrador_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("VA, escribelo", callback_data="va:" + borrador_id)],
+        [InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)],
+    ])
+
+
+def _lados_de_traspaso(campos):
+    """La cuenta suelta de "de Spin", contestada a una pregunta, cae en el lado que
+    falta. Si no falta ninguno, no se adivina cual de los dos cambia. **Pura.**"""
+    campos = dict(campos or {})
+    suelta, nombre = campos.pop("cuenta_id", None), campos.pop("cuenta_nombre", None)
+    falta = enrutador.lado_de_traspaso_que_falta(campos)
+    if suelta and falta:
+        campos[falta + "_id"] = suelta
+        campos[falta + "_nombre"] = nombre
+    return campos
+
+
+async def _preguntar_lado(update, chat, campos, lado):
+    nombres = ", ".join(str(c.get("nombre")) for c in await asyncio.to_thread(_cuentas_vivas, chat))
+    oida = str(campos.get(lado + "_oida") or "").strip()
+    texto = 'No ubico "' + oida + '" entre tus cuentas. ' if oida else ""
+    texto += "De cual cuenta sale?" if lado == "origen" else "A cual cuenta entra?"
+    await update.effective_message.reply_text(texto + (" Tengo: " + nombres + "." if nombres else ""))
+
+
+async def _atender_traspaso(update, chat, campos, pregunta=None, ya_avisado=False):
+    campos = _lados_de_traspaso(campos)
+    if not campos.get("monto"):
+        _recordar_a_medias(chat, "traspaso", campos)
+        await update.effective_message.reply_text(pregunta or "De cuanto fue el traspaso?")
+        return
+    solo_paga = campos.pop("destino_solo_paga", None)
+    if solo_paga:
+        _recordar_a_medias(chat, "traspaso", campos)
+        await update.effective_message.reply_text(
+            str(solo_paga) + " solo registra salidas: no puede recibir un traspaso. "
+            "A cual otra cuenta entra?")
+        return
+    lado = enrutador.lado_de_traspaso_que_falta(campos)
+    if lado:
+        _recordar_a_medias(chat, "traspaso", campos)
+        await _preguntar_lado(update, chat, campos, lado)
+        return
+    propuesta = {llave: campos.get(llave) for llave in
+                 ("monto", "origen_id", "destino_id", "concepto", "fecha")}
+    # S12: dos dictados iguales eran dos borradores y dos VA, dos traspasos. Un
+    # ajuste (`_reemplazo`) sustituye al suyo: no se parece a nada, ES el mismo.
+    igual = None if ya_avisado or _reemplazo.get(chat) else next(
+        (v for v in _pendientes_de(chat) if _mismo_traspaso(propuesta, v)), None)
+    if igual:
+        await _preguntar_duplicado(update, chat, igual, "traspaso",
+                                   {"traspaso": dict(campos), "propuesta": propuesta})
+        return
+    estado, r = _post("/api/bot/traspaso/proponer", {"telegram_id": chat, "propuesta": propuesta})
+    log.info("traspaso propuesto: %s -> %s monto=%s -> %s", campos.get("origen_nombre"),
+             campos.get("destino_nombre"), campos.get("monto"), estado)
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponer el traspaso."))
+        return
+    _memoria[chat] = {"tipo": "traspaso", "borrador_id": r["borrador_id"], "sello": r["sello"],
+                      "campos": campos, "propuesta": propuesta}
+    await _ensenar_propuesta(update, chat, r["mensaje"], _teclado_confirmar_traspaso(r["borrador_id"]))
+
+
+async def _confirmar_traspaso(update, chat):
+    """El VA. Solo viajan `{telegram_id, borrador_id, sello}`: un segundo clic no
+    duplica nada porque el servidor reusa los ids sellados."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "traspaso":
+        await update.effective_message.reply_text("No tengo ningun traspaso pendiente que escribir.")
+        return
+    estado, r = _post("/api/bot/traspaso/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("traspaso confirmado: borrador=%s -> %s filas=%s",
+             dato["borrador_id"], estado, r.get("filas_escritas"))
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        texto = r.get("mensaje") or "Listo. Quedo escrito el traspaso."
+        if r.get("aviso_marca"):
+            texto += NL + str(r["aviso_marca"])
+        await update.effective_message.reply_text(texto)
+    else:
+        await update.effective_message.reply_text(r.get("error", "No pude escribir el traspaso."))
+
+
+# 2026-11-08: la foto de una factura, ticket o cotizacion de VARIAS lineas
+# (botellas, tapas, flete...). Escrito el 2026-11-08 por el ejecutor del Socio.
+# El servidor empata cada linea con un insumo, cuadra las sumas y sella UN
+# borrador; aqui solo se ensena su resumen y se pregunta la cuenta con botones.
+# El clic en la cuenta ES la confirmacion: no hay "va" aparte.
+RUTA_COMPRA_DOCUMENTO = "/api/bot/compra-documento/proponer"
+RUTA_CONFIRMAR_COMPRA_DOCUMENTO = "/api/bot/compra-documento/confirmar"
+TEXTO_GASTO_SIN_ALMACEN = "Gasto (no entra al almacen)"
+
+
+def _teclado_compra_documento(cuentas, borrador_id):
+    filas = [[InlineKeyboardButton(str(c.get("nombre") or "(cuenta)")[:40],
+                                   callback_data="cdc:%d:%s" % (i, borrador_id))]
+             for i, c in enumerate(cuentas or [])]
+    filas.append([InlineKeyboardButton("Cancelar", callback_data="no:" + borrador_id)])
+    return InlineKeyboardMarkup(filas)
+
+
+def _teclado_linea_documento(pregunta, pid):
+    filas = [[InlineKeyboardButton(str(o.get("nombre") or "?")[:40],
+                                   callback_data="cdl:%d:%s" % (i, pid))]
+             for i, o in enumerate(pregunta.get("opciones") or [])]
+    filas.append([InlineKeyboardButton(TEXTO_GASTO_SIN_ALMACEN, callback_data="cdl:g:" + pid)])
+    filas.append([InlineKeyboardButton("Cancelar", callback_data="no:x:" + pid)])
+    return InlineKeyboardMarkup(filas)
+
+
+async def _proponer_compra_documento(update, chat, documento, clave_foto, elecciones=None, ticket=None):
+    """True si el servidor lo tomo como compra de insumos (ya se le contesto a la
+    persona). False si no es compra de insumos o el servidor no contesto: el
+    llamador sigue con el gasto de siempre, que no se pierde por esto."""
+    elecciones = dict(elecciones or {})
+    estado, r = _post(RUTA_COMPRA_DOCUMENTO, {"telegram_id": chat, "documento": documento,
+                                              "elecciones": elecciones})
+    log.info("compra de documento propuesta: lineas=%d elecciones=%d -> %s listo=%s caer=%s",
+             len(documento.get("lineas") or []), len(elecciones), estado,
+             (r or {}).get("listo"), (r or {}).get("caer_a_gasto"))
+    if estado != 200 or not isinstance(r, dict) or not r.get("ok") or not r.get("mensaje"):
+        return False
+    decir = update.effective_message.reply_text
+    bid = r.get("borrador_id")
+    if bid and r.get("sello"):
+        _memoria[chat] = {"tipo": "compra_documento", "borrador_id": bid, "sello": r["sello"],
+                          "cuentas": list(r.get("cuentas") or []), "documento": documento,
+                          "elecciones": elecciones}
+        _adjuntar_comprobante(chat, bid, clave_foto)
+        await _ensenar_propuesta(update, chat, r["mensaje"],
+                                 _teclado_compra_documento(r.get("cuentas"), bid))
+        return True
+    preguntas = r.get("preguntas") or []
+    if r.get("cuadra") and preguntas:
+        p = preguntas[0]
+        _memoria[chat] = {"tipo": "compra_documento_eligiendo", "documento": documento,
+                          "elecciones": elecciones, "pregunta": p, "foto": clave_foto,
+                          "ticket": ticket}
+        pid = dict.get(_memoria, chat)["_pid"]
+        await decir(r["mensaje"])
+        await decir('Linea %d: "%s". Que es?' % (int(p.get("indice", 0)) + 1, p.get("descripcion")),
+                    reply_markup=_teclado_linea_documento(p, pid))
+        return True
+    if r.get("cuadra") is not False:
+        # Ronda 2: cuadra, sin preguntas y sin borrador = nada entra al almacen.
+        # Un resumen sin botones seria un callejon: el gasto de siempre.
+        return False
+    # No cuadra: se dice por que y no se propone nada. La foto queda esperando por
+    # si la persona prefiere dictar el gasto.
+    _foto_a_vuelo(chat, clave_foto)
+    await decir(r["mensaje"])
+    return True
+
+
+async def _elegir_linea_documento(update, chat, opcion):
+    dato = _memoria.get(chat) or {}
+    p = dato.get("pregunta") or {}
+    if dato.get("tipo") != "compra_documento_eligiendo" or not p:
+        await update.effective_message.reply_text(YA_NO_ACTIVA)
+        return
+    if opcion == "g":
+        valor = "gasto"
+    else:
+        try:
+            valor = (p.get("opciones") or [])[int(opcion)]["id"]
+        except (ValueError, IndexError, TypeError, KeyError):
+            await update.effective_message.reply_text("Esa opcion ya no esta. Manda la foto otra vez.")
+            return
+    elecciones = dict(dato.get("elecciones") or {})
+    elecciones[str(p.get("indice"))] = valor
+    documento, foto, ticket = dato.get("documento") or {}, dato.get("foto"), dato.get("ticket")
+    _memoria.pop(chat, None)
+    if await _proponer_compra_documento(update, chat, documento, foto, elecciones, ticket=ticket):
+        return
+    if ticket:
+        # Ronda 2: todo acabo en "Gasto" ("BOTELLA AGUA 1L"): ya no es compra de
+        # insumos. Sigue la propuesta de gasto de siempre con ese ticket.
+        await _gasto_de_siempre_con_ticket(update, chat, ticket, foto)
+        return
+    await update.effective_message.reply_text(
+        "No pude volver a proponer la compra. No escribi nada: manda la foto otra vez.")
+
+
+async def _confirmar_compra_documento(update, chat, indice, borrador_id):
+    """El clic en la cuenta. Viajan `{telegram_id, borrador_id, sello, id_cuenta}`;
+    el servidor exige que la cuenta sea una de las que se ensenaron."""
+    dato = _memoria.get(chat) or {}
+    if dato.get("tipo") != "compra_documento" or dato.get("borrador_id") != borrador_id:
+        await update.effective_message.reply_text(YA_NO_ACTIVA)
+        return
+    try:
+        cuenta = (dato.get("cuentas") or [])[int(indice)]
+    except (ValueError, IndexError, TypeError):
+        await update.effective_message.reply_text(
+            "Ya no tengo las cuentas de esa propuesta (quiza se reinicio el bot). No escribi "
+            "nada: cancelala y manda la foto otra vez.")
+        return
+    estado, r = _post(RUTA_CONFIRMAR_COMPRA_DOCUMENTO, {
+        "telegram_id": chat, "borrador_id": borrador_id, "sello": dato.get("sello"),
+        "id_cuenta": cuenta.get("id")})
+    log.info("compra de documento confirmada: borrador=%s -> %s ya_estaba=%s",
+             borrador_id, estado, (r or {}).get("ya_estaba"))
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        texto = r.get("mensaje") or "Listo. Quedo registrada la compra."
+        if r.get("id") and not r.get("ya_estaba"):
+            texto += await asyncio.to_thread(_ligar_comprobante, borrador_id, r.get("id"))
+        if r.get("aviso_marca"):
+            texto += NL + str(r["aviso_marca"])
+        await update.effective_message.reply_text(texto)
+    else:
+        await update.effective_message.reply_text(r.get("error", "No pude registrar la compra. No escribi nada."))
+
+
+# 2026-11-07: la merma. El patron es el mismo que `PATRON_MERMA` de
+# `lib/bot-merma.ts`; aqui solo ahorra una peticion: quien decide es el servidor.
+_PATRON_MERMA = re.compile(
+    r"\b(merma|mermas|mermo|se\s+(?:me\s+|nos\s+|le\s+|les\s+)?(?:rompi\w*|quebr\w*|cay\w*|derram\w*|estrell\w*)"
+    r"|rot[ao]s?|quebrad[ao]s?|estrellad[ao]s?)\b")
+
+
+# Fase 7B (2026-11-07): las preguntas de lote. Mismos patrones que
+# `interpretarLote` de `lib/bot-pregunta-lote.ts`; aqui solo deciden si se
+# pregunta al servidor antes del cazador de lote. Quien contesta es el servidor.
+_PIDE_TRAZABILIDAD_LOTE = re.compile(
+    r"\b(trazabilidad|trazar|historia|historial|linea de tiempo|todo (lo )?del lote|detalle del lote|datos del lote"
+    r"|info(rmacion)? del lote|resumen del lote)\b")
+_PIDE_ETAPA_LOTE = re.compile(
+    r"\b(en que etapa|que etapa|en que va|como va|en que paso|en que quedo|como esta) (va |esta |anda )?(el )?lote\b"
+    r"|\betapa del lote\b")
+_PIDE_LOTES_ABIERTOS = re.compile(
+    r"\blotes? (abiertos?|activos?|en proceso|en fermentacion|fermentando|sin destilar|pendientes?)\b"
+    r"|\bque lotes (hay|tenemos|estan|van)\b|\blotes (hay|tenemos) (abiertos|activos)\b")
+_PIDE_PRODUCCION = re.compile(
+    r"\b(cuanto|que) (se )?(produjo|producimos|produjimos|hemos producido|se ha producido|llevamos producido)\b"
+    r"|\bproduccion (de|del|este) (mes|este mes|el mes pasado|mes pasado)\b|\bcuanto destilamos\b|\bcuanto se destilo\b")
+_CODIGO_LOTE = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
+
+
+def _pregunta_de_lote(texto):
+    """**Pura.** ¿Es una pregunta de lote? (no un registro: "ya destilamos el L-...")."""
+    t = unicodedata.normalize("NFD", str(texto or ""))
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
+    if _PIDE_TRAZABILIDAD_LOTE.search(t) and (_CODIGO_LOTE.search(t) or re.search(r"\blote\b", t)):
+        return True
+    if _PIDE_ETAPA_LOTE.search(t):
+        return True
+    if _CODIGO_LOTE.search(t) and re.search(r"\b(etapa|como va|en que va)\b", t):
+        return True
+    return bool(_PIDE_LOTES_ABIERTOS.search(t) or _PIDE_PRODUCCION.search(t))
+
+
+def _habla_de_merma(texto):
+    """**Pura.** Sin acentos y en minusculas, como el servidor."""
+    t = unicodedata.normalize("NFD", str(texto or ""))
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
+    return bool(_PATRON_MERMA.search(t))
+
+
+async def _proponer_merma(update, chat, texto):
+    """Devuelve True si el mensaje era una merma (propuesta o pregunta)."""
+    estado, r = _post("/api/bot/merma/proponer", {"telegram_id": chat, "texto": texto})
+    log.info("merma propuesta -> %s ok=%s no_es=%s", estado, (r or {}).get("ok"), (r or {}).get("no_es_merma"))
+    if estado == 200 and r.get("no_es_merma"):
+        return False
+    if estado == 200 and r.get("pregunta"):
+        await update.effective_message.reply_text(r["pregunta"])
+        return True
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponer la merma."))
+        return True
+    _memoria[chat] = {"tipo": "merma", "borrador_id": r["borrador_id"], "sello": r["sello"]}
+    await _ensenar_propuesta(update, chat, r["mensaje"], _teclado_confirmar_traspaso(r["borrador_id"]))
+    return True
+
+
+async def _confirmar_merma(update, chat):
+    """El VA. Solo viajan `{telegram_id, borrador_id, sello}`."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "merma":
+        await update.effective_message.reply_text("No tengo ninguna merma pendiente que escribir.")
+        return
+    estado, r = _post("/api/bot/merma/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("merma confirmada: borrador=%s -> %s filas=%s",
+             dato["borrador_id"], estado, r.get("filas_inventario"))
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        texto = r.get("mensaje") or "Listo. Quedo la merma."
+        if r.get("aviso_marca"):
+            texto += NL + str(r["aviso_marca"])
+        await update.effective_message.reply_text(texto)
+    else:
+        # `espera_aprobacion`: `_anotar_aprobacion` ya puso en `error` a quien se mando.
+        await update.effective_message.reply_text(r.get("error", "No pude escribir la merma."))
+
+
 async def _ensenar_propuesta(update, chat, mensaje, teclado):
     """Ensena una propuesta sellada y la deja guardada JUNTO A SU BORRADOR.
 
@@ -4181,7 +5949,10 @@ async def _ensenar_propuesta(update, chat, mensaje, teclado):
     dato = _memoria.get(chat)
     if isinstance(dato, dict) and dato.get("borrador_id"):
         dato["mostrado"] = (dato["borrador_id"], mensaje, teclado)
-    await update.effective_message.reply_text(mensaje, reply_markup=teclado)
+    with _hablando_de_ticket(isinstance(dato, dict) and dato.get("comprobante")):
+        enviado = await update.effective_message.reply_text(mensaje, reply_markup=teclado)
+    if isinstance(dato, dict) and dato.get("borrador_id"):
+        _anotar_mensaje(chat, enviado, dato["borrador_id"])
     caidos = _caidos.pop(chat, None)
     if caidos:
         # D79: el mensaje nuevo cancelo lo que estaba esperando su VA. Se DICE:
@@ -4207,10 +5978,11 @@ async def _pedir_va_explicito(update, chat):
         return
     mostrado = dato.get("mostrado")
     if mostrado and mostrado[0] == dato.get("borrador_id"):
-        await update.effective_message.reply_text(
+        enviado = await update.effective_message.reply_text(
             "No me quedo claro si es un si, y esto escribe. Te la vuelvo a "
             "ensenar:\n\n" + mostrado[1] + "\n\nToca VA o escribe va.",
             reply_markup=mostrado[2])
+        _anotar_mensaje(chat, enviado, dato["borrador_id"])
         return
     await update.effective_message.reply_text(
         "No me quedo claro si es un si, y esto escribe "
@@ -4218,21 +5990,166 @@ async def _pedir_va_explicito(update, chat):
         + ". Toca VA en la propuesta de arriba o escribe va.")
 
 
+YA_NO_ACTIVA = ("Esa propuesta ya no esta activa (se cancelo, se escribio o se reemplazo). "
+                "No cambie nada.")
+
+
+# El mensaje contestado es la pregunta "cual": trae VARIAS propuestas.
+_ES_LA_PREGUNTA_CUAL = "?"
+_PATRON_PREGUNTA = re.compile(r"^q[0-9a-f]{8}$")
+
+
+def _anotar_mensaje(chat, enviado, valor):
+    """Que objeto se ensena en ese mensaje. En RAM: tras un reinicio queda el teclado."""
+    mensaje_id = getattr(enviado, "message_id", None)
+    if mensaje_id is None:
+        return
+    mapa = _mensajes.setdefault(_chat_de(chat), {})
+    mapa[mensaje_id] = valor
+    while len(mapa) > TOPE_MENSAJES:
+        mapa.pop(next(iter(mapa)))
+
+
+def _borrador_del_reply(update, chat=None):
+    """El id del objeto al que contesta este mensaje, "" o `_ES_LA_PREGUNTA_CUAL`.
+
+    2026-11-04 (auditoria, S13 y S6): primero el id del mensaje contestado, que
+    resuelve aunque el mensaje ya no traiga teclado; despues el teclado, que sobrevive
+    a un reinicio. Un teclado con VARIOS ids es la pregunta "cual": antes se tomaba
+    el primero, y un "va" a la pregunta escribia esa propuesta."""
+    m = getattr(update, "effective_message", None)
+    respondido = getattr(m, "reply_to_message", None)
+    if respondido is None:
+        return ""
+    if chat is not None:
+        conocido = (_mensajes.get(_chat_de(chat)) or {}).get(getattr(respondido, "message_id", None))
+        if conocido:
+            return conocido
+    teclado = getattr(getattr(respondido, "reply_markup", None), "inline_keyboard", None)
+    ids = []
+    for fila in teclado or ():
+        for boton in fila:
+            partes = str(getattr(boton, "callback_data", "") or "").split(":")
+            if partes[0] in ("apr", "rch", "apa", "rca"):
+                return ""
+            ultimo = partes[-1]
+            if (_PATRON_UUID.match(ultimo) or _PATRON_PREGUNTA.match(ultimo)) and ultimo not in ids:
+                ids.append(ultimo)
+    if len(ids) > 1:
+        return _ES_LA_PREGUNTA_CUAL
+    return ids[0] if ids else ""
+
+
+def _contesta_a_ninguna(update, chat):
+    """True si contesta a un mensaje que no se puede atar a ninguna propuesta. El
+    `va` no escribe: se pregunta cual, aunque solo haya una viva."""
+    m = getattr(update, "effective_message", None)
+    respondido = getattr(m, "reply_to_message", None)
+    if respondido is None or _borrador_del_reply(update, chat):
+        return False
+    teclado = getattr(getattr(respondido, "reply_markup", None), "inline_keyboard", None)
+    return not any(str(getattr(b, "callback_data", "") or "").split(":")[0] in ("apr", "rch", "apa", "rca")
+                   for fila in teclado or () for b in fila)
+
+
+async def _contesta_a_muerta(update, chat):
+    """Si el mensaje contesta a una propuesta, la pone en el foco. Si esa ya no
+    esta viva lo dice y devuelve True: un "va" a una propuesta muerta no se lo
+    lleva la que este viva."""
+    bid = _borrador_del_reply(update, chat)
+    if not bid or bid == _ES_LA_PREGUNTA_CUAL or _enfocar(chat, bid):
+        return False
+    foco = _memoria.get(chat)
+    if isinstance(foco, dict) and foco.get("borrador_id") == bid:
+        return False
+    await update.effective_message.reply_text(_boton_ajeno(chat, "va", bid) or YA_NO_ACTIVA)
+    return True
+
+
+def _etiqueta_de(dato):
+    """Como se nombra una propuesta en la pregunta de cual: con monto y concepto.
+    Si no los tiene a la mano, la primera linea que se le ensenó."""
+    propuesta = dato.get("propuesta") if isinstance(dato.get("propuesta"), dict) else {}
+    peticion = dato.get("peticion") if isinstance(dato.get("peticion"), dict) else {}
+    monto = propuesta.get("monto") or dato.get("monto")
+    detalle = str(propuesta.get("descripcion") or dato.get("nombre_deudor") or propuesta.get("nota")
+                  or peticion.get("comprador") or peticion.get("cliente") or dato.get("para_quien")
+                  or dato.get("folio") or "")[:LARGO_ETIQUETA]
+    if not monto and not detalle and dato.get("mostrado"):
+        lineas = [x for x in _texto_plano(dato["mostrado"][1], 60).split(". ") if x]
+        detalle = lineas[0][:36] if lineas else ""
+    trozos = [_COMO_SE_LLAMA.get(_tipo_de(dato), "una propuesta"), "$%s" % monto if monto else "", detalle]
+    return " ".join(x for x in trozos if x)
+
+
+def _rotulos(vivos):
+    """Las etiquetas de varias propuestas, sin dos iguales: dos rotulos iguales son
+    una pregunta que no se puede contestar."""
+    vistos = {}
+    salida = []
+    for d in vivos:
+        rotulo = _etiqueta_de(d)
+        vistos[rotulo] = vistos.get(rotulo, 0) + 1
+        salida.append(rotulo if vistos[rotulo] == 1 else "%s (%da)" % (rotulo, vistos[rotulo]))
+    return salida
+
+
 async def _varias_vivas(update, chat):
     """D79: con DOS o mas propuestas vivas, un "va" escrito no dice cual.
 
-    No se adivina: se dicen cuales hay y se pide el VA de cada una. Con UNA,
-    esto no dice nada y el "va" escrito funciona como siempre (y D63 sigue
-    exigiendo un si explicito). Devuelve True si contesto.
+    2026-11-04: vale para la del mensaje al que contesta. Sin reply no se adivina:
+    se pregunta cual, con un boton por propuesta. Con UNA, esto no dice nada y el
+    "va" escrito funciona como siempre (y D63 sigue exigiendo un si explicito).
+    Devuelve True si contesto.
     """
-    vivos = _pendientes_de(chat)
-    if len(vivos) < 2:
+    if await _contesta_a_muerta(update, chat):
+        return True
+    reply = _borrador_del_reply(update, chat)
+    if reply and reply != _ES_LA_PREGUNTA_CUAL:
         return False
-    nombres = [_COMO_SE_LLAMA.get(_tipo_de(d), "una propuesta") for d in vivos]
-    await update.effective_message.reply_text(
-        "Tengo %d propuestas esperando: %s. Con un va escrito no se cual; toca el "
-        "VA de cada una." % (len(vivos), ", ".join(nombres)))
+    vivos = _pendientes_de(chat)
+    obligada = reply == _ES_LA_PREGUNTA_CUAL or _contesta_a_ninguna(update, chat)
+    if len(vivos) < 2 and not (obligada and vivos):
+        return False
+    await _preguntar_cual(update, chat, vivos, "VA: ", "va:",
+                          "Tengo %s esperando: %s. Con un va escrito no se cual: toca "
+                          "la que va, o contesta va al mensaje de esa propuesta.")
     return True
+
+
+async def _preguntar_cual(update, chat, vivos, prefijo, accion, texto):
+    """Un boton por propuesta, con rotulos que se distinguen."""
+    rotulos = _rotulos(vivos)
+    filas = [[InlineKeyboardButton((prefijo + r)[:60], callback_data=accion + d["borrador_id"])]
+             for d, r in zip(vivos, rotulos)]
+    enviado = await update.effective_message.reply_text(
+        texto % ("1 propuesta" if len(vivos) == 1 else "%d propuestas" % len(vivos),
+                 ", ".join(rotulos)),
+        reply_markup=InlineKeyboardMarkup(filas))
+    _anotar_mensaje(chat, enviado, _ES_LA_PREGUNTA_CUAL)
+
+
+async def _cancelar_lo_dicho(update, chat):
+    """El "no" escrito o dictado. Si contesta a una propuesta, apaga ESA.
+
+    2026-11-04 (encargo de Norman, "que los trate de forma independiente", auditoria
+    S7): con dos o mas y sin reply antes se apagaban todas (`_cancelar_todo`, D79).
+    Ahora se pregunta cual. Si lo que esta en el foco es una pregunta, el "no" es
+    para ella: las propuestas no se tocan."""
+    if await _contesta_a_muerta(update, chat):
+        return
+    reply = _borrador_del_reply(update, chat)
+    nombrada = bool(reply) and reply != _ES_LA_PREGUNTA_CUAL
+    foco = dict.get(_memoria, chat)
+    es_pregunta = isinstance(foco, dict) and not foco.get("borrador_id")
+    vivos = _pendientes_de(chat)
+    if not nombrada and not (es_pregunta and reply != _ES_LA_PREGUNTA_CUAL) and (
+            len(vivos) >= 2 or (vivos and (reply or _contesta_a_ninguna(update, chat)))):
+        await _preguntar_cual(update, chat, vivos, "Cancelar: ", "no:",
+                              "Tengo %s esperando: %s. No apago ninguna a ciegas: "
+                              "toca la que cancelo.")
+        return
+    await update.effective_message.reply_text(_cancelar_de_verdad(chat, _borrador_vivo(chat)))
 
 
 async def _confirmar(update, chat, por_boton=False):
@@ -4258,10 +6175,30 @@ async def _confirmar(update, chat, por_boton=False):
         await update.effective_message.reply_text(
             "Todavia me falta un dato para poder escribirlo. Contestame lo que te pregunte.")
         return
+    # 2026-11-08: la compra de un documento se confirma tocando la cuenta.
+    if dato.get("tipo") == "compra_documento":
+        await update.effective_message.reply_text(
+            "Esa compra se registra tocando la cuenta de la que salio el dinero (botones de "
+            "arriba). No escribi nada.")
+        return
+    if dato.get("tipo") == "compra_documento_eligiendo":
+        await update.effective_message.reply_text(
+            "Antes de la cuenta, dime que es la linea marcada (botones de arriba). No escribi nada.")
+        return
+    # 2026-11-04: si se pregunto la cuenta, el "va" no escribe la de default.
+    if await _falta_la_cuenta(update, dato):
+        return
     # Un "va" escrito vale para lo que este pendiente, sea gasto o abono: la
     # persona contesta como habla y no tiene por que saber que hay dos caminos.
     if dato.get("tipo") == "abono":
         await _confirmar_abono(update, chat)
+        return
+    # Sin esta rama, el default de abajo le mandaria el VA a la ruta del gasto.
+    if dato.get("tipo") == "traspaso":
+        await _confirmar_traspaso(update, chat)
+        return
+    if dato.get("tipo") == "merma":
+        await _confirmar_merma(update, chat)
         return
     # D112: sin esta rama un "va" escrito caia al camino de gasto.
     if dato.get("tipo") == "entrega_efectivo":
@@ -4287,6 +6224,9 @@ async def _confirmar(update, chat, por_boton=False):
         return
     if dato.get("tipo") == "alta_miembro":
         await _confirmar_miembro(update, chat)
+        return
+    if dato.get("tipo") == "alta_categoria":
+        await _confirmar_categoria(update, chat)
         return
     if dato.get("tipo") == "miembro_eligiendo":
         await update.effective_message.reply_text(
@@ -4335,6 +6275,20 @@ async def _confirmar(update, chat, por_boton=False):
         await update.effective_message.reply_text(
             "Primero dime de quien fue el pago, con uno de los botones.")
         return
+    if not dato.get("borrador_id"):
+        await update.effective_message.reply_text("Primero escoge con uno de los botones.")
+        return
+    if dato.get("tipo") == "lote_etapa":
+        # Rehidratada: el resumen de la etapa vivia en RAM, pero el borrador sellado
+        # esta completo. Sin esta rama caia a `gasto/confirmar`.
+        estado, r = _post(RUTA_CONFIRMAR_DE["lote_etapa"], {
+            "telegram_id": chat, "borrador_id": dato["borrador_id"], "sello": dato["sello"]})
+        if estado == 200 and r.get("ok"):
+            _memoria.pop(chat, None)
+            await update.effective_message.reply_text(r.get("mensaje") or "Listo.")
+        else:
+            await update.effective_message.reply_text(r.get("error", "No pude escribirlo."))
+        return
     estado, r = _post("/api/bot/gasto/confirmar", {
         "telegram_id": chat,
         "borrador_id": dato["borrador_id"],
@@ -4342,15 +6296,17 @@ async def _confirmar(update, chat, por_boton=False):
     })
     if estado == 200 and r.get("ok"):
         _memoria.pop(chat, None)
+        # 2026-11-03: el clic ya escribio; la foto se liga a ESE borrador.
+        pie = await asyncio.to_thread(_ligar_comprobante, dato.get("borrador_id"), r.get("id"))
         creada = r.get("categoria_creada")
         if creada:
             if creada not in _catalogo:
                 _catalogo.append(creada)
             await update.effective_message.reply_text(
                 "Listo. Quedo escrito, y la categoria " + str(creada) +
-                " quedo creada: desde ahora la uso sola.")
+                " quedo creada: desde ahora la uso sola." + pie)
         else:
-            await update.effective_message.reply_text("Listo. Quedo escrito.")
+            await update.effective_message.reply_text("Listo. Quedo escrito." + pie)
     else:
         await update.effective_message.reply_text(r.get("error", "No pude escribirlo."))
 
@@ -4368,30 +6324,114 @@ async def _reproponer(update, chat, cambios):
     propuesta = dict(dato["propuesta"])
     propuesta.update(cambios.get("propuesta", {}))
     id_cuenta = cambios.get("id_cuenta", dato.get("id_cuenta"))
+    # Lo que el modelo dejo por resolver sobrevive a cualquier otro cambio. Una cuenta
+    # que se dijo y no casa con ninguna (S8) no deja la anterior callada: vuelve a
+    # preguntarse.
+    duda = cambios.get("cuenta_duda") or {}
+    if cambios.get("id_cuenta"):
+        cuenta = {"id_cuenta": cambios["id_cuenta"]}
+    elif duda:
+        cuenta = dict(duda)
+    elif dato.get("cuenta_dicha"):
+        cuenta = {"id_cuenta": dato.get("id_cuenta")}
+    else:
+        cuenta = {"oida": dato.get("cuenta_oida"), "solo_paga": dato.get("cuenta_solo_paga")}
+    sugeridas = cambios.get("sugeridas", dato.get("sugeridas") or [])
 
-    cuerpo = {"telegram_id": chat, "propuesta": propuesta}
+    cuerpo = {"telegram_id": chat, "propuesta": propuesta,
+              "contexto_bot": _contexto_para_base(
+                  {k: v for k, v in cuenta.items() if v}, propuesta, sugeridas)}
     if id_cuenta:
         cuerpo["id_cuenta"] = id_cuenta
     estado, r = _post("/api/bot/gasto/proponer", cuerpo)
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(r.get("error", "No pude reproponerlo."))
         return
-    _memoria[chat] = {
-        "borrador_id": r["borrador_id"],
-        "sello": r["sello"],
-        "propuesta": propuesta,
-        "cuentas": r.get("cuentas", dato.get("cuentas", [])),
-        "id_cuenta": r.get("id_cuenta"),
-        "categorias": r.get("categorias", list(_catalogo)),
-    }
+    cuentas = r.get("cuentas", dato.get("cuentas", []))
+    # Cambiar de cuenta (o cualquier otro campo) reemplaza SIEMPRE a su propio
+    # borrador: el VA viejo ya no debe poder escribir (S3).
+    with _reemplazando(chat, dato.get("borrador_id")):
+        _memoria[chat] = dict({
+            "borrador_id": r["borrador_id"],
+            "sello": r["sello"],
+            "propuesta": propuesta,
+            "cuentas": cuentas,
+            "id_cuenta": r.get("id_cuenta"),
+            "categorias": r.get("categorias", list(_catalogo)),
+            "sugeridas": sugeridas,
+            "cuenta": {k: v for k, v in cuenta.items() if v},
+            "compra_opciones": list(r.get("compra_opciones") or []),
+            "compra_falta": r.get("compra_falta"),
+        }, **_estado_de_cuenta(cuenta, cuentas))
+    _marcar_espera_compra(chat, r)
     _refrescar_catalogo(r)
-    await _ensenar_propuesta(
-        update, chat, r["mensaje"], _teclado_confirmar(r["borrador_id"]))
+    # 2026-11-03: el borrador nuevo sustituye al viejo, y se lleva su foto.
+    mensaje = r["mensaje"]
+    vuelo = comprobantes.foto_de_vuelo(dato.get("borrador_id"))
+    pegadas = [c for c in comprobantes.fotos_de_borrador(dato.get("borrador_id"))
+               if _adjuntar_comprobante(chat, r["borrador_id"], c, c == vuelo)]
+    if pegadas:
+        mensaje = str(mensaje) + NL + NL + _pie_de_propuesta(len(pegadas))
+    await _ensenar_gasto(update, chat, mensaje)
 
 
 # Los botones que ESCRIBEN. El `borrador_id` que traen es el de la propuesta
 # que Norman vio; si ya no esta viva, NO se confirma lo que haya en el foco.
-ACCIONES_VA = ("va", "vaan", "vaalt", "vacnv", "vaab", "vavt", "valt", "vact", "vaent", "vamb", "vaet")
+ACCIONES_VA = ("va", "vaan", "vaalt", "vacnv", "vaab", "vavt", "valt", "vact", "vaent", "vamb", "vaet",
+               "vacat")
+# Los botones de una lista: `<accion>:<i>:<dueno>`, donde el dueno es un borrador o
+# una pregunta (`_lista_de`). Sin dueno el indice no significa nada.
+_ACCIONES_DE_LISTA = ("setdeu", "setcomp", "setcli", "setprod", "setins", "setfmt", "setalta",
+                      "setcnv", "setanu", "setcorr", "setet", "mbe", "setcat", "dup", "cmpi",
+                      "cdc", "cdl")
+# 2026-11-08: la cuenta de una compra de documento ESCRIBE, pero es boton de lista
+# (`cdc:<i>:<borrador>`): no va en ACCIONES_VA, cuyo `partes[1]` es el borrador.
+_VA_DE_LISTA = ("cdc",)
+# Los que vuelven a proponer lo mismo con un dato cambiado: sustituyen a su borrador.
+_ACCIONES_QUE_REEMPLAZAN = ("setcta", "setsug", "setcat", "setdeu", "setcomp", "setcli",
+                            "setprod", "setins", "setfmt", "setalta", "setcnv", "cmpi")
+
+
+_PATRON_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def _dueno_en_el_grupo(clave, borrador_id):
+    """En un grupo, la PERSONA (otra que quien apreta) cuya propuesta viva es
+    `borrador_id`, o None. **Pura salvo por leer la RAM.**"""
+    if not _en_grupo(clave):
+        return None
+    for k, reg in list(_pendientes.items()):
+        if not _en_grupo(k) or _chat_de(k) != _chat_de(clave) or _persona(k) == _persona(clave):
+            continue
+        foco = dict.get(_memoria, k)
+        if borrador_id in (reg or {}) or (isinstance(foco, dict) and foco.get("borrador_id") == borrador_id):
+            return _persona(k)
+    return None
+
+
+def _boton_ajeno(clave, accion, arg):
+    """El texto que se le dice a quien apreta el boton de una propuesta que no
+    es suya, o "" si el boton si es suyo (o no es de una propuesta). **Solo
+    lee la RAM.** Nunca escribe: el clic ajeno no llega al servidor."""
+    if not _en_grupo(clave) or not _PATRON_UUID.match(str(arg or "")):
+        return ""
+    if arg in (_pendientes.get(clave) or {}):
+        return ""
+    foco = dict.get(_memoria, clave)
+    if isinstance(foco, dict) and foco.get("borrador_id") == arg:
+        return ""
+    dueno = _dueno_en_el_grupo(clave, arg)
+    if dueno is None:
+        if accion in ACCIONES_VA + _VA_DE_LISTA or accion == "no":
+            return ("Ese boton no es de una propuesta tuya (o ya caduco). Tu clic no escribio nada. "
+                    "Lo que el bot escribe, lo escribe el clic de Norman.")
+        return ""
+    nombre = _nombre_de(dueno)
+    if int(_persona(clave)) == NORMAN_TELEGRAM_ID:
+        return ("Esa propuesta es de " + nombre + ". Cuando " + nombre + " le de VA, te llega "
+                "por privado el Aprobar; ese clic es el que la escribe. Este no escribio nada.")
+    return ("Esa propuesta es de " + nombre + ": solo " + nombre + " le da VA, y solo el Aprobar "
+            "de Norman la escribe. Tu clic no escribio nada.")
 
 
 async def manejar_boton(update, context):
@@ -4436,33 +6476,101 @@ async def _boton_de_lote_v2(update, chat, partes, accion):
     elif accion == "ltdes":
         await lote_ciclo.abrir_etapa(update, chat, "destilacion", arg)
     elif accion == "ltmu":
-        await lote_ciclo.muestra_guardada(update, chat, _post, arg)
+        # Auditoria 2026-11-03 (hallazgo 6): este boton escribe (lote_etapas) y
+        # no trae borrador, asi que la guardia de boton ajeno no lo veia. Solo
+        # el clic de Norman lo anota; el servidor lo vuelve a exigir.
+        if int(_persona(chat)) != NORMAN_TELEGRAM_ID:
+            log.info("boton ajeno: %s apreto ltmu (muestra) en %s", _persona(chat), _chat_de(chat))
+            await update.effective_message.reply_text(
+                "La muestra guardada la anota el clic de Norman. Tu clic no escribio nada.")
+        else:
+            await lote_ciclo.muestra_guardada(update, chat, _post, arg)
     else:
         return False
     return True
 
 
 async def _manejar_boton(update, chat, q, partes, accion):
+    # 2026-11-09: los botones de suscripciones no traen borrador; el modulo
+    # vuelve a partir `q.data` (lleva 4 piezas) y exige que sea Norman.
+    if accion in suscripciones.ACCIONES:
+        datos = getattr(q, "data", None) or ":".join(partes)
+        await suscripciones.atender_boton(update, chat, datos, _post)
+        return
     # D79: el boton trae el `borrador_id` de SU propuesta. Si esta viva, pasa
     # al foco (y lo que hubiera a medias se aparta); si es un VA de una que ya
     # no esta viva, no se escribe nada: el foco es OTRA propuesta.
     if accion in ("apr", "rch", "apa", "rca"):
         await _boton_de_aprobacion(update, chat, q, accion, partes[1] if len(partes) > 1 else "")
         return
+    if accion in PARA_DEL_PREFIJO:
+        # Fase 6: botones de una PREGUNTA (solo lectura), no de una propuesta.
+        await _boton_de_pregunta(update, chat, accion, partes[1] if len(partes) > 1 else "")
+        return
+    # 2026-11-03 (equipo en el grupo): el boton de la propuesta de OTRO no hace
+    # nada, y se dice por que. El servidor ya lo cerraba ("Ese borrador no es
+    # tuyo", 403); esto evita que llegue y le explica a quien apreto.
+    # Las de lista traen el indice primero y su dueno en tercer lugar.
+    de_propuesta = (accion in ("setcta", "setsug", "no") + _ACCIONES_DE_LISTA) and len(partes) > 2
+    aviso_ajeno = _boton_ajeno(chat, accion, partes[2] if de_propuesta else (partes[1] if len(partes) > 1 else ""))
+    if aviso_ajeno:
+        log.info("boton ajeno: %s apreto %s de otra persona en %s", _persona(chat), accion, _chat_de(chat))
+        await update.effective_message.reply_text(aviso_ajeno)
+        return
     if await _boton_de_lote_v2(update, chat, partes, accion):
+        return
+    if de_propuesta and not _enfocar(chat, partes[2]):
+        await update.effective_message.reply_text(YA_NO_ACTIVA)
+        return
+    if accion in _ACCIONES_DE_LISTA and not de_propuesta:
+        # Una lista de antes de que los botones llevaran dueno: su indice no se puede
+        # atar a nada (S5), y aplicarlo al foco es justo el defecto.
+        await update.effective_message.reply_text(YA_NO_ACTIVA)
         return
     bid = partes[1] if len(partes) > 1 else ""
     if bid and bid not in _NO_HAY_BORRADOR and not _enfocar(chat, bid):
+        # 2026-11-04: TODO boton valida su borrador, no solo el VA. "Cambiar cuenta"
+        # de un gasto ya cancelado leia el foco, que era un abono, y contestaba
+        # "Solo tienes una cuenta": falso, y sobre otra propuesta. El "no" pasa
+        # porque lo resuelve el servidor por id (y dice si ya estaba escrito).
         foco = _memoria.get(chat)
         foco_bid = foco.get("borrador_id") if isinstance(foco, dict) else ""
-        if accion in ACCIONES_VA and foco_bid and foco_bid != bid:
-            await update.effective_message.reply_text(
-                "Esa propuesta ya no esta viva (se cancelo o se reemplazo). "
-                "No escribi nada. La vigente es la de mas abajo.")
+        # Un VA sin nada en el foco cae a `_confirmar`, que dice que no hay pendiente.
+        # Con algo a medias en el foco tampoco es de ese: lo apagado se dice apagado.
+        es_propuesta = (bool(_PATRON_UUID.match(str(bid))) and accion != "no"
+                        and accion not in ACCIONES_VA)
+        if foco_bid != bid and (es_propuesta or (accion in ACCIONES_VA and foco)):
+            await update.effective_message.reply_text(YA_NO_ACTIVA)
             return
 
+    foco = dict.get(_memoria, chat)
+    foco = foco if isinstance(foco, dict) else {}
+    blanco = ""
+    if accion in _ACCIONES_QUE_REEMPLAZAN:
+        blanco = foco.get("borrador_id") or foco.get("_reemplaza") or ""
+    with _reemplazando(chat, blanco):
+        await _accion_de_boton(update, chat, partes, accion)
+    # Una pregunta contestada ya no vive: su lista vieja contesta YA_NO_ACTIVA.
+    pid = foco.get("_pid")
+    if pid and dict.get(_memoria, chat) is not foco:
+        (_preguntas.get(chat) or {}).pop(pid, None)
+
+
+async def _accion_de_boton(update, chat, partes, accion):
+    if accion == "qf":
+        await _quitar_foto(update, chat, partes[1] if len(partes) > 1 else "")
+        return
     if accion == "vamb":
         await _confirmar_miembro(update, chat)
+        return
+    if accion == "vacat":
+        await _confirmar_categoria(update, chat)
+        return
+    if accion == "cdc":
+        await _confirmar_compra_documento(update, chat, partes[1], partes[2] if len(partes) > 2 else "")
+        return
+    if accion == "cdl":
+        await _elegir_linea_documento(update, chat, partes[1])
         return
     if accion == "mbe":
         dato = _memoria.get(chat) or {}
@@ -4483,7 +6591,7 @@ async def _manejar_boton(update, chat, q, partes, accion):
     elif accion == "vaent":
         await _confirmar_entrada(update, chat)
     elif accion == "cod":
-        _esperando_codigo[chat] = True
+        _esperando_codigo[chat] = _borrador_vivo(chat) or True
         await update.effective_message.reply_text("Que codigo le pongo?")
     elif accion == "setins":
         dato = _memoria.get(chat) or {}
@@ -4524,9 +6632,9 @@ async def _manejar_boton(update, chat, q, partes, accion):
                 "Dictamela otra vez diciendo a quien se la cotizo.")
         else:
             await update.effective_message.reply_text(
-                "A quien?", reply_markup=_teclado_clientes(opciones))
+                "A quien?", reply_markup=_lista_de(chat, _teclado_clientes(opciones)))
     elif accion == "vig":
-        _esperando_vigencia[chat] = True
+        _esperando_vigencia[chat] = _borrador_vivo(chat) or True
         await update.effective_message.reply_text("Cuantos dias se la respeto? Solo el numero.")
     elif accion == "setcli":
         dato = _memoria.get(chat) or {}
@@ -4569,7 +6677,7 @@ async def _manejar_boton(update, chat, q, partes, accion):
             peticion = dato.get("peticion") or {}
             publico = str(peticion.get("propuesta", {}).get("condicion_pago") or "").upper() != "CONCESION"
             await update.effective_message.reply_text(
-                "A quien?", reply_markup=_teclado_compradores(opciones, publico))
+                "A quien?", reply_markup=_lista_de(chat, _teclado_compradores(opciones, publico)))
     elif accion == "setcomp":
         dato = _memoria.get(chat) or {}
         peticion = dict(dato.get("peticion") or {})
@@ -4684,7 +6792,7 @@ async def _manejar_boton(update, chat, q, partes, accion):
                               "opciones": opciones}
             await update.effective_message.reply_text(
                 "Que le cambio?" + NL + elegido.get("detalle", ""),
-                reply_markup=_teclado_campos_corregibles())
+                reply_markup=_lista_de(chat, _teclado_campos_corregibles()))
             return
         await _proponer_anulacion(update, chat, {
             "telegram_id": chat,
@@ -4710,7 +6818,8 @@ async def _manejar_boton(update, chat, q, partes, accion):
             # contra ella y no contra lo que el catalogo diga despues.
             vivas = list(_catalogo)
             dato["categorias_ofrecidas"] = vivas
-            await update.effective_message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
+            await update.effective_message.reply_text(
+                "Cual es?", reply_markup=_lista_de(chat, _teclado_categorias(vivas)))
     elif accion == "vaab":
         await _confirmar_abono(update, chat)
     elif accion == "vaet":
@@ -4737,7 +6846,8 @@ async def _manejar_boton(update, chat, q, partes, accion):
         if not opciones:
             await update.effective_message.reply_text("Dictamelo otra vez diciendo de quien fue el pago.")
         else:
-            await update.effective_message.reply_text("De quien fue?", reply_markup=_teclado_deudores(opciones))
+            await update.effective_message.reply_text(
+                "De quien fue?", reply_markup=_lista_de(chat, _teclado_deudores(opciones)))
     elif accion == "setdeu":
         dato = _memoria.get(chat) or {}
         opciones = dato.get("opciones") or []
@@ -4746,10 +6856,39 @@ async def _manejar_boton(update, chat, q, partes, accion):
         except (ValueError, IndexError, TypeError):
             await update.effective_message.reply_text("Ese ya no esta en la lista. Dictamelo otra vez.")
             return
+        if not dato.get("propuesta"):
+            await update.effective_message.reply_text("Ya no tengo ese abono. Dictamelo otra vez.")
+            return
         await _proponer_abono(update, chat, dato.get("propuesta"),
-                              id_deudor=elegido["id_entidad"])
+                              id_deudor=elegido["id_entidad"], cuenta=dato.get("cuenta"))
+    elif accion == "dup":
+        dato = _memoria.get(chat) or {}
+        if dato.get("tipo") != "duplicado_eligiendo":
+            await update.effective_message.reply_text(YA_NO_ACTIVA)
+            return
+        if dato.get("abono"):
+            await _proponer_abono(update, chat, dato["propuesta"],
+                                  id_deudor=dato["abono"].get("id_deudor"),
+                                  nombre=dato["abono"].get("nombre"),
+                                  cuenta=dato.get("cuenta"), ya_avisado=True)
+            return
+        if dato.get("traspaso"):
+            await _atender_traspaso(update, chat, dato["traspaso"], ya_avisado=True)
+            return
+        await _proponer_gasto_directo(update, chat, dato["propuesta"], dato.get("cuenta"),
+                                      dato.get("sugeridas"), ya_avisado=True,
+                                      foto=dato.get("foto"), de_vuelo=bool(dato.get("de_vuelo")))
+    elif accion == "setaj":
+        # Contesta a "a cual se lo hago?": el cambio esperaba en la pregunta.
+        pregunta = (_preguntas.get(chat) or {}).pop(partes[2] if len(partes) > 2 else "", None)
+        if not pregunta:
+            await update.effective_message.reply_text(YA_NO_ACTIVA)
+            return
+        if _apartado.get(chat) is pregunta:
+            _apartado.pop(chat, None)
+        await _ajustar(update, chat, pregunta["ruta"], blanco_id=partes[1])
     elif accion == "montoab":
-        _esperando_monto[chat] = True
+        _esperando_monto[chat] = _borrador_vivo(chat) or True
         await update.effective_message.reply_text("De cuanto fue el abono? Solo el numero.")
     elif accion == "va":
         await _confirmar(update, chat, por_boton=True)
@@ -4758,8 +6897,13 @@ async def _manejar_boton(update, chat, q, partes, accion):
         # en los ocho teclados de confirmacion. El unico sin uuid es el "Mejor
         # no" de las listas (`no:x`), que es el centinela.
         crudo = partes[1] if len(partes) > 1 else ""
-        borrador_id = "" if crudo in _NO_HAY_BORRADOR else crudo
-        await update.effective_message.reply_text(_cancelar_de_verdad(chat, borrador_id))
+        if crudo in _NO_HAY_BORRADOR:
+            # `no:x:<pregunta>` ya la puso en el foco. Un `no:x` suelto (un teclado de
+            # antes de este cambio) se trata como el "no" escrito: cancela en la base,
+            # y solo si se sabe cual. Antes apagaba el foco solo en RAM (S7).
+            await _cancelar_lo_dicho(update, chat)
+            return
+        await update.effective_message.reply_text(_cancelar_de_verdad(chat, crudo))
     elif accion == "cat":
         dato = _memoria.get(chat)
         if not dato:
@@ -4769,7 +6913,8 @@ async def _manejar_boton(update, chat, q, partes, accion):
         # Se guarda la lista EXACTA que se ofrecio: el indice del boton solo
         # significa algo contra ella, no contra lo que el catalogo diga despues.
         dato["categorias_ofrecidas"] = list(vivas)
-        await update.effective_message.reply_text("Cual es?", reply_markup=_teclado_categorias(vivas))
+        await update.effective_message.reply_text(
+            "Cual es?", reply_markup=_teclado_categorias(vivas, dato.get("borrador_id")))
     elif accion == "setcat":
         dato = _memoria.get(chat) or {}
         ofrecidas = dato.get("categorias_ofrecidas") or dato.get("categorias") or []
@@ -4808,15 +6953,22 @@ async def _manejar_boton(update, chat, q, partes, accion):
                 return
         await _reproponer(update, chat, {"propuesta": {"categoria": nueva}})
     elif accion == "monto":
-        _esperando_monto[chat] = True
+        _esperando_monto[chat] = _borrador_vivo(chat) or True
         await update.effective_message.reply_text("De cuanto fue? Solo el numero.")
     elif accion == "cta":
         dato = _memoria.get(chat) or {}
         cuentas = dato.get("cuentas") or []
-        if len(cuentas) < 2:
+        if "cuentas" not in dato:
+            # Rehidratada tras un reinicio: no se sabe cuantas hay, y decir "una"
+            # seria inventarlo.
+            await update.effective_message.reply_text(
+                "Esa propuesta la recupere de la base despues de un reinicio y no tengo "
+                "su detalle para cambiarle la cuenta. Dale VA asi o cancelala y dictamela otra vez.")
+        elif len(cuentas) < 2:
             await update.effective_message.reply_text("Solo tienes una cuenta dada de alta; no hay a cual cambiar.")
         else:
-            await update.effective_message.reply_text("Contra cual?", reply_markup=_teclado_cuentas(cuentas))
+            await update.effective_message.reply_text(
+                "Contra cual?", reply_markup=_teclado_cuentas(cuentas, dato.get("borrador_id")))
     elif accion == "setcta":
         dato = _memoria.get(chat) or {}
         cuentas = dato.get("cuentas") or []
@@ -4833,7 +6985,36 @@ async def _manejar_boton(update, chat, q, partes, accion):
             peticion["id_cuenta"] = elegida["id"]
             await _proponer_venta(update, chat, peticion)
             return
+        # Y al abono igual: sin esto se volveria a proponer como gasto.
+        if dato.get("tipo") == "abono":
+            if not dato.get("propuesta"):
+                await update.effective_message.reply_text(
+                    "Esa propuesta la recupere despues de un reinicio y no tengo su detalle "
+                    "para cambiarle la cuenta. No escribi nada. Cancelala y dictamela otra vez.")
+                return
+            await _proponer_abono(update, chat, dato.get("propuesta"), id_deudor=dato.get("id_deudor"),
+                                  cuenta={"id_cuenta": elegida["id"]})
+            return
         await _reproponer(update, chat, {"id_cuenta": elegida["id"]})
+    elif accion == "setsug":
+        dato = _memoria.get(chat) or {}
+        try:
+            nueva = (dato.get("sugeridas") or [])[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            await update.effective_message.reply_text("Esa categoria ya no esta en la lista. Dictamelo otra vez.")
+            return
+        await _reproponer(update, chat, {"propuesta": {"categoria": nueva, "categoria_nueva": None}})
+    elif accion == "cmpi":
+        # 2026-11-07: "Entra al almacen: <insumo>". El id sale de la lista que
+        # ofrecio el servidor, por indice; el servidor lo vuelve a buscar en el
+        # catalogo antes de proponer la compra.
+        dato = _memoria.get(chat) or {}
+        try:
+            elegido = (dato.get("compra_opciones") or [])[int(partes[1])]
+        except (ValueError, IndexError, TypeError):
+            await update.effective_message.reply_text("Ese insumo ya no esta en la lista. Dictamelo otra vez.")
+            return
+        await _reproponer(update, chat, {"propuesta": {"id_insumo": elegido.get("id")}})
 
 
 async def _consulta_directa(update, consulta, filtro=None):
@@ -4854,6 +7035,12 @@ async def _consulta_directa(update, consulta, filtro=None):
         await update.effective_message.reply_text(r.get("error", "No pude consultarlo."))
         return
     await _contestar_texto_de_consulta(update, chat, r)
+
+
+@_con_puerta
+async def comando_ticket(update, context):
+    """/ticket <folio, monto o proveedor>: reenvia la foto del ticket."""
+    await _mostrar_ticket(update, _clave_de(update), " ".join(context.args or []))
 
 
 @_con_puerta
@@ -4884,6 +7071,63 @@ async def comando_registrar(update, context):
 @_con_puerta
 async def comando_ventas(update, context):
     await _consulta_directa(update, "ventas")
+
+
+@_con_puerta
+async def comando_suscripciones(update, context):
+    """/suscripciones (2026-11-09): cada suscripcion con monto, dia y estado del
+    mes, y el total mensual. El texto lo arma el servidor (`lib/suscripciones.ts`,
+    la misma lectura que el modal del ERP). En privado, Norman recibe un boton
+    "Ya se pago" por cada pendiente; en grupo va por privado y sin botones."""
+    chat = _clave_de(update)
+    await update.effective_message.chat.send_action("typing")
+    estado, r = _post(suscripciones.RUTA, {"accion": "listar", "telegram_id": chat})
+    log.info("comando /suscripciones -> %s", estado)
+    texto, teclado, r = suscripciones.respuesta_de_lista(estado, r, _en_grupo(chat))
+    if r is None:
+        await update.effective_message.reply_text(texto)
+    elif teclado is not None:
+        await update.effective_message.reply_text(texto, reply_markup=teclado)
+    else:
+        await _contestar_texto_de_consulta(update, chat, r)
+
+
+@_con_puerta
+async def comando_botellas(update, context):
+    """/botellas (2026-11-08): botellas por semana y por mes de cada local y
+    distribuidor, contra la semana y el mes anteriores.
+
+    El texto entero lo arma el servidor con `leerBotellasPorCliente`, la MISMA
+    funcion que pinta la tarjeta de arriba del panel web. Aqui no se calcula.
+    """
+    chat = _clave_de(update)
+    await update.effective_message.chat.send_action("typing")
+    estado, r = _post("/api/bot/botellas", {"telegram_id": chat})
+    log.info("comando /botellas -> %s", estado)
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude consultarlo."))
+        return
+    await _contestar_texto_de_consulta(update, chat, r)
+
+
+@_con_puerta
+async def comando_pulso(update, context):
+    """/pulso (2026-11-08): que reponer (semanas que alcanza cada presentacion
+    en la matriz) y a quien llamar (dias sin surtir de cada local y
+    distribuidor).
+
+    El texto entero lo arma el servidor con `leerPulso`, la MISMA funcion que
+    pinta la tarjeta "Pulso" del panel web. Aqui no se calcula. Mismo permiso
+    que /botellas: solo la matriz; en grupo, por privado.
+    """
+    chat = _clave_de(update)
+    await update.effective_message.chat.send_action("typing")
+    estado, r = _post("/api/bot/pulso", {"telegram_id": chat})
+    log.info("comando /pulso -> %s", estado)
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude consultarlo."))
+        return
+    await _contestar_texto_de_consulta(update, chat, r)
 
 
 @_con_puerta
@@ -5008,12 +7252,18 @@ async def comando_inicio(update, context):
         + "PARA CAPTURAR, dime lo que gastaste como lo dirias en persona, por"
           " texto o nota de voz:" + NL
         + '  "gaste 340 de gasolina yendo a Zacatecas"' + NL
-        + "Te enseno la fila exacta antes de escribir nada. Nada entra sin tu VA." + NL + NL
+        + "Te enseno la fila exacta antes de escribir nada. Nada entra sin tu VA." + NL
+        + "O mandame la FOTO del ticket: la leo y te propongo el gasto. Queda ligada al"
+          " movimiento; \"muestrame el ticket de la gasolina\" o /ticket 500 te la regresa."
+        + NL + NL
         + "PARA CONSULTAR:" + NL
         + "  /stock            que hay, y donde" + NL
         + "  /stock chile 750  solo de un producto, o de un punto de venta" + NL
         + "  /cartera          quien debe, cuanto, y desde cuando" + NL
-        + "  /ventas           los ultimos 6 meses" + NL + NL
+        + "  /ventas           los ultimos 6 meses" + NL
+        + "  /botellas         botellas por semana y mes de cada local y distribuidor" + NL
+        + "  /pulso            que reponer y a quien no le ha llegado botella" + NL
+        + "  /suscripciones    lo que se cobra cada mes y si ya se pago" + NL + NL
         + "PARA REGISTRAR UN PAGO QUE TE HICIERON:" + NL
         + "  /abono Gilberto 5000   o dilo hablando: \"me deposito Gilberto 5 mil\"" + NL
         + "Te enseno a que pedidos se aplica ANTES de escribir nada." + NL
@@ -5089,6 +7339,12 @@ async def _latir(app):
             await lote_ciclo.tick(app.bot, _post)
         except Exception as e:  # el latido no se cae por el ciclo
             log.warning("ciclo del lote: %s: %s", type(e).__name__, e)
+        # 2026-11-09: la pregunta mensual de suscripciones (solo a Norman, por
+        # privado; reclamada en la base: UNA vez por mes aunque se reinicie).
+        try:
+            await suscripciones.tick(app.bot, _post)
+        except Exception as e:  # el latido no se cae por las suscripciones
+            log.warning("suscripciones: %s: %s", type(e).__name__, e)
 
 
 async def _al_arrancar(app):
@@ -5167,20 +7423,31 @@ def main():
     # Grupo -1: corre ANTES que cualquier otro handler y no corta la cadena.
     # Todo mensaje (texto, voz, boton, edicion) queda escrito antes de procesarse.
     app.add_handler(TypeHandler(Update, bitacora.anotar_update), group=-1)
+    # 2026-11-03: grupos silenciosos. Va PRIMERO en el grupo 0: lo que acepta aqui
+    # ya quedo en la bitacora y no lo ve ningun otro handler.
+    app.add_handler(_Silencio())
     app.add_handler(CommandHandler("start", comando_inicio))
     app.add_handler(CommandHandler("stock", comando_stock))
     app.add_handler(CommandHandler("cartera", comando_cartera))
     app.add_handler(CommandHandler("precios", comando_precios))
     app.add_handler(CommandHandler("registrar", comando_registrar))
     app.add_handler(CommandHandler("ventas", comando_ventas))
+    app.add_handler(CommandHandler("botellas", comando_botellas))
+    app.add_handler(CommandHandler("pulso", comando_pulso))
     app.add_handler(CommandHandler("abono", comando_abono))
     app.add_handler(CommandHandler("entrega", comando_entrega))
     app.add_handler(CommandHandler("anular", comando_anular))
     app.add_handler(CommandHandler("corregir", comando_corregir))
     app.add_handler(CommandHandler("alta", comando_alta))
     app.add_handler(CommandHandler("convertir", comando_convertir))
+    app.add_handler(CommandHandler("ticket", comando_ticket))
+    app.add_handler(CommandHandler("suscripciones", comando_suscripciones))
     app.add_handler(CallbackQueryHandler(manejar_boton))
     app.add_handler(MessageHandler(filters.VOICE, manejar_voz))
+    # Solo mensajes nuevos: editar el pie llega como `edited_message`, y ahi
+    # `update.message` es None y la foto ya se atendio cuando llego.
+    app.add_handler(MessageHandler((filters.PHOTO | filters.Document.IMAGE) & filters.UpdateType.MESSAGE,
+                                   manejar_foto))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_texto))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, manejar_entrada))
     app.add_error_handler(manejar_error)
