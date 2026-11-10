@@ -19,12 +19,15 @@
 import { test, expect } from '@playwright/test'
 import {
   chatDelBorrador,
+  CRISTIAN_TELEGRAM_ID,
   entidadesAlcanzables,
   esAprobador,
   esNorman,
   esGrupo,
   NORMAN_TELEGRAM_ID,
   puedeAprobar,
+  puedeRegistrar,
+  puedeRegistrarEnLaMatriz,
   permisoDeAccion,
   permisoDeConsulta,
   type AccionBot,
@@ -132,10 +135,25 @@ test.describe('D96 — la tabla de acciones', () => {
     ).toMatchObject({ ok: false, status: 403 })
   })
 
-  test('registrar sigue siendo solo de Norman (Kevin aprueba, no registra)', () => {
+  test('registrar: Norman y Cristian; Kevin (otro ADMIN con marca) no', () => {
     expect(esNorman(NORMAN)).toBe(true)
     expect(esNorman(KEVIN)).toBe(false)
     expect(permisoDeAccion(KEVIN, 'registrar')).toBe('no')
+    expect(permisoDeAccion({ ...KEVIN, telegramId: ID_KEVIN }, 'registrar')).toBe('no')
+  })
+
+  // 2026-11-10 (Norman: "que desde matriz tambien cristian pueda").
+  test('Cristian registra, pero no a la Matriz, y su VA sigue esperando', () => {
+    const CRISTIAN: ActorBot = { rol: 'ADMIN', requiereAprobacion: true, telegramId: CRISTIAN_TELEGRAM_ID }
+    expect(puedeRegistrar(CRISTIAN)).toBe(true)
+    expect(permisoDeAccion(CRISTIAN, 'registrar')).toBe('si')
+    expect(puedeRegistrarEnLaMatriz(CRISTIAN)).toBe(false)
+    expect(puedeRegistrarEnLaMatriz(NORMAN)).toBe(true)
+    expect(esNorman(CRISTIAN)).toBe(false)
+    expect(esAprobador(CRISTIAN)).toBe(false)
+    expect(permisoDeAccion(CRISTIAN, 'gasto')).toBe('aprobacion')
+    // Su id sin la entidad ADMIN no alcanza (si lo mueven a un DST, deja de registrar).
+    expect(permisoDeAccion({ rol: 'DST', requiereAprobacion: true, telegramId: CRISTIAN_TELEGRAM_ID }, 'registrar')).toBe('no')
   })
 })
 

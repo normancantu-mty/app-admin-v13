@@ -60,7 +60,8 @@ import * as cancelar from '@/app/api/bot/cancelar/route'
 import * as entregaP from '@/app/api/bot/entrega/proponer/route'
 import * as entregaC from '@/app/api/bot/entrega/confirmar/route'
 import { sellarEntrega, type PayloadEntrega } from '@/lib/bot-entrega'
-import { NORMAN_TELEGRAM_ID } from '@/lib/bot-permisos'
+import { CRISTIAN_TELEGRAM_ID, NORMAN_TELEGRAM_ID } from '@/lib/bot-permisos'
+import { sellarMiembro } from '@/lib/bot-miembro'
 import * as catP from '@/app/api/bot/categoria/proponer/route'
 import * as catC from '@/app/api/bot/categoria/confirmar/route'
 import * as consultaR from '@/app/api/bot/consulta/route'
@@ -1327,6 +1328,63 @@ test.describe('auditoria 2026-11-03 - categoria/{proponer,confirmar}, consulta g
     const alta = (b.payload as { alta: { requiere_aprobacion: boolean; id_entidad: string } }).alta
     expect(alta.id_entidad).toBe('dst-a')
     expect(alta.requiere_aprobacion).toBe(true)
+  })
+})
+
+// 2026-11-10 (Norman: "que desde matriz tambien cristian pueda"): Cristian
+// registra con alta directa, pero no a la Matriz.
+test.describe('2026-11-10 — Cristian registra, no a la Matriz', () => {
+  function conCristian() {
+    estadoInicial()
+    tablas.bot_identidades.push({
+      telegram_id: CRISTIAN_TELEGRAM_ID, etiqueta: 'cristian', id_entidad: 'ent-matriz', id_cuenta_destino: 'c-norman',
+      activo: true, requiere_aprobacion: true, creado_en: '2026-11-10'
+    })
+  }
+  const altas = () => escrituras.filter((e) => e === 'POST bot_identidades')
+
+  test('Cristian propone y confirma un DST -> 200, 1 alta con marca', async () => {
+    conCristian()
+    const p = await llamar('miembro/proponer', { telegram_id: CRISTIAN_TELEGRAM_ID, miembro_telegram_id: 777, texto: 'este es Pepe', id_entidad: 'dst-a' })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    // El PostgREST simulado no pone el default de `estado` (como en 1051 y 1148).
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id)
+    if (b && b.estado == null) b.estado = 'PENDIENTE'
+    const c = await llamar('miembro/confirmar', { telegram_id: CRISTIAN_TELEGRAM_ID, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(altas()).toHaveLength(1)
+    const nueva = tablas.bot_identidades.find((f) => f.telegram_id === 777) as Fila
+    expect(nueva.requiere_aprobacion).toBe(true)
+    expect(nueva.creado_por).toBe('telegram:cristian')
+  })
+
+  test('Cristian a la Matriz por id -> 403, 0 escrituras', async () => {
+    conCristian()
+    const r = await llamar('miembro/proponer', { telegram_id: CRISTIAN_TELEGRAM_ID, miembro_telegram_id: 777, texto: 'este es Pepe', id_entidad: 'ent-matriz' })
+    expect(r.status, JSON.stringify(r.j)).toBe(403)
+    expect(escrituras).toEqual([])
+  })
+
+  test('Cristian: los botones no traen la Matriz; los de Norman si', async () => {
+    conCristian()
+    const r = await llamar('miembro/proponer', { telegram_id: CRISTIAN_TELEGRAM_ID, miembro_telegram_id: 777, texto: 'este es Pepe' })
+    expect(r.j.hay_que_elegir, JSON.stringify(r.j)).toBe(true)
+    expect((r.j.opciones as { rol: string }[]).map((o) => o.rol)).not.toContain('ADMIN')
+    const n = await llamar('miembro/proponer', { telegram_id: NORMAN, miembro_telegram_id: 777, texto: 'este es Pepe' })
+    expect((n.j.opciones as { rol: string }[]).map((o) => o.rol)).toContain('ADMIN')
+  })
+
+  test('Cristian: un borrador sellado hacia la Matriz no se escribe -> 403, 0 altas', async () => {
+    conCristian()
+    const alta = {
+      telegram_id: 777, etiqueta: 'pepe', id_entidad: 'ent-matriz', id_cuenta_destino: 'c-norman',
+      requiere_aprobacion: true, creado_por: 'telegram:cristian'
+    }
+    const sello = sellarMiembro(alta)
+    const b = borrador({ telegram_id: CRISTIAN_TELEGRAM_ID, sello, payload: { tipo: 'alta_miembro', alta, meta: {} } })
+    const r = await llamar('miembro/confirmar', { telegram_id: CRISTIAN_TELEGRAM_ID, borrador_id: b.id, sello })
+    expect(r.status, JSON.stringify(r.j)).toBe(403)
+    expect(altas()).toEqual([])
   })
 })
 

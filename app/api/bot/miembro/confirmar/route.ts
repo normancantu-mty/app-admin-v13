@@ -9,7 +9,12 @@
 
 import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
-import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import {
+  permisoDeAccion,
+  puedeRegistrarEnLaMatriz,
+  MENSAJE_MATRIZ_SOLO_NORMAN,
+  MENSAJE_NO_PERMITIDO
+} from '@/lib/bot-permisos'
 import { abrirPuerta, actorDe } from '@/lib/bot-aprobacion'
 import { selloMiembroCoincide, type PayloadAltaMiembro } from '@/lib/bot-miembro'
 
@@ -48,6 +53,9 @@ export async function POST(request: Request) {
     }
     const puerta = await abrirPuerta(supabase, quien, borrador)
     if (!puerta.ok) return puerta.respuesta
+    // 2026-11-10: `puerta.modo` no se mira a proposito. Para Cristian (con
+    // marca) sale `esperar`, pero Norman decidio que sus altas queden directas;
+    // el freno es que no registra a la Matriz y que toda alta nace con marca.
 
     const guardado = borrador.payload as unknown as {
       tipo?: string
@@ -73,6 +81,14 @@ export async function POST(request: Request) {
     }
     if (alta.creado_por !== `telegram:${puerta.autor.etiqueta}`) {
       return NextResponse.json({ error: 'Tu alta cambio desde que propusiste esto.' }, { status: 409 })
+    }
+    // 2026-11-10: la misma regla que en `proponer`, releida aqui por si la
+    // entidad paso a ADMIN entre la propuesta y el VA.
+    if (!puedeRegistrarEnLaMatriz(actorDe(quien))) {
+      const { data: destino } = await supabase.from('entidades').select('rol').eq('id', alta.id_entidad).maybeSingle()
+      if (!destino || destino.rol === 'ADMIN') {
+        return NextResponse.json({ error: MENSAJE_MATRIZ_SOLO_NORMAN }, { status: 403 })
+      }
     }
 
     const { data: creada, error } = await supabase

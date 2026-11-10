@@ -68,6 +68,25 @@ export function esNorman(actor: ActorBot): boolean {
 }
 
 /**
+ * 2026-11-10 (Norman: "que desde matriz tambien cristian pueda"): Cristian
+ * registra quien es quien, igual que Norman, pero **no** a la Matriz: gente
+ * ADMIN solo la da de alta Norman (`puedeRegistrarEnLaMatriz`). Su id salio de
+ * `bot_identidades` el mismo dia (etiqueta `cristian`, CEO Admin, con marca).
+ * Su VA sigue esperando el Aprobar de Norman; esto solo abre el registro.
+ */
+export const CRISTIAN_TELEGRAM_ID = 1502214522
+
+export function puedeRegistrar(actor: ActorBot): boolean {
+  return esNorman(actor) || (actor.rol === 'ADMIN' && actor.telegramId === CRISTIAN_TELEGRAM_ID)
+}
+
+export function puedeRegistrarEnLaMatriz(actor: ActorBot): boolean {
+  return esNorman(actor)
+}
+
+export const MENSAJE_MATRIZ_SOLO_NORMAN = 'A la Matriz solo registra Norman.'
+
+/**
  * FASE 10 (D106): "Yo, Kevin" — Norman y Kevin aprueban (los dos ADMIN). Esto
  * solo dice quien PUEDE aprobar en general; que pueda aprobar ESTO lo decide
  * `puedeAprobar`, que agrega la regla que mas cierra: nadie aprueba lo suyo.
@@ -132,7 +151,7 @@ export const ROL_TRABAJADOR = 'TRABAJADOR'
 const DEL_TRABAJADOR: readonly AccionBot[] = ['venta', 'gasto', 'lote', 'entrada_insumo']
 
 export function permisoDeAccion(actor: ActorBot, accion: AccionBot): Veredicto {
-  if (accion === 'registrar') return esNorman(actor) ? 'si' : 'no'
+  if (accion === 'registrar') return puedeRegistrar(actor) ? 'si' : 'no'
   if (actor.rol === ROL_TRABAJADOR) return DEL_TRABAJADOR.includes(accion) ? 'aprobacion' : 'no'
   if (actor.rol === 'ADMIN') {
     if (!DE_LA_MATRIZ.includes(accion)) return 'no'
@@ -157,7 +176,7 @@ export const MENSAJE_NO_PERMITIDO: Record<AccionBot, string> = {
   entrada_insumo: 'El inventario de la matriz lo mueven Norman y Kevin; tu alta no alcanza.',
   convertir: 'Convertir una cotizacion en venta por aqui no te toca con tu alta.',
   entidad: 'Dar de alta clientes por aqui no te toca con tu alta.',
-  registrar: 'Registrar quien es quien lo hace solo Norman.',
+  registrar: 'Registrar quien es quien lo hacen solo Norman y Cristian.',
   entrega_efectivo: 'Registrar entregas de efectivo por aqui no te toca con tu alta.',
   categoria: 'Agregar categorias por aqui no te toca con tu alta.'
 }

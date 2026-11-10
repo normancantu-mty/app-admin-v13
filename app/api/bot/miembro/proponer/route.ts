@@ -16,7 +16,13 @@ import {
   resolverIdentidad,
   tokenValido
 } from '@/lib/bot-servidor'
-import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
+import {
+  chatDelBorrador,
+  permisoDeAccion,
+  puedeRegistrarEnLaMatriz,
+  MENSAJE_MATRIZ_SOLO_NORMAN,
+  MENSAJE_NO_PERMITIDO
+} from '@/lib/bot-permisos'
 import { actorDe, cuentaDeLaMatrizParaAbono } from '@/lib/bot-aprobacion'
 import { buscarPorNombre } from '@/lib/bot-nombres'
 import { ENTIDAD_PENDIENTE_DE_ASIGNAR } from '@/lib/avisos'
@@ -73,16 +79,23 @@ export async function POST(request: Request) {
     }
 
     const nombre = nombreDelRegistro(cuerpo.texto)
+    // 2026-11-10: Cristian registra, pero no a la Matriz. Las entidades ADMIN
+    // ni salen en sus botones; si las pide por id o por nombre, se niega abajo.
+    const enLaMatriz = puedeRegistrarEnLaMatriz(actorDe(identidad))
     const { data: filas } = await supabase.from('entidades').select('id, nombre, rol').order('nombre')
-    const entidades = (filas ?? [])
+    const todas = (filas ?? [])
       .filter((e) => e.id !== ENTIDAD_PENDIENTE_DE_ASIGNAR)
       .map((e) => ({ id: e.id, nombre: e.nombre ?? '(sin nombre)', rol: e.rol ?? '' }))
+    const entidades = enLaMatriz ? todas : todas.filter((e) => e.rol !== 'ADMIN')
     // La Matriz va primero en los botones: es la opcion de Kevin.
     const opciones = [...entidades].sort((a, b) => Number(b.rol === 'ADMIN') - Number(a.rol === 'ADMIN'))
 
     const idPedido = String(cuerpo.id_entidad ?? '')
     let entidad = idPedido !== '' ? entidades.find((e) => e.id === idPedido) : undefined
     if (idPedido !== '' && !entidad) {
+      if (todas.some((e) => e.id === idPedido)) {
+        return NextResponse.json({ error: MENSAJE_MATRIZ_SOLO_NORMAN }, { status: 403 })
+      }
       return NextResponse.json({ error: 'Esa entidad ya no existe.' }, { status: 422 })
     }
     if (!entidad) {
@@ -96,7 +109,9 @@ export async function POST(request: Request) {
           mensaje:
             nombre === ''
               ? 'Dime quien es: "este es Gilberto".'
-              : `¿${nombre} es de cual? (La Matriz es para alguien como Kevin: propone y tu apruebas.)`,
+              : enLaMatriz
+                ? `¿${nombre} es de cual? (La Matriz es para alguien como Kevin: propone y tu apruebas.)`
+                : `¿${nombre} es de cual?`,
           opciones: (hallazgo.motivo === 'ambiguo' ? hallazgo.candidatos : opciones)
             .slice(0, TOPE_OPCIONES)
             .map((e) => ({ id: e.id, nombre: e.nombre, rol: e.rol }))
