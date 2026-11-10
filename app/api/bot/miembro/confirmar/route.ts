@@ -53,9 +53,9 @@ export async function POST(request: Request) {
     }
     const puerta = await abrirPuerta(supabase, quien, borrador)
     if (!puerta.ok) return puerta.respuesta
-    // 2026-11-10: `puerta.modo` no se mira a proposito. Para Cristian (con
-    // marca) sale `esperar`, pero Norman decidio que sus altas queden directas;
-    // el freno es que no registra a la Matriz y que toda alta nace con marca.
+    // 2026-11-10: las altas de Cristian quedan directas (`escribeDirecto` le da
+    // `directo` en la puerta); el freno es que no registra a la Matriz y que
+    // toda alta nace con marca.
 
     const guardado = borrador.payload as unknown as {
       tipo?: string

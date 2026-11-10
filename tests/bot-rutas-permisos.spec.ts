@@ -1358,6 +1358,25 @@ test.describe('2026-11-10 — Cristian registra, no a la Matriz', () => {
     expect(nueva.creado_por).toBe('telegram:cristian')
   })
 
+  // 2026-11-10 (Norman: "necesito que Cristian pueda capturar sin yo aprobar").
+  test('el VA de Cristian sobre su gasto escribe directo: 1 fila en finanzas_ledger, sin espera', async () => {
+    conCristian()
+    tablas.categorias_movimiento = [
+      { id: 'cm-1', tipo: 'EGRESO', categoria: 'Logística y envíos', subcategoria: 'Gasolina', activa: true, orden: 28 }
+    ]
+    const p = await llamar('gasto/proponer', {
+      telegram_id: CRISTIAN_TELEGRAM_ID,
+      propuesta: { monto: 300, descripcion: 'gasolina', categoria: 'Logística y envíos / Gasolina' }
+    })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id)
+    if (b && b.estado == null) b.estado = 'PENDIENTE'
+    const va = await llamar('gasto/confirmar', { telegram_id: CRISTIAN_TELEGRAM_ID, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(va.status, JSON.stringify(va.j)).toBe(200)
+    expect(va.j.espera_aprobacion).toBeFalsy()
+    expect(escrituras.filter((e) => e === 'POST finanzas_ledger')).toHaveLength(1)
+  })
+
   test('Cristian a la Matriz por id -> 403, 0 escrituras', async () => {
     conCristian()
     const r = await llamar('miembro/proponer', { telegram_id: CRISTIAN_TELEGRAM_ID, miembro_telegram_id: 777, texto: 'este es Pepe', id_entidad: 'ent-matriz' })

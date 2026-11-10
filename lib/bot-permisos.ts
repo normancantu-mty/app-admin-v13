@@ -60,8 +60,8 @@ export interface ActorBot {
 export const NORMAN_TELEGRAM_ID = 6571822622
 
 /**
- * Norman: ADMIN sin marca **y con su telegram_id**. Es el unico que registra
- * quien es quien y el unico cuyo VA escribe directo.
+ * Norman: ADMIN sin marca **y con su telegram_id**. El unico que aprueba lo de
+ * otros. Desde 2026-11-10 Cristian tambien registra y escribe directo (abajo).
  */
 export function esNorman(actor: ActorBot): boolean {
   return actor.rol === 'ADMIN' && !actor.requiereAprobacion && actor.telegramId === NORMAN_TELEGRAM_ID
@@ -72,12 +72,26 @@ export function esNorman(actor: ActorBot): boolean {
  * registra quien es quien, igual que Norman, pero **no** a la Matriz: gente
  * ADMIN solo la da de alta Norman (`puedeRegistrarEnLaMatriz`). Su id salio de
  * `bot_identidades` el mismo dia (etiqueta `cristian`, CEO Admin, con marca).
- * Su VA sigue esperando el Aprobar de Norman; esto solo abre el registro.
+ *
+ * Mas tarde ese dia (Norman: "necesito que Cristian pueda capturar sin yo
+ * aprobar"): su VA tambien escribe directo en todo lo de la Matriz
+ * (`escribeDirecto`). Se quedan solo de Norman: aprobar lo de otros, traspasos,
+ * suscripciones y registrar a la Matriz. Se exige su id Y la entidad ADMIN: la
+ * marca `requiere_aprobacion` de su fila no se mira (sigue en true).
  */
 export const CRISTIAN_TELEGRAM_ID = 1502214522
 
+function esCristian(actor: ActorBot): boolean {
+  return actor.rol === 'ADMIN' && actor.telegramId === CRISTIAN_TELEGRAM_ID
+}
+
+/** Quien escribe con su propio VA, sin esperar el Aprobar: Norman y Cristian. */
+export function escribeDirecto(actor: ActorBot): boolean {
+  return esNorman(actor) || esCristian(actor)
+}
+
 export function puedeRegistrar(actor: ActorBot): boolean {
-  return esNorman(actor) || (actor.rol === 'ADMIN' && actor.telegramId === CRISTIAN_TELEGRAM_ID)
+  return esNorman(actor) || esCristian(actor)
 }
 
 export function puedeRegistrarEnLaMatriz(actor: ActorBot): boolean {
@@ -157,7 +171,8 @@ export function permisoDeAccion(actor: ActorBot, accion: AccionBot): Veredicto {
     if (!DE_LA_MATRIZ.includes(accion)) return 'no'
     // Auditoria 2026-11-03: solo Norman escribe con su propio VA; cualquier
     // otro ADMIN (con o sin marca) propone y espera el Aprobar de Norman.
-    return esNorman(actor) ? 'si' : 'aprobacion'
+    // 2026-11-10: y Cristian (`escribeDirecto`).
+    return escribeDirecto(actor) ? 'si' : 'aprobacion'
   }
   if (actor.rol === 'DST') {
     // Auditoria 2026-11-03 (hallazgo 2): el DST ya no escribe directo. Norman:

@@ -22,6 +22,7 @@ import {
   CRISTIAN_TELEGRAM_ID,
   entidadesAlcanzables,
   esAprobador,
+  escribeDirecto,
   esNorman,
   esGrupo,
   NORMAN_TELEGRAM_ID,
@@ -143,17 +144,34 @@ test.describe('D96 — la tabla de acciones', () => {
   })
 
   // 2026-11-10 (Norman: "que desde matriz tambien cristian pueda").
-  test('Cristian registra, pero no a la Matriz, y su VA sigue esperando', () => {
+  test('Cristian registra, pero no a la Matriz', () => {
     const CRISTIAN: ActorBot = { rol: 'ADMIN', requiereAprobacion: true, telegramId: CRISTIAN_TELEGRAM_ID }
     expect(puedeRegistrar(CRISTIAN)).toBe(true)
     expect(permisoDeAccion(CRISTIAN, 'registrar')).toBe('si')
     expect(puedeRegistrarEnLaMatriz(CRISTIAN)).toBe(false)
     expect(puedeRegistrarEnLaMatriz(NORMAN)).toBe(true)
-    expect(esNorman(CRISTIAN)).toBe(false)
-    expect(esAprobador(CRISTIAN)).toBe(false)
-    expect(permisoDeAccion(CRISTIAN, 'gasto')).toBe('aprobacion')
     // Su id sin la entidad ADMIN no alcanza (si lo mueven a un DST, deja de registrar).
     expect(permisoDeAccion({ rol: 'DST', requiereAprobacion: true, telegramId: CRISTIAN_TELEGRAM_ID }, 'registrar')).toBe('no')
+  })
+
+  // 2026-11-10 (Norman: "necesito que Cristian pueda capturar sin yo aprobar").
+  test('Cristian escribe directo todo lo de la Matriz, pero no aprueba lo de otros', () => {
+    const CRISTIAN: ActorBot = { rol: 'ADMIN', requiereAprobacion: true, telegramId: CRISTIAN_TELEGRAM_ID }
+    for (const a of ['venta', 'abono', 'cotizacion', 'gasto', 'lote', 'entrada_insumo', 'convertir', 'entidad', 'entrega_efectivo', 'categoria'] as AccionBot[]) {
+      expect(permisoDeAccion(CRISTIAN, a), a).toBe('si')
+    }
+    expect(escribeDirecto(CRISTIAN)).toBe(true)
+    expect(esNorman(CRISTIAN)).toBe(false)
+    expect(esAprobador(CRISTIAN)).toBe(false)
+    expect(
+      decidirPuerta({ estado: 'PENDIENTE', dueno: CRISTIAN_TELEGRAM_ID, quien: CRISTIAN_TELEGRAM_ID, quienRol: 'ADMIN', quienRequiereAprobacion: true })
+    ).toEqual({ ok: true, modo: 'directo' })
+    expect(
+      decidirPuerta({ estado: 'ESPERA_APROBACION', dueno: ID_GILBERTO, quien: CRISTIAN_TELEGRAM_ID, quienRol: 'ADMIN', quienRequiereAprobacion: true, duenoRol: 'DST', duenoRequiereAprobacion: true })
+    ).toMatchObject({ ok: false, status: 403 })
+    // Su id fuera de la Matriz no escribe directo; Kevin (otro ADMIN con marca) sigue esperando.
+    expect(escribeDirecto({ rol: 'DST', requiereAprobacion: true, telegramId: CRISTIAN_TELEGRAM_ID })).toBe(false)
+    expect(permisoDeAccion({ ...KEVIN, telegramId: ID_KEVIN }, 'gasto')).toBe('aprobacion')
   })
 })
 

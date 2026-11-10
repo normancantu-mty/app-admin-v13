@@ -29,7 +29,7 @@ import type { ClienteServicio, IdentidadBot } from '@/lib/bot-servidor'
 import { resolverIdentidad } from '@/lib/bot-servidor'
 import {
   esAprobador,
-  esNorman,
+  escribeDirecto,
   puedeAprobar,
   entidadesAlcanzables,
   ROL_TRABAJADOR,
@@ -77,8 +77,8 @@ export function decidirPuerta(h: HechosDeLaPuerta): DecisionPuerta {
     if (h.dueno !== h.quien) return { ok: false, status: 403, error: 'Ese borrador no es tuyo.' }
     // Auditoria 2026-11-03 (hallazgo 2): `directo` SOLO para Norman. Antes era
     // "sin marca -> directo", y un DST (o un ADMIN sin marca que no fuera
-    // Norman) escribia con su propio VA.
-    const directo = esNorman({ telegramId: h.quien, rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
+    // Norman) escribia con su propio VA. 2026-11-10: y Cristian (`escribeDirecto`).
+    const directo = escribeDirecto({ telegramId: h.quien, rol: h.quienRol, requiereAprobacion: h.quienRequiereAprobacion })
     return { ok: true, modo: directo ? 'directo' : 'esperar' }
   }
   if (h.estado === 'ESPERA_APROBACION') {
