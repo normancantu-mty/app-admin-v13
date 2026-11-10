@@ -138,8 +138,7 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
                   {entradas.map((e) => (
                     <tr key={e.id}>
                       <td>
-                        <b>{e.nombre}</b>
-                        {e.sku ? <div className="inv-sub mono">{e.sku}</div> : null}
+                        <b>{e.sku === 'chile-guajillo' ? 'Chile' : e.nombre}</b>
                       </td>
                       <td className="r">
                         {cant(e.cantidad)} <span className="inv-sub">{e.unidad}</span>

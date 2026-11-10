@@ -32,7 +32,18 @@ export type LoteInicial = {
   tandas: { id: string; numero_tanda: number; litros: number | null; grado_alcohol: number | null; peso_kg: number | null; notas: string | null }[]
 }
 
-type FilaInsumo = { clave: number; id_insumo: string; cantidad: string; fija: boolean }
+/**
+ * Los cuatro insumos que se capturan por lote (Cris, 2026-11-10): cantidad directa,
+ * sin lista desplegable. «Chile» se guarda contra `chile-guajillo` porque es el sku
+ * que `v_lote_rendimiento` suma como kg_chile (el guajón cuesta lo mismo en el catálogo).
+ */
+const INSUMOS_LOTE: { sku: string; etiqueta: string }[] = [
+  { sku: 'chile-guajillo', etiqueta: 'Chile' },
+  { sku: 'mosto-1', etiqueta: 'Aditivo 1' },
+  { sku: 'aditivo-2', etiqueta: 'Aditivo 2' },
+  { sku: 'levadura-enzimas', etiqueta: 'Levadura y enzimas' }
+]
+const UNIDAD_CORTA: Record<string, string> = { KILOGRAMOS: 'kg', GRAMOS: 'g', LITROS: 'L', MILILITROS: 'ml', PIEZAS: 'pzas' }
 type FilaTanda = { clave: number; id: string | null; numero: number | null; litros: string; grado: string; peso: string; notas: string }
 
 const txt = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n))
@@ -54,17 +65,25 @@ export default function FormLote({ inicial, insumos, hoy }: { inicial: LoteInici
   const [brixChile, setBrixChile] = useState(txt(inicial.brix_chile))
   const [brixFinal, setBrixFinal] = useState(txt(inicial.brix_final))
   const [notas, setNotas] = useState(inicial.notas ?? '')
-  const [filasInsumo, setFilasInsumo] = useState<FilaInsumo[]>(() =>
-    inicial.entradas.map((e) => ({ clave: clave(), id_insumo: e.id_insumo, cantidad: String(e.cantidad), fija: true }))
-  )
+  const porSku = new Map(insumos.filter((i) => i.sku).map((i) => [i.sku as string, i]))
+  const idsFijos = new Set(INSUMOS_LOTE.map((x) => porSku.get(x.sku)?.id).filter(Boolean) as string[])
+  // Insumos ya escritos que no son de los cuatro (lotes viejos o del bot): se conservan tal cual.
+  const otrasEntradas = inicial.entradas.filter((e) => !idsFijos.has(e.id_insumo))
+  const [cantidades, setCantidades] = useState<Record<string, string>>(() => {
+    const c: Record<string, string> = {}
+    for (const x of INSUMOS_LOTE) {
+      const id = porSku.get(x.sku)?.id
+      const e = inicial.entradas.find((en) => en.id_insumo === id)
+      c[x.sku] = e ? String(e.cantidad) : ''
+    }
+    return c
+  })
   const [filasTanda, setFilasTanda] = useState<FilaTanda[]>(() =>
     inicial.tandas.map((t) => ({ clave: clave(), id: t.id, numero: t.numero_tanda, litros: txt(t.litros), grado: txt(t.grado_alcohol), peso: txt(t.peso_kg), notas: t.notas ?? '' }))
   )
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const insumo = new Map(insumos.map((i) => [i.id, i]))
-  const cambiarInsumo = (k: number, cambio: Partial<FilaInsumo>) => setFilasInsumo((fs) => fs.map((f) => (f.clave === k ? { ...f, ...cambio } : f)))
   const cambiarTanda = (k: number, cambio: Partial<FilaTanda>) => setFilasTanda((fs) => fs.map((f) => (f.clave === k ? { ...f, ...cambio } : f)))
   const ultimaTanda = Math.max(0, ...filasTanda.map((t) => t.numero ?? 0))
 
@@ -81,8 +100,19 @@ export default function FormLote({ inicial, insumos, hoy }: { inicial: LoteInici
       brix_chile: numONulo(brixChile),
       brix_final: numONulo(brixFinal),
       notas,
-      entradas: filasInsumo.map((f) => ({ id_insumo: f.id_insumo, cantidad: numONulo(f.cantidad) ?? 0 })),
+      entradas: [
+        ...INSUMOS_LOTE.flatMap((x) => {
+          const id = porSku.get(x.sku)?.id
+          const c = numONulo(cantidades[x.sku] ?? '')
+          return id && c !== null ? [{ id_insumo: id, cantidad: c }] : []
+        }),
+        ...otrasEntradas
+      ],
       tandas: filasTanda.map((t) => ({ id: t.id, litros: numONulo(t.litros), grado_alcohol: numONulo(t.grado), peso_kg: numONulo(t.peso), notas: t.notas }))
+    }
+    if (form.entradas.some((en) => !Number.isFinite(en.cantidad))) {
+      setError('Una cantidad de insumo no se entiende. Revisa los campos.')
+      return
     }
     if ([form.horas_fermentacion, form.brix_chile, form.brix_final, ...form.tandas.flatMap((t) => [t.litros, t.grado_alcohol, t.peso_kg])].some((n) => n !== null && !Number.isFinite(n))) {
       setError('Hay un número que no se entiende. Revisa los campos.')
@@ -137,35 +167,30 @@ export default function FormLote({ inicial, insumos, hoy }: { inicial: LoteInici
       <div className="lote-seccion">
         <div className="lote-seccion-hd">
           <b>Insumos</b>
-          <span className="inv-sub">Kg de chile, azúcar, levadura… El insumo repetido se suma.</span>
+          <span className="inv-sub">Cantidad que se le echó de cada uno. Vacío = no se usó.</span>
         </div>
-        {filasInsumo.length === 0 && <div className="inv-sub">Sin insumos todavía.</div>}
-        {filasInsumo.map((f) => (
-          <div key={f.clave} className="lote-fila lote-fila-insumo">
-            <select className="in" value={f.id_insumo} disabled={f.fija} onChange={(e) => cambiarInsumo(f.clave, { id_insumo: e.target.value })} aria-label="Insumo" required>
-              <option value="">Elige un insumo…</option>
-              {insumos.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.nombre}
-                  {i.sku ? ` · ${i.sku}` : ''}
-                </option>
-              ))}
-              {f.fija && !insumo.has(f.id_insumo) && <option value={f.id_insumo}>(insumo fuera del catálogo)</option>}
-            </select>
-            <input className="in" inputMode="decimal" value={f.cantidad} onChange={(e) => cambiarInsumo(f.clave, { cantidad: e.target.value })} placeholder="Cantidad" aria-label="Cantidad" required />
-            <span className="inv-sub lote-unidad">{insumo.get(f.id_insumo)?.unidad_medida ?? ''}</span>
-            {f.fija ? (
-              <span className="inv-sub" title="Desde el ERP no se quita un insumo ya escrito">fijo</span>
-            ) : (
-              <button type="button" className="btn mini" onClick={() => setFilasInsumo((fs) => fs.filter((x) => x.clave !== f.clave))} aria-label="Quitar renglón">
-                ×
-              </button>
-            )}
-          </div>
-        ))}
-        <button type="button" className="btn mini" onClick={() => setFilasInsumo((fs) => [...fs, { clave: clave(), id_insumo: '', cantidad: '', fija: false }])}>
-          + Agregar insumo
-        </button>
+        <div className="grid g2">
+          {INSUMOS_LOTE.map((x) => {
+            const ins = porSku.get(x.sku)
+            const unidad = ins ? (UNIDAD_CORTA[ins.unidad_medida] ?? ins.unidad_medida.toLowerCase()) : ''
+            return (
+              <div key={x.sku} className="campo">
+                <label htmlFor={`lote-ins-${x.sku}`}>
+                  {x.etiqueta}
+                  {unidad ? ` (${unidad})` : ''}
+                </label>
+                <input
+                  id={`lote-ins-${x.sku}`}
+                  inputMode="decimal"
+                  value={cantidades[x.sku] ?? ''}
+                  onChange={(e) => setCantidades((c) => ({ ...c, [x.sku]: e.target.value }))}
+                  placeholder={ins ? 'Cantidad' : 'No está en el catálogo'}
+                  disabled={!ins}
+                />
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       <div className="lote-seccion">
