@@ -19,6 +19,7 @@ import * as etapaP from '@/app/api/bot/lote/etapa/proponer/route'
 import * as etapaC from '@/app/api/bot/lote/etapa/confirmar/route'
 import * as ciclo from '@/app/api/bot/lote/ciclo/route'
 import { fechaLocal } from '@/lib/fechas'
+import { MENSAJE_ADITIVO_2_NO_ES_ETAPA, sellarEtapa, type PayloadEtapa } from '@/lib/bot-lote-ciclo'
 
 type Ruta = { POST: (r: Request) => Promise<Response> }
 const RUTAS: Record<string, Ruta> = { 'lote/etapa/proponer': etapaP, 'lote/etapa/confirmar': etapaC, 'lote/ciclo': ciclo }
@@ -230,28 +231,31 @@ const GARRAFAS = [
 ]
 
 test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta', () => {
-  test('aditivo 2 por SKU opaco: ing-al se resuelve a su insumo; proponer solo escribe el borrador', async () => {
-    estadoInicial()
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'l-15-10.1', etapa: 'aditivo_2', cantidad: 2.5, unidad: 'kg', insumo_sku: 'ing-al' })
-    expect(r.status, JSON.stringify(r.j)).toBe(200)
-    expect(escrituras.every((e) => e.endsWith('bot_borradores'))).toBe(true)
-    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { tipo: string; etapa: { entradas: Fila[] } } }
-    expect(b.payload.tipo).toBe('lote_etapa')
-    expect(b.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-al', cantidad: 2.5 }])
-    expect(String(r.j.mensaje)).toContain('Aditivo 2: 2.5 kg')
+  // 2026-11-13 (Cris): el aditivo 2 es un INSUMO del inventario, no una etapa
+  // del lote. Antes la etapa volvia a sumar la cantidad en lote_entradas (doble).
+  test('aditivo 2 ya NO es etapa: proponer -> 422 con el aviso, 0 escrituras (ing-al y aditivo-2)', async () => {
+    for (const sku of ['ing-al', 'aditivo-2']) {
+      estadoInicial()
+      const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 1.5, unidad: 'kg', insumo_sku: sku })
+      expect(r.status, JSON.stringify(r.j)).toBe(422)
+      expect(r.j.error).toBe(MENSAJE_ADITIVO_2_NO_ES_ETAPA)
+      expect(escrituras).toEqual([])
+    }
   })
 
-  test('Fase 7A: aditivo 2 en GRAMOS en el catalogo: 1.5 kg dicho -> 1500 en el borrador; 800 g -> 800', async () => {
+  test('aditivo 2: un borrador VIEJO (anterior a la decision) no se escribe al confirmar -> 409, CANCELADO, sin rpc', async () => {
     estadoInicial()
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 1.5, unidad: 'kg', insumo_sku: 'aditivo-2' })
-    expect(r.status, JSON.stringify(r.j)).toBe(200)
-    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { etapa: { entradas: Fila[] } } }
-    expect(b.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-ad2', cantidad: 1500 }])
-    expect(String(r.j.mensaje)).toContain('Aditivo 2: 1500 g')
-    estadoInicial()
-    const g = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 800, unidad: 'g', insumo_sku: 'aditivo-2' })
-    const bg = tablas.bot_borradores.find((x) => x.id === g.j.borrador_id) as Fila & { payload: { etapa: { entradas: Fila[] } } }
-    expect(bg.payload.etapa.entradas).toEqual([{ id_insumo: 'ins-ad2', cantidad: 800 }])
+    const p = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'destilacion', garrafas: GARRAFAS })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila & { sello: string; payload: { etapa: PayloadEtapa } }
+    const viejo: PayloadEtapa = { ...b.payload.etapa, etapa: 'aditivo_2', garrafas: [], entradas: [{ id_insumo: 'ins-ad2', cantidad: 1500 }], unidad_entrada: 'g' }
+    b.payload = { ...b.payload, etapa: viejo }
+    b.sello = sellarEtapa(viejo)
+    const c = await llamar('lote/etapa/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: b.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(409)
+    expect(c.j.error).toBe(MENSAJE_ADITIVO_2_NO_ES_ETAPA)
+    expect(rpcs).toEqual([])
+    expect(tablas.bot_borradores.find((x) => x.id === p.j.borrador_id)?.estado).toBe('CANCELADO')
   })
 
   test('Fase 7A: cantidad sin unidad -> 422, sin borrador', async () => {
@@ -305,7 +309,7 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
 
   test('sello cambiado -> 409 sin escribir', async () => {
     estadoInicial()
-    const p = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 2, unidad: 'kg', insumo_sku: 'ing-al' })
+    const p = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'destilacion', garrafas: GARRAFAS })
     const c = await llamar('lote/etapa/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: 'f'.repeat(64) })
     expect(c.status).toBe(409)
     expect(rpcs).toEqual([])
@@ -313,8 +317,8 @@ test.describe('etapas: proponer no escribe el lote; confirmar pasa por la puerta
 
   test('etapa ya registrada -> 409 al proponer', async () => {
     estadoInicial()
-    tablas.lote_etapas.push({ id: 'e1', id_lote: 'lote-1', etapa: 'aditivo_2' })
-    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'aditivo_2', cantidad: 2, unidad: 'kg', insumo_sku: 'ing-al' })
+    tablas.lote_etapas.push({ id: 'e1', id_lote: 'lote-1', etapa: 'destilacion' })
+    const r = await llamar('lote/etapa/proponer', { telegram_id: NORMAN, codigo_lote: 'L-15-10.1', etapa: 'destilacion', garrafas: GARRAFAS })
     expect(r.status).toBe(409)
   })
 })

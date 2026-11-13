@@ -25,6 +25,8 @@ import {
 } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import {
+  ETAPAS_RETIRADAS,
+  MENSAJE_ADITIVO_2_NO_ES_ETAPA,
   mensajeDeFermentacion,
   resumenTemperatura,
   selloEtapaCoincide,
@@ -81,6 +83,14 @@ export async function POST(request: Request) {
     }
     if (!selloEtapaCoincide(etapa, selloRecibido)) {
       return NextResponse.json({ error: 'El sello no empata con lo que te ensene. No escribo nada.' }, { status: 409 })
+    }
+    if (ETAPAS_RETIRADAS.includes(etapa.etapa)) {
+      // Un borrador de aditivo 2 propuesto antes de la decision 2026-11-13 no se escribe.
+      await supabase
+        .from('bot_borradores')
+        .update({ estado: 'CANCELADO', resuelto_en: new Date().toISOString() })
+        .eq('id', borradorId)
+      return NextResponse.json({ error: MENSAJE_ADITIVO_2_NO_ES_ETAPA }, { status: 409 })
     }
     if (etapa.usuario_creador !== `telegram:${identidad.etiqueta}`) {
       return NextResponse.json({ error: 'Tu alta cambio desde que propusiste esto. Vuelve a dictarlo.' }, { status: 409 })

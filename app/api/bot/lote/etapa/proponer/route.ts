@@ -22,7 +22,14 @@ import {
 } from '@/lib/bot-servidor'
 import { chatDelBorrador, permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { actorDe } from '@/lib/bot-aprobacion'
-import { esEtapaConVa, mensajeDeEtapa, normalizarEtapa, sellarEtapa } from '@/lib/bot-lote-ciclo'
+import {
+  esEtapaConVa,
+  ETAPAS_RETIRADAS,
+  mensajeDeEtapa,
+  MENSAJE_ADITIVO_2_NO_ES_ETAPA,
+  normalizarEtapa,
+  sellarEtapa
+} from '@/lib/bot-lote-ciclo'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,6 +58,9 @@ export async function POST(request: Request) {
     }
     if (!esEtapaConVa(cuerpo.etapa)) {
       return NextResponse.json({ error: 'Etapa invalida.' }, { status: 400 })
+    }
+    if (ETAPAS_RETIRADAS.includes(cuerpo.etapa)) {
+      return NextResponse.json({ error: MENSAJE_ADITIVO_2_NO_ES_ETAPA }, { status: 422 })
     }
     const supabase = clienteDeServicio(request)
     const identidad = await resolverIdentidad(supabase, telegramId)

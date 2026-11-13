@@ -12,11 +12,11 @@ DO NOTHING, `lote_etapas` unica por (id_lote, etapa). El reloj se inyecta.
      (`codigo_siguiente`, formato leido del YAML, y `_codigo_nuevo_lote` del
      bot contra la ruta doblada). CONTROLES: otro dia u otro mes no cuentan; un
      hueco (.1 borrado) no se reusa.
-  2. ADITIVO 2 en D+3: antes no; D+3 antes de las 8 no; D+3 a las 9 SI, a quien
-     abrio el lote + los ADMIN, sin repetir. Otro latido: nada. REINICIO
-     (importlib.reload de los modulos, la base sigue): nada.
-  3. DESTILAR reposo_dias despues del aditivo 2: antes no; el dia SI, UNA vez,
-     y tampoco tras reinicio. Ya destilado: no.
+  2. ADITIVO 2 (decision de Cris 2026-11-13: es insumo, no etapa): NO hay
+     recordatorio ni boton.
+  3. DESTILAR en D + aditivo_2_dia + reposo_dias: antes no; antes de las 8 no;
+     el dia SI, a quien abrio + ADMIN, UNA vez, y tampoco tras reinicio.
+     Ya destilado: no.
   4. MUESTRA: al confirmar la destilacion sale "Guarda una muestra" con su
      boton y queda reclamada (el latido no la repite). A las 23 h nada; a las 24 h
      UN segundo aviso; a las 48 h nada mas. Con "Ya la guarde" no hay segundo.
@@ -26,7 +26,7 @@ DO NOTHING, `lote_etapas` unica por (id_lote, etapa). El reloj se inyecta.
      del YAML. Destilacion por garrafa: pide las que faltan; avisa los rangos
      sin bloquear. TRABAJADOR: espera el Aprobar (no se escribe) y el aviso
      al aprobador lleva el resumen.
-  6. Texto "aditivo 2 del L-..., 4 kilos": resumen directo, sin modelo.
+  6. Texto "aditivo 2 del L-..., 4 kilos": ya NO abre etapa (2026-11-13).
 
 Corre con:  python bot/probar_lote_ciclo.py      (sin red)
 """
@@ -202,38 +202,32 @@ caso("1b. a las 23:30 de la planta (05:30 UTC del dia siguiente) sigue siendo el
 caso("1b. sin red sale .1 (no se inventa un N)", B.lote_ciclo.codigo_nuevo(lambda r, c: (0, {}), ahora=local(2026, 10, 19, 9)),
      "L-19-10.1")
 
-# ─── 2. aditivo 2 en D+3 ────────────────────────────────────────────────────
+# ─── 2. el aditivo 2 YA NO se recuerda (decision de Cris 2026-11-13) ─────────
+# El aditivo 2 es un insumo, no una etapa: ni recordatorio ni boton.
 base, bot = Ciclo(), BotTg()
 base.nuevo_lote("lote-a", "L-12-10.1", "2026-10-12", abrio=555)
-caso("2. D+2: nada", tipos(latir(base, bot, local(2026, 10, 14, 9))), [])
-caso("2. D+3 a las 7 (antes de la hora del YAML): nada", tipos(latir(base, bot, local(2026, 10, 15, 7))), [])
-h = latir(base, bot, local(2026, 10, 15, 9))
-caso("2. D+3 a las 9: el recordatorio del aditivo 2", tipos(h), ["aditivo_2"])
-caso("2. ... a quien abrio + ADMIN, sin repetir (555 es las dos cosas)",
-     sorted(c for _l, _t, c in h["enviados"]), [111, 555])
-caso("2. ... el texto dice el codigo y el dia", "L-12-10.1" in bot.enviados[0][1] and "dia 3" in bot.enviados[0][1], True)
-caso("2. ... con el boton que abre la etapa", bot.enviados[0][2], ["ltad2:L-12-10.1"])
-caso("2. ... callback_data <= 64 bytes", all(len(d.encode()) <= 64 for _c, _t, ds in bot.enviados for d in ds), True)
-caso("2. otro latido: nada", tipos(latir(base, bot, local(2026, 10, 15, 9, 15))), [])
-reiniciar()
-caso("2. REINICIO del bot: tampoco (el reclamo esta en la base)", tipos(latir(base, bot, local(2026, 10, 16, 10))), [])
-caso("2. ... salio UNA vez en total (2 personas)", len(bot.enviados), 2)
+caso("2. D+3 a las 9: NO hay recordatorio del aditivo 2", tipos(latir(base, bot, local(2026, 10, 15, 9))), [])
+caso("2. D+5: nada", tipos(latir(base, bot, local(2026, 10, 17, 9))), [])
+caso("2. ... ningun boton ltad2 salio", [d for _c, _t, ds in bot.enviados for d in ds if d.startswith("ltad2")], [])
 
-# ─── 3. destilar reposo_dias despues del aditivo 2 ──────────────────────────
-base.etapas[("lote-a", "aditivo_2")] = {"fecha": "2026-10-15", "telegram_id": 555}
+# ─── 3. destilar en D + aditivo_2_dia + reposo_dias desde la produccion ──────
 caso("3. reposo del YAML", C._ciclo()["reposo_dias"], 3)
-caso("3. 2 dias despues del aditivo 2: nada", tipos(latir(base, bot, local(2026, 10, 17, 9))), [])
+caso("3. D+6 a las 7 (antes de la hora del YAML): nada", tipos(latir(base, bot, local(2026, 10, 18, 7))), [])
 antes = len(bot.enviados)
 h = latir(base, bot, local(2026, 10, 18, 9))
-caso("3. 3 dias despues: ya toca destilar", tipos(h), ["destilar"])
+caso("3. D+6 a las 9: ya toca destilar (sin esperar etapa de aditivo 2)", tipos(h), ["destilar"])
+caso("3. ... a quien abrio + ADMIN, sin repetir (555 es las dos cosas)",
+     sorted(c for _l, _t, c in h["enviados"]), [111, 555])
+caso("3. ... el texto dice el codigo y el dia desde la produccion",
+     "L-12-10.1" in bot.enviados[-1][1] and "dia 6" in bot.enviados[-1][1], True)
 caso("3. ... con su boton", bot.enviados[-1][2], ["ltdes:L-12-10.1"])
+caso("3. ... callback_data <= 64 bytes", all(len(d.encode()) <= 64 for _c, _t, ds in bot.enviados for d in ds), True)
 caso("3. otro latido: nada", tipos(latir(base, bot, local(2026, 10, 18, 9, 15))), [])
 reiniciar()
 caso("3. REINICIO: nada", tipos(latir(base, bot, local(2026, 10, 19, 9))), [])
 caso("3. ... UNA vez (2 personas)", len(bot.enviados) - antes, 2)
 otro = Ciclo()
 otro.nuevo_lote("lote-b", "L-12-10.2", "2026-10-12")
-otro.etapas[("lote-b", "aditivo_2")] = {"fecha": "2026-10-15"}
 otro.etapas[("lote-b", "destilacion")] = {"fecha": "2026-10-17", "telegram_id": 555}
 otro.recordatorios[("lote-b", "muestra")] = local(2026, 10, 17, 12).isoformat()
 caso("3. CONTROL ya destilado: no se recuerda destilar", "destilar" in tipos(latir(otro, BotTg(), local(2026, 10, 18, 9))), False)
@@ -300,40 +294,14 @@ def rutas():
 HOY_TXT = P.fecha_para_persona(C.ahora_local().date())
 u = Update(CHAT)
 boton(u, "ltad2", "L-12-10.1")
-caso("5. boton del recordatorio: pregunta el aditivo 2 con su unidad (gramos o kilos)",
-     ("Cuanto aditivo 2, con su unidad?" in u.message.dichos[-1], '"1500 g"' in u.message.dichos[-1]), (True, True))
-# 2026-11-10 (Norman: "Preguntar g o kg"): un numero solo NO se adivina.
-texto(u, "4.5")
-caso("5. numero solo: pregunta gramos o kilos, sin resumen",
-     ("4.5 gramos o 4.5 kilos?" in u.message.dichos[-1], "Revisa" in u.message.dichos[-1]), (True, False))
-texto(u, "kilos")
-res = u.message.dichos[-1]
-caso("5. contesta 'kilos': resumen con lote, etapa, fecha de hoy y '4.5 kg (4500 g)'",
-     ("LOTE L-12-10.1 - ADITIVO 2" in res, ("Fecha: %s (hoy)" % HOY_TXT) in res, "Aditivo 2: 4.5 kg (4500 g)" in res),
+# 2026-11-13 (Cris): el aditivo 2 es insumo. El boton viejo (mensajes ya
+# enviados) solo explica y NO abre etapa ni escribe.
+caso("5. boton viejo 'Registrar aditivo 2': dice que es insumo y no anota",
+     ("es un insumo" in u.message.dichos[-1], "L-12-10.1" in u.message.dichos[-1], "no anote nada" in u.message.dichos[-1]),
      (True, True, True))
-caso("5. ... con Confirmar / Corregir", u.message.teclados[-1], ["ltec:x", "ltecc:x"])
-caso("5. ... y NADA salio al servidor antes de Confirmar", [r for r in rutas() if "/etapa/" in r], [])
-boton(u, "ltecc")
-caso("5. Corregir: vuelve a preguntar", "Cuanto aditivo 2, con su unidad?" in u.message.dichos[-1], True)
-caso("5. ... y sigue sin salir nada", [r for r in rutas() if "/etapa/" in r], [])
-texto(u, "250 kg")
-caso("5. fuera de rango AVISA y no bloquea", ("Ojo" in u.message.dichos[-1], "Aditivo 2: 250 kg" in u.message.dichos[-1]),
-     (True, True))
-# 800 g = 0.8 kg: dentro del rango en kilos, sin aviso (el rango es fisico).
-texto(u, "800 gramos")
-caso("5. 800 gramos: pasa directo, dentro de rango (se compara en kg), sin Ojo",
-     ("Ojo" in u.message.dichos[-1], "Aditivo 2: 800 g" in u.message.dichos[-1]), (False, True))
-texto(u, "1500 g")
-caso("5. 1500 g: se ensena tambien en kilos", "Aditivo 2: 1500 g (1.5 kg)" in u.message.dichos[-1], True)
-texto(u, "4 kg")
-boton(u, "ltec")
-prop = [c for r, c in base.llamadas if r == C.RUTA_ETAPA_PROPONER]
-caso("5. Confirmar: propone UNA vez con cantidad, unidad y el SKU del YAML",
-     [(c["etapa"], c["cantidad"], c["unidad"], c["insumo_sku"], c["codigo_lote"]) for c in prop],
-     [("aditivo_2", 4.0, "kg", "aditivo-2", "L-12-10.1")])
-caso("5. ... y confirma", rutas().count(C.RUTA_ETAPA_CONFIRMAR), 1)
-caso("5. ... quedo en la base", ("lote-a", "aditivo_2") in base.etapas, True)
-caso("5. ... y lo dice", u.message.dichos[-1].startswith("Listo."), True)
+caso("5. ... no queda etapa a medias", C.sesion(CHAT), None)
+caso("5. ... y NADA salio al servidor", [r for r in rutas() if "/etapa/" in r], [])
+caso("5. ... ni quedo etapa aditivo_2 en la base", ("lote-a", "aditivo_2") in base.etapas, False)
 
 # destilacion
 u = Update(CHAT)
@@ -354,7 +322,7 @@ caso("5. resumen de destilacion: todas las garrafas (litros, kg, %, nota) y la f
       "Garrafa 2: 19 L, 17 kg a 48% (Turbia, olía a cobre)" in res,
       "Garrafa 3: 11 L, 10 kg a 95%" in res, ("Fecha: %s (hoy)" % HOY_TXT) in res), (True, True, True, True, True, True))
 caso("5. ... 95% avisa (fuera de 0-80) sin bloquear", "Ojo: la garrafa 3" in res, True)
-caso("5. ... nada salio todavia", rutas().count(C.RUTA_ETAPA_PROPONER), 1)
+caso("5. ... nada salio todavia", rutas().count(C.RUTA_ETAPA_PROPONER), 0)
 base.ahora = local(2026, 10, 19, 10)
 boton(u, "ltec")
 prop = [c for r, c in base.llamadas if r == C.RUTA_ETAPA_PROPONER][-1]
@@ -403,33 +371,29 @@ caso("4. ... tambien a quien destilo (777)", 777 in [c for _l, _t, c in h["envia
 # ─── 5b. TRABAJADOR: espera el Aprobar ──────────────────────────────────────
 C = B.lote_ciclo
 base.esperar = True
-base.etapas.pop(("lote-a", "aditivo_2"), None)
+# 2026-11-13: antes con el aditivo 2 (ya no es etapa); ahora con la destilacion
+# de otro lote.
+base.nuevo_lote("lote-z", "L-14-10.1", "2026-10-14")
 B._por_aprobar.clear()
 u = Update(CHAT)
-boton(u, "ltad2", "L-12-10.1")
-texto(u, "3 kilos")
+boton(u, "ltdes", "L-14-10.1")
+texto(u, "1 garrafa: 20 L 18 kg 50%")
 boton(u, "ltec")
-caso("5b. TRABAJADOR: no se escribio", ("lote-a", "aditivo_2") in base.etapas, False)
+caso("5b. TRABAJADOR: no se escribio", ("lote-z", "destilacion") in base.etapas, False)
 caso("5b. ... se le dice que espera el Aprobar", "espera el Aprobar" in u.message.dichos[-1], True)
 caso("5b. ... y queda anotado para avisar al aprobador", [p["avisar_a"] for p in B._por_aprobar], [[111]])
 asyncio.run(B._avisar_aprobaciones(u))
 caso("5b. el aviso al aprobador lleva el resumen con la fecha",
-     ("Aditivo 2: 3 kg" in BOT_APROBADOR.enviados[-1][1], ("Fecha: %s" % HOY_TXT) in BOT_APROBADOR.enviados[-1][1]),
+     ("Garrafa 1: 20 L, 18 kg a 50%" in BOT_APROBADOR.enviados[-1][1], ("Fecha: %s" % HOY_TXT) in BOT_APROBADOR.enviados[-1][1]),
      (True, True))
 caso("5b. ... con Aprobar / Rechazar", [d.split(":")[0] for d in BOT_APROBADOR.enviados[-1][2]], ["apr", "rch"])
 caso("5b. la ruta de Aprobar de lote_etapa existe", B.RUTA_CONFIRMAR_DE.get("lote_etapa"), "/api/bot/lote/etapa/confirmar")
 base.esperar = False
 
-# ─── 6. por texto, sin modelo ───────────────────────────────────────────────
-base.etapas.pop(("lote-a", "aditivo_2"), None)
-n = rutas().count(C.RUTA_ETAPA_PROPONER)
-u = Update(CHAT)
-texto(u, "aditivo 2 del L-12-10.1, 4 kilos")
-caso("6. 'aditivo 2 del L-..., 4 kilos': resumen directo", "Aditivo 2: 4 kg" in u.message.dichos[-1], True)
-caso("6. ... sin proponer todavia", rutas().count(C.RUTA_ETAPA_PROPONER), n)
-texto(u, "confirmar")
-caso("6. 'confirmar' dicho: propone y confirma", (rutas().count(C.RUTA_ETAPA_PROPONER), ("lote-a", "aditivo_2") in base.etapas),
-     (n + 1, True))
+# ─── 6. por texto: el aditivo 2 ya NO abre etapa (2026-11-13) ────────────────
+caso("6. 'aditivo 2 del L-..., 4 kilos' ya no dispara etapa", C._disparo("aditivo 2 del L-12-10.1, 4 kilos"), (None, None))
+caso("6. 'le pusimos 4 kilos de aditivo 2 al L-..' tampoco",
+     C._disparo("le pusimos 4 kilos de aditivo 2 al L-12-10.1"), (None, None))
 u = Update(CHAT)
 texto(u, "destilamos hoy")
 caso("6. sin codigo: pregunta de cual lote", "De cual lote?" in u.message.dichos[-1], True)
@@ -437,16 +401,31 @@ caso("6. sin codigo: pregunta de cual lote", "De cual lote?" in u.message.dichos
 # --- 7. RONDA 2 (H1): NO-REGRESION del camino F0/D81 y frases naturales ------
 # El auditor: "le pusimos 4 kilos de aditivo 2 al L-12-10.1" y "agregale 5
 # kilos de ing-az al lote L-12-10.1" abrian la plantilla de lote NUEVO.
-base.etapas.pop(("lote-a", "aditivo_2"), None)
 B._olvidar_chat(CHAT)
 P.olvidar(CHAT)
 C.olvidar(CHAT)
+# 2026-11-13 (Cris): el aditivo 2 es insumo -> va por el modelo al camino D81
+# (agregar insumo a un lote existente), NO a la etapa ni a la plantilla nueva.
+_modelo_ad2 = []
+
+
+def _enrutar_ad2(*a, **k):
+    _modelo_ad2.append(a[0])
+    return True, {"intencion": "lote", "confianza": "alta", "entendido": "lote", "campos": {
+        "codigo_lote": "L-12-10.1", "insumos": [{"insumo": "aditivo 2", "cantidad": 4, "unidad": "kg"}]}}
+
+
+B.enrutar = _enrutar_ad2
+n = len(base.llamadas)
 u = Update(CHAT)
 texto(u, "le pusimos 4 kilos de aditivo 2 al L-12-10.1")
-caso("7. 'le pusimos 4 kilos de aditivo 2 al L-12-10.1' (sin modelo): resumen de la etapa del L-12-10.1",
-     ("LOTE L-12-10.1 - ADITIVO 2" in u.message.dichos[-1], "Aditivo 2: 4 kg" in u.message.dichos[-1]),
-     (True, True))
+caso("7. 'le pusimos 4 kilos de aditivo 2 al L-12-10.1': pasa por el modelo (insumo)", len(_modelo_ad2), 1)
+caso("7. ... va a D81 (/lote/proponer), NO a la etapa",
+     ([r for r, _c in base.llamadas[n:]].count("/api/bot/lote/proponer"),
+      [r for r, _c in base.llamadas[n:] if "/etapa/" in r]), (1, []))
 caso("7. ... NO abre la plantilla de lote nuevo", any("Me falta" in d for d in u.message.dichos), False)
+B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
+B._olvidar_chat(CHAT)
 C.olvidar(CHAT)
 u = Update(CHAT)
 texto(u, "oye, ya destilamos el L-12-10.1: 2 garrafas, 20 L 18 kg 50% y 11 L 10 kg 30%")
@@ -540,36 +519,36 @@ B._olvidar_chat(CHAT)
 caso("8. el tope sale del YAML", C._ciclo()["intentos_recordatorio"], 3)
 base8 = Ciclo()
 base8.nuevo_lote("lote-r", "L-12-10.3", "2026-10-12", abrio=555)
-h = latir(base8, BotTg(fallan=["todos"]), local(2026, 10, 15, 9))
-caso("8. fallan TODOS los envios: nada salio", (h["enviados"], h["sin_entregar"]), ([], [("L-12-10.3", "aditivo_2", 1)]))
-caso("8. ... en la base queda reclamado SIN entregar", dict(base8.estado[("lote-r", "aditivo_2")]), {"intentos": 1, "entregado_en": None})
+h = latir(base8, BotTg(fallan=["todos"]), local(2026, 10, 18, 9))
+caso("8. fallan TODOS los envios: nada salio", (h["enviados"], h["sin_entregar"]), ([], [("L-12-10.3", "destilar", 1)]))
+caso("8. ... en la base queda reclamado SIN entregar", dict(base8.estado[("lote-r", "destilar")]), {"intentos": 1, "entregado_en": None})
 reiniciar()
 bot8 = BotTg()
-h = latir(base8, bot8, local(2026, 10, 15, 9, 15))
-caso("8. siguiente latido (y tras REINICIO): se reintenta y sale", tipos(h), ["aditivo_2"])
+h = latir(base8, bot8, local(2026, 10, 18, 9, 15))
+caso("8. siguiente latido (y tras REINICIO): se reintenta y sale", tipos(h), ["destilar"])
 caso("8. ... por el compare-and-swap (reintentar con intentos=1)",
      [c.get("intentos") for r, c in base8.llamadas if c.get("accion") == "reintentar"], [1])
-caso("8. ... y queda entregado", (base8.estado[("lote-r", "aditivo_2")]["intentos"],
-                                  bool(base8.estado[("lote-r", "aditivo_2")]["entregado_en"])), (2, True))
-caso("8. otro latido: nada (ya entregado)", tipos(latir(base8, bot8, local(2026, 10, 15, 9, 30))), [])
+caso("8. ... y queda entregado", (base8.estado[("lote-r", "destilar")]["intentos"],
+                                  bool(base8.estado[("lote-r", "destilar")]["entregado_en"])), (2, True))
+caso("8. otro latido: nada (ya entregado)", tipos(latir(base8, bot8, local(2026, 10, 18, 9, 30))), [])
 # el tope: Telegram nunca entrega
 base8b = Ciclo()
 base8b.nuevo_lote("lote-t", "L-12-10.4", "2026-10-12")
 caido = BotTg(fallan=["todos"])
 intentos = []
 for i in range(5):
-    intentos.append([n for _c, _t, n in latir(base8b, caido, local(2026, 10, 15, 9 + i, 0))["sin_entregar"]])
+    intentos.append([n for _c, _t, n in latir(base8b, caido, local(2026, 10, 18, 9 + i, 0))["sin_entregar"]])
 caso("8. TOPE: intenta 1, 2, 3 y despues ya no", intentos, [[1], [2], [3], [], []])
 # entrega parcial: uno falla, otro recibe -> entregado, sin reintento
 base8c = Ciclo()
 base8c.nuevo_lote("lote-p", "L-12-10.5", "2026-10-12", abrio=555)
-h = latir(base8c, BotTg(fallan=[111]), local(2026, 10, 15, 9))
+h = latir(base8c, BotTg(fallan=[111]), local(2026, 10, 18, 9))
 caso("8. parcial (111 falla, 555 recibe): entregado, sin reintento",
-     ([c for _l, _t, c in h["enviados"]], h["sin_entregar"], bool(base8c.estado[("lote-p", "aditivo_2")]["entregado_en"])),
+     ([c for _l, _t, c in h["enviados"]], h["sin_entregar"], bool(base8c.estado[("lote-p", "destilar")]["entregado_en"])),
      ([555], [], True))
-caso("8. ... el siguiente latido no lo repite", tipos(latir(base8c, BotTg(), local(2026, 10, 15, 9, 15))), [])
+caso("8. ... el siguiente latido no lo repite", tipos(latir(base8c, BotTg(), local(2026, 10, 18, 9, 15))), [])
 caso("8. CONTROL: dos latidos con el mismo intentos -> gana UNO",
-     (C.reclamar(base8b, "lote-t", "aditivo_2", 3), C.reclamar(base8b, "lote-t", "aditivo_2", 3)), (True, False))
+     (C.reclamar(base8b, "lote-t", "destilar", 3), C.reclamar(base8b, "lote-t", "destilar", 3)), (True, False))
 
 # --- 9. RONDA 2: muestra_2 respeta hora_recordatorios ------------------------
 base9 = Ciclo()
@@ -736,14 +715,12 @@ for frase in ("cuanto aditivo 2 lleva el L-12-10.1?", "cuando destilamos el L-12
     texto(u, frase)
     caso("11f. pregunta '%s': NO abre etapa, va al modelo" % frase,
          (C.sesion(CHAT), MODELO11[-1], [r for r, _c in base10.llamadas[n:] if "/etapa/" in r]), (None, frase, []))
-# (g) CONTROL: la frase de H1 sigue abriendo la etapa sin modelo
+# (g) 2026-11-13 (Cris): la frase de H1 del aditivo 2 YA NO abre etapa (es
+# insumo: va por el modelo a D81; ver la prueba 7).
 B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
 C.olvidar(CHAT)
-u = Update(CHAT)
-texto(u, "le pusimos 4 kilos de aditivo 2 al L-12-10.1")
-caso("11g. CONTROL H1: 'le pusimos 4 kilos de aditivo 2 al L-12-10.1' sigue abriendo la etapa",
-     ("LOTE L-12-10.1 - ADITIVO 2" in u.message.dichos[-1]), True)
-C.olvidar(CHAT)
+caso("11g. 'le pusimos 4 kilos de aditivo 2 al L-12-10.1' ya no abre la etapa",
+     C._disparo("le pusimos 4 kilos de aditivo 2 al L-12-10.1"), (None, None))
 caso("11g. CONTROL: 'destilamos el L-12-10.1, garrafa 1 18 kilos a 50 grados' no trae temperatura dicha",
      C.temperatura_dicha("destilamos el L-12-10.1, garrafa 1 18 kilos a 50 grados")[0], None)
 B._olvidar_chat(CHAT)
@@ -771,12 +748,12 @@ base12.nuevo_lote("lote-e", "L-12-10.6", "2026-10-12", abrio=555)
 post12 = FallaEntregado(base12, 1)
 bot12 = BotTg()
 for i in range(4):
-    base12.ahora = local(2026, 10, 15, 9, 15 * i)
+    base12.ahora = local(2026, 10, 18, 9, 15 * i)
     asyncio.run(C.tick(bot12, post12, ahora=base12.ahora, abrir=lambda u_, t_: {"daily": {}}))
 caso("12. salio y 'entregado' fallo: 4 latidos -> 2 envios (los 2 destinatarios), no 4",
      sorted(c for c, _t, _d in bot12.enviados), [111, 555])
 caso("12. ... el siguiente latido solo reintento la MARCA y quedo entregado",
-     (bool(base12.estado[("lote-e", "aditivo_2")]["entregado_en"]), base12.estado[("lote-e", "aditivo_2")]["intentos"]),
+     (bool(base12.estado[("lote-e", "destilar")]["entregado_en"]), base12.estado[("lote-e", "destilar")]["intentos"]),
      (True, 1))
 caso("12. ... sin otro reclamo (ni reintentar)", [c.get("accion") for r, c in base12.llamadas
                                                  if c.get("accion") in ("reclamar", "reintentar")], ["reclamar"])
@@ -822,14 +799,10 @@ ABREN = [
     ("ya destilamos el L-12-10.1, salieron 2 botellones", "destilacion"),
     ("ya destilamos el L-12-10.1: garrafa 1 de 50 por ciento, 18 kilos", "destilacion"),
     ("ya destilamos el L-12-10.1, la 1 de 50 de alcohol, 18 kilos", "destilacion"),
-    ("le pusimos 4 kilos de aditivo 2 al L-12-10.1, cuando toca destilar?", "aditivo_2"),
-    ("dime si quedo: le pusimos 4 kilos de aditivo 2 al L-12-10.1", "aditivo_2"),
     # variantes con ¿? al inicio y al final (como las puede poner la transcripcion)
     ("¿ya destilamos el L-12-10.1, salieron 2 garrafas?", "destilacion"),
     ("¿Que crees? Ya destilamos el L-12-10.1.", "destilacion"),
     ("¿Como quedamos? Hoy destilamos el L-12-10.1", "destilacion"),
-    ("¿le pusimos 4 kilos de aditivo 2 al L-12-10.1?", "aditivo_2"),
-    ("¿Dime si quedo, le pusimos 4 kilos de aditivo 2 al L-12-10.1?", "aditivo_2"),
     ("¿Ya destilamos el L-12-10.1? Salieron 2 garrafas, 18 kg 50% y 10 kg 30%.", "destilacion"),
 ]
 NO_ABREN = [
@@ -841,16 +814,20 @@ NO_ABREN = [
     "¿Cuanto aditivo 2 lleva el L-12-10.1?",
     "cuanto aditivo 2 lleva el L-12-10.1",           # voz sin signos
     "cuando destilamos el L-12-10.1",
+    # 2026-11-13 (Cris): el aditivo 2 es insumo; estas abrian su etapa.
+    "le pusimos 4 kilos de aditivo 2 al L-12-10.1, cuando toca destilar?",
+    "dime si quedo: le pusimos 4 kilos de aditivo 2 al L-12-10.1",
+    "¿le pusimos 4 kilos de aditivo 2 al L-12-10.1?",
+    "¿Dime si quedo, le pusimos 4 kilos de aditivo 2 al L-12-10.1?",
 ]
 for frase, etapa in ABREN:
     caso("14. ABRE '%s'" % frase, C._disparo(frase), (etapa, "L-12-10.1"))
 for frase in NO_ABREN:
     caso("14. NO abre '%s'" % frase, C._disparo(frase), (None, None))
-# de punta a punta, por el bot, sin modelo: dos de las legitimas abren la etapa
+# de punta a punta, por el bot, sin modelo: una legitima abre la etapa
 B.enrutar = lambda *a, **k: (_ for _ in ()).throw(AssertionError("el modelo no debe llamarse"))
 B._post_de_verdad = base10
-for frase, esperado in [("ya destilamos el L-19-10.1, salieron 2 garrafas, ¿lo anotas?", "destilacion"),
-                        ("¿le pusimos 4 kilos de aditivo 2 al L-19-10.1?", "aditivo_2")]:
+for frase, esperado in [("ya destilamos el L-19-10.1, salieron 2 garrafas, ¿lo anotas?", "destilacion")]:
     C.olvidar(CHAT)
     B._olvidar_chat(CHAT)
     u = Update(CHAT)

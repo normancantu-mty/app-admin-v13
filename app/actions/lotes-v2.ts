@@ -22,8 +22,12 @@
  *    aqui serian INSERTs sueltos en dos tablas sin ese candado. Ademas, desde la
  *    ronda 5 del lote v2 (Norman, 2026-10-19) el envasado es DIARIO y no se liga
  *    al lote. Se registra con «Envasar».
- *  - ETAPAS (`lote_etapas`: aditivo 2, destilacion, muestra): no tienen politica
- *    de INSERT para `authenticated`; solo las escribe el bot. Aqui se leen.
+ *  - ETAPAS (`lote_etapas`: destilacion, muestra): no tienen politica de INSERT
+ *    para `authenticated`; solo las escribe el bot. Aqui se leen. El aditivo 1 y
+ *    el 2 NO son etapas (Cris, 2026-11-13): son insumos del catalogo y entran por
+ *    `lote_entradas` en el alta o en la edicion (upsert), nunca por
+ *    `registrar_etapa_lote` (esa RPC con 'aditivo_2' inserta la etapa Y vuelve a
+ *    sumar la cantidad en `lote_entradas`: doble).
  *  - BORRAR: no se quita un insumo ni una tanda ya escritos, ni el lote. No son
  *    ledgers, pero tampoco tienen bitacora (los triggers de auditoria cubren solo
  *    los ledgers y los tickets): un borrado no dejaria rastro.

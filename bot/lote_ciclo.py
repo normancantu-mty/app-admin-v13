@@ -155,10 +155,13 @@ def _reintento(lote, tipo):
 def recordatorios_debidos(lotes, ahora, ciclo=None):
     """Que recordatorios tocan YA. **Pura**: `ahora` se inyecta.
 
-    Devuelve [(lote, tipo, extra)] con tipo en aditivo_2 | destilar | muestra |
-    muestra_2. Lo ya reclamado en la base (`recordatorios`) no vuelve a salir.
-      - aditivo_2: D + aditivo_2_dia desde la produccion, sin aditivo 2 aun.
-      - destilar:  reposo_dias despues del aditivo 2, sin destilacion aun.
+    Devuelve [(lote, tipo, extra)] con tipo en destilar | muestra | muestra_2.
+    Lo ya reclamado en la base (`recordatorios`) no vuelve a salir.
+    Decision de Cris 2026-11-13: el aditivo 2 es un INSUMO del inventario, no
+    una etapa del lote: el bot ya no lo recuerda ni lo pregunta.
+      - destilar:  D + aditivo_2_dia + reposo_dias desde la produccion (el mismo
+                   calendario de antes, ya sin esperar la etapa del aditivo 2),
+                   sin destilacion aun.
       - muestra:   hay destilacion y nadie dijo "Ya la guarde" (normalmente se
                    reclama al confirmar la destilacion; esto es la red).
       - muestra_2: muestra_horas despues del primero, sin "Ya la guarde". UNA vez.
@@ -177,13 +180,11 @@ def recordatorios_debidos(lotes, ahora, ciclo=None):
         if not lote.get("fecha_inicio"):
             continue
         inicio = _fecha(lote["fecha_inicio"])
-        ad2, des, mue = _etapa(lote, "aditivo_2"), _etapa(lote, "destilacion"), _etapa(lote, "muestra")
-        if (not temprano and ad2 is None and des is None and not _cerrado(lote, "aditivo_2", tope)
-                and (hoy - inicio).days >= int(c["aditivo_2_dia"])):
-            salida.append((lote, "aditivo_2", dict(_reintento(lote, "aditivo_2"), dia=(hoy - inicio).days)))
-        if (not temprano and ad2 is not None and des is None and not _cerrado(lote, "destilar", tope)
-                and ad2.get("fecha") and (hoy - _fecha(ad2["fecha"])).days >= int(c["reposo_dias"])):
-            salida.append((lote, "destilar", dict(_reintento(lote, "destilar"), dias=(hoy - _fecha(ad2["fecha"])).days)))
+        des, mue = _etapa(lote, "destilacion"), _etapa(lote, "muestra")
+        dias = (hoy - inicio).days
+        if (not temprano and des is None and not _cerrado(lote, "destilar", tope)
+                and dias >= int(c["aditivo_2_dia"]) + int(c["reposo_dias"])):
+            salida.append((lote, "destilar", dict(_reintento(lote, "destilar"), dias=dias)))
         if des is not None and mue is None:
             primero = _recordatorio(lote, "muestra")
             if not _cerrado(lote, "muestra", tope):
@@ -215,8 +216,6 @@ def destinatarios(lote, admins, tipo=None):
 
 def mensaje_de(lote, tipo, extra):
     codigo = lote.get("codigo_lote")
-    if tipo == "aditivo_2":
-        return _texto("aditivo_2_recordatorio", codigo=codigo, dia=extra.get("dia", ""))
     if tipo == "destilar":
         return _texto("destilar_recordatorio", codigo=codigo, dias=extra.get("dias", ""))
     if tipo == "muestra":
@@ -226,8 +225,6 @@ def mensaje_de(lote, tipo, extra):
 
 def boton_de(lote, tipo):
     """(etiqueta, callback_data). El codigo viaja en el boton: cabe en 64 bytes."""
-    if tipo == "aditivo_2":
-        return "Registrar aditivo 2", "ltad2:" + str(lote.get("codigo_lote"))
     if tipo == "destilar":
         return "Registrar destilacion", "ltdes:" + str(lote.get("codigo_lote"))
     return "Ya la guarde", "ltmu:" + str(lote.get("id"))
@@ -449,6 +446,11 @@ def olvidar(chat):
 
 
 # Fase 7B (2026-11-07): el fin de la fermentacion es una etapa mas del chat.
+# 2026-11-13 (Cris): el aditivo 2 es un insumo, no una etapa. Sigue aqui SOLO
+# para que sus disparadores ganen primero (si no, "le pusimos 4 kg de aditivo 2
+# al L-.., cuando toca destilar?" abriria la destilacion); `_disparo` lo
+# devuelve como (None, None) y el mensaje sigue el camino de cualquier insumo a
+# un lote existente (modelo -> D81 /api/bot/lote/proponer).
 ETAPAS_DEL_CHAT = ("aditivo_2", "destilacion", "fin_fermentacion")
 NOMBRE_ETAPA = {"aditivo_2": "ADITIVO 2", "destilacion": "DESTILACION", "fin_fermentacion": "FIN DE FERMENTACION"}
 DICHO_ETAPA = {"aditivo_2": "aditivo 2", "destilacion": "destilacion", "fin_fermentacion": "termino la fermentacion"}
@@ -707,7 +709,18 @@ def _teclado_resumen():
     ]])
 
 
+# Decision de Cris 2026-11-13: el aditivo 2 es un insumo, no una etapa. El boton
+# viejo "Registrar aditivo 2" (mensajes ya enviados) ahora solo responde esto y
+# NO escribe nada (antes la etapa volvia a sumar la cantidad en lote_entradas y
+# quedaba al doble).
+ETAPAS_RETIRADAS = ("aditivo_2",)
+
+
 async def abrir_etapa(update, chat, etapa, codigo):
+    if etapa in ETAPAS_RETIRADAS:
+        olvidar(chat)
+        await update.effective_message.reply_text(_texto(etapa + "_no_es_etapa", codigo=codigo or ""))
+        return
     empezar(chat, etapa, codigo)
     await update.effective_message.reply_text(pregunta_de(etapa, codigo))
 
@@ -769,14 +782,14 @@ def _disparo(texto):
         e = (cfg().get("etapas") or {}).get(etapa) or {}
         for patron in e.get("disparadores") or []:
             if re.search(patron, t):
-                return etapa, cod
+                return (None, None) if etapa in ETAPAS_RETIRADAS else (etapa, cod)
         # Ronda 2 (H1): en CUALQUIER parte del mensaje, pero solo con un
         # codigo L- en el mismo mensaje ("le pusimos 4 kilos de aditivo 2 al
         # L-12-10.1"). Sin codigo no: "aditivo 2" suelto puede ser otra cosa.
         if cod and not excluido:
             for patron in e.get("disparadores_con_codigo") or []:
                 if re.search(patron, t):
-                    return etapa, cod
+                    return (None, None) if etapa in ETAPAS_RETIRADAS else (etapa, cod)
     return None, None
 
 

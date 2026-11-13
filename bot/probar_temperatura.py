@@ -156,8 +156,10 @@ class BotTg(object):
 bot, srv = BotTg(), ServidorCiclo()
 hecho = asyncio.run(C.tick(bot, srv, ahora=dt.datetime(2026, 10, 19, 16, 0, tzinfo=dt.timezone.utc), abrir=api_caida))
 caso("6. Open-Meteo caido: la temperatura queda pendiente", hecho["temperatura"], (0, 7))
-caso("6. ... y el tick siguio: mando el recordatorio del aditivo 2",
-     [t for _l, t, _c in hecho["enviados"]], ["aditivo_2"])
+# 2026-11-13 (Cris): el aditivo 2 es insumo, ya no se recuerda; el lote ya
+# paso D+6, asi que el recordatorio que sale es el de destilar.
+caso("6. ... y el tick siguio: mando el recordatorio de destilar",
+     [t for _l, t, _c in hecho["enviados"]], ["destilar"])
 
 fallos = [(n, o, e) for n, o, e in casos if o != e]
 for n, o, e in casos:

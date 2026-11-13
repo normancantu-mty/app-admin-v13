@@ -6,7 +6,8 @@
  * Se importan las rutas reales y se les habla como el bot, en orden:
  *   1. dia de produccion   lote/proponer + lote/confirmar      (chile 40 kg, aditivo 1 8 kg -> 8000 g, benzoato 200 g)
  *   2. fin de fermentacion lote/etapa/proponer + confirmar     (ayer, 90 h -> cabecera del lote)
- *   3. aditivo 2           lote/etapa/proponer + confirmar     (1.5 kg -> 1500 g, fecha de lote_etapas)
+ *   3. aditivo 2           lote/proponer + lote/confirmar      (INSUMO al lote existente, 1.5 kg -> 1500 g; decision
+ *                                                              de Cris 2026-11-13: ya NO es etapa)
  *   4. destilacion         lote/etapa/proponer + confirmar     (3 garrafas: 20 kg al 43%, 15 kg al 8%, 10 kg al 30%)
  *   5. envasado            lote/proponer + lote/confirmar      (40 de 750, diario, SIN lote)
  *   6. trazabilidad        pregunta                            (la linea de tiempo entera)
@@ -318,17 +319,16 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
     expect(String(otra.j.error)).toContain('ya tiene fin de fermentacion')
     expect(tablas.lotes[0].fecha_fin_fermentacion).toBe(AYER)
 
-    // ── 3. ADITIVO 2 (1.5 kg -> 1500 g) ─────────────────────────────────────
-    await proponerYConfirmar('lote/etapa/proponer', 'lote/etapa/confirmar', {
-      codigo_lote: CODIGO,
-      etapa: 'aditivo_2',
-      cantidad: 1.5,
-      unidad: 'kg',
-      insumo_sku: 'aditivo-2'
+    // ── 3. ADITIVO 2 (1.5 kg -> 1500 g): INSUMO, no etapa (Cris 2026-11-13) ──
+    await proponerYConfirmar('lote/proponer', 'lote/confirmar', {
+      insumos: [{ insumo: 'aditivo-2', cantidad: 1.5, unidad: 'kg' }],
+      envasado: [],
+      propuesta: { codigo_lote: CODIGO }
     })
-    const ad2 = delLote('lote_etapas').find((e) => e.etapa === 'aditivo_2')
-    expect(ad2).toMatchObject({ fecha: HOY, datos: { cantidad: 1500, unidad: 'g' } })
-    expect(delLote('lote_entradas').find((e) => e.id_insumo === 'ad2')?.cantidad).toBe(1500)
+    expect(delLote('lote_etapas').find((e) => e.etapa === 'aditivo_2')).toBeUndefined()
+    // UNA sola fila de 1500 g (antes la etapa la volvia a sumar: quedaba al doble).
+    expect(delLote('lote_entradas').filter((e) => e.id_insumo === 'ad2').map((e) => e.cantidad)).toEqual([1500])
+    expect(tablas.lotes).toHaveLength(1)
 
     // ── 4. DESTILACION: 3 garrafas ──────────────────────────────────────────
     await proponerYConfirmar('lote/etapa/proponer', 'lote/etapa/confirmar', {
@@ -366,7 +366,6 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
       '   Benzoato de sodio: 200 g',
       '   Brix del chile: 12',
       `${fechaParaPersona(AYER)} — FIN DE FERMENTACION`,
-      `${fechaParaPersona(HOY)} — ADITIVO 2`,
       '   Aditivo 2: 1500 g (1.5 kg)',
       `${fechaParaPersona(HOY)} — DESTILACION: 3 garrafa(s)`,
       '   Garrafa 1: 22 L, 20 kg al 43%',
@@ -380,13 +379,13 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
     ]) {
       expect(txt, txt).toContain(linea)
     }
-    // El orden: produccion < fin < aditivo 2 < destilacion.
+    // El orden: produccion < fin < destilacion. El aditivo 2 ya no es etapa:
+    // sale como un insumo mas del lote, en el dia de produccion (lineaDeTiempo).
     const pos = (s: string) => txt.indexOf(s)
     expect(pos('DIA DE PRODUCCION')).toBeLessThan(pos('FIN DE FERMENTACION'))
-    expect(pos('FIN DE FERMENTACION')).toBeLessThan(pos('— ADITIVO 2'))
-    expect(pos('— ADITIVO 2')).toBeLessThan(pos('DESTILACION'))
-    // El aditivo 2 NO sale en el dia de produccion (su fecha es la de su etapa).
-    expect(txt.slice(pos('DIA DE PRODUCCION'), pos('FIN DE FERMENTACION'))).not.toContain('Aditivo 2')
+    expect(pos('FIN DE FERMENTACION')).toBeLessThan(pos('DESTILACION'))
+    expect(txt).not.toContain('— ADITIVO 2')
+    expect(txt.slice(pos('DIA DE PRODUCCION'), pos('FIN DE FERMENTACION'))).toContain('Aditivo 2: 1500 g')
 
     // La pregunta no escribe nada.
     const n = escrituras.length

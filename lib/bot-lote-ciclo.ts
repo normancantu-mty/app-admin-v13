@@ -36,6 +36,15 @@ import { TOPE_HORAS_FERMENTACION } from '@/lib/bot-lotes'
 
 export const ETAPAS_CON_VA = ['aditivo_2', 'destilacion', 'fin_fermentacion'] as const
 export type EtapaConVa = (typeof ETAPAS_CON_VA)[number]
+/**
+ * Decision de Cris 2026-11-13: el aditivo 2 es un INSUMO del inventario, no una
+ * etapa del lote. `aditivo_2` sigue en ETAPAS_CON_VA solo para leer lo viejo;
+ * las rutas del bot ya no lo proponen ni lo confirman (antes la etapa volvia a
+ * sumar la cantidad en `lote_entradas` y quedaba al doble).
+ */
+export const ETAPAS_RETIRADAS: readonly string[] = ['aditivo_2']
+export const MENSAJE_ADITIVO_2_NO_ES_ETAPA =
+  'El aditivo 2 ya no es una etapa del lote: es un insumo como cualquier otro. Dictamelo como insumo (por ejemplo "agregale 1500 g de aditivo 2 al lote L-.."). No anote nada.'
 export const TIPOS_RECORDATORIO = ['aditivo_2', 'destilar', 'muestra', 'muestra_2'] as const
 export type TipoRecordatorio = (typeof TIPOS_RECORDATORIO)[number]
 // Ronda 6: solo Open-Meteo (Norman 2026-10-19: la gente no dicta temperatura).

@@ -293,8 +293,10 @@ envasado_diario:
   - '\b\d+\s+(botellas?\s+)?de\s+(50|200|250|375|500|700|750|1000)\b(?!\s*(kg|kilos?|%|grados?))'
 
 ciclo:
-  aditivo_2_dia: 3          # D+3 despues de la produccion: recordar el aditivo 2
-  reposo_dias: 3            # dias despues del aditivo 2: "ya toca destilar"
+  # 2026-11-13 (Cris): el aditivo 2 es insumo, no etapa: ya no se recuerda.
+  # "Ya toca destilar" sale el dia aditivo_2_dia + reposo_dias desde la produccion.
+  aditivo_2_dia: 3          # D+3 despues de la produccion (era cuando va el aditivo 2)
+  reposo_dias: 3            # dias de reposo despues de ese dia: "ya toca destilar"
   muestra_horas: 24         # sin "Ya la guarde" en este tiempo: UN segundo aviso y ya
   hora_recordatorios: 8     # no se recuerda antes de esta hora local
   intentos_recordatorio: 3  # reclamos de un recordatorio que no salio a nadie (ronda 2)
@@ -321,6 +323,9 @@ etapas:
   no_abren_etapa:
     - '\?'
     - '^\W*(oye\W+)?(cuant[oa]s?|cual(es)?|cuando|donde|quien(es)?|sabes|dime|me\s+dices)\b'
+  # 2026-11-13 (Cris): el aditivo 2 es insumo. Estos disparadores ya NO abren
+  # etapa: solo ganan primero para que el mensaje no abra otra etapa (destilacion)
+  # y siga al modelo como insumo de un lote existente (lote_ciclo.ETAPAS_RETIRADAS).
   aditivo_2:
     disparadores:
       - '^\W*(registra\w*\s+|ya\s+|hoy\s+)?(el\s+)?aditivo\s*(2|dos)\b'
@@ -353,11 +358,12 @@ etapas:
       - '\b(dejo\s+de|termino\s+de|acabo\s+de)\s+fermentar\b'
 
 textos:
-  aditivo_2_recordatorio: 'Lote {codigo}: hoy toca el aditivo 2 (dia {dia} desde la produccion). Cuanto le pusieron, con su unidad? (ej. "1.5 kg" o "1500 g")'
+  # 2026-11-13 (Cris): el aditivo 2 es un insumo del inventario, no una etapa del lote.
+  aditivo_2_no_es_etapa: 'El aditivo 2 ya no es una etapa del lote: es un insumo como cualquier otro. Dictamelo como insumo, por ejemplo: "agregale 1500 g de aditivo 2 al lote {codigo}". Con este boton no anote nada.'
   aditivo_2_pregunta: 'Lote {codigo} - aditivo 2. Cuanto aditivo 2, con su unidad? (ej. "1.5 kg" o "1500 g")'
   aditivo_2_unidad: 'Lote {codigo} - aditivo 2: {cantidad} gramos o {cantidad} kilos? Contesta "gramos" o "kilos".'
   fin_fermentacion_pregunta: 'Lote {codigo} - fin de fermentacion. Cuando termino (hoy, ayer, hace 2 dias) y, si las llevaron, cuantas horas fermento?'
-  destilar_recordatorio: 'Lote {codigo}: ya paso el reposo ({dias} dias desde el aditivo 2). Ya toca destilar.'
+  destilar_recordatorio: 'Lote {codigo}: ya paso el reposo (dia {dias} desde la produccion). Ya toca destilar.'
   destilacion_pregunta: "Lote {codigo} - destilacion. Cuantas garrafas salieron, y de cada una los litros, el peso (kg) y el % de alcohol? Si quieres, una nota entre parentesis.\nEjemplo: 3 garrafas: 20 L 18.5 kg 52%, 19 L 17 kg 48% (turbia), 11 L 10 kg 30%"
   muestra: 'Guarda una muestra del lote {codigo}.'
   muestra_2: 'Recordatorio (ultimo): guarda una muestra del lote {codigo}.'

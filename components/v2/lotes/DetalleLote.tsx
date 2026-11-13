@@ -21,7 +21,7 @@ const pesos4 = (v: number | null | undefined) => (n(v) === null ? '—' : `$${n(
 const pct = (v: number | null | undefined) => (n(v) === null ? '—' : `${(n(v)! * 100).toFixed(1)}%`)
 
 const ETAPA: Record<string, string> = {
-  aditivo_2: 'Segundo aditivo',
+  aditivo_2: 'Segundo aditivo (registro anterior; hoy es insumo)',
   destilacion: 'Destilación',
   muestra: 'Muestra',
   fin_fermentacion: 'Fin de fermentación'
@@ -178,7 +178,7 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
           </table>
         </div>
         <div className="inv-sub">
-          La fecha de los insumos es la del día de producción (la base no guarda otra); la del aditivo 2 sale de su etapa. El envasado diario no se liga a un lote.
+          La fecha de los insumos (aditivos 1 y 2 incluidos) es la del día de producción (la base no guarda otra). El envasado diario no se liga a un lote.
         </div>
       </div>
 
@@ -300,7 +300,7 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
           <div>
             <h4 className="lote-h">Etapas (bot)</h4>
             {etapas.length === 0 ? (
-              <div className="vacio"><b>Sin etapas</b>Las registra el bot (segundo aditivo, destilación, muestras).</div>
+              <div className="vacio"><b>Sin etapas</b>Las registra el bot (destilación, muestras). Los aditivos son insumos del lote: se capturan en «Editar lote».</div>
             ) : (
               <div className="inv-scroll">
                 <table className="t inv-t">
