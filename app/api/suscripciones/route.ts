@@ -11,7 +11,7 @@ import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { getServerSupabaseClient } from '@/lib/server-session'
-import { puedeCapturarMatriz } from '@/lib/v2/roles'
+import { esAdmin } from '@/lib/v2/roles'
 import { cuentaUsableporElBot } from '@/lib/bot-servidor'
 import { validarSuscripcion } from '@/lib/suscripciones'
 import { esTablaFaltante } from '@/lib/suscripciones-leer'
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   try {
     const usuario = await getCurrentUser()
     if (!usuario) return NextResponse.json({ error: 'Sin sesion.' }, { status: 401 })
-    if (!puedeCapturarMatriz(usuario.rol)) {
+    if (!esAdmin(usuario.rol)) {
       return NextResponse.json({ error: 'Las suscripciones las edita un ADMIN.' }, { status: 403 })
     }
     const cuerpo = (await request.json()) as Record<string, unknown>

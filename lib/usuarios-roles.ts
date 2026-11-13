@@ -10,12 +10,14 @@
  *   `entidades_rol_check`: ADMIN, DST, LOC, SOCIO
  *   (supabase/migrations/20260101000000_v2_local_esquema_base_previo.sql:54).
  * `SUB-ADMIN` aparece en tipos de TypeScript pero la base lo rechaza: no se ofrece.
+ * `EMPLEADO_ADMIN` (2026-11-13) NO es una entidad: es una fila en `accesos`
+ * (`accesos_rol_check`) que opera como la matriz.
  *
  * Cada descripcion esta sacada del codigo que decide el permiso (la fuente va al
  * lado). Si cambia el permiso, cambia la descripcion.
  */
 
-export type RolDeUsuario = 'SOCIO' | 'DST' | 'LOC' | 'ADMIN'
+export type RolDeUsuario = 'SOCIO' | 'DST' | 'LOC' | 'EMPLEADO_ADMIN' | 'ADMIN'
 
 export interface OpcionDeRol {
   rol: RolDeUsuario
@@ -51,6 +53,16 @@ export const ROLES_DE_USUARIO: readonly OpcionDeRol[] = [
     disponible: true
   },
   {
+    rol: 'EMPLEADO_ADMIN',
+    nombre: 'Empleado administrativo',
+    // lib/v2/roles.ts: puedeCapturarMatriz (lotes, envasado, compra, inventario) y puedeVerFinanzas
+    // (solo con accesos.permiso_finanzas). Plan DESDE_CUARTEL_rol_empleado_admin_2026-11-13.md.
+    descripcion:
+      'Opera la matriz: lotes, envasado, compra de insumos e inventario (en la app, como ADMIN). ' +
+      'Finanzas solo si se le da el permiso; no da de alta usuarios ni toca catálogo, precios ni aprobaciones.',
+    disponible: true
+  },
+  {
     rol: 'ADMIN',
     nombre: 'Administrador (matriz)',
     // lib/v2/roles.ts puedeCapturarMatriz: gasto, compra, envasado, anular, aprobar.
@@ -81,6 +93,31 @@ export interface DatosNuevoUsuario {
   comisionHijoLocal?: string
   /** Solo LOC. */
   comisionBaseLocal?: string
+  /** Solo EMPLEADO_ADMIN: `accesos.permiso_finanzas`. */
+  permisoFinanzas?: boolean
+}
+
+/**
+ * `accesos.etiqueta` a partir del nombre: minusculas sin acentos, lo demas a
+ * `_`, valida contra el CHECK `^[a-z0-9_-]{2,24}$` y fuera de `ocupadas`
+ * (agrega `-2`, `-3`, ... recortando la base para no pasar de 24).
+ */
+export function etiquetaDesdeNombre(nombre: string, ocupadas: ReadonlySet<string>): string {
+  let base = String(nombre ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 24)
+    .replace(/_+$/, '')
+  if (base.length < 2) base = `emp${base}`.slice(0, 24)
+  if (!ocupadas.has(base)) return base
+  for (let n = 2; ; n++) {
+    const sufijo = `-${n}`
+    const candidata = base.slice(0, 24 - sufijo.length) + sufijo
+    if (!ocupadas.has(candidata)) return candidata
+  }
 }
 
 export const LARGO_MINIMO_PASSWORD_USUARIO = 8

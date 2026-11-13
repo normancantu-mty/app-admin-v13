@@ -14,6 +14,7 @@ import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { leerAcceso } from '@/lib/auth-utils'
 
 export type ClienteServidor = SupabaseClient<Database>
 
@@ -22,6 +23,8 @@ export interface SesionOperador {
   entidadId: string
   /** Siempre en mayusculas. */
   rol: string
+  /** `accesos.permiso_finanzas` (solo cuenta para EMPLEADO_ADMIN). */
+  permisoFinanzas?: boolean
 }
 
 export type ResultadoSesion =
@@ -50,7 +53,7 @@ export async function getServerSupabaseClient(): Promise<ClienteServidor> {
 }
 
 /**
- * Resuelve la sesion y la entidad por correo. `usuario_creador` sale de AQUI,
+ * Resuelve la sesion y la entidad: `accesos` (por auth_id) primero; si no, por correo. `usuario_creador` sale de AQUI,
  * nunca del cliente: eso es lo que cierra el hueco por el que 36 de 118 filas
  * quedaron sin autor y un DST no podia anular su propio movimiento
  * (`app/actions/audit.ts`).
@@ -67,6 +70,18 @@ export async function resolverSesionOperador(
 
   if (authError || !user?.email) {
     return { ok: false, error: 'No se pudo validar tu sesion. Inicia sesion nuevamente.' }
+  }
+
+  // `accesos` primero, como `mi_rol()` / `mi_entidad_id()` en la base.
+  const acceso = await leerAcceso(supabase, user.id)
+  if (acceso) {
+    if (acceso.rol === 'SOCIO') {
+      return { ok: false, error: 'Acceso denegado: tu rol es de solo lectura.' }
+    }
+    return {
+      ok: true,
+      sesion: { email: user.email, entidadId: acceso.idEntidad, rol: acceso.rol, permisoFinanzas: acceso.permisoFinanzas }
+    }
   }
 
   const { data: entidad, error: entidadError } = await supabase

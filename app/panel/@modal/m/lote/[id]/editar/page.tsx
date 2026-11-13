@@ -6,7 +6,7 @@
 
 import { RUTA_BASE } from '@/lib/v2/rutas'
 import { notFound } from 'next/navigation'
-import { exigirMandoV2 } from '@/lib/v2/puerta'
+import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
 import { Modal } from '@/components/v2/modal/Modal'
 import FormLote from '@/components/v2/lotes/FormLote'
@@ -15,7 +15,7 @@ import { hoyMx, leerInsumosLote, leerLote } from '@/components/v2/lotes/datos'
 export const dynamic = 'force-dynamic'
 
 export default async function ModalEditarLote({ params }: { params: Promise<{ id: string }> }) {
-  const usuario = await exigirMandoV2()
+  const usuario = await exigirMatrizV2()
   if (!puedeCapturarMatriz(usuario.rol)) notFound()
   const { id } = await params
   const [lote, insumos] = await Promise.all([leerLote(id), leerInsumosLote()])

@@ -20,7 +20,7 @@ import { cache } from 'react'
 import { notFound, redirect } from 'next/navigation'
 import { getAuthUser, getCurrentUser, type CurrentUser } from '@/lib/auth-utils'
 import { RUTA_LOGIN } from '@/lib/puerta-dashboard'
-import { esRolDeMandoV2 } from './roles'
+import { puedeVerFinanzas, veLaMatriz } from './roles'
 
 /** Cualquier rol con entidad. Sin sesion, al login; con sesion pero sin entidad, 404. */
 export const exigirSesionV2 = cache(async (): Promise<CurrentUser> => {
@@ -32,9 +32,19 @@ export const exigirSesionV2 = cache(async (): Promise<CurrentUser> => {
   notFound()
 })
 
-/** Solo ADMIN y SOCIO (el dinero de la matriz). Otro rol vuelve a su panel. */
+/**
+ * El dinero de la matriz: ADMIN, SOCIO y EMPLEADO_ADMIN con permiso de finanzas
+ * (`puedeVerFinanzas`). Otro rol vuelve a su panel.
+ */
 export const exigirMandoV2 = cache(async (): Promise<CurrentUser> => {
   const usuario = await exigirSesionV2()
-  if (!esRolDeMandoV2(usuario.rol)) redirect(RUTA_BASE)
+  if (!puedeVerFinanzas(usuario)) redirect(RUTA_BASE)
+  return usuario
+})
+
+/** Lo operativo de la matriz (lotes, inventario): ADMIN, SOCIO y EMPLEADO_ADMIN. */
+export const exigirMatrizV2 = cache(async (): Promise<CurrentUser> => {
+  const usuario = await exigirSesionV2()
+  if (!veLaMatriz(usuario.rol)) redirect(RUTA_BASE)
   return usuario
 })

@@ -30,7 +30,8 @@ import {
   type MovimientoDinero
 } from '@/lib/v2/dinero'
 import { esRutaProtegida } from '@/lib/puerta-dashboard'
-import { esRolDeMandoV2 } from '@/lib/v2/roles'
+import { esAdmin, esRolDeMandoV2, puedeCapturarMatriz, puedeVerFinanzas, veLaMatriz } from '@/lib/v2/roles'
+import { etiquetaDesdeNombre } from '@/lib/usuarios-roles'
 
 const EF = 'cuenta-efectivo'
 const FI = 'cuenta-fresnillo'
@@ -306,10 +307,15 @@ function codigoVivo(texto: string): string {
     .join('\n')
 }
 
-/** ¿El archivo exige rol de mando ANTES de abrir el cliente de la base? */
+/**
+ * ¿El archivo exige rol de mando ANTES de abrir el cliente de la base? `exigirMatrizV2()`
+ * (2026-11-13: lo operativo, abierto tambien a EMPLEADO_ADMIN) cuenta igual: filtra por rol.
+ */
 function exigeMandoAntesDeLeer(fuente: string): boolean {
   const vivo = codigoVivo(fuente)
-  const puerta = vivo.indexOf('await exigirMandoV2()')
+  const mando = vivo.indexOf('await exigirMandoV2()')
+  const matriz = vivo.indexOf('await exigirMatrizV2()')
+  const puerta = mando < 0 ? matriz : matriz < 0 ? mando : Math.min(mando, matriz)
   if (puerta < 0) return false
   const lectura = vivo.indexOf('getServerSupabaseClient()')
   return lectura < 0 || puerta < lectura
@@ -379,7 +385,37 @@ test.describe('Front v2 · rol ADMIN/SOCIO en el layout y en cada pagina', () =>
   test('solo ADMIN y SOCIO son de mando', () => {
     expect(esRolDeMandoV2('ADMIN')).toBe(true)
     expect(esRolDeMandoV2('SOCIO')).toBe(true)
-    for (const r of ['DST', 'LOC', 'SUB-ADMIN', '', null, undefined]) expect(esRolDeMandoV2(r), String(r)).toBe(false)
+    for (const r of ['DST', 'LOC', 'SUB-ADMIN', 'EMPLEADO_ADMIN', '', null, undefined]) expect(esRolDeMandoV2(r), String(r)).toBe(false)
+  })
+
+  test('EMPLEADO_ADMIN: captura operativa si, finanzas solo con permiso, administracion no', () => {
+    expect(puedeCapturarMatriz('EMPLEADO_ADMIN')).toBe(true)
+    expect(puedeCapturarMatriz('ADMIN')).toBe(true)
+    for (const r of ['SOCIO', 'DST', 'LOC', 'SUB-ADMIN', '', null]) expect(puedeCapturarMatriz(r), String(r)).toBe(false)
+    expect(veLaMatriz('EMPLEADO_ADMIN')).toBe(true)
+    expect(veLaMatriz('DST')).toBe(false)
+    expect(esAdmin('EMPLEADO_ADMIN')).toBe(false)
+    expect(esAdmin('ADMIN')).toBe(true)
+    expect(puedeVerFinanzas({ rol: 'ADMIN' })).toBe(true)
+    expect(puedeVerFinanzas({ rol: 'SOCIO' })).toBe(true)
+    expect(puedeVerFinanzas({ rol: 'EMPLEADO_ADMIN', permiso_finanzas: true })).toBe(true)
+    expect(puedeVerFinanzas({ rol: 'EMPLEADO_ADMIN', permiso_finanzas: false })).toBe(false)
+    expect(puedeVerFinanzas({ rol: 'EMPLEADO_ADMIN' })).toBe(false)
+    // El permiso no le sirve a otro rol.
+    expect(puedeVerFinanzas({ rol: 'DST', permiso_finanzas: true })).toBe(false)
+    expect(puedeVerFinanzas(null)).toBe(false)
+  })
+
+  test('etiqueta de accesos: pasa el CHECK ^[a-z0-9_-]{2,24}$ y no repite', () => {
+    const CHECK = /^[a-z0-9_-]{2,24}$/
+    const casos = ['María José Peña', 'A', '  ', 'Un nombre larguisimo de mas de veinticuatro letras', '¡¡Ñoño!!']
+    for (const c of casos) expect(etiquetaDesdeNombre(c, new Set()), c).toMatch(CHECK)
+    expect(etiquetaDesdeNombre('María José', new Set())).toBe('maria_jose')
+    expect(etiquetaDesdeNombre('María José', new Set(['maria_jose']))).toBe('maria_jose-2')
+    expect(etiquetaDesdeNombre('María José', new Set(['maria_jose', 'maria_jose-2']))).toBe('maria_jose-3')
+    const larga = etiquetaDesdeNombre('Un nombre larguisimo de mas de veinticuatro letras', new Set(['un_nombre_larguisimo_de']))
+    expect(larga).toMatch(CHECK)
+    expect(larga.endsWith('-2')).toBe(true)
   })
 
   test('cada page.tsx, layout.tsx y default.tsx de app/panel pasa por una puerta con chequeo de rol antes de leer la base', () => {

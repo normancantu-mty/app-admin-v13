@@ -10,7 +10,7 @@
 
 import { RUTA_BASE } from '@/lib/v2/rutas'
 import Link from 'next/link'
-import { exigirMandoV2 } from '@/lib/v2/puerta'
+import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
 import { fechaParaPersona } from '@/lib/fechas'
 import { mxn } from '@/lib/v2/formato'
@@ -23,7 +23,7 @@ import { CHIP_ESTADO, ESTADOS_LOTE, ETIQUETA_ESTADO, esEstadoLote } from '@/comp
 export const dynamic = 'force-dynamic'
 
 export default async function LotesV2({ searchParams }: { searchParams: Promise<{ estado?: string | string[] }> }) {
-  const usuario = await exigirMandoV2()
+  const usuario = await exigirMatrizV2()
   const captura = puedeCapturarMatriz(usuario.rol)
   const sp = await searchParams
   const eq = Array.isArray(sp.estado) ? sp.estado[0] : sp.estado

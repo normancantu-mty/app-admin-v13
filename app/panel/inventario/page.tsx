@@ -18,7 +18,7 @@
 
 import { RUTA_BASE } from '@/lib/v2/rutas'
 import Link from 'next/link'
-import { exigirMandoV2 } from '@/lib/v2/puerta'
+import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
@@ -49,7 +49,7 @@ type ProductoCorto = { id: string; nombre: string; tipo: string; unidad_medida: 
 const TIPOS_CAPTURA = ['ENTRADA_COMPRA', 'PRODUCCION']
 
 export default async function InventarioV2({ searchParams }: { searchParams: Promise<{ tipo?: string | string[]; filas?: string | string[]; ver?: string | string[] }> }) {
-  const usuario = await exigirMandoV2()
+  const usuario = await exigirMatrizV2()
   const captura = puedeCapturarMatriz(usuario.rol)
   const sp = await searchParams
   const tq = Array.isArray(sp.tipo) ? sp.tipo[0] : sp.tipo

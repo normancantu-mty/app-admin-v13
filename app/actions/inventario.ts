@@ -13,6 +13,7 @@ type TipoLogisticaInversa = 'MERMA' | 'DEVOLUCION_FISICA'
 type InventarioInsert = TablesInsert<'inventario_ledger'>
 
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
+import { leerAcceso } from '@/lib/auth-utils'
 type FinanzaInsert = TablesInsert<'finanzas_ledger'>
 
 interface RegistrarSalidaCascadaInput {
@@ -41,6 +42,21 @@ export interface RegistrarProduccionPayload {
 export interface RegistrarProduccionResult {
   success: boolean
   error?: string
+}
+
+/**
+ * La entidad desde la que opera la sesion: `accesos` primero (por auth_id, como
+ * `mi_entidad_id()`; asi entra EMPLEADO_ADMIN, que no tiene fila en
+ * `entidades`), y si no, por correo como siempre. No se exporta: este archivo
+ * es `'use server'`.
+ */
+async function entidadOperadoraDe(
+  supabase: Awaited<ReturnType<typeof getServerSupabaseClient>>,
+  user: { id: string; email?: string }
+): Promise<{ data: { id: string; rol: string } | null; error: unknown }> {
+  const acceso = await leerAcceso(supabase, user.id)
+  if (acceso) return { data: { id: acceso.idEntidad, rol: acceso.rol }, error: null }
+  return supabase.from('entidades').select('id, rol').eq('email', user.email ?? '').single()
 }
 
 async function getServerSupabaseClient() {
@@ -78,11 +94,7 @@ export async function registrarProduccionAction(
       return { success: false, error: 'No se pudo validar tu sesión. Inicia sesión nuevamente.' }
     }
 
-    const { data: entidadOperadora, error: entidadError } = await supabase
-      .from('entidades')
-      .select('id, rol')
-      .eq('email', user.email)
-      .single()
+    const { data: entidadOperadora, error: entidadError } = await entidadOperadoraDe(supabase, user)
 
     if (entidadError || !entidadOperadora) {
       return { success: false, error: 'No se pudo validar la entidad operadora.' }
@@ -258,11 +270,7 @@ export async function registrarSalidaCascada(
       return { success: false, error: 'Sesión no válida. Inicia sesión nuevamente.' }
     }
 
-    const { data: entidadOperadora, error: entidadError } = await supabase
-      .from('entidades')
-      .select('id, rol')
-      .eq('email', user.email)
-      .single()
+    const { data: entidadOperadora, error: entidadError } = await entidadOperadoraDe(supabase, user)
 
     if (entidadError || !entidadOperadora) {
       return { success: false, error: 'No se pudo validar tu identidad operativa.' }
@@ -314,11 +322,7 @@ export async function registrarLogisticaInversaAction(
       return { success: false, error: 'Sesión no válida. Inicia sesión nuevamente.' }
     }
 
-    const { data: entidad, error: entidadError } = await supabase
-      .from('entidades')
-      .select('id, rol')
-      .eq('email', user.email)
-      .single()
+    const { data: entidad, error: entidadError } = await entidadOperadoraDe(supabase, user)
 
     if (entidadError || !entidad) {
       return { success: false, error: 'No se pudo validar tu identidad operativa.' }

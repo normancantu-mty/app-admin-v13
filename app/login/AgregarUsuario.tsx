@@ -38,6 +38,7 @@ export default function AgregarUsuario({ onCerrar }: { onCerrar: () => void }) {
   const [comisionBase, setComisionBase] = useState('')
   const [comisionHijoLocal, setComisionHijoLocal] = useState('')
   const [comisionBaseLocal, setComisionBaseLocal] = useState('')
+  const [permisoFinanzas, setPermisoFinanzas] = useState(false)
   const [creado, setCreado] = useState<{ nombre: string; email: string; rol: string } | null>(null)
 
   const cerrar = () => {
@@ -79,7 +80,8 @@ export default function AgregarUsuario({ onCerrar }: { onCerrar: () => void }) {
         idPadre: rol === 'LOC' ? idPadre : null,
         comisionBase: rol === 'DST' ? comisionBase : undefined,
         comisionHijoLocal: rol === 'DST' ? comisionHijoLocal : undefined,
-        comisionBaseLocal: rol === 'LOC' ? comisionBaseLocal : undefined
+        comisionBaseLocal: rol === 'LOC' ? comisionBaseLocal : undefined,
+        permisoFinanzas: rol === 'EMPLEADO_ADMIN' ? permisoFinanzas : undefined
       })
       if (!r.ok) {
         setError(r.error)
@@ -187,13 +189,25 @@ export default function AgregarUsuario({ onCerrar }: { onCerrar: () => void }) {
         </div>
       </fieldset>
 
-      <div>
-        <label htmlFor="nu-zona" className={ETIQUETA}>Zona</label>
-        <select id="nu-zona" value={zona} onChange={(e) => setZona(e.target.value)} className={CAMPO}>
-          <option value="Zacatecas">Zacatecas</option>
-          <option value="Foraneo">Foráneo</option>
-        </select>
-      </div>
+      {rol === 'EMPLEADO_ADMIN' ? (
+        <label className="flex gap-3 items-start p-2 rounded-md border border-gray-200 dark:border-gray-700 cursor-pointer">
+          <input id="nu-finanzas" type="checkbox" checked={permisoFinanzas} onChange={(e) => setPermisoFinanzas(e.target.checked)} className="mt-1" />
+          <span>
+            <span className="block text-sm font-semibold text-gray-800 dark:text-gray-100">Permiso de finanzas</span>
+            <span className="block text-xs text-gray-600 dark:text-gray-400">
+              Ve finanzas en el ERP web (saldos, cuentas, cobranza, cartera) y registra gastos. Sin él, solo la operación.
+            </span>
+          </span>
+        </label>
+      ) : (
+        <div>
+          <label htmlFor="nu-zona" className={ETIQUETA}>Zona</label>
+          <select id="nu-zona" value={zona} onChange={(e) => setZona(e.target.value)} className={CAMPO}>
+            <option value="Zacatecas">Zacatecas</option>
+            <option value="Foraneo">Foráneo</option>
+          </select>
+        </div>
+      )}
 
       {rol === 'DST' ? (
         <div className="grid grid-cols-2 gap-3">
@@ -226,7 +240,7 @@ export default function AgregarUsuario({ onCerrar }: { onCerrar: () => void }) {
         </>
       ) : null}
 
-      {opcion?.rol === 'SOCIO' ? null : (
+      {opcion?.rol === 'SOCIO' || opcion?.rol === 'EMPLEADO_ADMIN' ? null : (
         <p className="text-xs text-gray-500 dark:text-gray-400">Comisión en porciento: 20 = 20%. &quot;1&quot; es ambiguo: escribe 0.01 o 100.</p>
       )}
 

@@ -11,7 +11,7 @@
  */
 
 import { RUTA_BASE } from '@/lib/v2/rutas'
-import { exigirMandoV2 } from '@/lib/v2/puerta'
+import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { fechaParaPersona } from '@/lib/fechas'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { VerTodo } from '@/components/v2/pagina/Encabezado'
@@ -20,7 +20,7 @@ import { CHIP_ESTADO, ESTADOS_LOTE, ETIQUETA_ESTADO } from '@/components/v2/lote
 import { cant2 } from './formato-inv'
 
 export async function LotesVista({ limite }: { limite?: number } = {}) {
-  await exigirMandoV2()
+  await exigirMatrizV2()
   const { lotes, error } = await leerLotes()
   const visibles = limite ? lotes.slice(0, limite) : lotes
   return (

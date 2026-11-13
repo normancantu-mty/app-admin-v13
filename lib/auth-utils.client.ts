@@ -3,8 +3,9 @@ import { supabase } from './supabase'
 export interface CurrentClientUser {
   id: string
   email: string
-  rol: 'ADMIN' | 'DST' | 'LOC' | 'SOCIO'
+  rol: 'ADMIN' | 'DST' | 'LOC' | 'SOCIO' | 'EMPLEADO_ADMIN'
   nombre: string
+  permiso_finanzas?: boolean
 }
 
 export async function getCurrentClientUser(): Promise<CurrentClientUser | null> {
@@ -15,6 +16,24 @@ export async function getCurrentClientUser(): Promise<CurrentClientUser | null> 
 
   if (sessionError || !session?.user?.email) {
     return null
+  }
+
+  // `accesos` primero (por auth_id), como `mi_rol()` en la base.
+  const { data: acceso } = await supabase
+    .from('accesos')
+    .select('*')
+    .eq('auth_id', session.user.id)
+    .eq('activo', true)
+    .maybeSingle()
+  if (acceso) {
+    const fila = acceso as { id_entidad: string; rol: string; nombre: string; permiso_finanzas?: boolean | null }
+    return {
+      id: fila.id_entidad,
+      email: session.user.email,
+      rol: String(fila.rol || '').toUpperCase() as CurrentClientUser['rol'],
+      nombre: fila.nombre,
+      permiso_finanzas: fila.permiso_finanzas === true
+    }
   }
 
   const { data, error } = await supabase

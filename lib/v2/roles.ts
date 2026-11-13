@@ -15,9 +15,36 @@ export function esRolDeMandoV2(rol: string | null | undefined): boolean {
   return (ROLES_DE_MANDO_V2 as readonly string[]).includes(rol ?? '')
 }
 
-/** Captura de la matriz (gasto, compra, envasado, anular, aprobar): solo ADMIN. SOCIO es de solo lectura. */
+/**
+ * Captura OPERATIVA de la matriz (lotes, envasado, compra de insumos, inventario): ADMIN y
+ * EMPLEADO_ADMIN (2026-11-13). SOCIO es de solo lectura. Lo de dinero (gasto) pide ademas
+ * `puedeVerFinanzas`; lo de administracion (categorias, suscripciones, aprobar), `esAdmin`.
+ */
 export function puedeCapturarMatriz(rol: string | null | undefined): boolean {
+  return rol === 'ADMIN' || rol === 'EMPLEADO_ADMIN'
+}
+
+/** Administracion (alta de usuarios, catalogo, categorias, suscripciones, aprobar, ajustes): solo ADMIN. */
+export function esAdmin(rol: string | null | undefined): boolean {
   return rol === 'ADMIN'
+}
+
+/** ¿Ve la matriz (lotes, inventario)? Mando o empleado administrativo. */
+export function veLaMatriz(rol: string | null | undefined): boolean {
+  return esRolDeMandoV2(rol) || rol === 'EMPLEADO_ADMIN'
+}
+
+/**
+ * ¿Ve el dinero de la matriz (finanzas, cuentas, cobranza, cartera, saldos)? ADMIN y SOCIO
+ * siempre; EMPLEADO_ADMIN solo con `accesos.permiso_finanzas`. La base le deja leer y escribir
+ * finanzas igual (la app movil lo necesita, opcion (a) del plan 2026-11-13): esto es UI y
+ * guards de servidor, no un candado de datos.
+ */
+export function puedeVerFinanzas(
+  usuario: { rol: string | null | undefined; permiso_finanzas?: boolean | null } | null | undefined
+): boolean {
+  if (!usuario) return false
+  return esRolDeMandoV2(usuario.rol) || (usuario.rol === 'EMPLEADO_ADMIN' && usuario.permiso_finanzas === true)
 }
 
 /**

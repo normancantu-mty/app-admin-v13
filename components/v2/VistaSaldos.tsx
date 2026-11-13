@@ -11,10 +11,11 @@
 import { cookies } from 'next/headers'
 import { SelectorVista } from './saldos/SelectorVista'
 import { COOKIE_VISTA, vistaDeCookie } from './saldos/vista'
+import { puedeVerFinanzas } from '@/lib/v2/roles'
 
-/** Solo el mando (ADMIN y SOCIO) ve los saldos de la matriz; a un nodo no se le pinta. */
-export async function VistaSaldos({ rol }: { rol: string }) {
-  if (rol !== 'ADMIN' && rol !== 'SOCIO') return null
+/** Solo quien ve el dinero de la matriz (`puedeVerFinanzas`) ve el selector; a un nodo no se le pinta. */
+export async function VistaSaldos({ rol, permisoFinanzas }: { rol: string; permisoFinanzas?: boolean }) {
+  if (!puedeVerFinanzas({ rol, permiso_finanzas: permisoFinanzas })) return null
   const guardada = (await cookies()).get(COOKIE_VISTA)?.value
   return <SelectorVista inicial={vistaDeCookie(guardada)} />
 }

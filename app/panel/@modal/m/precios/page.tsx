@@ -17,7 +17,8 @@ export const dynamic = 'force-dynamic'
 
 export default async function ModalPrecios({ searchParams }: { searchParams: Promise<SpPrecios> }) {
   const usuario = await exigirSesionV2()
-  if (usuario.rol === 'SUB-ADMIN') notFound()
+  // Catalogo y precios es de administracion: el EMPLEADO_ADMIN no entra.
+  if (usuario.rol === 'SUB-ADMIN' || usuario.rol === 'EMPLEADO_ADMIN') notFound()
   const sp = await searchParams
   const rolActual = rolDePrecios(usuario.rol)
   return (

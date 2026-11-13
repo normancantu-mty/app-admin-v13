@@ -2,14 +2,14 @@
 
 import { notFound } from 'next/navigation'
 import { exigirSesionV2 } from '@/lib/v2/puerta'
-import { puedeCapturarMatriz } from '@/lib/v2/roles'
+import { esAdmin } from '@/lib/v2/roles'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { Modal } from '@/components/v2/modal/Modal'
 import Categorias from '@/components/v2/finanzas/Categorias'
 
 export default async function ModalCategorias() {
   const usuario = await exigirSesionV2()
-  if (!puedeCapturarMatriz(usuario.rol)) notFound()
+  if (!esAdmin(usuario.rol)) notFound()
   const supabase = await getServerSupabaseClient()
   const { data } = await supabase
     .from('categorias_movimiento')

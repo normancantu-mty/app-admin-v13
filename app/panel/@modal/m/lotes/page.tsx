@@ -8,7 +8,7 @@
  */
 
 import { RUTA_BASE } from '@/lib/v2/rutas'
-import { exigirMandoV2 } from '@/lib/v2/puerta'
+import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { Modal } from '@/components/v2/modal/Modal'
@@ -18,7 +18,7 @@ import { LotesVista } from '@/components/v2/inventario/Lotes'
 export const dynamic = 'force-dynamic'
 
 export default async function ModalLotes() {
-  const usuario = await exigirMandoV2()
+  const usuario = await exigirMatrizV2()
   return (
     <Modal
       titulo="Lotes"

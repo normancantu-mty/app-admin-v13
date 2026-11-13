@@ -6,6 +6,7 @@ import type { Database, TablesInsert } from '@/types/database'
 import { marcaDeTraspaso } from '@/lib/traspaso-pareja'
 import { CATEGORIA_SIN_CATEGORIZAR, normalizarCategoriaGasto } from '@/lib/avisos'
 import { registrarAviso } from '@/lib/avisos-server'
+import { leerAcceso } from '@/lib/auth-utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -95,11 +96,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No autenticado.' }, { status: 401 })
     }
 
-    const { data: entidad, error: entidadError } = await supabase
-      .from('entidades')
-      .select('id, rol')
-      .eq('email', user.email)
-      .single()
+    // `accesos` primero (por auth_id, como `mi_entidad_id()`); si no, por correo como siempre.
+    const acceso = await leerAcceso(supabase, user.id)
+    const { data: entidad, error: entidadError } = acceso
+      ? { data: { id: acceso.idEntidad, rol: acceso.rol }, error: null }
+      : await supabase
+          .from('entidades')
+          .select('id, rol')
+          .eq('email', user.email)
+          .single()
 
     if (entidadError || !entidad) {
       return NextResponse.json({ error: 'No se pudo validar identidad operativa.' }, { status: 403 })
@@ -107,6 +112,11 @@ export async function POST(request: Request) {
 
     if (entidad.rol === 'SOCIO') {
       return NextResponse.json({ error: 'Acceso denegado para rol SOCIO.' }, { status: 403 })
+    }
+
+    // EMPLEADO_ADMIN: finanzas en la web solo con permiso (la base no lo distingue, plan 2026-11-13).
+    if (entidad.rol === 'EMPLEADO_ADMIN' && !acceso?.permisoFinanzas) {
+      return NextResponse.json({ error: 'Sin permiso de finanzas.' }, { status: 403 })
     }
 
     const validarCuentaPropia = async (idCuenta: string): Promise<boolean> => {

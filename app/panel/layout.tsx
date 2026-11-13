@@ -40,7 +40,7 @@ export default async function LayoutV2({ children, modal }: { children: ReactNod
             </a>
             <div className="der">
               <SesionMenu nombre={usuario.nombre} rol={usuario.rol} />
-              <VistaSaldos rol={usuario.rol} />
+              <VistaSaldos rol={usuario.rol} permisoFinanzas={usuario.permiso_finanzas} />
               <PrivacidadV2 />
               <TemaSelector />
             </div>

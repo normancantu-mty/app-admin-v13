@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { getServerSupabaseClient } from '@/lib/server-session'
-import { puedeCapturarMatriz } from '@/lib/v2/roles'
+import { esAdmin } from '@/lib/v2/roles'
 import { validarAltaCategoria, type FilaCategoria } from '@/lib/categorias-movimiento'
 
 export const dynamic = 'force-dynamic'
@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   try {
     const usuario = await getCurrentUser()
     if (!usuario) return NextResponse.json({ error: 'Sin sesion.' }, { status: 401 })
-    if (!puedeCapturarMatriz(usuario.rol)) {
+    if (!esAdmin(usuario.rol)) {
       return NextResponse.json({ error: 'Agregar categorias lo hace un ADMIN.' }, { status: 403 })
     }
     const cuerpo = (await request.json()) as { tipo?: unknown; categoria?: unknown; subcategoria?: unknown }

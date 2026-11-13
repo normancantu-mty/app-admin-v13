@@ -2,14 +2,15 @@
 
 import { notFound } from 'next/navigation'
 import { exigirSesionV2 } from '@/lib/v2/puerta'
-import { puedeCapturarMatriz } from '@/lib/v2/roles'
+import { puedeCapturarMatriz, puedeVerFinanzas } from '@/lib/v2/roles'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { Modal } from '@/components/v2/modal/Modal'
 import Gasto from '@/components/v2/finanzas/Gasto'
 
 export default async function ModalGasto() {
   const usuario = await exigirSesionV2()
-  if (!puedeCapturarMatriz(usuario.rol)) notFound()
+  // Gasto es dinero: EMPLEADO_ADMIN solo con permiso de finanzas.
+  if (!puedeCapturarMatriz(usuario.rol) || !puedeVerFinanzas(usuario)) notFound()
   const supabase = await getServerSupabaseClient()
   // Las mismas dos lecturas que /dashboard/finanzas/nuevo.
   const [{ data: cuentas }, { data: categorias }] = await Promise.all([

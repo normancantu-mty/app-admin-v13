@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { cookies, headers } from 'next/headers'
 import { CABECERA_SESION_VERIFICADA } from './cabecera-sesion'
 
@@ -9,8 +10,38 @@ import { CABECERA_SESION_VERIFICADA } from './cabecera-sesion'
 export interface CurrentUser {
   id: string
   email: string
-  rol: 'ADMIN' | 'DST' | 'LOC' | 'SOCIO' | 'SUB-ADMIN'
+  rol: 'ADMIN' | 'DST' | 'LOC' | 'SOCIO' | 'SUB-ADMIN' | 'EMPLEADO_ADMIN'
   nombre: string
+  /** Solo cuenta para EMPLEADO_ADMIN (`accesos.permiso_finanzas`). Ver `puedeVerFinanzas`. */
+  permiso_finanzas?: boolean
+}
+
+/**
+ * La fila activa de `accesos` de este login, o `null`. Mismo orden que
+ * `mi_rol()` / `mi_entidad_id()` en Postgres (20261104175839_accesos.sql): si
+ * hay fila, manda ella (rol y entidad desde la que opera); si no, `entidades`.
+ * `select('*')` a proposito: si `permiso_finanzas` aun no existe en la base,
+ * la lectura no truena (queda en false). Un error se registra y se cae al
+ * camino de siempre: para un login que solo vive en `accesos` eso es `null`
+ * (falla cerrada).
+ */
+export async function leerAcceso(
+  supabase: SupabaseClient,
+  authId: string
+): Promise<{ rol: string; idEntidad: string; nombre: string; permisoFinanzas: boolean } | null> {
+  const { data, error } = await supabase.from('accesos').select('*').eq('auth_id', authId).eq('activo', true).maybeSingle()
+  if (error) {
+    console.error('Error leyendo accesos:', error.message)
+    return null
+  }
+  if (!data) return null
+  const fila = data as { rol: string; id_entidad: string; nombre: string; permiso_finanzas?: boolean | null }
+  return {
+    rol: String(fila.rol || '').toUpperCase(),
+    idEntidad: fila.id_entidad,
+    nombre: fila.nombre,
+    permisoFinanzas: fila.permiso_finanzas === true
+  }
 }
 
 /**
@@ -138,6 +169,20 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     // en Postgres tambien dejo de empatar por correo
     // (supabase/migrations/20260902235500_identidad_solo_por_auth_id.sql).
     const SELECCION = 'id, email, rol, nombre'
+
+    // `accesos` primero, como `mi_rol()`. Ojo: un login que esta en las dos
+    // tablas (p. ej. ADMIN en accesos y DST en entidades) se ve aqui con el rol
+    // de `accesos`, que es el que la base ya le aplica.
+    const acceso = await leerAcceso(supabase, user.id)
+    if (acceso) {
+      return {
+        id: acceso.idEntidad,
+        email: user.email,
+        rol: acceso.rol as CurrentUser['rol'],
+        nombre: acceso.nombre,
+        permiso_finanzas: acceso.permisoFinanzas
+      }
+    }
 
     const { data: porAuthId, error: errorAuthId } = await supabase
       .from('entidades')

@@ -1,7 +1,7 @@
 /** Paridad v2 — modal «Avisos» (cola de captura: resolver e ignorar). Escrito el 2026-10-29 por el ejecutor del Socio. */
 
 import { exigirSesionV2 } from '@/lib/v2/puerta'
-import { esRolDeMandoV2 } from '@/lib/v2/roles'
+import { puedeVerFinanzas } from '@/lib/v2/roles'
 import { Modal } from '@/components/v2/modal/Modal'
 import AvisosVista from '@/components/v2/avisos/AvisosVista'
 
@@ -12,7 +12,7 @@ export default async function ModalAvisos() {
   return (
     <Modal titulo="Avisos" sub="Cola de captura: lo que el sistema dejó entrar sin saber del todo" tam="lg">
       <div className="v1">
-        <AvisosVista esMando={esRolDeMandoV2(usuario.rol)} />
+        <AvisosVista esMando={puedeVerFinanzas(usuario)} />
       </div>
     </Modal>
   )

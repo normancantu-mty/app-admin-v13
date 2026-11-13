@@ -4,6 +4,7 @@ import { RUTA_BASE } from '@/lib/v2/rutas'
 import { useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { getCurrentClientUser } from '@/lib/auth-utils.client'
 import AgregarUsuario from './AgregarUsuario'
 
 // `?cambiar=1` lo pone el menu de sesion de /panel ("Cambiar de usuario"): correo
@@ -31,12 +32,8 @@ export default function LoginPage() {
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (session && session.user.email) {
-        const { data: entidad } = await supabase
-          .from('entidades')
-          .select('id, rol')
-          .eq('email', session.user.email)
-          .single()
-        
+        // `accesos` primero y luego `entidades` (EMPLEADO_ADMIN solo vive en `accesos`).
+        const entidad = await getCurrentClientUser()
         if (entidad) {
           // Todos los roles entran al panel unico (A1, 2026-10-30): /panel decide que ve cada uno.
           router.push(RUTA_BASE)
@@ -60,12 +57,7 @@ export default function LoginPage() {
       if (error) throw error
 
       if (data.user && data.user.email) {
-        const { data: entidad } = await supabase
-          .from('entidades')
-          .select('id, rol')
-          .eq('email', data.user.email)
-          .single()
-        
+        const entidad = await getCurrentClientUser()
         if (entidad) {
           // Todos los roles entran al panel unico (A1, 2026-10-30): /panel decide que ve cada uno.
           router.push(RUTA_BASE)

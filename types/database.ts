@@ -14,6 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      accesos: {
+        Row: {
+          activo: boolean
+          auth_id: string | null
+          creado_en: string
+          etiqueta: string
+          id: string
+          id_entidad: string
+          nombre: string
+          permiso_finanzas: boolean
+          rol: string
+        }
+        Insert: {
+          activo?: boolean
+          auth_id?: string | null
+          creado_en?: string
+          etiqueta: string
+          id?: string
+          id_entidad: string
+          nombre: string
+          permiso_finanzas?: boolean
+          rol: string
+        }
+        Update: {
+          activo?: boolean
+          auth_id?: string | null
+          creado_en?: string
+          etiqueta?: string
+          id?: string
+          id_entidad?: string
+          nombre?: string
+          permiso_finanzas?: boolean
+          rol?: string
+        }
+        Relationships: []
+      }
       auditoria_logs: {
         Row: {
           creado_en: string

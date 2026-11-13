@@ -3,7 +3,7 @@
 import { notFound } from 'next/navigation'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { exigirSesionV2 } from '@/lib/v2/puerta'
-import { puedeCapturarMatriz } from '@/lib/v2/roles'
+import { esAdmin } from '@/lib/v2/roles'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { cuentaUsableporElBot } from '@/lib/bot-servidor'
 import { hoyEnMX } from '@/lib/date-format'
@@ -14,7 +14,7 @@ import Suscripciones from '@/components/v2/finanzas/Suscripciones'
 
 export default async function ModalSuscripciones() {
   const usuario = await exigirSesionV2()
-  if (!puedeCapturarMatriz(usuario.rol)) notFound()
+  if (!esAdmin(usuario.rol)) notFound()
   const tipada = await getServerSupabaseClient()
   const hoy = hoyEnMX(new Date())
   const mes = mesDe(hoy)

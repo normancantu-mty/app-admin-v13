@@ -13,6 +13,7 @@ import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { VerTodo } from '@/components/v2/pagina/Encabezado'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { exigirMandoV2 } from '@/lib/v2/puerta'
+import { esRolDeMandoV2, puedeCapturarMatriz, puedeVender } from '@/lib/v2/roles'
 import { leerTablero, slugDeClase } from '@/lib/v2/lecturas'
 import {
   cascadaDeCaja,
@@ -58,7 +59,7 @@ function Vacio({ titulo, children }: { titulo: string; children: React.ReactNode
   )
 }
 
-/** El panel de la matriz (ADMIN y SOCIO). Lo pinta /panel y su default.tsx. */
+/** El panel de la matriz (ADMIN, SOCIO y EMPLEADO_ADMIN con permiso de finanzas). Lo pinta /panel y su default.tsx. */
 export async function PanelMando() {
   const usuario = await exigirMandoV2()
   const client = await getServerSupabaseClient()
@@ -80,7 +81,9 @@ export async function PanelMando() {
       (e: unknown) => ({ datos: null, error: e instanceof Error ? e.message : String(e) })
     )
   ])
-  const puedeCapturar = usuario.rol === 'ADMIN'
+  const puedeCapturar = puedeCapturarMatriz(usuario.rol)
+  // Red, catalogo y aprobaciones son de ADMIN/SOCIO: al EMPLEADO_ADMIN no se le pintan.
+  const mando = esRolDeMandoV2(usuario.rol)
   const ahora = new Date()
 
   // ── Saldos ──
@@ -381,7 +384,9 @@ export async function PanelMando() {
       {puedeCapturar && (
         <div className="acciones">
           <span className="lbl">CAPTURAR</span>
-          <AbrirModal className="btn p" href={`${RUTA_BASE}/m/venta`} titulo="Nueva venta" tam="xl" data-testid="abrir-venta">+ Venta</AbrirModal>
+          {puedeVender(usuario.rol) && (
+            <AbrirModal className="btn p" href={`${RUTA_BASE}/m/venta`} titulo="Nueva venta" tam="xl" data-testid="abrir-venta">+ Venta</AbrirModal>
+          )}
           <AbrirModal className="btn p" href={`${RUTA_BASE}/m/envasado`} titulo="Registrar envasado" tam="md">+ Envasado</AbrirModal>
           <AbrirModal className="btn p" href={`${RUTA_BASE}/m/gasto`} titulo="Registrar gasto" tam="md">+ Gasto</AbrirModal>
           <AbrirModal className="btn p" href={`${RUTA_BASE}/m/compra`} titulo="Comprar insumos" tam="md">Comprar insumos</AbrirModal>
@@ -392,10 +397,10 @@ export async function PanelMando() {
         <AbrirModal className="btn" href={`${RUTA_BASE}/m/cuenta/efectivo`} titulo="Movimientos de dinero">Movimientos de dinero</AbrirModal>
         <AbrirModal className="btn" href={`${RUTA_BASE}/m/inventario`} titulo="Inventario">Movimientos de inventario</AbrirModal>
         <AbrirModal className="btn" href={`${RUTA_BASE}/m/cartera`} titulo="Cartera completa">Cartera completa</AbrirModal>
-        <AbrirModal className="btn" href={`${RUTA_BASE}/m/red`} titulo="Red de distribución">Red</AbrirModal>
-        <AbrirModal className="btn" href={`${RUTA_BASE}/m/precios`} titulo="Catálogo y precios">Catálogo y precios</AbrirModal>
+        {mando && <AbrirModal className="btn" href={`${RUTA_BASE}/m/red`} titulo="Red de distribución">Red</AbrirModal>}
+        {mando && <AbrirModal className="btn" href={`${RUTA_BASE}/m/precios`} titulo="Catálogo y precios">Catálogo y precios</AbrirModal>}
         <AbrirModal className="btn" href={`${RUTA_BASE}/m/lotes`} titulo="Lotes">Ver lotes</AbrirModal>
-        <AbrirModal className="btn" href={`${RUTA_BASE}/m/aprobaciones`} titulo="Aprobaciones" tam="md">Aprobaciones</AbrirModal>
+        {mando && <AbrirModal className="btn" href={`${RUTA_BASE}/m/aprobaciones`} titulo="Aprobaciones" tam="md">Aprobaciones</AbrirModal>}
         <AbrirModal className="btn" href={`${RUTA_BASE}/m/avisos`} titulo="Avisos" tam="md">Avisos</AbrirModal>
         <AbrirModal className="btn" href={`${RUTA_BASE}/m/actividad`} titulo="Actividad">Actividad</AbrirModal>
         <AbrirModal className="btn" href={`${RUTA_BASE}/m/ventas`} titulo="Ventas">Ventas</AbrirModal>
@@ -404,8 +409,8 @@ export async function PanelMando() {
       <div className="acciones" data-testid="panel-ver-todo">
         <span className="lbl">VER TODO</span>
         <VerTodo href={`${RUTA_BASE}/finanzas`}>Finanzas →</VerTodo>
-        <VerTodo href={`${RUTA_BASE}/red`}>Red y cartera →</VerTodo>
-        <VerTodo href={`${RUTA_BASE}/catalogo`}>Catálogo →</VerTodo>
+        {mando && <VerTodo href={`${RUTA_BASE}/red`}>Red y cartera →</VerTodo>}
+        {mando && <VerTodo href={`${RUTA_BASE}/catalogo`}>Catálogo →</VerTodo>}
         <VerTodo href={`${RUTA_BASE}/inventario`}>Inventario →</VerTodo>
         <VerTodo href={`${RUTA_BASE}/lotes`}>Lotes →</VerTodo>
       </div>

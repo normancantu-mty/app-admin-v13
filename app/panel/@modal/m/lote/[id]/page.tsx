@@ -4,7 +4,7 @@
  */
 
 import { notFound } from 'next/navigation'
-import { exigirMandoV2 } from '@/lib/v2/puerta'
+import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
 import { Modal } from '@/components/v2/modal/Modal'
 import DetalleLote from '@/components/v2/lotes/DetalleLote'
@@ -13,7 +13,7 @@ import { leerLote } from '@/components/v2/lotes/datos'
 export const dynamic = 'force-dynamic'
 
 export default async function ModalLote({ params }: { params: Promise<{ id: string }> }) {
-  const usuario = await exigirMandoV2()
+  const usuario = await exigirMatrizV2()
   const { id } = await params
   const lote = await leerLote(id)
   if (!lote) notFound()
