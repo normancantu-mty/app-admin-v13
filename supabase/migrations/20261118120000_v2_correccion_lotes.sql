@@ -117,7 +117,7 @@ $$;
 -- ─── 3. EL NOMBRE NUEVO ESTA LIBRE (cruce lotes <-> lote_alias) ─────────────
 
 CREATE OR REPLACE FUNCTION public.tg_lote_nombre_libre() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE
   v_norm  text := upper(btrim(NEW.codigo_lote));
   v_dueno uuid;
@@ -159,7 +159,7 @@ CREATE TRIGGER trg_lote_nombre_libre
 -- ─── 4. EL NOMBRE ANTERIOR QUEDA COMO ALIAS ─────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.tg_lote_alias() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 BEGIN
   IF upper(btrim(OLD.codigo_lote)) IS DISTINCT FROM upper(btrim(NEW.codigo_lote)) THEN
     INSERT INTO public.lote_alias (id_lote, alias, autor, motivo)
@@ -259,7 +259,7 @@ GRANT EXECUTE ON FUNCTION public.siguiente_codigo_lote() TO authenticated, servi
 
 -- SECURITY DEFINER: ve TODOS los lotes y alias aunque quien inserta no los lea.
 CREATE OR REPLACE FUNCTION public.tg_lote_codigo_vacio() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 BEGIN
   IF NEW.codigo_lote IS NULL OR btrim(NEW.codigo_lote) = '' THEN
     PERFORM pg_advisory_xact_lock(hashtext('lotes:nombres'));

@@ -591,6 +591,9 @@ export async function leerFormatosDeBotella(
  * escribir**. `lotes.codigo_lote` es `unique`, asi que sin esto el choque
  * llegaria como un error de Postgres a mitad de la escritura, cuando la fila
  * del lote ya existe y hay que deshacerla.
+ *
+ * Si la lectura falla, LANZA (no devuelve []): proponer '1' por un fallo de red
+ * seria inventar un codigo.
  */
 export async function leerCodigosDeLote(supabase: ClienteServicio): Promise<string[]> {
   // 2026-11-18: tambien los ALIAS (nombres anteriores, `lote_alias`): un lote
@@ -601,8 +604,10 @@ export async function leerCodigosDeLote(supabase: ClienteServicio): Promise<stri
     supabase.from('lote_alias').select('id_lote, alias')
   ])
   if (error || !data || alias.error) {
+    // 2026-11-18 (auditoria): NO se devuelve [] — con la lista vacia el consecutivo
+    // saldria '1' y el choque de nombres no se veria. Se revienta: la ruta contesta 500.
     console.error('[bot] no se pudieron leer los codigos de lote:', error ?? alias.error)
-    return []
+    throw new Error('No pude leer los codigos de lote.')
   }
   return nombresTomados(
     data.map((l) => l.codigo_lote),
