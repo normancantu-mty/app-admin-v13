@@ -61,13 +61,16 @@ def local(y, m, d, h, mi=0):
 
 # ─── 1. el codigo ───────────────────────────────────────────────────────────
 HOY = dt.date(2026, 10, 19)
-caso("1. 0 lotes hoy -> .1", P.codigo_siguiente([], HOY), "L-19-10.1")
-caso("1. 1 lote hoy -> .2", P.codigo_siguiente(["L-19-10.1"], HOY), "L-19-10.2")
-caso("1. 2 lotes hoy -> .3", P.codigo_siguiente(["L-19-10.1", "L-19-10.2"], HOY), "L-19-10.3")
-caso("1. CONTROL otro dia / otro mes no cuentan",
-     P.codigo_siguiente(["L-18-10.1", "L-19-11.4", "L-1017", "L-19-10.1x"], HOY), "L-19-10.1")
-caso("1. CONTROL un hueco no se reusa (.1 borrado, queda .2)", P.codigo_siguiente(["L-19-10.2"], HOY), "L-19-10.3")
-caso("1. el formato sale del YAML", P.plantilla().get("formato_codigo"), "L-{dd}-{mm}.{n}")
+# 2026-11-18 (Cris): consecutivo simple; la misma regla que siguiente_codigo_lote().
+caso("1. 0 lotes -> 1", P.codigo_siguiente([], HOY), "1")
+caso("1. 1 lote -> 2", P.codigo_siguiente(["1"], HOY), "2")
+caso("1. 136 y 137 -> 138", P.codigo_siguiente(["136", "137"], HOY), "138")
+caso("1. CONTROL los codigos viejos no cuentan (solo digitos)",
+     P.codigo_siguiente(["L-18-10.1", "L-19-11.4", "L-1017", "L-19-10.1x", "136x"], HOY), "1")
+caso("1. CONTROL un hueco no se reusa (136 borrado, queda 137)", P.codigo_siguiente(["137"], HOY), "138")
+caso("1. un alias numerico cuenta (los codigos traen alias)", P.codigo_siguiente(["L-04-11.1", "140", "136"], HOY), "141")
+caso("1. el formato sale del YAML", P.plantilla().get("formato_codigo"), "{n}")
+caso("1. el formato viejo (YAML) sigue funcionando", P.codigo_siguiente(["L-19-10.1"], HOY, "L-{dd}-{mm}.{n}"), "L-19-10.2")
 caso("1. otro formato (YAML) funciona igual", P.codigo_siguiente(["19/10-1"], HOY, "{dd}/{mm}-{n}"), "19/10-2")
 
 
@@ -192,15 +195,38 @@ async def _alta_ok(update, clave):
 B._puerta_de_privado = _alta_ok
 base = Ciclo()
 B._post_de_verdad = base
-caso("1b. el bot sin lotes hoy -> .1", B.lote_ciclo.codigo_nuevo(base, ahora=local(2026, 10, 19, 9)), "L-19-10.1")
-base.nuevo_lote("x1", "L-19-10.1", "2026-10-19")
-caso("1b. con uno -> .2", B.lote_ciclo.codigo_nuevo(base, ahora=local(2026, 10, 19, 9)), "L-19-10.2")
+caso("1b. el bot sin lotes -> 1", B.lote_ciclo.codigo_nuevo(base, ahora=local(2026, 10, 19, 9)), "1")
+base.nuevo_lote("x1", "1", "2026-10-19")
+caso("1b. con uno -> 2", B.lote_ciclo.codigo_nuevo(base, ahora=local(2026, 10, 19, 9)), "2")
 base.nuevo_lote("x2", "L-19-10.2", "2026-10-19")
-caso("1b. con dos -> .3", B.lote_ciclo.codigo_nuevo(base, ahora=local(2026, 10, 19, 9)), "L-19-10.3")
-caso("1b. a las 23:30 de la planta (05:30 UTC del dia siguiente) sigue siendo el 19",
-     B.lote_ciclo.codigo_nuevo(base, ahora=local(2026, 10, 19, 23, 30)), "L-19-10.3")
-caso("1b. sin red sale .1 (no se inventa un N)", B.lote_ciclo.codigo_nuevo(lambda r, c: (0, {}), ahora=local(2026, 10, 19, 9)),
-     "L-19-10.1")
+caso("1b. CONTROL un codigo viejo no mueve el consecutivo", B.lote_ciclo.codigo_nuevo(base, ahora=local(2026, 10, 19, 9)), "2")
+caso("1b. el siguiente del servidor manda (siguiente_codigo_lote)",
+     B.lote_ciclo.codigo_nuevo(lambda r, c: (200, {"ok": True, "codigos": ["1"], "siguiente": "137"}),
+                               ahora=local(2026, 10, 19, 9)), "137")
+caso("1b. sin red sale 1 (no se inventa un N)", B.lote_ciclo.codigo_nuevo(lambda r, c: (0, {}), ahora=local(2026, 10, 19, 9)),
+     "1")
+
+# ─── 1c. el codigo dentro del texto (2026-11-18: "lote 136") ────────────────
+import re as _re  # noqa: E402
+_RC = _re.compile(P.PATRON_CODIGO)
+
+
+def _cod(t):
+    m = _RC.search(P._plano(t))
+    return P.codigo_de_coincidencia(m) if m else None
+
+
+caso("1c. 'lote 136' -> 136 (sin anteponer L-)", _cod("lote 136"), "136")
+caso("1c. CONTROL '136 litros' -> nada (numero suelto es ambiguo)", _cod("136 litros"), None)
+caso("1c. 'L-10-11.2' igual que antes", _cod("L-10-11.2"), "L-10-11.2")
+caso("1c. 'lote L-20261111' reconocido (8 digitos)", _cod("lote L-20261111"), "L-20261111")
+caso("1c. 'lote no. 137' y 'lote #138'", (_cod("lote no. 137"), _cod("lote #138")), ("137", "138"))
+caso("1c. CONTROL 'del lote 12 kilos' no es el lote 12", _cod("del lote 12 kilos"), None)
+caso("1c. 'l1017' -> L-1017 (forma vieja)", _cod("l1017"), "L-1017")
+caso("1c. el disparo de etapa lee 'lote 136'", C._disparo("ya destilamos el lote 136"), ("destilacion", "136"))
+caso("1c. el disparo con forma vieja sigue igual", C._disparo("destilamos el L-19-10.1"), ("destilacion", "L-19-10.1"))
+caso("1c. la plantilla lee 'lote 136' y sus kilos aparte", P.leer("lote 136, 12 kilos de chile")["campos"],
+     {"kg_chile": 12, "codigo_lote": "136"})
 
 # ─── 2. el aditivo 2 YA NO se recuerda (decision de Cris 2026-11-13) ─────────
 # El aditivo 2 es un insumo, no una etapa: ni recordatorio ni boton.

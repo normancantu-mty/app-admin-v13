@@ -201,11 +201,41 @@ def _regex_del_formato(formato, fecha):
     return re.compile("^" + "".join(out) + "$", re.I)
 
 
+# 2026-11-18 (Cris): nomenclatura nueva = numeros consecutivos ("136"). Con el
+# formato '{n}' (YAML) la regla de abajo es EXACTAMENTE la de
+# `siguiente_codigo_lote()` en Postgres (fuente unica): 1 + el mayor codigo que
+# sea solo digitos entre `codigos` (que trae nombres actuales Y alias); 1 si no
+# hay. `codigo_nuevo` (lote_ciclo) prefiere el `siguiente` que da el servidor.
+
+# El codigo de lote en un texto ya PLANO (minusculas). Dos formas:
+#   1. las viejas, que siguen vivas como nombre o como alias: L-DD-MM.N,
+#      L-NNN..L-AAAAMMDD (3 a 8 digitos) con letra opcional (L-20260918-B);
+#   2. la nueva, un numero de 1 a 5 digitos SOLO si va precedido de la palabra
+#      "lote" ("lote 136", "lote no. 136", "lote #136"): un numero suelto es
+#      ambiguo ("136 litros").
+# Mismas formas en lib/bot-pregunta-lote.ts (CODIGO), bot/plantillas/lote.yaml
+# (campo codigo_lote) y bot/bot_gastos.py (_CODIGO_LOTE).
+PATRON_CODIGO = r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,8}(?:-[a-z])?)\b|\blote\s*(?:n[oº°.]*\s*)?#?\s*(\d{1,5})\b(?![.,]\d)(?!\s*(?:%|(?:kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?|l|lts?|litros?|ml|grados?|brix|garrafas?|botellas?|piezas?|cajas?)\b))"
+
+
+def codigo_de_coincidencia(m):
+    """La coincidencia de PATRON_CODIGO -> el codigo como se guarda: la forma
+    vieja en mayusculas con 'L-' ("l1017" -> "L-1017"); la nueva tal cual
+    ("lote 136" -> "136", sin anteponer nada). None si no hay grupo."""
+    viejo = m.group(1) if m.re.groups >= 1 else None
+    nuevo = m.group(2) if m.re.groups >= 2 else None
+    if viejo:
+        cod = viejo.upper()
+        return cod if cod.startswith("L-") else "L-" + cod[1:]
+    return nuevo or None
+
+
 def codigo_siguiente(codigos, fecha, formato=None):
     """El codigo que le toca al siguiente lote de `fecha`: N = 1 + el mayor N
     que ya exista con el mismo prefijo (no "cuantos hay": si se borro el .1, el
-    .2 no se reusa). El formato sale del YAML (`formato_codigo`)."""
-    formato = formato or plantilla().get("formato_codigo") or "L-{dd}-{mm}.{n}"
+    .2 no se reusa). El formato sale del YAML (`formato_codigo`); desde el
+    2026-11-18 es '{n}' (consecutivo simple)."""
+    formato = formato or plantilla().get("formato_codigo") or "{n}"
     patron = _regex_del_formato(formato, fecha)
     mayor = 0
     for c in codigos or []:
@@ -319,10 +349,9 @@ def leer(texto, preguntadas=()):
     def extra(e, m):
         tomar(m)
         if e["tipo"] == "codigo":
-            cod = m.group(1).upper()
-            if not cod.startswith("L-"):
-                cod = "L-" + cod[1:]
-            campos.setdefault("codigo_lote", cod)
+            cod = codigo_de_coincidencia(m)
+            if cod:
+                campos.setdefault("codigo_lote", cod)
         elif e["tipo"] == "a_notas":
             # Ronda 3: si lo que se pregunto deja UN solo campo posible
             # (`campo_si_unico`), el dato es de ese campo; si no, a notas.

@@ -19,10 +19,11 @@ nombre: lote
 vida_minutos: 30
 
 # El codigo del lote. {dd} dia, {mm} mes, {aaaa} anio, {aa} anio corto, {n} el
-# consecutivo del dia (1 + el mayor N que ya exista con el mismo prefijo).
-# OJO: sin anio, L-19-10.1 se repite el 19 de octubre del anio que entra y
-# `lotes.codigo_lote` es UNIQUE: ese dia saldria L-19-10.2 (o el que siga).
-formato_codigo: 'L-{dd}-{mm}.{n}'
+# consecutivo (1 + el mayor N que ya exista con el mismo prefijo).
+# 2026-11-18 (Cris): numeros consecutivos simples ("136", "137", ...). Con '{n}'
+# la regla es la de `siguiente_codigo_lote()` en Postgres (fuente unica): 1 + el
+# mayor codigo solo-digitos entre nombres actuales y alias. Antes: 'L-{dd}-{mm}.{n}'.
+formato_codigo: '{n}'
 
 # Los aditivos van por SKU OPACO (ERP-84): nunca por su nombre real.
 # Decidido por Norman el 2026-10-19 (plan v3 §8): aditivo 1 = ing-az, aditivo 2 = ing-al.
@@ -213,7 +214,10 @@ extras:
   - nombre: codigo_lote
     tipo: codigo
     patrones:
-      - '\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b'
+      # 2026-11-18: formas viejas (siguen vivas como alias) + "lote 136" (la
+      # nueva: numero SOLO tras la palabra "lote"). Misma regex que
+      # lote_plantilla.PATRON_CODIGO; el codigo lo saca codigo_de_coincidencia.
+      - '\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,8}(?:-[a-z])?)\b|\blote\s*(?:n[oº°.]*\s*)?#?\s*(\d{1,5})\b(?![.,]\d)(?!\s*(?:%|(?:kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?|l|lts?|litros?|ml|grados?|brix|garrafas?|botellas?|piezas?|cajas?)\b))'
   - nombre: grados_ambiguos
     tipo: a_notas
     # "a 24 grados" puede ser temperatura o alcohol: NO se adivina, va a notas.

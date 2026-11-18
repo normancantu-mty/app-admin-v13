@@ -5874,7 +5874,8 @@ _PIDE_LOTES_ABIERTOS = re.compile(
 _PIDE_PRODUCCION = re.compile(
     r"\b(cuanto|que) (se )?(produjo|producimos|produjimos|hemos producido|se ha producido|llevamos producido)\b"
     r"|\bproduccion (de|del|este) (mes|este mes|el mes pasado|mes pasado)\b|\bcuanto destilamos\b|\bcuanto se destilo\b")
-_CODIGO_LOTE = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
+# 2026-11-18: formas viejas + "lote 136" (ver lote_plantilla.PATRON_CODIGO).
+_CODIGO_LOTE = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,8}(?:-[a-z])?)\b|\blote\s*(?:n[oº°.]*\s*)?#?\s*(\d{1,5})\b(?![.,]\d)(?!\s*(?:%|(?:kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?|l|lts?|litros?|ml|grados?|brix|garrafas?|botellas?|piezas?|cajas?)\b))")
 
 
 def _pregunta_de_lote(texto):

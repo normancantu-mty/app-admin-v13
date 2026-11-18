@@ -104,12 +104,16 @@ def _texto(clave, **k):
 # ── el codigo del lote ──────────────────────────────────────────────────────
 
 def codigo_nuevo(post, ahora=None):
-    """El codigo que le toca HOY al siguiente lote, contra los codigos que ya
-    existen en la base (formato del YAML). Sin red: el N sale 1."""
+    """El codigo que le toca al siguiente lote. 2026-11-18: el servidor manda
+    `siguiente` (= `siguiente_codigo_lote()`, fuente unica); si no viene (ruta
+    vieja), se calcula aqui con la misma regla sobre `codigos` (nombres + alias,
+    formato '{n}' del YAML). Sin red: sale 1."""
     codigos = []
     try:
         estado, r = post(RUTA_CICLO, {"accion": "leer", "ventana_dias": 1})
         if estado == 200 and isinstance(r, dict) and r.get("ok"):
+            if isinstance(r.get("siguiente"), str) and r["siguiente"].strip():
+                return r["siguiente"].strip()
             codigos = list(r.get("codigos") or [])
     except Exception as e:
         log.warning("ciclo: no pude leer los codigos de lote: %s", e)
@@ -586,7 +590,8 @@ def leer_garrafas(texto):
     return (int(n.group(1)) if n else None), garrafas, incompletas
 
 
-_CODIGO = re.compile(r"\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b")
+# 2026-11-18: formas viejas + "lote 136" (ver lote_plantilla.PATRON_CODIGO).
+_CODIGO = re.compile(lote_plantilla.PATRON_CODIGO)
 _KG_CON_UNIDAD = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilogramos?)\b")
 # Fase 7A (2026-11-07): el aditivo 2 se lleva en GRAMOS en el catalogo. Se lee
 # la masa CON su unidad; un numero pelon no se adivina (se pregunta g o kg).
@@ -769,9 +774,7 @@ def _disparo(texto):
     """'aditivo 2 del lote L-19-10.1' / 'destilamos el L-19-10.1' -> (etapa, codigo|None)."""
     t = sin_muletillas(texto)
     m = _CODIGO.search(t)
-    cod = m.group(1).upper() if m else None
-    if cod and not cod.startswith("L-"):
-        cod = "L-" + cod[1:]
+    cod = lote_plantilla.codigo_de_coincidencia(m) if m else None
     # Ronda 3 (R2-B) / ronda 4 / ronda 5 (B): un ENVASADO ("envasamos 40 de 750
     # del L-.. que destilamos el viernes"; es diario y no se liga al lote) o una PREGUNTA ("cuanto aditivo 2 lleva el
     # L-..?") no abren la etapa POR CODIGO EN MEDIO; los disparadores anclados

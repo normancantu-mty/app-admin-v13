@@ -60,7 +60,8 @@ test('la plantilla del lote es DATOS: el YAML trae los campos nuevos, sus rangos
   for (const c of ['kg_chile', 'tipo_chile', 'brix_chile', 'aditivo_1', 'brix_final']) expect(y).toContain('nombre: ' + c)
   for (const c of ['dias_fermentacion', 'tandas']) expect(y).not.toContain('nombre: ' + c)
   expect(y).toContain('rango: [1, 1000]')
-  expect(y).toContain("formato_codigo: 'L-{dd}-{mm}.{n}'")
+  // 2026-11-18 (Cris): consecutivo simple; antes 'L-{dd}-{mm}.{n}'.
+  expect(y).toContain("formato_codigo: '{n}'")
   // Ronda 6: Norman decidio el 2026-10-19 (plan v3 §8): aditivo 1 = ing-az, aditivo 2 = ing-al; sin marca.
   // Fase 7 (2026-11-07): 'ing-az'/'ing-al' no existen en el catalogo de produccion;
   // los SKU reales de "Aditivo 1" y "Aditivo 2" son 'mosto-1' y 'aditivo-2'.

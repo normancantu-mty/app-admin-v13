@@ -34,14 +34,36 @@ export type PreguntaLote =
 /** El SKU del aditivo 2 en produccion (YAML `aditivo_2_sku`). */
 export const SKU_ADITIVO_2 = 'aditivo-2'
 
-const CODIGO = /\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,5})\b/i
+/**
+ * El codigo de lote dentro de un texto. 2026-11-18: dos formas (mismas que
+ * `bot/lote_plantilla.py` PATRON_CODIGO, `bot/plantillas/lote.yaml` y
+ * `bot/bot_gastos.py` _CODIGO_LOTE):
+ *   1. las viejas, vivas como nombre o alias: L-DD-MM.N, L-NNN..L-AAAAMMDD
+ *      (3 a 8 digitos) con letra opcional (L-20260918-B);
+ *   2. la nueva (Cris): un numero de 1 a 5 digitos SOLO tras la palabra "lote"
+ *      ("lote 136", "lote no. 136", "lote #136"), y no seguido de una unidad
+ *      ("lote 12 kilos" no es el lote 12): un numero suelto es ambiguo.
+ */
+export const CODIGO =
+  /\b(l-?\d{1,2}-\d{1,2}\.\d{1,3}|l-?\d{3,8}(?:-[a-z])?)\b|\blote\s*(?:n[oº°.]*\s*)?#?\s*(\d{1,5})\b(?![.,]\d)(?!\s*(?:%|(?:kg|kgs|kilos?|kilogramos?|g|gr|grs|gramos?|l|lts?|litros?|ml|grados?|brix|garrafas?|botellas?|piezas?|cajas?)\b))/i
 
-/** "l-12-10.1" / "L12-10.1" / "l1017" -> "L-12-10.1" / "L-1017". null si no hay. */
+/**
+ * "l-12-10.1" / "L12-10.1" / "l1017" -> "L-12-10.1" / "L-1017"; "lote 136" ->
+ * "136" (la forma nueva va tal cual, sin "L-"). null si no hay.
+ */
 export function codigoDeLote(texto: string): string | null {
   const m = CODIGO.exec(String(texto ?? ''))
   if (!m) return null
+  if (!m[1]) return m[2] ?? null
   const c = m[1].toUpperCase()
   return c.startsWith('L-') ? c : 'L-' + c.slice(1)
+}
+
+/** Un codigo YA extraido (p. ej. "136" o "l-12-10.1") -> su forma guardada. */
+export function normalizarCodigoDeLote(codigo: string): string | null {
+  const c = String(codigo ?? '').trim()
+  if (/^\d{1,5}$/.test(c)) return c
+  return codigoDeLote(c)
 }
 
 function plano(texto: string): string {

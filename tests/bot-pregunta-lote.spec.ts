@@ -8,6 +8,7 @@
 import { expect, test } from '@playwright/test'
 import {
   codigoDeLote,
+  normalizarCodigoDeLote,
   interpretarLote,
   lineaDeTiempo,
   resumenGarrafas,
@@ -27,7 +28,21 @@ test.describe('interpretar preguntas de lotes', () => {
     expect(codigoDeLote('trazabilidad del l-12-10.1')).toBe('L-12-10.1')
     expect(codigoDeLote('lote L12-10.1')).toBe('L-12-10.1')
     expect(codigoDeLote('lote l1017')).toBe('L-1017')
-    expect(codigoDeLote('lote 12')).toBeNull()
+    // 2026-11-18 (Cris): numero consecutivo, SOLO tras la palabra "lote".
+    expect(codigoDeLote('lote 12')).toBe('12')
+  })
+
+  test('2026-11-18: "lote 136" se reconoce; un numero suelto no', () => {
+    expect(codigoDeLote('trazabilidad del lote 136')).toBe('136')
+    expect(codigoDeLote('136 litros')).toBeNull()
+    expect(codigoDeLote('salieron 136 litros del L-10-11.2')).toBe('L-10-11.2')
+    expect(codigoDeLote('lote L-20261111')).toBe('L-20261111')
+    expect(codigoDeLote('lote no. 137')).toBe('137')
+    expect(codigoDeLote('lote #138')).toBe('138')
+    expect(codigoDeLote('del lote 12 kilos')).toBeNull()
+    expect(codigoDeLote('lote 12.5')).toBeNull()
+    expect(normalizarCodigoDeLote('136')).toBe('136')
+    expect(normalizarCodigoDeLote('l-12-10.1')).toBe('L-12-10.1')
   })
 
   for (const [frase, tipo] of [
