@@ -272,7 +272,7 @@ async function leerProductos(supabase: ClienteServicio, ids: string[]): Promise<
 /** Todo lo que cuelga de un lote. Un error de lectura revienta (500): no se contesta a medias. */
 async function leerDatosDeLote(supabase: ClienteServicio, codigo: string): Promise<DatosDeLote | null> {
   const db = supabase as unknown as ClienteSinTipos
-  // 2026-11-18: por nombre actual o ALIAS (`resolver_lote`, migracion 20261118120000).
+  // 2026-11-18: por nombre actual o ALIAS (`resolver_lote`, migracion 20261118192907).
   // Por GET: este cliente es de solo lectura (lib/bot-solo-lectura.ts) y la funcion es STABLE.
   const { data: lote, error } = await db.rpc('resolver_lote', { p_nombre: codigo }, { get: true }).select(COLUMNAS_LOTE).maybeSingle()
   if (error) throw new Error('lotes')

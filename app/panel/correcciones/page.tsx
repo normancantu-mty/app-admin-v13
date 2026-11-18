@@ -15,7 +15,7 @@
  *
  * (c) 2026-11-18: la CABECERA de un lote (codigo, fechas, horas, Brix, notas;
  * no las etapas) con `ajustar_lote`. Al renombrar, el nombre anterior queda como
- * alias (se muestran). Ver la migracion 20261118120000.
+ * alias (se muestran). Ver la migracion 20261118192907.
  */
 
 import { getServerSupabaseClient } from '@/lib/server-session'

@@ -1,5 +1,5 @@
 /**
- * Las dos LECTURAS de la migracion 20261118120000 para los dobles de Supabase
+ * Las dos LECTURAS de la migracion 20261118192907 para los dobles de Supabase
  * de las pruebas de rutas del bot (2026-11-18, agente Cuartel). Misma regla que
  * Postgres: `resolver_lote` = el lote por nombre actual o alias (sin mayusculas
  * ni espacios); `siguiente_codigo_lote` = el consecutivo. No escriben: el doble

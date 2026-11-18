@@ -1367,7 +1367,7 @@ export type Database = {
           },
         ]
       }
-      // 2026-11-18 (migracion 20261118120000): nombres anteriores de un lote.
+      // 2026-11-18 (migracion 20261118192907): nombres anteriores de un lote.
       // Solo la escriben triggers; los clientes solo leen.
       lote_alias: {
         Row: {
@@ -2186,7 +2186,7 @@ export type Database = {
         Args: { p_id_entidad: string; p_id_producto: string; p_cubeta: string }
         Returns: number
       }
-      // 2026-11-18 (migracion 20261118120000): lotes con alias y consecutivo.
+      // 2026-11-18 (migracion 20261118192907): lotes con alias y consecutivo.
       resolver_lote: {
         Args: { p_nombre: string }
         Returns: Database["public"]["Tables"]["lotes"]["Row"][]

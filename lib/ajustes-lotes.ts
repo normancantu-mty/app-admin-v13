@@ -13,7 +13,7 @@
  *   2. confirmar: hay que TECLEAR el codigo del lote como quedara. El servidor
  *      vuelve a comprobar las dos cosas (`validarSolicitudLote`).
  *
- * La RPC `ajustar_lote` (migracion 20261118120000) compara lo que el usuario VIO
+ * La RPC `ajustar_lote` (migracion 20261118192907) compara lo que el usuario VIO
  * contra lo actual y rechaza con CAMBIO_CONCURRENTE. Al renombrar, el nombre
  * anterior queda como ALIAS (trigger), y el bot encuentra el lote por los dos.
  */

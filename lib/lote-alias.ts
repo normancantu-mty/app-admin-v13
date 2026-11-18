@@ -7,7 +7,7 @@
  * Regla de Cris (2026-11-18): al renombrar un lote, el nombre anterior queda
  * como alias y el bot encuentra el lote por su nombre actual o por cualquiera
  * anterior. En Postgres: tabla `lote_alias` + `resolver_lote()` (migracion
- * 20261118120000). Aqui, el espejo para lo que el bot filtra en memoria.
+ * 20261118192907). Aqui, el espejo para lo que el bot filtra en memoria.
  *
  * Nomenclatura nueva (Cris, 2026-11-18): numeros consecutivos ("136", "137").
  * La FUENTE UNICA de la recomendacion es `siguiente_codigo_lote()` en SQL;

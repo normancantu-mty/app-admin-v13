@@ -1,5 +1,5 @@
 -- ============================================================================
--- ROLLBACK de 20261118120000_v2_correccion_lotes.sql
+-- ROLLBACK de 20261118192907_v2_correccion_lotes.sql
 -- Escrito el 2026-11-18 por el agente (Cuartel). Correr en UNA transaccion.
 --
 -- OJO: borrar `lote_alias` PIERDE los nombres anteriores: el bot dejara de

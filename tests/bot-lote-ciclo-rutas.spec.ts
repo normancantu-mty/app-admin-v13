@@ -147,7 +147,7 @@ function responder(url: string, init: RequestInit | undefined): Response {
 
   if (tabla.startsWith('rpc/')) {
     const args = init?.body ? JSON.parse(String(init.body)) : {}
-    // 2026-11-18: las lecturas de la migracion 20261118120000 no escriben ni cuentan como rpc.
+    // 2026-11-18: las lecturas de la migracion 20261118192907 no escriben ni cuentan como rpc.
     const lectura = rpcDeLoteFalsa(tabla, { ...Object.fromEntries(u.searchParams), ...args }, tablas)
     if (lectura !== undefined) return json(lectura)
     rpcs.push({ nombre: tabla.slice(4), args })

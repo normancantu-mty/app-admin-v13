@@ -1,5 +1,5 @@
 /**
- * Correccion de lotes + alias + consecutivo (migracion 20261118120000).
+ * Correccion de lotes + alias + consecutivo (migracion 20261118192907).
  * Escrito el 2026-11-18 por el agente (Cuartel). PURAS: sin base ni red.
  *
  * 1. Nombres y alias (`lib/lote-alias.ts`): el bot encuentra el lote por su
@@ -40,7 +40,7 @@ import { validarLote } from '@/components/v2/lotes/validar'
 
 const RAIZ = process.cwd()
 const leer = (f: string) => fs.readFileSync(path.join(RAIZ, f), 'utf-8')
-const MIGRACION = leer('supabase/migrations/20261118120000_v2_correccion_lotes.sql')
+const MIGRACION = leer('supabase/migrations/20261118192907_v2_correccion_lotes.sql')
 const ROLLBACK = leer('supabase/ROLLBACK_correccion_lotes_2026-11-18.sql')
 const ID = '44444444-4444-4444-8444-444444444444'
 
