@@ -13,6 +13,7 @@
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { aplicarAjusteAction } from '@/app/actions/ajustes-admin'
+import { LotesCorreccion, type FilaLoteCorreccion } from './LotesCorreccion'
 import {
   calcularDiferencia,
   claveInventario,
@@ -51,9 +52,19 @@ const fmtDinero = (n: number) => n.toLocaleString('es-MX', { style: 'currency', 
 const fmt = (clase: ClaseAjuste, n: number) => (clase === 'inventario' ? fmtCant(n) : fmtDinero(n))
 const conSigno = (clase: ClaseAjuste, n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${fmt(clase, Math.abs(n))}`
 
-export function Correcciones({ stock, cuentas }: { stock: FilaStock[]; cuentas: FilaCuenta[] }) {
+export function Correcciones({
+  stock,
+  cuentas,
+  lotes = [],
+  recomendado = ''
+}: {
+  stock: FilaStock[]
+  cuentas: FilaCuenta[]
+  lotes?: FilaLoteCorreccion[]
+  recomendado?: string
+}) {
   const router = useRouter()
-  const [vista, setVista] = useState<'stock' | 'cuentas'>('stock')
+  const [vista, setVista] = useState<'stock' | 'cuentas' | 'lotes'>('stock')
   const [filtro, setFiltro] = useState('')
   const [nuevos, setNuevos] = useState<Record<string, string>>({})
   const [objetivo, setObjetivo] = useState<Objetivo | null>(null)
@@ -93,11 +104,16 @@ export function Correcciones({ stock, cuentas }: { stock: FilaStock[]; cuentas: 
           <button type="button" className={vista === 'cuentas' ? 'on' : ''} onClick={() => setVista('cuentas')} style={{ padding: '7px 12px', fontWeight: 600 }}>
             Cuentas ({cuentas.length})
           </button>
+          <button type="button" className={vista === 'lotes' ? 'on' : ''} onClick={() => setVista('lotes')} style={{ padding: '7px 12px', fontWeight: 600 }}>
+            Lotes ({lotes.length})
+          </button>
         </div>
         <input className="in" placeholder="Filtrar por entidad, producto, cuenta…" value={filtro} onChange={(e) => setFiltro(e.target.value)} style={{ minWidth: 240 }} />
       </div>
 
-      {vista === 'stock' ? (
+      {vista === 'lotes' ? (
+        <LotesCorreccion lotes={lotes} filtro={f} recomendado={recomendado} onAviso={setAviso} />
+      ) : vista === 'stock' ? (
         <div className="inv-scroll" style={{ overflowX: 'auto' }}>
           <table className="t" data-testid="tabla-stock" style={{ minWidth: 760 }}>
             <thead>

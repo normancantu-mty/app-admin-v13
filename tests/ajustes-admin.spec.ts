@@ -192,7 +192,13 @@ test.describe('ajustes admin · ruta escondida y solo ADMIN', () => {
     }
     for (const d of ['app', 'components', 'lib']) recorrer(path.join(RAIZ, d))
     // La server action revalida su propia ruta y la logica pura la nombra en un comentario: no son enlaces.
-    const permitidos = [path.join('app', 'actions', 'ajustes-admin.ts'), path.join('lib', 'ajustes-admin.ts')]
+    const permitidos = [
+      path.join('app', 'actions', 'ajustes-admin.ts'),
+      path.join('lib', 'ajustes-admin.ts'),
+      // 2026-11-18: el apartado de lotes, igual que los dos de arriba.
+      path.join('app', 'actions', 'ajustes-lotes.ts'),
+      path.join('lib', 'ajustes-lotes.ts')
+    ]
     expect(hallados.filter((h) => !permitidos.includes(h))).toEqual([])
   })
 
