@@ -10,7 +10,10 @@
  *   · `leer`        — lotes de la ventana con sus etapas y recordatorios ya
  *                     mandados, quien abrio cada lote, los ADMIN, los dias de
  *                     temperatura que ya hay, y todos los codigos (para el
- *                     consecutivo L-DD-MM.N). Solo lectura.
+ *                     consecutivo). 2026-11-18: `codigos` trae tambien los
+ *                     ALIAS (nombres anteriores) y `siguiente` es el
+ *                     consecutivo de `siguiente_codigo_lote()` (fuente unica en
+ *                     SQL). Solo lectura.
  *   · `reclamar`    — INSERT ... ON CONFLICT DO NOTHING en `lote_recordatorios`.
  *                     `reclamado: true` solo para el que inserto: cada
  *                     recordatorio sale UNA vez aunque el bot se reinicie o dos
@@ -34,6 +37,7 @@ import { actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { diaDeTemperatura, esTipoRecordatorio } from '@/lib/bot-lote-ciclo'
 import { fechaLocal } from '@/lib/fechas'
+import { nombresTomados, type FilaAlias } from '@/lib/lote-alias'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,7 +69,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'No pude leer los lotes.' }, { status: 500 })
       }
       const ids = (lotes ?? []).map((l) => l.id as string)
-      const [etapas, recordatorios, borradores, identidades, temperaturas, codigos] = await Promise.all([
+      const [etapas, recordatorios, borradores, identidades, temperaturas, codigos, alias, siguiente] = await Promise.all([
         ids.length
           ? supabase.from('lote_etapas').select('id, id_lote, etapa, fecha, telegram_id, registrado_por, registrado_en').in('id_lote', ids)
           : Promise.resolve({ data: [], error: null }),
@@ -77,9 +81,11 @@ export async function POST(request: Request) {
           : Promise.resolve({ data: [], error: null }),
         supabase.from('bot_identidades').select('*, entidades!inner(rol)').eq('activo', true),
         supabase.from('temperatura_diaria').select('fecha, fuente, t_min, t_max, t_prom').gte('fecha', desdeFecha),
-        supabase.from('lotes').select('codigo_lote')
+        supabase.from('lotes').select('codigo_lote'),
+        supabase.from('lote_alias').select('id_lote, alias'),
+        supabase.rpc('siguiente_codigo_lote')
       ])
-      for (const r of [etapas, recordatorios, borradores, identidades, temperaturas, codigos]) {
+      for (const r of [etapas, recordatorios, borradores, identidades, temperaturas, codigos, alias, siguiente]) {
         if (r.error) {
           console.error('[bot/ciclo] leer:', r.error)
           return NextResponse.json({ error: 'No pude leer el ciclo.' }, { status: 500 })
@@ -110,7 +116,11 @@ export async function POST(request: Request) {
         lotes: filas,
         admins: [...new Set(admins)],
         temperaturas: temperaturas.data ?? [],
-        codigos: ((codigos.data ?? []) as { codigo_lote: string }[]).map((c) => c.codigo_lote)
+        codigos: nombresTomados(
+          ((codigos.data ?? []) as { codigo_lote: string }[]).map((c) => c.codigo_lote),
+          (alias.data ?? []) as FilaAlias[]
+        ),
+        siguiente: typeof siguiente.data === 'string' ? siguiente.data : null
       })
     }
 

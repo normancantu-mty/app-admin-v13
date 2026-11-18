@@ -36,6 +36,7 @@ import type { CompradorDeVenta, ProductoConPrecios } from '@/lib/bot-venta'
 import type { FormatoDeBotella, InsumoDelCatalogo } from '@/lib/bot-lotes'
 import { esCompradorSeleccionable } from '@/lib/avisos'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
+import { nombresTomados } from '@/lib/lote-alias'
 
 /** Un pedido a concesion tal como sale del ledger, antes de netear. Ver ERP-25. */
 interface TicketAbiertoRow {
@@ -592,10 +593,19 @@ export async function leerFormatosDeBotella(
  * del lote ya existe y hay que deshacerla.
  */
 export async function leerCodigosDeLote(supabase: ClienteServicio): Promise<string[]> {
-  const { data, error } = await supabase.from('lotes').select('codigo_lote')
-  if (error || !data) {
-    console.error('[bot] no se pudieron leer los codigos de lote:', error)
+  // 2026-11-18: tambien los ALIAS (nombres anteriores, `lote_alias`): un lote
+  // nuevo no puede llamarse como el nombre viejo de otro, y el consecutivo no
+  // reusa un numero ya usado. Service role: lee sin RLS.
+  const [{ data, error }, alias] = await Promise.all([
+    supabase.from('lotes').select('codigo_lote'),
+    supabase.from('lote_alias').select('id_lote, alias')
+  ])
+  if (error || !data || alias.error) {
+    console.error('[bot] no se pudieron leer los codigos de lote:', error ?? alias.error)
     return []
   }
-  return data.map((l) => l.codigo_lote).filter((c): c is string => typeof c === 'string')
+  return nombresTomados(
+    data.map((l) => l.codigo_lote),
+    alias.data ?? []
+  )
 }

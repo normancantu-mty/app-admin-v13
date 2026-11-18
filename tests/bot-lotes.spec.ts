@@ -163,17 +163,16 @@ test.describe('fechas y codigo', () => {
     expect(sumarDias('2026-09-18', 0)).toBe('2026-09-18')
   })
 
-  test('el codigo sugerido sale de la fecha', () => {
-    expect(codigoSugerido('2026-09-18', [])).toBe('L-20260918')
+  // 2026-11-18 (Cris): numeros consecutivos; antes L-AAAAMMDD.
+  test('el codigo sugerido es el siguiente consecutivo (1 si no hay numericos)', () => {
+    expect(codigoSugerido([])).toBe('1')
+    expect(codigoSugerido(['L-20260918', 'L-10-11.2'])).toBe('1')
+    expect(codigoSugerido(['135', 'L-20260918', '136'])).toBe('137')
   })
 
-  test('dos lotes el mismo dia son dos, no un error', () => {
-    expect(codigoSugerido('2026-09-18', ['L-20260918'])).toBe('L-20260918-B')
-    expect(codigoSugerido('2026-09-18', ['L-20260918', 'L-20260918-B'])).toBe('L-20260918-C')
-  })
-
-  test('el codigo tomado se compara sin importar mayusculas', () => {
-    expect(codigoSugerido('2026-09-18', ['l-20260918'])).toBe('L-20260918-B')
+  test('un numero ya usado como alias no se reusa; los huecos tampoco se rellenan', () => {
+    expect(codigoSugerido(['140', '136'])).toBe('141')
+    expect(codigoSugerido([' 9 ', '10'])).toBe('11')
   })
 })
 
@@ -202,7 +201,7 @@ test.describe('normalizar el lote', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
 
-    expect(r.payload.codigo_lote).toBe('L-20260918')
+    expect(r.payload.codigo_lote).toBe('1') // sin lotes numericos: el primero
     expect(r.codigoSugerido).toBe(true)
     expect(r.payload.fecha_inicio).toBe('2026-09-18')
     expect(r.payload.fecha_fin_fermentacion).toBe('2026-09-21')
@@ -247,6 +246,23 @@ test.describe('normalizar el lote', () => {
     )
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toContain('ya existe')
+  })
+
+  test('2026-11-18: un numero dictado que no es el consecutivo se AVISA, no se bloquea', () => {
+    const r = normalizarLote({ codigo_lote: '140' }, contexto({ codigosTomados: ['136', 'L-20260901'] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.payload.codigo_lote).toBe('140')
+    expect(r.avisos.join(' ')).toContain('el consecutivo que sigue es 137')
+    const bien = normalizarLote({ codigo_lote: '137' }, contexto({ codigosTomados: ['136'] }))
+    expect(bien.ok && bien.avisos.some((a) => a.includes('consecutivo'))).toBe(false)
+    const sugerido = normalizarLote({}, contexto({ codigosTomados: ['136'] }))
+    expect(sugerido.ok && sugerido.payload.codigo_lote).toBe('137')
+  })
+
+  test('2026-11-18: un alias (nombre anterior) cuenta como tomado', () => {
+    const r = normalizarLote({ codigo_lote: 'l-04-11.1' }, contexto({ codigosTomados: ['136', 'L-04-11.1'] }))
+    expect(r.ok).toBe(false)
   })
 
   test('decir dias NO rellena las horas, y al reves tampoco', () => {
@@ -427,7 +443,7 @@ test.describe('los mensajes', () => {
     if (!r.ok) return
     const m = mensajeDeConfirmacionLote(r.payload, r.desglose, r.avisos, r.codigoSugerido)
 
-    expect(m).toContain('LOTE L-20260918')
+    expect(m).toContain('LOTE 1')
     expect(m).toContain('codigo que te propongo')
     expect(m).toContain('8 kilogramos de Chile Guajillo')
     expect(m).toContain('120 litros de Agua de proceso')

@@ -32,6 +32,7 @@
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
 import { fechaLocal, fechaParaPersona, sumarDias } from '@/lib/fechas'
 import { buscarPorNombre, type ResultadoNombre } from '@/lib/bot-nombres'
+import { avisoDeCodigoNumerico, siguienteCodigoNumerico } from '@/lib/lote-alias'
 
 // ============================================================================
 // 1. LO QUE SE CAPTURA
@@ -166,20 +167,17 @@ export { fechaLocal, sumarDias } from '@/lib/fechas'
  * **No es inventar un dato: es proponer un default y ensenarlo.** `codigo_lote`
  * es `not null unique` y es lo que va impreso en la etiqueta, asi que tiene que
  * existir; pero tambien es lo unico del lote que Norman quizas ya decidio en
- * papel. Por eso se propone `L-AAAAMMDD`, se ensena en la confirmacion, y hay
- * un boton para cambiarlo antes del "va". La letra al final solo aparece cuando
- * el del dia ya existe — dos lotes el mismo dia son dos, no un error.
+ * papel. Por eso se propone, se ensena en la confirmacion, y hay un boton para
+ * cambiarlo antes del "va".
+ *
+ * 2026-11-18 (Cris): la nomenclatura pasa a numeros consecutivos ("136",
+ * "137"). Antes era `L-AAAAMMDD`. La regla es la de `siguiente_codigo_lote()`
+ * en Postgres (fuente unica; espejo en `lib/lote-alias.ts`): 1 + el mayor
+ * nombre SOLO digitos entre los tomados (actuales + alias). `tomados` debe
+ * traer tambien los alias (`leerCodigosDeLote` ya los trae).
  */
-export function codigoSugerido(fecha: string, tomados: readonly string[]): string {
-  const base = 'L-' + fecha.replace(/-/g, '')
-  const usados = new Set(tomados.map((c) => c.trim().toUpperCase()))
-  if (!usados.has(base)) return base
-  for (let i = 1; i < 26; i++) {
-    const conLetra = base + '-' + String.fromCharCode(65 + i)
-    if (!usados.has(conLetra)) return conLetra
-  }
-  // 26 lotes el mismo dia no pasa; si pasara, se detiene en vez de repetir.
-  return ''
+export function codigoSugerido(tomados: readonly string[]): string {
+  return siguienteCodigoNumerico(tomados)
 }
 
 // ============================================================================
@@ -267,7 +265,7 @@ export function normalizarLote(
   let codigo = dictado
   let esSugerido = false
   if (codigo === '') {
-    codigo = codigoSugerido(fechaInicio, contexto.codigosTomados)
+    codigo = codigoSugerido(contexto.codigosTomados)
     esSugerido = true
     if (codigo === '') {
       return { ok: false, error: 'No pude proponerte un codigo de lote. Dictame uno.' }
@@ -279,8 +277,13 @@ export function normalizarLote(
   if (contexto.codigosTomados.some((c) => c.trim().toUpperCase() === codigo.toUpperCase())) {
     return {
       ok: false,
-      error: `El lote ${codigo} ya existe. Si es otro lote, dame otro codigo.`
+      error: `El lote ${codigo} ya existe (o fue su nombre anterior). Si es otro lote, dame otro codigo.`
     }
+  }
+  // Un numero dictado que no es el consecutivo: se avisa, no se bloquea (Cris, 2026-11-18).
+  if (!esSugerido) {
+    const aviso = avisoDeCodigoNumerico(codigo, codigoSugerido(contexto.codigosTomados))
+    if (aviso) avisos.push(aviso)
   }
 
   // ── La fermentacion. Se captura lo que se dijo, no lo que se deduce ───────

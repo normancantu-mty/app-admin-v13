@@ -57,6 +57,7 @@ export type Database = {
           datos_despues: Json
           id: string
           id_registro: string
+          motivo: string | null
           operacion: string
           rol: string | null
           tabla: string
@@ -68,6 +69,7 @@ export type Database = {
           datos_despues: Json
           id?: string
           id_registro: string
+          motivo?: string | null
           operacion: string
           rol?: string | null
           tabla: string
@@ -79,6 +81,7 @@ export type Database = {
           datos_despues?: Json
           id?: string
           id_registro?: string
+          motivo?: string | null
           operacion?: string
           rol?: string | null
           tabla?: string
@@ -1364,6 +1367,43 @@ export type Database = {
           },
         ]
       }
+      // 2026-11-18 (migracion 20261118120000): nombres anteriores de un lote.
+      // Solo la escriben triggers; los clientes solo leen.
+      lote_alias: {
+        Row: {
+          alias: string
+          autor: string | null
+          creado_en: string
+          id: string
+          id_lote: string
+          motivo: string | null
+        }
+        Insert: {
+          alias: string
+          autor?: string | null
+          creado_en?: string
+          id?: string
+          id_lote: string
+          motivo?: string | null
+        }
+        Update: {
+          alias?: string
+          autor?: string | null
+          creado_en?: string
+          id?: string
+          id_lote?: string
+          motivo?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lote_alias_id_lote_fkey"
+            columns: ["id_lote"]
+            isOneToOne: false
+            referencedRelation: "lotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lotes: {
         Row: {
           brix_chile: number | null
@@ -2145,6 +2185,24 @@ export type Database = {
       stock_en_cubeta: {
         Args: { p_id_entidad: string; p_id_producto: string; p_cubeta: string }
         Returns: number
+      }
+      // 2026-11-18 (migracion 20261118120000): lotes con alias y consecutivo.
+      resolver_lote: {
+        Args: { p_nombre: string }
+        Returns: Database["public"]["Tables"]["lotes"]["Row"][]
+      }
+      siguiente_codigo_lote: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      ajustar_lote: {
+        Args: {
+          p_id: string
+          p_visto: Json
+          p_nuevo: Json
+          p_motivo: string
+        }
+        Returns: Json
       }
       ajustar_inventario: {
         Args: {

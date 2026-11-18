@@ -52,9 +52,12 @@ const METODOS_QUE_ESCRIBEN = new Set(['insert', 'update', 'upsert', 'delete'])
 
 /**
  * Las UNICAS rpc que pasan: `saldo_cuenta` es una lectura pura (2026-11-05), y sin
- * ella el traspaso no podria ensenar su propuesta real. Todo lo demas sigue negado.
+ * ella el traspaso no podria ensenar su propuesta real. 2026-11-18: `resolver_lote`
+ * (el lote por nombre actual o alias) y `siguiente_codigo_lote` (el consecutivo),
+ * las dos `language sql stable`, sin escrituras (migracion 20261118120000).
+ * Todo lo demas sigue negado.
  */
-const RPC_DE_SOLO_LECTURA = new Set(['saldo_cuenta'])
+const RPC_DE_SOLO_LECTURA = new Set(['saldo_cuenta', 'resolver_lote', 'siguiente_codigo_lote'])
 
 /** Las escrituras que se habrian hecho, para quien quiera leerlas (pruebas). */
 export const escriturasNegadas: { tabla: string; metodo: string }[] = []

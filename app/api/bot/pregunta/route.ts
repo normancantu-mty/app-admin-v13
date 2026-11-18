@@ -71,7 +71,7 @@ import {
   type TicketDeVenta
 } from '@/lib/bot-pregunta'
 import {
-  codigoDeLote,
+  normalizarCodigoDeLote,
   textoEtapaLote,
   textoFaltaCodigo,
   textoLotesAbiertos,
@@ -272,7 +272,9 @@ async function leerProductos(supabase: ClienteServicio, ids: string[]): Promise<
 /** Todo lo que cuelga de un lote. Un error de lectura revienta (500): no se contesta a medias. */
 async function leerDatosDeLote(supabase: ClienteServicio, codigo: string): Promise<DatosDeLote | null> {
   const db = supabase as unknown as ClienteSinTipos
-  const { data: lote, error } = await db.from('lotes').select(COLUMNAS_LOTE).ilike('codigo_lote', codigo.replace(/[%_\\]/g, (c: string) => '\\' + c)).maybeSingle()
+  // 2026-11-18: por nombre actual o ALIAS (`resolver_lote`, migracion 20261118120000).
+  // Por GET: este cliente es de solo lectura (lib/bot-solo-lectura.ts) y la funcion es STABLE.
+  const { data: lote, error } = await db.rpc('resolver_lote', { p_nombre: codigo }, { get: true }).select(COLUMNAS_LOTE).maybeSingle()
   if (error) throw new Error('lotes')
   if (!lote) return null
   const id = String((lote as Record<string, unknown>).id)
@@ -305,7 +307,7 @@ type ClienteSinTipos = any
 async function contestarLote(supabase: ClienteServicio, p: PreguntaLote, hoy: string): Promise<string> {
   const db = supabase as unknown as ClienteSinTipos
   if (p.tipo === 'trazabilidad_lote' || p.tipo === 'etapa_lote') {
-    const codigo = p.codigo ? codigoDeLote(p.codigo) : null
+    const codigo = p.codigo ? normalizarCodigoDeLote(p.codigo) : null
     if (!codigo) return textoFaltaCodigo()
     const d = await leerDatosDeLote(supabase, codigo)
     if (!d) return textoNoHayLote(codigo)

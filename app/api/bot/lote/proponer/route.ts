@@ -72,6 +72,7 @@ import { fechaLocal } from '@/lib/fechas'
 import { convertirMasa } from '@/lib/bot-compra'
 import type { ClienteServicio } from '@/lib/bot-servidor'
 import { inventarioDelEnvasado } from '@/lib/bot-empaque-servidor'
+import { aliasPorLote } from '@/lib/lote-alias'
 
 export const dynamic = 'force-dynamic'
 
@@ -125,10 +126,15 @@ function respuestaFaltaEmpaque(
 }
 
 async function leerLotes(supabase: ClienteServicio): Promise<LoteExistente[]> {
-  const { data } = await supabase.from('lotes').select('id, codigo_lote, fecha_inicio')
-  return (data ?? []).filter(
-    (l): l is LoteExistente => typeof l.codigo_lote === 'string' && typeof l.fecha_inicio === 'string'
-  )
+  // 2026-11-18: con sus ALIAS (nombres anteriores): "envasamos ... del L-viejo" sigue empatando.
+  const [{ data }, { data: alias }] = await Promise.all([
+    supabase.from('lotes').select('id, codigo_lote, fecha_inicio'),
+    supabase.from('lote_alias').select('id_lote, alias')
+  ])
+  const porLote = aliasPorLote(alias)
+  return (data ?? [])
+    .filter((l) => typeof l.codigo_lote === 'string' && typeof l.fecha_inicio === 'string')
+    .map((l) => ({ id: l.id, codigo_lote: l.codigo_lote, fecha_inicio: l.fecha_inicio, alias: porLote.get(l.id) ?? [] }))
 }
 
 function opcionesDeFormato(lista: readonly FormatoDeBotella[]) {

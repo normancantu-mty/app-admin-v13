@@ -19,6 +19,7 @@ import * as etapaP from '@/app/api/bot/lote/etapa/proponer/route'
 import * as etapaC from '@/app/api/bot/lote/etapa/confirmar/route'
 import * as ciclo from '@/app/api/bot/lote/ciclo/route'
 import { fechaLocal } from '@/lib/fechas'
+import { rpcDeLoteFalsa } from './lote-rpc-falso'
 import { MENSAJE_ADITIVO_2_NO_ES_ETAPA, sellarEtapa, type PayloadEtapa } from '@/lib/bot-lote-ciclo'
 
 type Ruta = { POST: (r: Request) => Promise<Response> }
@@ -146,6 +147,9 @@ function responder(url: string, init: RequestInit | undefined): Response {
 
   if (tabla.startsWith('rpc/')) {
     const args = init?.body ? JSON.parse(String(init.body)) : {}
+    // 2026-11-18: las lecturas de la migracion 20261118120000 no escriben ni cuentan como rpc.
+    const lectura = rpcDeLoteFalsa(tabla, { ...Object.fromEntries(u.searchParams), ...args }, tablas)
+    if (lectura !== undefined) return json(lectura)
     rpcs.push({ nombre: tabla.slice(4), args })
     escrituras.push(`POST ${tabla}`)
     return json({ id_etapa: 'e-x', entradas: (args.p_entradas ?? []).length, garrafas: (args.p_garrafas ?? []).length })

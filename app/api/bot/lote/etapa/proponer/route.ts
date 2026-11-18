@@ -73,10 +73,11 @@ export async function POST(request: Request) {
 
     const codigo = String(cuerpo.codigo_lote ?? '').trim()
     if (codigo === '') return NextResponse.json({ error: 'De cual lote? Dame el codigo.' }, { status: 422 })
+    // 2026-11-18: por nombre actual o ALIAS (nombre anterior): el boton "ltdes:" de
+    // un recordatorio viejo y la sesion de etapas traen el nombre de entonces.
     const { data: lote } = await supabase
-      .from('lotes')
+      .rpc('resolver_lote', { p_nombre: codigo })
       .select('id, codigo_lote, fecha_inicio, fecha_fin_fermentacion')
-      .ilike('codigo_lote', codigo)
       .maybeSingle()
     if (!lote) return NextResponse.json({ error: `No encontre el lote ${codigo}.` }, { status: 422 })
 

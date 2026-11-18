@@ -246,15 +246,16 @@ export async function POST(request: Request) {
     // El codigo, RELEIDO: entre la propuesta y el "va" pudo entrar otro lote con
     // el mismo codigo desde la pantalla. `codigo_lote` es `unique`, asi que sin
     // esto el choque llegaria como un error de Postgres.
+    // 2026-11-18: sin distinguir mayusculas y contra los ALIAS (nombres anteriores
+    // de otros lotes), igual que el indice unico y `tg_lote_nombre_libre`.
     const { data: yaExiste } = await supabase
-      .from('lotes')
+      .rpc('resolver_lote', { p_nombre: lote.codigo_lote })
       .select('id')
-      .eq('codigo_lote', lote.codigo_lote)
       .maybeSingle()
     if (yaExiste) {
       await liberarReclamo(supabase, borradorId, puerta.modo)
       return NextResponse.json(
-        { error: `El lote ${lote.codigo_lote} ya existe. Dame otro codigo.` },
+        { error: `El lote ${lote.codigo_lote} ya existe (o fue el nombre de otro lote). Dame otro codigo.` },
         { status: 409 }
       )
     }
@@ -279,6 +280,14 @@ export async function POST(request: Request) {
     if (errorLote || !creado) {
       console.error('[bot] no se pudo crear el lote:', errorLote)
       await liberarReclamo(supabase, borradorId, puerta.modo)
+      // Choque concurrente: otra captura tomo el mismo nombre entre la relectura y el
+      // INSERT (indice unico normalizado / alias). Nada se escribio: se reintenta.
+      if (errorLote?.code === '23505') {
+        return NextResponse.json(
+          { error: `El lote ${lote.codigo_lote} lo acaba de tomar otra captura. No escribi nada: pideme el lote otra vez y te propongo el siguiente.` },
+          { status: 409 }
+        )
+      }
       return NextResponse.json(
         { error: 'No pude escribir el lote. No quedo nada a medias.' },
         { status: 500 }

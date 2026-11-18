@@ -30,6 +30,7 @@ import * as etapaP from '@/app/api/bot/lote/etapa/proponer/route'
 import * as etapaC from '@/app/api/bot/lote/etapa/confirmar/route'
 import * as pregunta from '@/app/api/bot/pregunta/route'
 import { fechaLocal, fechaParaPersona } from '@/lib/fechas'
+import { rpcDeLoteFalsa } from './lote-rpc-falso'
 
 type Ruta = { POST: (r: Request) => Promise<Response> }
 const RUTAS: Record<string, Ruta> = {
@@ -199,6 +200,9 @@ function responder(url: string, init: RequestInit | undefined): Response {
 
   if (tabla.startsWith('rpc/')) {
     const args = init?.body ? JSON.parse(String(init.body)) : {}
+    // 2026-11-18: las lecturas de la migracion 20261118120000 no escriben ni cuentan como rpc.
+    const lectura = rpcDeLoteFalsa(tabla, { ...Object.fromEntries(u.searchParams), ...args }, tablas)
+    if (lectura !== undefined) return json(lectura)
     rpcs.push({ nombre: tabla.slice(4), args })
     escrituras.push(`POST ${tabla}`)
     return json(aplicarRpc(tabla.slice(4), args))

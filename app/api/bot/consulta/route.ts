@@ -53,6 +53,7 @@ import {
   type AlcanceConsulta,
   type TipoConsulta
 } from '@/lib/bot-consultas'
+import { aliasPorLote } from '@/lib/lote-alias'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,16 +75,20 @@ const CONSULTA_DE_LA_TABLA: Record<TipoConsulta, ConsultaBot> = {
  * se filtran por periodo en `filasDelPeriodo`, que es pura y tiene su prueba.
  */
 async function leerEnvasado(supabase: ClienteServicio): Promise<FilaEnvasado[]> {
-  const [{ data: envasado }, { data: lotes }, { data: productos }] = await Promise.all([
+  const [{ data: envasado }, { data: lotes }, { data: productos }, { data: alias }] = await Promise.all([
     supabase.from('lote_envasado').select('fecha, botellas, id_lote, id_producto'),
     supabase.from('lotes').select('id, codigo_lote'),
-    supabase.from('catalogo_productos').select('id, nombre').eq('tipo', 'TERMINADO')
+    supabase.from('catalogo_productos').select('id, nombre').eq('tipo', 'TERMINADO'),
+    // 2026-11-18: "el lote X" empata tambien con un nombre anterior del lote.
+    supabase.from('lote_alias').select('id_lote, alias')
   ])
   const codigo = new Map((lotes ?? []).map((l) => [l.id, l.codigo_lote]))
   const nombre = new Map((productos ?? []).map((p) => [p.id, p.nombre]))
+  const porLote = aliasPorLote(alias)
   return (envasado ?? []).map((e) => ({
     fecha: String(e.fecha),
     codigo_lote: String(codigo.get(e.id_lote) ?? '?'),
+    alias: porLote.get(e.id_lote) ?? [],
     producto: String(nombre.get(e.id_producto) ?? '?'),
     botellas: Number(e.botellas)
   }))
@@ -255,13 +260,17 @@ export async function POST(request: Request) {
       const filas = filasDelPeriodo(await leerEnvasado(supabase), periodo)
       let texto = textoProduccion(filas, periodo)
       if (periodo.tipo === 'lote') {
-        const { data: lote } = await supabase
-          .from('v_lote_rendimiento')
-          .select(
-            'codigo_lote, alcohol_absoluto_l, litros_al_grado_objetivo, botellas_750_teoricas, grado_ponderado, alcanza_el_grado_diluyendo, costo_por_ml, tandas_sin_grado, insumos_sin_costo, faltan_costo'
-          )
-          .ilike('codigo_lote', periodo.codigo.replace(/[%_\\]/g, (c) => '\\' + c))
-          .maybeSingle()
+        // 2026-11-18: el lote por nombre actual o ALIAS, y la vista por su id.
+        const { data: resuelto } = await supabase.rpc('resolver_lote', { p_nombre: periodo.codigo }).select('id').maybeSingle()
+        const { data: lote } = resuelto
+          ? await supabase
+              .from('v_lote_rendimiento')
+              .select(
+                'codigo_lote, alcohol_absoluto_l, litros_al_grado_objetivo, botellas_750_teoricas, grado_ponderado, alcanza_el_grado_diluyendo, costo_por_ml, tandas_sin_grado, insumos_sin_costo, faltan_costo'
+              )
+              .eq('id', resuelto.id)
+              .maybeSingle()
+          : { data: null }
         if (!lote) {
           texto = `No tengo el lote ${periodo.codigo}.`
         } else {

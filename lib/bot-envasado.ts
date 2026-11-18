@@ -20,6 +20,7 @@
 import { fechaParaPersona, sumarDias } from '@/lib/fechas'
 import { sellar, selloEmpata } from '@/lib/bot-sello'
 import type { EntradaLote, EnvasadoLote, TandaLote } from '@/lib/bot-lotes'
+import { nombreDelLote } from '@/lib/lote-alias'
 
 // ============================================================================
 // D82 — EL MOVIMIENTO
@@ -223,6 +224,8 @@ export interface LoteExistente {
   id: string
   codigo_lote: string
   fecha_inicio: string
+  /** 2026-11-18: nombres anteriores (`lote_alias`); el lote se encuentra por cualquiera. */
+  alias?: readonly string[]
 }
 
 export type LoteDestino =
@@ -249,7 +252,7 @@ export function elegirLoteDestino(
 ): LoteDestino {
   const codigo = (dicho ?? '').trim()
   if (codigo !== '') {
-    const lote = lotes.find((l) => l.codigo_lote.trim().toUpperCase() === codigo.toUpperCase())
+    const lote = lotes.find((l) => nombreDelLote(codigo, l))
     return lote
       ? { ok: true, lote, porDefault: false }
       : { ok: false, motivo: 'no_existe', error: `No tengo el lote ${codigo}. Dime el codigo como esta escrito.` }
@@ -306,6 +309,8 @@ export function esAgregarALote(p: {
 export interface FilaEnvasado {
   fecha: string
   codigo_lote: string
+  /** 2026-11-18: nombres anteriores del lote; "el lote X" empata con cualquiera. */
+  alias?: readonly string[]
   producto: string
   botellas: number
 }
@@ -349,8 +354,7 @@ export function filasDelPeriodo(
   periodo: PeriodoProduccion
 ): FilaEnvasado[] {
   if (periodo.tipo === 'lote') {
-    const c = periodo.codigo.toUpperCase()
-    return filas.filter((f) => f.codigo_lote.trim().toUpperCase() === c)
+    return filas.filter((f) => nombreDelLote(periodo.codigo, f))
   }
   return filas.filter((f) => f.fecha >= periodo.desde && f.fecha <= periodo.hasta)
 }
