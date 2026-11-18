@@ -196,8 +196,13 @@ export async function leerInsumosLote(): Promise<InsumoLote[]> {
 }
 
 /** Codigos ya usados (para sugerir `L-AAAAMMDD` sin chocar). */
-export async function leerCodigosLote(): Promise<string[]> {
+/**
+ * El consecutivo recomendado para el siguiente lote: `siguiente_codigo_lote()`
+ * (fuente unica en SQL, 2026-11-18; cuenta nombres actuales y alias). Solo se
+ * ensena; el servidor lo vuelve a pedir al guardar.
+ */
+export async function leerSiguienteCodigoLote(): Promise<string> {
   const supabase = await getServerSupabaseClient()
-  const { data } = await supabase.from('lotes').select('codigo_lote')
-  return ((data ?? []) as { codigo_lote: string }[]).map((l) => l.codigo_lote)
+  const { data } = await supabase.rpc('siguiente_codigo_lote')
+  return typeof data === 'string' ? data : ''
 }

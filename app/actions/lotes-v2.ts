@@ -46,7 +46,7 @@ import { revalidatePath } from 'next/cache'
 import { getServerSupabaseClient, resolverSesionOperador } from '@/lib/server-session'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
 import { fechaLocal } from '@/lib/fechas'
-import { codigoSugerido } from '@/lib/bot-lotes'
+import { avisoDeCodigoNumerico, nombreTomado, nombresTomados } from '@/lib/lote-alias'
 import { validarLote, type LoteForm } from '@/components/v2/lotes/validar'
 
 export interface GuardarLoteResult {
@@ -68,21 +68,41 @@ export async function guardarLoteAction(form: LoteForm): Promise<GuardarLoteResu
     const hoy = fechaLocal(new Date())
     const idLote = form?.id ? String(form.id) : null
 
-    // Codigos tomados (tabla chica): para sugerir y para el choque sin distinguir mayusculas, como el bot.
-    const { data: codigos, error: errCodigos } = await supabase.from('lotes').select('id, codigo_lote')
+    // Codigos tomados (tabla chica): para el choque sin distinguir mayusculas, como el bot.
+    // 2026-11-18: tambien los ALIAS (nombres anteriores) de otros lotes, y el
+    // consecutivo recomendado sale de `siguiente_codigo_lote()` (fuente unica, SQL).
+    const [codigosRes, aliasRes, siguienteRes] = await Promise.all([
+      supabase.from('lotes').select('id, codigo_lote'),
+      supabase.from('lote_alias').select('id_lote, alias'),
+      supabase.rpc('siguiente_codigo_lote')
+    ])
+    const errCodigos = codigosRes.error ?? aliasRes.error ?? siguienteRes.error
     if (errCodigos) return { success: false, error: `No pude leer los lotes: ${errCodigos.message}` }
-    const tomados = (codigos ?? []) as { id: string; codigo_lote: string }[]
+    const tomados = (codigosRes.data ?? []) as { id: string; codigo_lote: string }[]
+    const ajenos = nombresTomados(
+      tomados.filter((t) => t.id !== idLote).map((t) => t.codigo_lote),
+      (aliasRes.data ?? []).filter((a) => a.id_lote !== idLote)
+    )
+    const recomendado = String(siguienteRes.data ?? '')
 
+    // Vacio = el recomendado, decidido AQUI (no se confia en el cliente). Si entre
+    // esto y el INSERT otro toma el numero, el indice unico lo rechaza (abajo).
     const entrada: LoteForm = { ...form }
     if (!idLote && !String(entrada.codigo_lote ?? '').trim()) {
-      entrada.codigo_lote = codigoSugerido(String(entrada.fecha_inicio || hoy), tomados.map((t) => t.codigo_lote))
+      entrada.codigo_lote = recomendado
     }
     const v = validarLote(entrada, hoy)
     if (!v.ok) return { success: false, error: v.error }
     const lote = v.lote
 
-    if (tomados.some((t) => t.id !== idLote && t.codigo_lote.trim().toUpperCase() === lote.codigo_lote.toUpperCase())) {
-      return { success: false, error: `El lote ${lote.codigo_lote} ya existe. Usa otro código.` }
+    if (nombreTomado(lote.codigo_lote, ajenos)) {
+      return { success: false, error: `El lote ${lote.codigo_lote} ya existe (o fue el nombre de otro lote). Usa otro código.` }
+    }
+    // Un numero que no es el consecutivo: se avisa, no se bloquea (Cris, 2026-11-18).
+    const original = tomados.find((t) => t.id === idLote)?.codigo_lote
+    if (lote.codigo_lote !== original) {
+      const aviso = avisoDeCodigoNumerico(lote.codigo_lote, recomendado)
+      if (aviso) v.avisos.push(aviso)
     }
 
     // Los insumos tienen que existir y ser INSUMO (la lista del formulario no es garantia).
@@ -111,6 +131,9 @@ export async function guardarLoteAction(form: LoteForm): Promise<GuardarLoteResu
         .insert({ ...cabecera, usuario_creador: sesion.sesion.email })
         .select('id')
         .single()
+      if (errLote?.code === '23505') {
+        return { success: false, error: `El lote ${lote.codigo_lote} lo acaba de tomar otra captura. No quedó nada escrito: vuelve a guardar (deja el código vacío para usar el siguiente).` }
+      }
       if (errLote || !creado) {
         return { success: false, error: `No pude escribir el lote: ${errLote?.message ?? 'sin respuesta'}. No quedó nada a medias.` }
       }
@@ -160,6 +183,7 @@ export async function guardarLoteAction(form: LoteForm): Promise<GuardarLoteResu
     if ([...idsEnForm].some((id) => !tandasActuales.has(id))) return { success: false, error: 'Una tanda no es de este lote.' }
 
     const { error: errCab } = await supabase.from('lotes').update(cabecera).eq('id', idLote)
+    if (errCab?.code === '23505') return { success: false, error: `El nombre ${lote.codigo_lote} ya lo usa otro lote (actual o anterior). No cambió nada.` }
     if (errCab) return { success: false, error: `No pude guardar la cabecera: ${errCab.message}. No cambió nada.` }
 
     if (lote.entradas.length > 0) {

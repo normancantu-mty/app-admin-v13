@@ -16,6 +16,7 @@ import { useState } from 'react'
 import { useModalV2 } from '@/components/v2/modal/ProveedorModal'
 import { guardarLoteAction } from '@/app/actions/lotes-v2'
 import type { LoteForm } from './validar'
+import { avisoDeCodigoNumerico } from '@/lib/lote-alias'
 
 export type InsumoOpcion = { id: string; nombre: string; sku: string | null; unidad_medida: string }
 
@@ -55,7 +56,12 @@ const numONulo = (s: string): number | null => {
 let siguienteClave = 1
 const clave = () => siguienteClave++
 
-export default function FormLote({ inicial, insumos, hoy }: { inicial: LoteInicial; insumos: InsumoOpcion[]; hoy: string }) {
+/**
+ * `recomendado` (solo en el alta): el consecutivo de `siguiente_codigo_lote()`.
+ * Se ensena como placeholder; si el codigo se deja vacio, el SERVIDOR pone el
+ * recomendado (nomenclatura nueva de Cris, 2026-11-18).
+ */
+export default function FormLote({ inicial, insumos, hoy, recomendado }: { inicial: LoteInicial; insumos: InsumoOpcion[]; hoy: string; recomendado?: string }) {
   const { irTrasGuardar, cerrar } = useModalV2()
   const editando = inicial.id !== null
   const [codigo, setCodigo] = useState(inicial.codigo_lote)
@@ -138,7 +144,22 @@ export default function FormLote({ inicial, insumos, hoy }: { inicial: LoteInici
       <div className="grid g3">
         <div className="campo">
           <label htmlFor="lote-codigo">Código del lote</label>
-          <input id="lote-codigo" value={codigo} onChange={(e) => setCodigo(e.target.value)} maxLength={40} placeholder="L-AAAAMMDD" required />
+          <input
+            id="lote-codigo"
+            value={codigo}
+            onChange={(e) => setCodigo(e.target.value)}
+            maxLength={40}
+            placeholder={recomendado ? `${recomendado} (siguiente)` : undefined}
+            required={!recomendado}
+          />
+          {recomendado && codigo.trim() === '' ? (
+            <small className="mono" style={{ color: 'var(--muted)' }} data-testid="lote-codigo-recomendado">
+              Vacío = {recomendado}, el siguiente consecutivo.
+            </small>
+          ) : null}
+          {recomendado && avisoDeCodigoNumerico(codigo, recomendado) ? (
+            <small style={{ color: 'var(--warn, #b26b00)' }}>{avisoDeCodigoNumerico(codigo, recomendado)}</small>
+          ) : null}
         </div>
         <div className="campo">
           <label htmlFor="lote-inicio">Inicio de fermentación</label>
