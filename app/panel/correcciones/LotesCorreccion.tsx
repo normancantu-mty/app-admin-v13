@@ -15,7 +15,7 @@
 
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { ajustarLoteAction } from '@/app/actions/ajustes-lotes'
+import { ajustarLoteAction, eliminarLoteAction } from '@/app/actions/ajustes-lotes'
 import {
   cabeceraDesdeForm,
   cambiosDeLote,
@@ -48,6 +48,7 @@ export function LotesCorreccion({
 }) {
   const router = useRouter()
   const [editando, setEditando] = useState<FilaLoteCorreccion | null>(null)
+  const [eliminando, setEliminando] = useState<FilaLoteCorreccion | null>(null)
   const visibles = useMemo(
     () => lotes.filter((l) => !filtro || `${l.cabecera.codigo_lote} ${l.alias.join(' ')} ${l.cabecera.notas ?? ''}`.toLowerCase().includes(filtro)),
     [lotes, filtro]
@@ -107,6 +108,9 @@ export function LotesCorreccion({
                 <td className="r">
                   <button type="button" className="btn mini" onClick={() => setEditando(l)}>
                     Editar
+                  </button>{' '}
+                  <button type="button" className="btn mini" onClick={() => setEliminando(l)} data-testid="lt-eliminar" style={{ color: 'var(--bad, #b00020)' }}>
+                    Eliminar
                   </button>
                 </td>
               </tr>
@@ -128,7 +132,93 @@ export function LotesCorreccion({
           }}
         />
       ) : null}
+
+      {eliminando ? (
+        <DialogoEliminarLote
+          fila={eliminando}
+          onCerrar={() => setEliminando(null)}
+          onHecho={(texto) => {
+            setEliminando(null)
+            onAviso({ tipo: 'ok', texto })
+            router.refresh()
+          }}
+        />
+      ) : null}
     </>
+  )
+}
+
+function DialogoEliminarLote({ fila, onCerrar, onHecho }: { fila: FilaLoteCorreccion; onCerrar: () => void; onHecho: (texto: string) => void }) {
+  const codigo = fila.cabecera.codigo_lote
+  const [motivo, setMotivo] = useState('')
+  const [tecleo, setTecleo] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [pendiente, iniciar] = useTransition()
+  const casa = confirmacionLoteCasa(tecleo, codigo)
+  const listo = casa && motivo.trim().length >= MOTIVO_MINIMO
+
+  const eliminar = () => {
+    if (!listo) return
+    setError(null)
+    iniciar(async () => {
+      const r = await eliminarLoteAction({ id: fila.id, confirmacion: tecleo, motivo })
+      if (!r.ok) {
+        setError(r.error)
+        return
+      }
+      onHecho(`Lote ${r.codigo_lote} eliminado (${r.entradas} insumo(s), ${r.salidas} tanda(s), ${r.etapas} etapa(s)). La foto completa queda en la bitácora.`)
+    })
+  }
+
+  return (
+    <div
+      className="m-fondo"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !pendiente) onCerrar()
+      }}
+    >
+      <div className="m-caja sm" role="dialog" aria-modal="true" aria-label="Eliminar lote" data-testid="dialogo-eliminar-lote">
+        <div className="m-hd">
+          <div className="m-tit">
+            <h2>Eliminar el lote {codigo}</h2>
+            <div className="m-sub">{fila.alias.length ? `antes: ${fila.alias.join(', ')}` : 'No se deshace desde la pantalla'}</div>
+          </div>
+          <button type="button" className="m-cerrar" aria-label="Cerrar" onClick={onCerrar} disabled={pendiente}>
+            ×
+          </button>
+        </div>
+        <div className="m-bd" style={{ padding: 18 }}>
+          <div className="msg warn">
+            Se borra el lote <b className="mono">{codigo}</b> con sus insumos, tandas, etapas y alias. Si ya tiene envasado ligado (movió inventario), el
+            sistema lo rechaza. La foto completa queda en la bitácora con tu usuario y el motivo.
+          </div>
+          <div className="campo">
+            <label htmlFor="le-motivo">Motivo (obligatorio)</label>
+            <textarea id="le-motivo" rows={2} value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. lote de prueba; capturado dos veces" />
+          </div>
+          <div className="campo">
+            <label htmlFor="le-tecleo">
+              Para confirmar, escribe el código del lote: <b className="mono">{codigo}</b>
+            </label>
+            <input id="le-tecleo" autoComplete="off" value={tecleo} onChange={(e) => setTecleo(e.target.value)} data-testid="le-tecleo" />
+          </div>
+          {tecleo !== '' && !casa ? <div className="msg mal">No coincide con el código.</div> : null}
+          {error ? (
+            <div className="msg mal" role="alert">
+              {error}
+            </div>
+          ) : null}
+          <div className="fila-acc" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="btn" onClick={onCerrar} disabled={pendiente}>
+              Cancelar
+            </button>
+            <button type="button" className="btn p" disabled={!listo || pendiente} onClick={eliminar} data-testid="le-eliminar">
+              {pendiente ? 'Eliminando…' : `Eliminar ${codigo}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

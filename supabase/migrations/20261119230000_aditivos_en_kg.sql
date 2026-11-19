@@ -1,4 +1,5 @@
 -- Aditivo 1 y Aditivo 2 en KILOGRAMOS (2026-11-19). Escrito el 2026-11-19 por el agente (Cuartel).
+-- SIN APLICAR en prod a proposito (2026-11-19): va JUNTO con el deploy del codigo (esAditivoMismoNumero); al aplicarla, renombrar el archivo a la version que registre Supabase.
 -- Reversa: supabase/ROLLBACK_aditivos_en_kg_2026-11-19.sql
 --
 -- Cris (2026-11-19): en la app y en Telegram el aditivo 1 y 2 se capturan "en

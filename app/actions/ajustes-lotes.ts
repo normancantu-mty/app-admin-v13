@@ -23,7 +23,7 @@ import { fechaLocal } from '@/lib/fechas'
 import { validarLote } from '@/components/v2/lotes/validar'
 import type { Json } from '@/types/database'
 import { esEstadoLote } from '@/components/v2/lotes/estado'
-import { CAMPOS_LOTE, mensajeDeErrorLote, validarSolicitudLote, type CabeceraLote, type SolicitudLote } from '@/lib/ajustes-lotes'
+import { CAMPOS_LOTE, MOTIVO_MINIMO, mensajeDeErrorLote, validarSolicitudLote, type CabeceraLote, type SolicitudLote } from '@/lib/ajustes-lotes'
 
 export type ResultadoAjusteLote =
   | { ok: true; antes: CabeceraLote; despues: CabeceraLote; cambios: string[]; alias: string[]; avisos: string[] }
@@ -95,6 +95,47 @@ export async function ajustarLoteAction(solicitud: SolicitudLote): Promise<Resul
       alias: r.alias ?? [],
       avisos: v.avisos
     }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Error inesperado' }
+  }
+}
+
+export type ResultadoEliminarLote = { ok: true; codigo_lote: string; entradas: number; salidas: number; etapas: number } | { ok: false; error: string }
+
+const UUID_LOTE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Eliminar un lote (2026-11-19). SOLO ADMIN. La RPC `eliminar_lote` (SECURITY
+ * DEFINER, migracion 20261119221815) vuelve a exigir ADMIN, compara el codigo
+ * tecleado, RECHAZA si el lote ya movio inventario (envasado ligado) y si no
+ * borra en una transaccion (etapas, insumos, tandas, alias en cascada) dejando
+ * la foto completa en auditoria_logs (operacion DELETE) con el motivo.
+ */
+export async function eliminarLoteAction(p: { id: string; confirmacion: string; motivo: string }): Promise<ResultadoEliminarLote> {
+  try {
+    const usuario = await getCurrentUser()
+    if (!usuario || usuario.rol !== 'ADMIN') return { ok: false, error: 'No autorizado.' }
+    const id = String(p?.id ?? '')
+    if (!UUID_LOTE.test(id)) return { ok: false, error: 'Lote inválido.' }
+    const motivo = String(p?.motivo ?? '').trim()
+    if (motivo.length < MOTIVO_MINIMO) return { ok: false, error: `El motivo es obligatorio (mínimo ${MOTIVO_MINIMO} caracteres).` }
+    const confirmacion = String(p?.confirmacion ?? '').trim()
+    if (!confirmacion) return { ok: false, error: 'Escribe el código del lote para confirmar.' }
+
+    const supabase = await getServerSupabaseClient()
+    // eliminar_lote no esta en types/database.ts: se llama sin tipos, en la frontera.
+    const db = supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> }
+    const { data, error } = await db.rpc('eliminar_lote', { p_id: id, p_confirmacion: confirmacion, p_motivo: motivo })
+    if (error) {
+      const m = error.message
+      if (m.includes('LOTE_CON_ENVASADO')) return { ok: false, error: m.replace(/^.*LOTE_CON_ENVASADO:\s*/, '') }
+      if (m.includes('CONFIRMACION')) return { ok: false, error: m.replace(/^.*CONFIRMACION:\s*/, '') }
+      return { ok: false, error: mensajeDeErrorLote(m) }
+    }
+    const r = (data ?? {}) as { codigo_lote?: string; entradas?: number; salidas?: number; etapas?: number }
+    revalidatePath(`${RUTA_BASE}/correcciones`)
+    revalidatePath(`${RUTA_BASE}/lotes`)
+    return { ok: true, codigo_lote: String(r.codigo_lote ?? ''), entradas: Number(r.entradas ?? 0), salidas: Number(r.salidas ?? 0), etapas: Number(r.etapas ?? 0) }
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : 'Error inesperado' }
   }
