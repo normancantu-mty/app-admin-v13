@@ -120,7 +120,9 @@ export async function guardarLoteAction(form: LoteForm): Promise<GuardarLoteResu
       horas_fermentacion: lote.horas_fermentacion,
       brix_chile: lote.brix_chile,
       brix_final: lote.brix_final,
-      notas: lote.notas
+      notas: lote.notas,
+      // Ausente en la edicion = no se toca; en el alta, el default de la base (FERMENTACION).
+      ...(lote.estado_proceso ? { estado_proceso: lote.estado_proceso } : {})
     }
 
     // ── ALTA ────────────────────────────────────────────────────────────────

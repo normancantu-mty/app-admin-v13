@@ -18,6 +18,7 @@
  * alias (se muestran). Ver la migracion 20261118192907.
  */
 
+import { estadoLote } from '@/components/v2/lotes/estado'
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { EncabezadoPagina } from '@/components/v2/pagina/Encabezado'
 import { notFound } from 'next/navigation'
@@ -45,7 +46,7 @@ export default async function PaginaCorrecciones() {
       supabase.from('entidades').select('id, nombre, rol'),
       supabase
         .from('lotes')
-        .select('id, codigo_lote, fecha_inicio, fecha_fin_fermentacion, horas_fermentacion, brix_chile, brix_final, notas')
+        .select('id, codigo_lote, fecha_inicio, fecha_fin_fermentacion, horas_fermentacion, brix_chile, brix_final, notas, estado_proceso')
         .order('fecha_inicio', { ascending: false }),
       supabase.from('lote_alias').select('id_lote, alias, creado_en').order('creado_en'),
       supabase.rpc('siguiente_codigo_lote')
@@ -70,7 +71,8 @@ export default async function PaginaCorrecciones() {
         horas_fermentacion: num(x.horas_fermentacion),
         brix_chile: num(x.brix_chile),
         brix_final: num(x.brix_final),
-        notas: x.notas
+        notas: x.notas,
+        estado_proceso: estadoLote(x.estado_proceso)
       }
     }))
     stock = (s.data ?? []).map((f) => ({ ...f, stock: Number(f.stock) }))

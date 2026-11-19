@@ -10,6 +10,7 @@ import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
 import { Modal } from '@/components/v2/modal/Modal'
 import FormLote from '@/components/v2/lotes/FormLote'
+import { estadoLote } from '@/components/v2/lotes/estado'
 import { hoyMx, leerInsumosLote, leerLote } from '@/components/v2/lotes/datos'
 
 export const dynamic = 'force-dynamic'
@@ -36,6 +37,7 @@ export default async function ModalEditarLote({ params }: { params: Promise<{ id
           brix_chile: c.brix_chile === null ? null : Number(c.brix_chile),
           brix_final: c.brix_final === null ? null : Number(c.brix_final),
           notas: c.notas,
+          estado_proceso: estadoLote(c.estado_proceso),
           entradas: lote.entradas.map((e) => ({ id_insumo: e.id_insumo, cantidad: e.cantidad })),
           tandas: lote.salidas
         }}

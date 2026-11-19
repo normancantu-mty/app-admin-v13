@@ -20,11 +20,12 @@
 
 import { mensajeDeErrorRpc, MOTIVO_MINIMO } from '@/lib/ajustes-admin'
 import { normalizarNombreLote } from '@/lib/lote-alias'
+import { esEstadoLote, ETIQUETA_ESTADO, type EstadoLote } from '@/components/v2/lotes/estado'
 
 export { MOTIVO_MINIMO }
 
-/** Las 7 llaves de la cabecera que se corrigen (las mismas de la RPC). */
-export const CAMPOS_LOTE = [
+/** Las 7 llaves obligatorias de la cabecera (las de la RPC). */
+const CAMPOS_OBLIGATORIOS = [
   'codigo_lote',
   'fecha_inicio',
   'fecha_fin_fermentacion',
@@ -32,6 +33,18 @@ export const CAMPOS_LOTE = [
   'brix_chile',
   'brix_final',
   'notas'
+] as const
+
+/** Lo que se corrige: las 7 + `estado_proceso` (8a llave opcional de la RPC desde 20261119215907). */
+export const CAMPOS_LOTE = [
+  'codigo_lote',
+  'fecha_inicio',
+  'fecha_fin_fermentacion',
+  'horas_fermentacion',
+  'brix_chile',
+  'brix_final',
+  'notas',
+  'estado_proceso'
 ] as const
 
 export type CampoLote = (typeof CAMPOS_LOTE)[number]
@@ -45,6 +58,8 @@ export interface CabeceraLote {
   brix_chile: number | null
   brix_final: number | null
   notas: string | null
+  /** lotes.estado_proceso. Opcional: sin el, la RPC no lo toca. */
+  estado_proceso?: EstadoLote
 }
 
 export const ETIQUETA_CAMPO: Record<CampoLote, string> = {
@@ -54,7 +69,13 @@ export const ETIQUETA_CAMPO: Record<CampoLote, string> = {
   horas_fermentacion: 'Horas de fermentación',
   brix_chile: 'Brix chile',
   brix_final: 'Brix final',
-  notas: 'Notas'
+  notas: 'Notas',
+  estado_proceso: 'Estado'
+}
+
+/** Como se ensena un valor del estado. */
+export function verEstado(v: unknown): string {
+  return esEstadoLote(v) ? ETIQUETA_ESTADO[v] : '—'
 }
 
 /** Lo que escribe el formulario (todo texto) + el toggle de «terminada». */
@@ -67,6 +88,7 @@ export interface FormCabecera {
   brix_chile: string
   brix_final: string
   notas: string
+  estado_proceso: EstadoLote
 }
 
 export function formDesdeCabecera(c: CabeceraLote): FormCabecera {
@@ -79,7 +101,8 @@ export function formDesdeCabecera(c: CabeceraLote): FormCabecera {
     horas_fermentacion: t(c.horas_fermentacion),
     brix_chile: t(c.brix_chile),
     brix_final: t(c.brix_final),
-    notas: c.notas ?? ''
+    notas: c.notas ?? '',
+    estado_proceso: c.estado_proceso ?? 'FERMENTACION'
   }
 }
 
@@ -125,7 +148,8 @@ export function cabeceraDesdeForm(f: FormCabecera): { ok: true; cabecera: Cabece
       horas_fermentacion: horas,
       brix_chile: brixChile,
       brix_final: brixFinal,
-      notas: notas === '' ? null : notas
+      notas: notas === '' ? null : notas,
+      ...(esEstadoLote(f.estado_proceso) ? { estado_proceso: f.estado_proceso } : {})
     }
   }
 }
@@ -175,7 +199,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 function esCabecera(c: unknown): c is CabeceraLote {
   if (!c || typeof c !== 'object') return false
   const o = c as Record<string, unknown>
-  return CAMPOS_LOTE.every((k) => k in o) && typeof o.codigo_lote === 'string' && typeof o.fecha_inicio === 'string'
+  return CAMPOS_OBLIGATORIOS.every((k) => k in o) && typeof o.codigo_lote === 'string' && typeof o.fecha_inicio === 'string'
 }
 
 /** La puerta de la server action. El rol ADMIN se valida aparte (sesion). */

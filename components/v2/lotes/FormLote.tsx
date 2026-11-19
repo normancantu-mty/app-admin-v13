@@ -16,6 +16,7 @@ import { useState } from 'react'
 import { useModalV2 } from '@/components/v2/modal/ProveedorModal'
 import { guardarLoteAction } from '@/app/actions/lotes-v2'
 import type { LoteForm } from './validar'
+import { ESTADOS_LOTE, ETIQUETA_ESTADO, type EstadoLote } from './estado'
 import { avisoDeCodigoNumerico } from '@/lib/lote-alias'
 
 export type InsumoOpcion = { id: string; nombre: string; sku: string | null; unidad_medida: string }
@@ -29,6 +30,7 @@ export type LoteInicial = {
   brix_chile: number | null
   brix_final: number | null
   notas: string | null
+  estado_proceso: EstadoLote
   entradas: { id_insumo: string; cantidad: number }[]
   tandas: { id: string; numero_tanda: number; litros: number | null; grado_alcohol: number | null; peso_kg: number | null; notas: string | null }[]
 }
@@ -71,6 +73,7 @@ export default function FormLote({ inicial, insumos, hoy, recomendado }: { inici
   const [brixChile, setBrixChile] = useState(txt(inicial.brix_chile))
   const [brixFinal, setBrixFinal] = useState(txt(inicial.brix_final))
   const [notas, setNotas] = useState(inicial.notas ?? '')
+  const [estadoProceso, setEstadoProceso] = useState<EstadoLote>(inicial.estado_proceso)
   const porSku = new Map(insumos.filter((i) => i.sku).map((i) => [i.sku as string, i]))
   const idsFijos = new Set(INSUMOS_LOTE.map((x) => porSku.get(x.sku)?.id).filter(Boolean) as string[])
   // Insumos ya escritos que no son de los cuatro (lotes viejos o del bot): se conservan tal cual.
@@ -106,6 +109,7 @@ export default function FormLote({ inicial, insumos, hoy, recomendado }: { inici
       brix_chile: numONulo(brixChile),
       brix_final: numONulo(brixFinal),
       notas,
+      estado_proceso: estadoProceso,
       entradas: [
         ...INSUMOS_LOTE.flatMap((x) => {
           const id = porSku.get(x.sku)?.id
@@ -182,6 +186,19 @@ export default function FormLote({ inicial, insumos, hoy, recomendado }: { inici
         <div className="campo">
           <label htmlFor="lote-brix-final">Brix final</label>
           <input id="lote-brix-final" inputMode="decimal" value={brixFinal} onChange={(e) => setBrixFinal(e.target.value)} placeholder="opcional" />
+        </div>
+      </div>
+      <div className="grid g3">
+        <div className="campo">
+          <label htmlFor="lote-estado">Estado</label>
+          <select id="lote-estado" value={estadoProceso} onChange={(e) => setEstadoProceso(e.target.value as EstadoLote)} data-testid="lote-estado">
+            {ESTADOS_LOTE.map((e) => (
+              <option key={e} value={e}>
+                {ETIQUETA_ESTADO[e]}
+              </option>
+            ))}
+          </select>
+          <small className="inv-sub">Con Aditivo 1, Aditivo 2 y Levadura el sistema lo pasa solo a Terminado (salvo Destilado).</small>
         </div>
       </div>
 

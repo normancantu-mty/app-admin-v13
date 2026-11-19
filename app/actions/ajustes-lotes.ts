@@ -22,6 +22,7 @@ import { RUTA_BASE } from '@/lib/v2/rutas'
 import { fechaLocal } from '@/lib/fechas'
 import { validarLote } from '@/components/v2/lotes/validar'
 import type { Json } from '@/types/database'
+import { esEstadoLote } from '@/components/v2/lotes/estado'
 import { CAMPOS_LOTE, mensajeDeErrorLote, validarSolicitudLote, type CabeceraLote, type SolicitudLote } from '@/lib/ajustes-lotes'
 
 export type ResultadoAjusteLote =
@@ -38,7 +39,8 @@ function limpia(c: CabeceraLote | undefined | null): CabeceraLote {
     horas_fermentacion: num(o.horas_fermentacion),
     brix_chile: num(o.brix_chile),
     brix_final: num(o.brix_final),
-    notas: o.notas === null || o.notas === undefined ? null : String(o.notas)
+    notas: o.notas === null || o.notas === undefined ? null : String(o.notas),
+    ...(esEstadoLote(o.estado_proceso) ? { estado_proceso: o.estado_proceso } : {})
   }
 }
 
@@ -68,7 +70,9 @@ export async function ajustarLoteAction(solicitud: SolicitudLote): Promise<Resul
       horas_fermentacion: v.lote.horas_fermentacion,
       brix_chile: v.lote.brix_chile,
       brix_final: v.lote.brix_final,
-      notas: v.lote.notas
+      notas: v.lote.notas,
+      // El estado viaja solo si lo visto lo trae (la RPC lo compara contra lo actual).
+      ...(s.visto.estado_proceso && s.nuevo.estado_proceso ? { estado_proceso: s.nuevo.estado_proceso } : {})
     }
 
     const supabase = await getServerSupabaseClient()

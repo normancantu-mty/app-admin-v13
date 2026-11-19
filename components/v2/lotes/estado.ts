@@ -1,46 +1,36 @@
 /**
- * Lotes v2 — el estado de un lote, derivado de lo que ya esta escrito (no hay
- * columna `estado` en `lotes`, y no se agrega: sin migraciones). Escrito el
- * 2026-10-30 por el ejecutor del Socio. PURO.
- *
- * Regla (la mas simple que no inventa datos):
- *  - ENVASADO: el lote tiene botellas en `lote_envasado` (desde la ronda 5 del
- *    lote v2 el envasado diario va SIN lote, asi que esto solo pasa con lotes del
- *    bot anterior o del ciclo F0).
- *  - TERMINADO: ya salio algo del lote (tandas/garrafas en `lote_salidas`), el bot
- *    registro la etapa `destilacion`, o la fecha de fin de fermentacion ya paso.
- *  - EN FERMENTACION: todo lo demas.
+ * Lotes v2 — el estado de PROCESO de un lote. Desde el 2026-11-19 es una
+ * columna: `lotes.estado_proceso` (migracion 20261119215907), contrato
+ * compartido con la app movil y el bot. La base lo pasa SOLA a TERMINADO
+ * cuando el lote tiene Aditivo 1, Aditivo 2 y Levadura y enzimas (trigger
+ * `trg_lote_estado_por_insumos`), salvo DESTILADO, que nunca se degrada.
+ * Antes (2026-10-30) el estado se DERIVABA aqui de tandas y fechas
+ * (fermentacion / terminado / envasado); ya no: manda la columna. PURO.
  */
 
-export type EstadoLote = 'fermentacion' | 'terminado' | 'envasado'
+export type EstadoLote = 'FERMENTACION' | 'DESTILADO' | 'TERMINADO'
 
-export const ESTADOS_LOTE: EstadoLote[] = ['fermentacion', 'terminado', 'envasado']
+export const ESTADOS_LOTE: EstadoLote[] = ['FERMENTACION', 'TERMINADO', 'DESTILADO']
 
 export const ETIQUETA_ESTADO: Record<EstadoLote, string> = {
-  fermentacion: 'En fermentación',
-  terminado: 'Terminado',
-  envasado: 'Envasado'
+  FERMENTACION: 'Fermentación',
+  DESTILADO: 'Destilado',
+  TERMINADO: 'Terminado'
 }
 
 export const CHIP_ESTADO: Record<EstadoLote, string> = {
-  fermentacion: 'warn',
-  terminado: 'info',
-  envasado: 'good'
+  FERMENTACION: 'warn',
+  TERMINADO: 'info',
+  DESTILADO: 'good'
 }
 
 export function esEstadoLote(v: unknown): v is EstadoLote {
   return typeof v === 'string' && (ESTADOS_LOTE as string[]).includes(v)
 }
 
-export function estadoLote(
-  l: { botellas: number | null; tandas: number | null; fecha_fin_fermentacion: string | null },
-  destilado: boolean,
-  hoy: string
-): EstadoLote {
-  if (Number(l.botellas ?? 0) > 0) return 'envasado'
-  if (destilado || Number(l.tandas ?? 0) > 0) return 'terminado'
-  if (l.fecha_fin_fermentacion && l.fecha_fin_fermentacion.slice(0, 10) <= hoy) return 'terminado'
-  return 'fermentacion'
+/** Lo que venga de la base; algo raro (o la columna aun no leida) cae en FERMENTACION. */
+export function estadoLote(v: unknown): EstadoLote {
+  return esEstadoLote(v) ? v : 'FERMENTACION'
 }
 
 /** Dias entre dos fechas 'YYYY-MM-DD' (sin zona: son columnas `date`). */

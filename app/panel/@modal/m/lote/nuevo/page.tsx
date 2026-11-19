@@ -34,6 +34,7 @@ export default async function ModalNuevoLote() {
           brix_chile: null,
           brix_final: null,
           notas: null,
+          estado_proceso: 'FERMENTACION',
           entradas: [],
           tandas: []
         }}

@@ -5,7 +5,7 @@
  * solo a ADMIN, asi que a SOCIO las etapas le llegan vacias, sin error).
  *
  * El rendimiento NO se calcula aqui: sale de `v_lote_rendimiento`, la misma vista
- * que lee el bot (D-198). Aqui solo se junta y se deriva el estado.
+ * que lee el bot (D-198). Aqui solo se junta; el estado es `lotes.estado_proceso`.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -61,12 +61,12 @@ export function hoyMx(): string {
   return fechaLocal(new Date())
 }
 
-function resumir(f: FilaRendimiento, destilaciones: Map<string, string>, hoy: string): LoteResumen {
+function resumir(f: FilaRendimiento, destilaciones: Map<string, string>, estados: Map<string, string>, hoy: string): LoteResumen {
   const fechaDestilacion = destilaciones.get(f.id) ?? null
   const { dias, enCurso } = diasFermentacion(f.fecha_inicio, f.fecha_fin_fermentacion, fechaDestilacion, hoy)
   return {
     ...f,
-    estado: estadoLote(f, fechaDestilacion !== null, hoy),
+    estado: estadoLote(estados.get(f.id)),
     dias,
     diasEnCurso: enCurso,
     fechaDestilacion
@@ -77,15 +77,18 @@ function resumir(f: FilaRendimiento, destilaciones: Map<string, string>, hoy: st
 export async function leerLotes(): Promise<{ lotes: LoteResumen[]; error: string | null }> {
   const supabase = await getServerSupabaseClient()
   const db = supabase as unknown as ClienteLibre
-  const [vista, etapas] = await Promise.all([
+  const [vista, etapas, cabeceras] = await Promise.all([
     db.from('v_lote_rendimiento').select(COLUMNAS_VISTA).order('fecha_inicio', { ascending: false }).order('codigo_lote', { ascending: false }),
-    db.from('lote_etapas').select('id_lote, fecha').eq('etapa', 'destilacion')
+    db.from('lote_etapas').select('id_lote, fecha').eq('etapa', 'destilacion'),
+    db.from('lotes').select('id, estado_proceso')
   ])
   if (vista.error) return { lotes: [], error: vista.error.message }
+  if (cabeceras.error) return { lotes: [], error: cabeceras.error.message }
+  const estados = new Map<string, string>(((cabeceras.data ?? []) as { id: string; estado_proceso: string }[]).map((c) => [c.id, c.estado_proceso]))
   // Sin etapas (SOCIO no las ve, o la lectura fallo) el estado sale de las tandas y la fecha de fin.
   const destilaciones = new Map<string, string>(((etapas.data ?? []) as { id_lote: string; fecha: string }[]).map((e) => [e.id_lote, e.fecha]))
   const hoy = hoyMx()
-  return { lotes: ((vista.data ?? []) as FilaRendimiento[]).map((f) => resumir(f, destilaciones, hoy)), error: null }
+  return { lotes: ((vista.data ?? []) as FilaRendimiento[]).map((f) => resumir(f, destilaciones, estados, hoy)), error: null }
 }
 
 export type CabeceraLote = {
@@ -99,6 +102,7 @@ export type CabeceraLote = {
   creado_en: string
   brix_chile: number | null
   brix_final: number | null
+  estado_proceso: string
 }
 
 export type EntradaDetalle = { id: string; id_insumo: string; cantidad: number; nombre: string; sku: string | null; unidad: string; costo_unitario: number | null }
@@ -124,7 +128,7 @@ export async function leerLote(id: string): Promise<DetalleLote | null> {
   const supabase = await getServerSupabaseClient()
   const db = supabase as unknown as ClienteLibre
   const [cab, vista, ent, sal, env, eta] = await Promise.all([
-    db.from('lotes').select('id, codigo_lote, fecha_inicio, fecha_fin_fermentacion, horas_fermentacion, notas, usuario_creador, creado_en, brix_chile, brix_final').eq('id', id).maybeSingle(),
+    db.from('lotes').select('id, codigo_lote, fecha_inicio, fecha_fin_fermentacion, horas_fermentacion, notas, usuario_creador, creado_en, brix_chile, brix_final, estado_proceso').eq('id', id).maybeSingle(),
     db.from('v_lote_rendimiento').select(COLUMNAS_VISTA).eq('id', id).maybeSingle(),
     db.from('lote_entradas').select('id, id_insumo, cantidad, producto:catalogo_productos(nombre, sku, unidad_medida, costo_unitario)').eq('id_lote', id),
     db.from('lote_salidas').select('id, numero_tanda, litros, grado_alcohol, peso_kg, notas').eq('id_lote', id).order('numero_tanda', { ascending: true }),
@@ -167,7 +171,7 @@ export async function leerLote(id: string): Promise<DetalleLote | null> {
 
   return {
     cabecera: cab.data as CabeceraLote,
-    resumen: vista.data ? resumir(vista.data as FilaRendimiento, destilaciones, hoyMx()) : null,
+    resumen: vista.data ? resumir(vista.data as FilaRendimiento, destilaciones, new Map([[id, String(cab.data.estado_proceso ?? '')]]), hoyMx()) : null,
     entradas,
     salidas: ((sal.data ?? []) as SalidaDetalle[]).map((s) => ({
       ...s,

@@ -1,7 +1,7 @@
 /**
  * Lotes v2 — `/panel/lotes`: el apartado completo de lotes. Escrito el 2026-10-30
- * por el ejecutor del Socio. Lista con estado (en fermentacion / terminado /
- * envasado), filtro por estado, clic en el codigo abre el detalle en modal, y
+ * por el ejecutor del Socio. Lista con estado (`lotes.estado_proceso`:
+ * fermentacion / terminado / destilado), filtro por estado, clic en el codigo abre el detalle en modal, y
  * ADMIN tiene «Nuevo lote». ADMIN y SOCIO lo ven; SOCIO sin botones de captura.
  *
  * El rendimiento sale de `v_lote_rendimiento` (D-198). FALLA CERRADA: si la
@@ -35,7 +35,7 @@ export default async function LotesV2({ searchParams }: { searchParams: Promise<
   const suma = (xs: (number | null)[]) => xs.reduce<number>((a, x) => a + Number(x ?? 0), 0)
   const litros = suma(lotes.map((l) => l.litros_producidos))
   const botellas = suma(lotes.map((l) => l.botellas))
-  const fermentando = lotes.filter((l) => l.estado === 'fermentacion')
+  const fermentando = lotes.filter((l) => l.estado === 'FERMENTACION')
 
   return (
     <>
@@ -71,17 +71,17 @@ export default async function LotesV2({ searchParams }: { searchParams: Promise<
               </div>
               <div className="kpi">
                 <div className="t">En fermentación</div>
-                <div className="v">{cuenta('fermentacion')}</div>
+                <div className="v">{cuenta('FERMENTACION')}</div>
                 <div className="d">{fermentando.length ? <>el más viejo lleva <b>{Math.max(...fermentando.map((l) => l.dias))}</b> días</> : 'ninguno fermentando'}</div>
               </div>
               <div className="kpi">
                 <div className="t">Terminados</div>
-                <div className="v">{cuenta('terminado')}</div>
-                <div className="d">destilados, sin botellas ligadas</div>
+                <div className="v">{cuenta('TERMINADO')}</div>
+                <div className="d">con los tres insumos, sin destilar</div>
               </div>
               <div className="kpi">
-                <div className="t">Envasados</div>
-                <div className="v">{cuenta('envasado')}</div>
+                <div className="t">Destilados</div>
+                <div className="v">{cuenta('DESTILADO')}</div>
                 <div className="d">
                   <b>{cant(botellas)}</b> botellas ligadas a lote
                 </div>
@@ -141,6 +141,7 @@ export default async function LotesV2({ searchParams }: { searchParams: Promise<
                         </td>
                         <td>
                           <span className={`chip ${CHIP_ESTADO[l.estado]}`}>{ETIQUETA_ESTADO[l.estado]}</span>
+                          {Number(l.botellas ?? 0) > 0 ? <span className="chip good">envasado</span> : null}
                           {l.faltan_costo ? <span className="chip warn" title={`Sin costo: ${l.faltan_costo}`}>costo incompleto</span> : null}
                         </td>
                         <td className="r">

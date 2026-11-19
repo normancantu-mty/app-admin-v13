@@ -51,7 +51,8 @@ const L04: CabeceraLote = {
   horas_fermentacion: 168,
   brix_chile: 2.5,
   brix_final: 10.7,
-  notas: null
+  notas: null,
+  estado_proceso: 'TERMINADO'
 }
 
 test.describe('lotes · nombres y alias', () => {

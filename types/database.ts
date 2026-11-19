@@ -1408,6 +1408,7 @@ export type Database = {
         Row: {
           brix_chile: number | null
           brix_final: number | null
+          estado_proceso: string
           codigo_lote: string
           creado_en: string
           fecha_fin_fermentacion: string | null
@@ -1420,6 +1421,7 @@ export type Database = {
         Insert: {
           brix_chile?: number | null
           brix_final?: number | null
+          estado_proceso?: string
           codigo_lote: string
           creado_en?: string
           fecha_fin_fermentacion?: string | null
@@ -1432,6 +1434,7 @@ export type Database = {
         Update: {
           brix_chile?: number | null
           brix_final?: number | null
+          estado_proceso?: string
           codigo_lote?: string
           creado_en?: string
           fecha_fin_fermentacion?: string | null

@@ -10,6 +10,7 @@
 
 import { GRADO_MAXIMO, TOPE_CANTIDAD_INSUMO, TOPE_HORAS_FERMENTACION, TOPE_LITROS_TANDA } from '@/lib/bot-lotes'
 import { TOPE_GARRAFAS, TOPE_PESO_GARRAFA_KG } from '@/lib/bot-lote-ciclo'
+import { esEstadoLote, type EstadoLote } from './estado'
 
 export interface EntradaForm {
   id_insumo: string
@@ -35,6 +36,8 @@ export interface LoteForm {
   brix_chile: number | null
   brix_final: number | null
   notas: string
+  /** lotes.estado_proceso; ausente = FERMENTACION en el alta, sin cambio en la edicion. */
+  estado_proceso?: string | null
   entradas: EntradaForm[]
   tandas: TandaForm[]
 }
@@ -47,6 +50,7 @@ export interface LoteLimpio {
   brix_chile: number | null
   brix_final: number | null
   notas: string | null
+  estado_proceso: EstadoLote | null
   entradas: EntradaForm[]
   tandas: { id: string | null; litros: number | null; grado_alcohol: number | null; peso_kg: number | null; notas: string | null }[]
 }
@@ -100,6 +104,10 @@ export function validarLote(f: LoteForm, hoy: string): ResultadoValidacion {
 
   const notas = String(f.notas ?? '').trim().slice(0, 500)
 
+  const estadoCrudo = f.estado_proceso === undefined || f.estado_proceso === null || f.estado_proceso === '' ? null : String(f.estado_proceso)
+  if (estadoCrudo !== null && !esEstadoLote(estadoCrudo)) return { ok: false, error: 'El estado del lote va Fermentación, Destilado o Terminado.' }
+  const estado_proceso: EstadoLote | null = estadoCrudo as EstadoLote | null
+
   // Insumos: el repetido se SUMA (unique id_lote,id_insumo), igual que el bot.
   const porInsumo = new Map<string, number>()
   for (const e of Array.isArray(f.entradas) ? f.entradas : []) {
@@ -148,6 +156,7 @@ export function validarLote(f: LoteForm, hoy: string): ResultadoValidacion {
       horas_fermentacion: horas === null ? null : redondear(horas, 2),
       ...brix,
       notas: notas || null,
+      estado_proceso,
       entradas: [...porInsumo.entries()].map(([id_insumo, cantidad]) => ({ id_insumo, cantidad })),
       tandas
     }

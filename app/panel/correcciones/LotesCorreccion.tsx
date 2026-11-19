@@ -25,8 +25,10 @@ import {
   MOTIVO_MINIMO,
   renombraDeVerdad,
   type CabeceraLote,
-  type FormCabecera
+  type FormCabecera,
+  verEstado
 } from '@/lib/ajustes-lotes'
+import { CHIP_ESTADO, ESTADOS_LOTE, ETIQUETA_ESTADO, estadoLote, type EstadoLote } from '@/components/v2/lotes/estado'
 import { avisoDeCodigoNumerico } from '@/lib/lote-alias'
 
 export type FilaLoteCorreccion = { id: string; cabecera: CabeceraLote; alias: string[] }
@@ -69,6 +71,7 @@ export function LotesCorreccion({
             <tr>
               <th>Lote</th>
               <th>Inicio</th>
+              <th>Estado</th>
               <th>Fermentación</th>
               <th className="r">Horas</th>
               <th className="r">Brix chile / final</th>
@@ -87,6 +90,9 @@ export function LotesCorreccion({
                   ) : null}
                 </td>
                 <td className="mono">{l.cabecera.fecha_inicio}</td>
+                <td>
+                  <span className={`chip ${CHIP_ESTADO[estadoLote(l.cabecera.estado_proceso)]}`}>{ETIQUETA_ESTADO[estadoLote(l.cabecera.estado_proceso)]}</span>
+                </td>
                 <td>
                   {l.cabecera.fecha_fin_fermentacion ? (
                     <span className="chip info">terminó {l.cabecera.fecha_fin_fermentacion}</span>
@@ -206,6 +212,16 @@ function DialogoLote({
                 <input id="lt-inicio" type="date" value={form.fecha_inicio} onChange={(e) => pon('fecha_inicio', e.target.value)} />
               </div>
               <div className="campo">
+                <label htmlFor="lt-estado">Estado del lote</label>
+                <select id="lt-estado" value={form.estado_proceso} onChange={(e) => pon('estado_proceso', e.target.value as EstadoLote)} data-testid="lt-estado">
+                  {ESTADOS_LOTE.map((e) => (
+                    <option key={e} value={e}>
+                      {ETIQUETA_ESTADO[e]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="campo">
                 <span>Fermentación</span>
                 <div className="seg" role="group" aria-label="Estado de la fermentación">
                   <button type="button" className={!form.terminada ? 'on' : ''} onClick={() => pon('terminada', false)} data-testid="lt-en-curso">
@@ -279,8 +295,8 @@ function DialogoLote({
                   {cambios.map((c) => (
                     <tr key={c.campo}>
                       <td>{ETIQUETA_CAMPO[c.campo]}</td>
-                      <td className="mono">{c.campo === 'fecha_fin_fermentacion' && c.antes === null ? 'en curso' : ver(c.antes)}</td>
-                      <td className="mono">{c.campo === 'fecha_fin_fermentacion' && c.despues === null ? 'en curso' : ver(c.despues)}</td>
+                      <td className="mono">{c.campo === 'estado_proceso' ? verEstado(c.antes) : c.campo === 'fecha_fin_fermentacion' && c.antes === null ? 'en curso' : ver(c.antes)}</td>
+                      <td className="mono">{c.campo === 'estado_proceso' ? verEstado(c.despues) : c.campo === 'fecha_fin_fermentacion' && c.despues === null ? 'en curso' : ver(c.despues)}</td>
                     </tr>
                   ))}
                 </tbody>

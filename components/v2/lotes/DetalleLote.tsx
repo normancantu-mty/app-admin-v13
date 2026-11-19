@@ -12,7 +12,7 @@ import { mxn } from '@/lib/v2/formato'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import { cant, cant2 } from '@/components/v2/inventario/formato-inv'
 import type { DetalleLote as Detalle } from './datos'
-import { CHIP_ESTADO, ETIQUETA_ESTADO } from './estado'
+import { CHIP_ESTADO, ETIQUETA_ESTADO, estadoLote } from './estado'
 import { lineaDeTiempo, NOTA_ALCOHOL, resumenGarrafas, type DatosDeLote } from '@/lib/bot-pregunta-lote'
 
 const n = (v: number | null | undefined): number | null => (v === null || v === undefined ? null : Number(v))
@@ -73,7 +73,7 @@ export default function DetalleLote({ lote, puedeEditar }: { lote: Detalle; pued
     <div className="lote-detalle" data-testid="lote-detalle">
       <div className="inv-barra">
         <div className="fila-acc">
-          {r ? <span className={`chip ${CHIP_ESTADO[r.estado]}`}>{ETIQUETA_ESTADO[r.estado]}</span> : null}
+          <span className={`chip ${CHIP_ESTADO[estadoLote(c.estado_proceso)]}`} data-testid="lote-estado-chip">{ETIQUETA_ESTADO[estadoLote(c.estado_proceso)]}</span>
           <span className="inv-sub">
             Inicio <b>{fechaParaPersona(c.fecha_inicio)}</b>
             {c.fecha_fin_fermentacion ? (
