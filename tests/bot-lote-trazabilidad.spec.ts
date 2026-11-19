@@ -4,9 +4,9 @@
  * Escrito el 2026-11-07 por el ejecutor del Socio (bot con paridad de la web).
  *
  * Se importan las rutas reales y se les habla como el bot, en orden:
- *   1. dia de produccion   lote/proponer + lote/confirmar      (chile 40 kg, aditivo 1 8 kg -> 8000 g, benzoato 200 g)
+ *   1. dia de produccion   lote/proponer + lote/confirmar      (chile 40 kg, aditivo 1 8 -> 8 kg (D-010, mismo numero), benzoato 200 g)
  *   2. fin de fermentacion lote/etapa/proponer + confirmar     (ayer, 90 h -> cabecera del lote)
- *   3. aditivo 2           lote/proponer + lote/confirmar      (INSUMO al lote existente, 1.5 kg -> 1500 g; decision
+ *   3. aditivo 2           lote/proponer + lote/confirmar      (INSUMO al lote existente, 1.5 kg, catalogo en kg; decision
  *                                                              de Cris 2026-11-13: ya NO es etapa)
  *   4. destilacion         lote/etapa/proponer + confirmar     (3 garrafas: 20 kg al 43%, 15 kg al 8%, 10 kg al 30%)
  *   5. envasado            lote/proponer + lote/confirmar      (40 de 750, diario, SIN lote)
@@ -79,11 +79,11 @@ function estadoInicial() {
       { id: 'c-n', id_entidad: 'ent-matriz', nombre: 'Efectivo', tipo_fiscalidad: 'NO_FISCAL' },
       { id: 'c-g', id_entidad: 'dst-a', nombre: 'Caja Gil', tipo_fiscalidad: 'NO_FISCAL' }
     ],
-    // Como en produccion: los dos aditivos en GRAMOS (Norman 2026-11-10: "mejor si los registre como gramos en el erp").
+    // Como en produccion desde 2026-11-19 (D-010): los dos aditivos en KILOGRAMOS, mismo numero capturado.
     catalogo_productos: [
       { id: 'chile-g', sku: 'chile-guajillo', nombre: 'Chile Guajillo', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
-      { id: 'ad1', sku: 'mosto-1', nombre: 'Aditivo 1', unidad_medida: 'GRAMOS', tipo: 'INSUMO' },
-      { id: 'ad2', sku: 'aditivo-2', nombre: 'Aditivo 2', unidad_medida: 'GRAMOS', tipo: 'INSUMO' },
+      { id: 'ad1', sku: 'mosto-1', nombre: 'Aditivo 1', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
+      { id: 'ad2', sku: 'aditivo-2', nombre: 'Aditivo 2', unidad_medida: 'KILOGRAMOS', tipo: 'INSUMO' },
       { id: 'benz', sku: 'benzoato', nombre: 'Benzoato de sodio', unidad_medida: 'GRAMOS', tipo: 'INSUMO' },
       { id: 'corcho', sku: 'corcho', nombre: 'Corcho', unidad_medida: 'PIEZAS', tipo: 'INSUMO' },
       { id: 'bot-750', sku: 'dst-750', nombre: 'Destilado 750', unidad_medida: 'PIEZAS', tipo: 'TERMINADO', ml_por_unidad: 750 }
@@ -301,9 +301,9 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
     expect(tablas.lotes[0].fecha_fin_fermentacion ?? null).toBeNull()
     const r1 = rpcs.filter((r) => r.nombre === 'registrar_en_lote')
     expect(r1).toHaveLength(1)
-    // 8 kg de aditivo 1 se escriben 8000 (el catalogo lo lleva en GRAMOS).
+    // Aditivo 1: se escribe el mismo numero (8), el catalogo lo lleva en KILOGRAMOS (D-010).
     expect(new Set((r1[0].args.p_entradas as Fila[]).map((e) => `${e.id_insumo}=${e.cantidad}`))).toEqual(
-      new Set(['chile-g=40', 'ad1=8000', 'benz=200'])
+      new Set(['chile-g=40', 'ad1=8', 'benz=200'])
     )
 
     // ── 2. FIN DE FERMENTACION (ayer, 90 h) ─────────────────────────────────
@@ -323,15 +323,15 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
     expect(String(otra.j.error)).toContain('ya tiene fin de fermentacion')
     expect(tablas.lotes[0].fecha_fin_fermentacion).toBe(AYER)
 
-    // ── 3. ADITIVO 2 (1.5 kg -> 1500 g): INSUMO, no etapa (Cris 2026-11-13) ──
+    // ── 3. ADITIVO 2 (1.5 kg, catalogo en kg): INSUMO, no etapa (Cris 2026-11-13) ──
     await proponerYConfirmar('lote/proponer', 'lote/confirmar', {
       insumos: [{ insumo: 'aditivo-2', cantidad: 1.5, unidad: 'kg' }],
       envasado: [],
       propuesta: { codigo_lote: CODIGO }
     })
     expect(delLote('lote_etapas').find((e) => e.etapa === 'aditivo_2')).toBeUndefined()
-    // UNA sola fila de 1500 g (antes la etapa la volvia a sumar: quedaba al doble).
-    expect(delLote('lote_entradas').filter((e) => e.id_insumo === 'ad2').map((e) => e.cantidad)).toEqual([1500])
+    // UNA sola fila de 1.5 kg (antes la etapa la volvia a sumar: quedaba al doble).
+    expect(delLote('lote_entradas').filter((e) => e.id_insumo === 'ad2').map((e) => e.cantidad)).toEqual([1.5])
     expect(tablas.lotes).toHaveLength(1)
 
     // ── 4. DESTILACION: 3 garrafas ──────────────────────────────────────────
@@ -366,11 +366,11 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
       `Fermento 4 dia(s) (90 h): del ${fechaParaPersona(INICIO)} al ${fechaParaPersona(AYER)}`,
       `${fechaParaPersona(INICIO)} — DIA DE PRODUCCION`,
       '   Chile Guajillo: 40 kg',
-      '   Aditivo 1: 8000 g (8 kg)',
+      '   Aditivo 1: 8 kg',
       '   Benzoato de sodio: 200 g',
       '   Brix del chile: 12',
       `${fechaParaPersona(AYER)} — FIN DE FERMENTACION`,
-      '   Aditivo 2: 1500 g (1.5 kg)',
+      '   Aditivo 2: 1.5 kg',
       `${fechaParaPersona(HOY)} — DESTILACION: 3 garrafa(s)`,
       '   Garrafa 1: 22 L, 20 kg al 43%',
       '   Garrafa 2: 16 L, 15 kg al 8%',
@@ -389,7 +389,7 @@ test.describe('Fase 7B: un lote de punta a punta desde el bot', () => {
     expect(pos('DIA DE PRODUCCION')).toBeLessThan(pos('FIN DE FERMENTACION'))
     expect(pos('FIN DE FERMENTACION')).toBeLessThan(pos('DESTILACION'))
     expect(txt).not.toContain('— ADITIVO 2')
-    expect(txt.slice(pos('DIA DE PRODUCCION'), pos('FIN DE FERMENTACION'))).toContain('Aditivo 2: 1500 g')
+    expect(txt.slice(pos('DIA DE PRODUCCION'), pos('FIN DE FERMENTACION'))).toContain('Aditivo 2: 1.5 kg')
 
     // La pregunta no escribe nada.
     const n = escrituras.length
