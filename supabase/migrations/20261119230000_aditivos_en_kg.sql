@@ -14,7 +14,7 @@
 --      de aditivo 2 pasan a leerse como kg: el arranque del 2026-10-27 se conto
 --      cuando el catalogo estaba en kilos); el costo del movimiento pasa a por kg
 --      (x1000), el mismo precio por unidad del catalogo.
---   3. lote_entradas: las cantidades de aditivo de los lotes YA escritos se
+--   3. [RETIRADO 2026-11-19: Cris corrige a mano lo historico; ver seccion 3] lote_entradas: las cantidades de aditivo de los lotes YA escritos se
 --      capturaron en GRAMOS reales (bot/plantilla "8 kg" -> 8000 g; receta
 --      "~8 kg de aditivo"). Dejarlas igual en kg daria 8,000 kg por lote y un
 --      costo de $192,000 de aditivo 1 por lote. Se pasan a kg (/1000) UNA vez, con
@@ -42,16 +42,8 @@ update public.inventario_ledger il
  where p.id = il.id_producto and p.sku in ('mosto-1', 'aditivo-2')
    and coalesce(il.notas, '') not like '%[2026-11-19:%';
 
--- 3. lote_entradas: los gramos ya escritos -> kg (una vez). Se deja traza en la bitacora.
-insert into public.auditoria_logs (tabla, id_registro, operacion, usuario, rol, datos_antes, datos_despues, motivo)
-select 'lote_entradas', e.id, 'UPDATE', 'sistema', null, to_jsonb(e), to_jsonb(e) || jsonb_build_object('cantidad', e.cantidad / 1000),
-       '2026-11-19: aditivo en kg (los gramos escritos antes pasan a kg)'
-  from public.lote_entradas e join public.catalogo_productos p on p.id = e.id_insumo
- where p.sku in ('mosto-1', 'aditivo-2');
-update public.lote_entradas e
-   set cantidad = e.cantidad / 1000
-  from public.catalogo_productos p
- where p.id = e.id_insumo and p.sku in ('mosto-1', 'aditivo-2');
+-- 3. lote_entradas: NO se tocan. Cris corrige a mano los aditivos ya guardados
+--    (decision en el chat, 2026-11-19).
 
 -- 4. receta
 update public.receta_liquido_estandar r
