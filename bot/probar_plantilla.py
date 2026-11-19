@@ -427,6 +427,28 @@ caso("2. ... 'confirmar' (dicho o por voz) confirma ", doble.confirmados, 1)
 caso("2. ... guajon va a chile-guajillo (D-004)", [i.get("insumo") for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))],
      ["chile-guajillo"])
 
+# 2e. D-010 (2026-11-19): el estado al crear el lote.
+caso("2e. 'ya destilado' en la plantilla -> estado destilado",
+     P.leer("40 kilos de chile, ya destilado")["campos"].get("estado_proceso"), "destilado")
+caso("2e. 'estado fermentacion' -> fermentacion", P.leer("estado fermentacion")["campos"].get("estado_proceso"),
+     "fermentacion")
+caso("2e. CONTROL 'termino la fermentacion hoy' NO es estado",
+     "estado_proceso" in P.leer("termino la fermentacion hoy, 72 horas")["campos"], False)
+caso("2e. va normalizado aparte, no en la propuesta",
+     P.campos_para_peticion({"campos": {"estado_proceso": "terminada"}, "codigo": None}).get("estado_proceso"), "TERMINADO")
+dichos, doble, modelo = conversar(["empecemos", "1. hoy 2. 40 guajillo 3. 12 4. 8 g 20 g, ya terminado", "1. 18"])
+caso("2e. el resumen ensena el estado", "Estado: terminado" in dichos[-1], True)
+boton("ltok", doble, dichos)
+pet = (doble.lotes() or [{}])[-1]
+caso("2e. ... la propuesta NO lleva el estado (el servidor no lo sella)",
+     "estado_proceso" in (pet.get("propuesta") or {}), False)
+caso("2e. ... al confirmar, POST estado TERMINADO por id del lote nuevo",
+     [(c.get("estado"), c.get("id_lote")) for r, c in doble.llamadas if c.get("accion") == "estado"], [("TERMINADO", "id-1")])
+dichos, doble, modelo = conversar(["empecemos", "1. hoy 2. 40 guajillo 3. 12 4. 8 g 20 g", "1. 18"])
+boton("ltok", doble, dichos)
+caso("2e. CONTROL sin estado dicho: no hay POST estado",
+     [c for r, c in doble.llamadas if c.get("accion") == "estado"], [])
+
 # ─── 3. "luego": pendiente, se pregunta UNA vez ─────────────────────────────
 dichos, doble, modelo = conversar(["empezamos lote nuevo", "40 kilos de chile", "luego"])
 caso("3. 'luego': resumen con lo pendiente", ("Brix chile: pendiente" in dichos[-1], "Brix final: pendiente" in dichos[-1]),

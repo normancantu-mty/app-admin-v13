@@ -3162,6 +3162,11 @@ def _codigo_nuevo_lote():
     return lote_ciclo.codigo_nuevo(_post)
 
 
+# D-010: chat -> estado dicho en la plantilla, vivo solo mientras se propone y
+# confirma ese lote (auto=True).
+_estado_al_crear = {}
+
+
 async def _confirmar_plantilla_lote(update, chat):
     """Lote v2: el Confirmar del resumen de la plantilla. Nada salio antes."""
     codigo = await asyncio.to_thread(_codigo_nuevo_lote)
@@ -3177,7 +3182,13 @@ async def _confirmar_plantilla_lote(update, chat):
     peticion = _peticion_de_lote(campos)
     if notas:
         peticion["propuesta"]["notas"] = notas
-    await _proponer_lote(update, chat, peticion, auto=True)
+    # D-010: el estado dicho al crear se escribe al confirmar (`_confirmar_lote`).
+    if campos.get("estado_proceso"):
+        _estado_al_crear[chat] = campos["estado_proceso"]
+    try:
+        await _proponer_lote(update, chat, peticion, auto=True)
+    finally:
+        _estado_al_crear.pop(chat, None)
 
 
 async def _confirmar_etapa_lote(update, chat):
@@ -3208,6 +3219,10 @@ async def _confirmar_lote(update, chat):
     if estado != 200 or not r.get("ok"):
         await update.effective_message.reply_text(r.get("error", "No pude escribir el lote."))
         return
+    est = _estado_al_crear.pop(chat, None)
+    if est and r.get("id_lote"):
+        ok, msj = await asyncio.to_thread(lote_ciclo.cambiar_estado, _post, _persona(chat), est, None, r.get("id_lote"))
+        await update.effective_message.reply_text(msj if ok else "El lote si quedo, pero el estado no: " + msj)
 
     _memoria.pop(chat, None)
     if r.get("envasado_diario"):
@@ -3929,6 +3944,10 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # y ANTES del cazador de lote (que lee "...del L-12-10.1" como registro). Si
     # el servidor no la reconoce (p. ej. master sin Fase 7B), sigue lo de siempre.
     if not esperando and _pregunta_de_lote(texto) and await _contestar_pregunta(update, chat, texto, "produccion"):
+        return
+    # D-010 (2026-11-19): "lote 241 destilado", "marca el 240 como terminado".
+    # Antes que las etapas: "lote 241 destilado" no es registrar garrafas.
+    if not esperando and not lote_plantilla.activa(chat) and await lote_ciclo.atender_estado(update, chat, texto):
         return
     if not esperando and await lote_ciclo.atender(update, chat, texto, _confirmar_etapa_lote, post=_post):
         return
@@ -6486,6 +6505,11 @@ async def _boton_de_lote_v2(update, chat, partes, accion):
         await lote_ciclo.abrir_etapa(update, chat, "aditivo_2", arg)
     elif accion == "ltdes":
         await lote_ciclo.abrir_etapa(update, chat, "destilacion", arg)
+    elif accion == "ltest":
+        # D-010: "Si, cambiar" el estado del lote. El servidor exige el permiso.
+        await lote_ciclo.boton_estado(update, chat, _post, ":".join(partes[1:]), _persona(chat))
+    elif accion == "ltestno":
+        await update.effective_message.reply_text("Va, no cambie el estado.")
     elif accion == "ltmu":
         # Auditoria 2026-11-03 (hallazgo 6): este boton escribe (lote_etapas) y
         # no trae borrador, asi que la guardia de boton ajeno no lo veia. Solo

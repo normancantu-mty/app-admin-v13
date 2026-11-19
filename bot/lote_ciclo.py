@@ -861,6 +861,108 @@ def _solo_relleno(texto):
     return not re.search(r"\d", texto) and all(w in relleno for w in re.findall(r"[a-z]+", _plano(texto)))
 
 
+# ── D-010: el estado del lote por Telegram ──────────────────────────────────
+# "lote 241 destilado", "marca el 240 como terminado", "pon el lote 136 en
+# fermentacion". El lote se busca por nombre O alias (lo resuelve el servidor,
+# D-009). Nada se escribe sin el clic de "Si, cambiar" (regla 1 del bot).
+INICIAL_ESTADO = {"FERMENTACION": "F", "DESTILADO": "D", "TERMINADO": "T"}
+ESTADO_DE_INICIAL = {v: k for k, v in INICIAL_ESTADO.items()}
+DICHO_ESTADO = {"FERMENTACION": "en fermentacion", "DESTILADO": "destilado", "TERMINADO": "terminado"}
+_PALABRA_ESTADO = re.compile(r"\b(fermentacion|fermentando|destilad[oa]s?|terminad[oa]s?)\b")
+_VERBO_ESTADO = re.compile(r"\b(marca\w*|pon|ponle|ponlo|ponla|pasa\w*|cambia\w*|actualiza\w*|estado|como)\b")
+_NUMERO_SUELTO = re.compile(r"\b(?:el|al|del|lote)\s+#?(\d{1,5})\b(?![.,]\d)")
+# Lo que puede acompanar a la forma corta sin verbo ("el lote 241 ya esta
+# destilado"). "quedo" NO: "ya quedo destilado el L-.." sigue siendo la etapa.
+_RELLENO_ESTADO = {"el", "la", "lote", "ya", "esta", "en", "de", "del", "al", "a", "como", "estado", "es", "por", "favor",
+                   "oye", "ok", "y", "lo", "le", "#", "no", "num", "numero"}
+
+
+def estado_dicho(texto):
+    """**Pura.** -> (ESTADO, codigo) si el mensaje pide cambiar el estado de un
+    lote; None si no. Una pregunta, un envasado o un mensaje con datos de etapa
+    (garrafas, litros, kg, %) NO es cambio de estado."""
+    t = sin_muletillas(texto)
+    e = cfg().get("etapas") or {}
+    if (e.get("datos_de_etapa") and re.search(e["datos_de_etapa"], t)) or es_envasado(t):
+        return None
+    if any(re.search(p, t) for p in (e.get("no_abren_etapa") or [])):
+        return None
+    palabras = _PALABRA_ESTADO.findall(t)
+    if len(set(lote_plantilla.estado_normalizado(p) for p in palabras)) != 1:
+        return None
+    estado = lote_plantilla.estado_normalizado(palabras[0])
+    m = re.search(lote_plantilla.PATRON_CODIGO, t)
+    codigo = lote_plantilla.codigo_de_coincidencia(m) if m else None
+    con_verbo = bool(_VERBO_ESTADO.search(t))
+    if not codigo and con_verbo:
+        n = _NUMERO_SUELTO.search(t)
+        if n:
+            codigo, m = n.group(1), n
+    if not codigo:
+        return None
+    if con_verbo:
+        return estado, codigo
+    resto = (t[:m.start()] + " " + t[m.end():]) if m else t
+    resto = _PALABRA_ESTADO.sub(" ", resto)
+    sobra = [w for w in re.findall(r"[a-z#]+", resto) if w not in _RELLENO_ESTADO]
+    return (estado, codigo) if not sobra else None
+
+
+def teclado_estado(estado, codigo):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("Si, cambiar", callback_data="ltest:%s:%s" % (INICIAL_ESTADO[estado], codigo)),
+        InlineKeyboardButton("No", callback_data="ltestno"),
+    ]])
+
+
+def pregunta_estado(estado, codigo):
+    return "Lote %s: lo marco como %s (estado: %s). Lo cambio?" % (codigo, DICHO_ESTADO[estado], estado)
+
+
+async def atender_estado(update, chat, texto):
+    """D-010. True si el mensaje era un cambio de estado (y se pregunto)."""
+    if sesion(chat) is not None:
+        return False  # una etapa a medias manda sobre esto
+    pedido = estado_dicho(texto)
+    if not pedido:
+        return False
+    estado, codigo = pedido
+    await update.effective_message.reply_text(pregunta_estado(estado, codigo),
+                                              reply_markup=teclado_estado(estado, codigo))
+    return True
+
+
+def cambiar_estado(post, telegram_id, estado, lote=None, id_lote=None):
+    """POST de la accion `estado`. -> (ok, mensaje). No lanza."""
+    cuerpo = {"accion": "estado", "telegram_id": int(telegram_id), "estado": estado}
+    if id_lote:
+        cuerpo["id_lote"] = id_lote
+    if lote:
+        cuerpo["lote"] = str(lote)
+    try:
+        st, r = post(RUTA_CICLO, cuerpo)
+    except Exception as e:
+        log.warning("ciclo: no pude cambiar el estado (%s): %s", type(e).__name__, e)
+        return False, "No pude cambiar el estado del lote (sin conexion con el ERP)."
+    r = r if isinstance(r, dict) else {}
+    if st == 200 and r.get("ok"):
+        return True, r.get("mensaje") or "Listo."
+    return False, r.get("error") or "No pude cambiar el estado del lote."
+
+
+async def boton_estado(update, chat, post, arg, telegram_id):
+    """El clic de "Si, cambiar": arg = 'D:241'."""
+    inicial, _, codigo = str(arg or "").partition(":")
+    estado = ESTADO_DE_INICIAL.get(inicial)
+    if not estado or not codigo:
+        await update.effective_message.reply_text("Ese boton ya no sirve. Dimelo otra vez.")
+        return False
+    ok, mensaje = await asyncio.to_thread(cambiar_estado, post, telegram_id, estado, codigo)
+    await update.effective_message.reply_text(mensaje)
+    return ok
+
+
 async def atender(update, chat, texto, confirmar=None, post=None):
     """El texto de una etapa en captura. True si lo atendio.
     Ronda 5: la temperatura dicha NO se guarda como temperatura (sale de

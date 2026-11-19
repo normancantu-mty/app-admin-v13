@@ -285,8 +285,9 @@ export async function POST(request: Request) {
     if (accion === 'estado') {
       const telegramId = Number(cuerpo.telegram_id)
       const dicho = String(cuerpo.lote ?? '').trim()
+      const idPedido = String(cuerpo.id_lote ?? '').trim()
       const estado = String(cuerpo.estado ?? '').trim().toUpperCase()
-      if (!Number.isSafeInteger(telegramId) || dicho === '' || !(ESTADOS_PROCESO as readonly string[]).includes(estado)) {
+      if (!Number.isSafeInteger(telegramId) || (dicho === '' && idPedido === '') || !(ESTADOS_PROCESO as readonly string[]).includes(estado)) {
         return NextResponse.json(
           { error: 'telegram_id, lote y estado (FERMENTACION, DESTILADO o TERMINADO) validos.' },
           { status: 400 }
@@ -313,11 +314,12 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'No pude leer los lotes.' }, { status: 500 })
       }
       const porLote = aliasPorLote((alias.data ?? []) as FilaAlias[])
+      // Por id (el lote que el bot acaba de crear) o por nombre/alias (D-009).
       const hallados = ((todos.data ?? []) as { id: string; codigo_lote: string }[]).filter((l) =>
-        nombreDelLote(dicho, { codigo_lote: l.codigo_lote, alias: porLote.get(l.id) ?? [] })
+        idPedido !== '' ? l.id === idPedido : nombreDelLote(dicho, { codigo_lote: l.codigo_lote, alias: porLote.get(l.id) ?? [] })
       )
       if (hallados.length === 0) {
-        return NextResponse.json({ error: `No encontre el lote ${dicho} (ni por nombre ni por alias).` }, { status: 404 })
+        return NextResponse.json({ error: `No encontre el lote ${dicho || idPedido} (ni por nombre ni por alias).` }, { status: 404 })
       }
       if (hallados.length > 1) {
         return NextResponse.json({ error: `Hay mas de un lote que se llama ${dicho}. Corrigelo en la web.` }, { status: 409 })

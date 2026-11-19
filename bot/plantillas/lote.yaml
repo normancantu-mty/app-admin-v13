@@ -180,6 +180,19 @@ campos:
     tipo: fecha
     patrones:
       - '(?:\b(?:termin\w*|acab\w*|paro|finaliz\w*)\s+(?:de\s+)?(?:la\s+)?fermenta\w*|\bfin\s+de\s+(?:la\s+)?fermenta\w*|\bfermento\s+hasta)[^.,;0-9]{0,15}?((?:el\s+)?\d{1,2}\s+de\s+[a-z]+|\d{1,2}/\d{1,2}(?:/\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|antier|antes\s+de\s+ayer|ayer|hoy|hace\s+\d{1,2}\s+dias?)'
+  # D-010 (Cris, 2026-11-19): el estado del lote al crearlo. Opcional: sin
+  # decirlo, la base pone FERMENTACION (default). "ya destilado", "terminado",
+  # "estado fermentacion". "fermentacion" suelta NO cuenta (sale en "termino la
+  # fermentacion", que es otra cosa). Se escribe en `estado_proceso` DESPUES de
+  # crear el lote (accion `estado` de /api/bot/lote/ciclo).
+  - nombre: estado_proceso
+    etiqueta: 'Estado'
+    pregunta: '(opcional) En que estado esta: fermentacion, destilado o terminado?'
+    obligatorio: false
+    tipo: texto
+    patrones:
+      - '\b(destilad[oa]|terminad[oa])\b'
+      - '\b(?:estado|esta|sigue)\s*:?\s*(?:en\s+)?(fermentacion|fermentando)\b'
   - nombre: horas_fermentacion
     etiqueta: 'Horas de fermentacion'
     pregunta: '(opcional) Cuantas horas fermento?'

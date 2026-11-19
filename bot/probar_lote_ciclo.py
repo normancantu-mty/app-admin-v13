@@ -1122,6 +1122,70 @@ caso("20. latido: lote DESTILADO -> nada enviado", tipos(latir(base20, bot20, _t
 base20.lotes["lote-t"]["estado_proceso"] = "FERMENTACION"
 caso("20. latido CONTROL: FERMENTACION incompleto -> destilar", tipos(latir(base20, bot20, _t20)), ["destilar"])
 
+# ─── 21. D-010: el estado del lote por Telegram ─────────────────────────────
+for _t, _esp in [
+    ("lote 241 destilado", ("DESTILADO", "241")),
+    ("Lote 241 Destilado.", ("DESTILADO", "241")),
+    ("destilado el lote 241", ("DESTILADO", "241")),
+    ("marca el 240 como terminado", ("TERMINADO", "240")),
+    ("el lote 241 ya esta terminado", ("TERMINADO", "241")),
+    ("pon el lote 136 en fermentacion", ("FERMENTACION", "136")),
+    ("cambia el 136 a fermentando", ("FERMENTACION", "136")),
+    ("marca el lote L-19-10.1 como destilada", ("DESTILADO", "L-19-10.1")),
+]:
+    caso("21. estado_dicho(%r)" % _t, C.estado_dicho(_t), _esp)
+for _t in ["ya quedo destilado el L-12-10.1", "destilamos el lote 241", "en que estado va el lote 241?",
+           "lote 241 destilado, 3 garrafas 20 L", "termino la fermentacion del lote 241",
+           "lote 241 terminado y lote 240 destilado", "terminado", "marca como terminado"]:
+    caso("21. CONTROL no es cambio de estado: %r" % _t, C.estado_dicho(_t), None)
+caso("21. CONTROL la etapa sigue: 'ya quedo destilado el L-12-10.1' abre destilacion",
+     C._disparo("ya quedo destilado el L-12-10.1"), ("destilacion", "L-12-10.1"))
+
+_estados21 = []
+
+
+def _post21(ruta, cuerpo):
+    if ruta == C.RUTA_CICLO and cuerpo.get("accion") == "estado":
+        _estados21.append(dict(cuerpo))
+        return 200, {"ok": True, "codigo_lote": cuerpo.get("lote"), "estado_proceso": cuerpo["estado"],
+                     "mensaje": "Listo: el lote %s quedo en %s." % (cuerpo.get("lote"), cuerpo["estado"])}
+    return base(ruta, cuerpo)
+
+
+_post21_antes = B._post_de_verdad
+B._post_de_verdad = _post21
+C.olvidar(CHAT)
+u = Update(CHAT)
+texto(u, "lote 241 destilado")
+caso("21. 'lote 241 destilado': pregunta con Si/No (nada escrito aun)",
+     (u.message.dichos[-1], u.message.teclados[-1], len(_estados21)),
+     ("Lote 241: lo marco como destilado (estado: DESTILADO). Lo cambio?", ["ltest:D:241", "ltestno"], 0))
+boton(u, "ltestno", "")
+caso("21. 'No': no escribe", (len(_estados21), u.message.dichos[-1]), (0, "Va, no cambie el estado."))
+boton(u, "ltest", "D:241")
+caso("21. 'Si, cambiar': POST estado por NOMBRE (el servidor resuelve alias)",
+     [(c["estado"], c["lote"], c["telegram_id"]) for c in _estados21], [("DESTILADO", "241", CHAT)])
+caso("21. ... y dice lo que contesto el servidor", u.message.dichos[-1], "Listo: el lote 241 quedo en DESTILADO.")
+u = Update(CHAT)
+texto(u, "marca el 240 como terminado")
+caso("21. 'marca el 240 como terminado' -> boton ltest:T:240", u.message.teclados[-1], ["ltest:T:240", "ltestno"])
+caso("21. callback_data cabe en 64 bytes con un codigo largo",
+     len(("ltest:F:" + "L-20261111-a").encode()) <= 64, True)
+
+
+def _post21_falla(ruta, cuerpo):
+    if cuerpo.get("accion") == "estado":
+        return 409, {"error": "La base todavia no tiene el estado del lote. No cambie nada; intentalo en un rato."}
+    return base(ruta, cuerpo)
+
+
+B._post_de_verdad = _post21_falla
+u = Update(CHAT)
+boton(u, "ltest", "T:240")
+caso("21. columna aun inexistente (409): lo dice y no truena", u.message.dichos[-1],
+     "La base todavia no tiene el estado del lote. No cambie nada; intentalo en un rato.")
+B._post_de_verdad = _post21_antes
+
 fallos = [(n_, o, e) for n_, o, e in casos if o != e]
 for n_, o, e in casos:
     print(("ok   " if o == e else "FALLA") + "  " + n_ + ("" if o == e else "  -> obtuve %r, esperaba %r" % (o, e)))

@@ -314,6 +314,11 @@ def leer(texto, preguntadas=()):
             idx = int(piezas[i]) - 1
             if 0 <= idx < len(items):
                 campos.update(_valores_de_item(items[idx], piezas[i + 1].strip(" ,;."), sin_unidad))
+        # D-010: el estado ("ya terminado") no tiene numero de pregunta: se
+        # busca en todo el mensaje.
+        est = estado_en(t)
+        if campos and est and "estado_proceso" not in campos:
+            campos["estado_proceso"] = est
         if campos:
             return {"campos": campos, "notas": notas, "omitir": False, "consumio": True,
                     "resto": "", "dinero": False, "sin_unidad": sin_unidad}
@@ -778,12 +783,40 @@ def _fecha_inicio_distinta(s, hoy=None):
     return isinstance(f, dt.date) and f != (hoy or hoy_local())
 
 
+def estado_en(t):
+    """D-010. La palabra de estado del texto plano segun los patrones del campo
+    `estado_proceso` del YAML, o None. **Pura.**"""
+    for patron in (_campo("estado_proceso") or {}).get("patrones") or []:
+        m = re.search(patron, t)
+        if m:
+            return m.group(1)
+    return None
+
+
+def estado_normalizado(palabra):
+    """D-010. 'destilado' / 'terminada' / 'fermentando' -> DESTILADO / TERMINADO /
+    FERMENTACION; otra cosa -> None. **Pura.**"""
+    p = _plano(str(palabra or "")).strip()
+    if p.startswith("ferment"):
+        return "FERMENTACION"
+    if p.startswith("destil"):
+        return "DESTILADO"
+    if p.startswith("termin"):
+        return "TERMINADO"
+    return None
+
+
 def campos_para_peticion(s, hoy=None):
     """Los campos tal como los entiende `_peticion_de_lote` del bot. El aditivo
     1 sale como renglon de insumo con su SKU OPACO (YAML `aditivo_1_sku`)."""
     hoy = hoy or hoy_local()
     c = {k: v for k, v in s["campos"].items()
          if k in ("kg_chile", "brix_chile", "brix_final", "dias_fermentacion", "horas_fermentacion", "tandas")}
+    # D-010: el estado NO va en la propuesta (el servidor no lo sella); el bot
+    # lo escribe despues de crear el lote. Aqui ya normalizado (FERMENTACION...).
+    est = estado_normalizado(s["campos"].get("estado_proceso"))
+    if est:
+        c["estado_proceso"] = est
     # 2026-11-10: la fecha de inicio y el fin de la fermentacion. El fin viaja
     # como dias desde el inicio: `lib/bot-lotes.ts` saca de ahi la fecha de fin
     # (tope 31). Lo que no cuadra no se manda (ya se aviso en el resumen).
