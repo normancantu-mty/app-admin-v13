@@ -62,7 +62,7 @@ preguntas:
     campos: [kg_chile, tipo_chile]
   - etiqueta: 'Brix chile'
     campos: [brix_chile]
-  - etiqueta: 'Aditivo 1 y levadura y enzimas, con su unidad (ej. "8 kg y 20 g")'
+  - etiqueta: 'Aditivo 1 y levadura y enzimas (ej. "8 g de aditivo y 20 g de levadura")'
     campos: [aditivo_1, g_levadura]
 
 # La segunda tanda: se pregunta despues del formulario, con lo que falte. Los
@@ -125,16 +125,21 @@ campos:
   # en GRAMOS (el catalogo). "8000 g" pasa directo; "8 kg" se pasa a 8000 g; un
   # numero sin unidad se pregunta (`pedir_unidad`). La receta es ~8 kg (8000 g)
   # por lote; el rango solo AVISA (atrapa un "8 gramos" que eran kilos).
+  # D-010 (Cris, 2026-11-19): se dicta en gramos pero el ERP lo registra en
+  # KILOGRAMOS con el MISMO numero (8 g -> 8 kg, sin x/÷1000). `numero_tal_cual`:
+  # el numero dicho se guarda tal cual, diga la unidad que diga, y va al
+  # servidor SIN unidad (asi el servidor tampoco convierte). Ya no se pregunta
+  # "gramos o kilos". Receta ~8 por lote; el rango solo AVISA.
   - nombre: aditivo_1
     etiqueta: 'Aditivo 1'
-    pregunta: 'Cuanto aditivo 1, con su unidad? (ej. "8 kg" u "8000 g")'
+    pregunta: 'Cuanto aditivo 1? (ej. "8 g": se anota como 8 kilos en el ERP)'
     obligatorio: true
     tipo: numero
-    unidad: g
-    pedir_unidad: true
+    unidad: kg
+    numero_tal_cual: true
     clave: 'aditivo(?:\s*1\b|\s+uno\b)?'
     insumo: aditivo_1_sku
-    rango: [500, 50000]
+    rango: [0.5, 50]
     patrones:
       - '(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?|g|gr|grs|gramos?)\s+(?:de\s+)?aditivo(?:\s*1\b|\s+uno\b)?'
       - 'aditivo(?:\s*1\b|\s+uno\b)?\s*(?:de|:)?\s*(\d+(?:[.,]\d+)?)\s*(?:kilos?|kgs?|kilogramos?|g|gr|grs|gramos?)\b'
@@ -363,7 +368,7 @@ etapas:
 
 textos:
   # 2026-11-13 (Cris): el aditivo 2 es un insumo del inventario, no una etapa del lote.
-  aditivo_2_no_es_etapa: 'El aditivo 2 ya no es una etapa del lote: es un insumo como cualquier otro. Dictamelo como insumo, por ejemplo: "agregale 1500 g de aditivo 2 al lote {codigo}". Con este boton no anote nada.'
+  aditivo_2_no_es_etapa: 'El aditivo 2 ya no es una etapa del lote: es un insumo como cualquier otro. Dictamelo como insumo, por ejemplo: "agregale 8 g de aditivo 2 al lote {codigo}" (se anota 8 kg en el ERP). Con este boton no anote nada.'
   aditivo_2_pregunta: 'Lote {codigo} - aditivo 2. Cuanto aditivo 2, con su unidad? (ej. "1.5 kg" o "1500 g")'
   aditivo_2_unidad: 'Lote {codigo} - aditivo 2: {cantidad} gramos o {cantidad} kilos? Contesta "gramos" o "kilos".'
   fin_fermentacion_pregunta: 'Lote {codigo} - fin de fermentacion. Cuando termino (hoy, ayer, hace 2 dias) y, si las llevaron, cuantas horas fermento?'

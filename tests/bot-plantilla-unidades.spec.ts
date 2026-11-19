@@ -19,15 +19,19 @@ import { convertirMasa, unidadCorta } from '../lib/bot-compra'
  * en el erp ... levadura y enzimas que igual sea en gramos"): la migracion
  * 20261110*_unidades_lotes_gramos deja aditivos y levadura en GRAMOS (receta
  * aditivo 8 -> 8000 g, levadura 0.02 kg -> 20 g). Esto es el catalogo DESPUES.
+ *
+ * D-010 (Cris, 2026-11-19): aditivo 1 y aditivo 2 en KILOGRAMOS en el ERP con
+ * el MISMO numero que se dicta ("8 g" -> 8 kg). El bot manda el aditivo sin
+ * unidad (numero_tal_cual), asi que el servidor no convierte.
  */
 const CATALOGO_REAL: Record<string, string> = {
-  'mosto-1': 'GRAMOS',
-  'aditivo-2': 'GRAMOS',
+  'mosto-1': 'KILOGRAMOS',
+  'aditivo-2': 'KILOGRAMOS',
   'chile-guajillo': 'KILOGRAMOS',
   'chile-guajon': 'KILOGRAMOS',
   'levadura-enzimas': 'GRAMOS'
 }
-const RECETA_REAL: Record<string, number> = { 'mosto-1': 8000, 'chile-guajillo': 12, 'levadura-enzimas': 20 }
+const RECETA_REAL: Record<string, number> = { 'mosto-1': 8, 'chile-guajillo': 12, 'levadura-enzimas': 20 }
 
 const YAML = readFileSync(join(__dirname, '..', 'bot', 'plantillas', 'lote.yaml'), 'utf8')
 

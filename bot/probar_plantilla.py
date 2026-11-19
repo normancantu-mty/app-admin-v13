@@ -190,10 +190,10 @@ def seguir(texto, doble, dichos, modelo=None):
 
 def aditivo(pet):
     for i in pet.get("insumos") or []:
-        # El SKU del YAML (mosto-1 en produccion), en GRAMOS (la unidad del
-        # catalogo; Norman 2026-11-10: "mejor si los registre como gramos en el erp").
+        # El SKU del YAML (mosto-1 en produccion). D-010 (2026-11-19): el numero
+        # dicho TAL CUAL y SIN unidad (el servidor no convierte; el ERP lo lleva en kg).
         if i.get("insumo") == B.lote_plantilla.plantilla().get("aditivo_1_sku"):
-            assert i.get("unidad") == "g", i
+            assert "unidad" not in i, i
             return i.get("cantidad")
     return None
 
@@ -215,14 +215,14 @@ caso("1. la plantilla va encabezada por el codigo L-DD-MM.N de hoy", dichos[0].s
 caso("1. ... con las 4 preguntas nuevas, numeradas",
      [l for l in dichos[0].split("\n") if re.match(r"^\d\. ", l)],
      ["1. Fecha de inicio (si no me dices, es hoy)", "2. Kilos de chile y tipo de chile", "3. Brix chile",
-      '4. Aditivo 1 y levadura y enzimas, con su unidad (ej. "8 kg y 20 g")'])
+      '4. Aditivo 1 y levadura y enzimas (ej. "8 g de aditivo y 20 g de levadura")'])
 caso("1. ... sin dias de fermentacion ni tandas",
      ("dias" in dichos[0].lower(), "tanda" in dichos[0].lower()), (False, False))
 caso("1. luego pregunta SOLO lo que falta (<=4)", (dichos[1].startswith("Me falta:"), numeradas(dichos[1])), (True, 4))
 res = dichos[-1]
 caso("1. al final: el resumen con TODO y la fecha de hoy",
      (HOY_COD in res, ("Fecha de inicio: %s (hoy)" % HOY_TXT) in res, "Kilos de chile: 40 kg" in res,
-      "Tipo de chile: guajillo" in res, "Brix chile: 12" in res, "Aditivo 1: 3000 g (3 kg)" in res,
+      "Tipo de chile: guajillo" in res, "Brix chile: 12" in res, "Aditivo 1: 3 kg" in res,
       "Levadura y enzimas: 20 g" in res, "Brix final: 18" in res), (True,) * 8)
 caso("1. ... y NADA se propuso antes de Confirmar", len(doble.lotes()), 0)
 caso("1. ... ninguna respuesta con mas de 4 numeradas", max(numeradas(d) for d in dichos) <= 4, True)
@@ -230,7 +230,7 @@ boton("ltok", doble, dichos)
 lotes = doble.lotes()
 pet = lotes[-1] if lotes else {}
 caso("1. Confirmar: UNA propuesta", len(lotes), 1)
-caso("1. ... kilos de chile y aditivo 1 por SKU opaco ('3 kilos' -> 3000 g)", (kilos(pet), aditivo(pet)), (40, 3000))
+caso("1. ... kilos de chile y aditivo 1 por SKU opaco ('3 kilos' -> 3, tal cual, D-010)", (kilos(pet), aditivo(pet)), (40, 3))
 caso("1. ... levadura y enzimas por su SKU, en gramos (Norman 2026-11-10)", levadura(pet), (20, "g"))
 caso("1. ... Brix chile y final",((pet.get("propuesta") or {}).get("brix_chile"), (pet.get("propuesta") or {}).get("brix_final")),
      (12, 18))
@@ -285,7 +285,7 @@ pet = (doble.lotes() or [{}])[-1]
 caso("1d. ... un solo renglon de chile-guajillo con el total (D-004)",
      sorted((i.get("insumo"), i.get("cantidad")) for i in pet.get("insumos") or [] if "chile" in str(i.get("insumo"))),
      [("chile-guajillo", 40)])
-caso("1d. ... y el aditivo 1 sigue", aditivo(pet), 3000)
+caso("1d. ... y el aditivo 1 sigue", aditivo(pet), 3)
 
 # ─── 2. numeradas en un mensaje; "confirmar" dicho ──────────────────────────
 # 2026-11-10: 1 fecha, 2 chile, 3 Brix chile, 4 aditivo 1 y levadura (con su
@@ -295,7 +295,7 @@ dichos, doble, modelo = conversar(["dame la plantilla del lote", "1. hoy 2. 35 g
                                    "confirmar"])
 pet = (doble.lotes() or [{}])[-1]
 caso("2. numeradas: todo de una", (kilos(pet), aditivo(pet), levadura(pet), pet.get("propuesta", {}).get("brix_chile"),
-                                   pet.get("propuesta", {}).get("brix_final")), (35, 8000, (20, "g"), 11.5, 17))
+                                   pet.get("propuesta", {}).get("brix_final")), (35, 8, (20, "g"), 11.5, 17))
 caso("2. ... la segunda tanda: Brix final + el fin opcional, numeradas",
      [l for l in dichos[-3].split("\n") if re.match(r"^\d\. ", l)],
      ["1. Cuanto Brix final (despues del aditivo 1)?",
@@ -330,22 +330,28 @@ caso("2a. ... y se confirma (sin reensenar por el codigo de hoy)", doble.confirm
 P_ = B.lote_plantilla
 C_AD1 = P_._campo("aditivo_1")
 C_LEV = P_._campo("g_levadura")
-caso("2b. el YAML: aditivo 1 y levadura en gramos y con pedir_unidad",
-     (C_AD1["unidad"], C_AD1.get("pedir_unidad"), C_LEV["unidad"], C_LEV.get("pedir_unidad")), ("g", True, "g", True))
-caso("2b. el rango acepta la receta de 8 kg (8000 g) y la de 20 g (solo avisa)",
-     (C_AD1["rango"][0] <= 8000 <= C_AD1["rango"][1], C_LEV["rango"][0] <= 20 <= C_LEV["rango"][1]), (True, True))
-caso("2b. numeradas '4. 8 kg' -> 8000 g", P_.leer("1. hoy 2. 35 guajon 3. 11.5 4. 8 kg", FORMA)["campos"]["aditivo_1"], 8000)
+# D-010 (Cris, 2026-11-19): el ADITIVO 1 ya no convierte ni pregunta: el numero
+# dicho tal cual (8 g -> 8 kg en el ERP). La levadura sigue como estaba.
+caso("2b. el YAML: aditivo 1 en kg, numero_tal_cual, sin pedir_unidad; levadura en g con pedir_unidad",
+     (C_AD1["unidad"], C_AD1.get("numero_tal_cual"), C_AD1.get("pedir_unidad"), C_LEV["unidad"], C_LEV.get("pedir_unidad")),
+     ("kg", True, None, "g", True))
+caso("2b. el rango acepta la receta de 8 (kg) y la de 20 g (solo avisa)",
+     (C_AD1["rango"][0] <= 8 <= C_AD1["rango"][1], C_LEV["rango"][0] <= 20 <= C_LEV["rango"][1]), (True, True))
+caso("2b. numeradas '4. 8 kg' -> 8 (tal cual)", P_.leer("1. hoy 2. 35 guajon 3. 11.5 4. 8 kg", FORMA)["campos"]["aditivo_1"], 8)
+caso("2b. D-010 '8 g de aditivo' -> 8 (sin /1000)", P_.leer("8 g de aditivo")["campos"].get("aditivo_1"), 8)
+caso("2b. D-010 '8 gramos de aditivo 1' -> 8, sin preguntar unidad",
+     (P_.leer("8 gramos de aditivo 1")["campos"].get("aditivo_1"), P_.leer("8 gramos de aditivo 1")["sin_unidad"]), (8, []))
 caso("2b. numeradas '4. 800 g' -> 800 g", P_.leer("1. hoy 2. 35 guajon 3. 11.5 4. 800 g", FORMA)["campos"]["aditivo_1"], 800)
 l8 = P_.leer("1. hoy 2. 35 guajon 3. 11.5 4. 8 20", FORMA)
-caso("2b. numeradas '4. 8 20' (sin unidad): los dos se apuntan para preguntar",
+caso("2b. numeradas '4. 8 20' (sin unidad): solo la levadura se apunta para preguntar (D-010)",
      (l8["campos"].get("aditivo_1"), l8["campos"].get("g_levadura"), sorted(l8["sin_unidad"])),
-     (8, 20, ["aditivo_1", "g_levadura"]))
+     (8, 20, ["g_levadura"]))
 l8 = P_.leer("8", [["aditivo_1"]])
-caso("2b. solo '8' a la pregunta del aditivo -> se pregunta la unidad", (l8["campos"].get("aditivo_1"), l8["sin_unidad"]),
-     (8, ["aditivo_1"]))
+caso("2b. solo '8' a la pregunta del aditivo -> 8, sin preguntar unidad (D-010)",
+     (l8["campos"].get("aditivo_1"), l8["sin_unidad"]), (8, []))
 caso("2b. '800 g de aditivo' -> 800 (pasa directo)", (P_.leer("800 g de aditivo")["campos"].get("aditivo_1"),
                                                       P_.leer("800 g de aditivo")["sin_unidad"]), (800, []))
-caso("2b. '1.5 kilos de aditivo' -> 1500", P_.leer("1.5 kilos de aditivo")["campos"].get("aditivo_1"), 1500)
+caso("2b. '1.5 kilos de aditivo' -> 1.5 (tal cual, D-010)", P_.leer("1.5 kilos de aditivo")["campos"].get("aditivo_1"), 1.5)
 caso("2b. '20 gramos de levadura' -> 20; '0.02 kg de levadura' -> 20",
      (P_.leer("20 gramos de levadura")["campos"].get("g_levadura"), P_.leer("0.02 kg de levadura")["campos"].get("g_levadura")),
      (20, 20))
@@ -354,9 +360,15 @@ caso("2b. CONTROL: '40 kilos de chile' sigue en kg (40), no en gramos",
      P_.leer("40 kilos de chile")["campos"].get("kg_chile"), 40)
 caso("2b. CONTROL: un numero solo a la pregunta del chile NO pregunta unidad (es kg)",
      P_.leer("40", [["kg_chile", "tipo_chile"]])["sin_unidad"], [])
-caso("2b. peticion: el aditivo va en gramos, la unidad del campo",
-     [i for i in P_.campos_para_peticion({"campos": {"aditivo_1": 8000}, "codigo": None})["insumos"]],
-     [{"insumo": "mosto-1", "cantidad": 8000, "unidad": "g"}])
+caso("2b. peticion: el aditivo va SIN unidad (el servidor no convierte, D-010)",
+     [i for i in P_.campos_para_peticion({"campos": {"aditivo_1": 8}, "codigo": None})["insumos"]],
+     [{"insumo": "mosto-1", "cantidad": 8}])
+caso("2b. D-010 camino D81: aditivo 1/2 sin unidad; chile y levadura con la suya",
+     B._peticion_de_lote({"codigo_lote": "241", "insumos": [
+         {"insumo": "aditivo 2", "cantidad": 8, "unidad": "g"}, {"insumo": "mosto-1", "cantidad": 8, "unidad": "kg"},
+         {"insumo": "levadura", "cantidad": 20, "unidad": "g"}, {"insumo": "chile-guajillo", "cantidad": 40, "unidad": "kg"}]})["insumos"],
+     [{"insumo": "aditivo 2", "cantidad": 8}, {"insumo": "mosto-1", "cantidad": 8},
+      {"insumo": "levadura", "cantidad": 20, "unidad": "g"}, {"insumo": "chile-guajillo", "cantidad": 40, "unidad": "kg"}])
 caso("2b. leer_unidades: 'kilos' / '1. kilos 2. gramos' / 'gramos' para los dos",
      (P_.leer_unidades("kilos", ["aditivo_1"]), P_.leer_unidades("1. kilos 2. gramos", ["aditivo_1", "g_levadura"]),
       P_.leer_unidades("gramos", ["aditivo_1", "g_levadura"])),
@@ -369,21 +381,20 @@ caso("2b. leer_unidades: por nombre, y con numero manda el numero",
 
 # 2c. La conversacion: '4. 8 20' -> pregunta la unidad -> '1. kilos 2. gramos'.
 dichos, doble, modelo = conversar(["empecemos", "1. hoy 2. 40 guajillo 3. 12 4. 8 20"])
-caso("2c. '4. 8 20': pregunta gramos o kilos de los dos, antes que nada",
-     (dichos[-1].startswith("Me falta la unidad:"), "1. Aditivo 1: 8 gramos o 8 kilos?" in dichos[-1],
-      "2. Levadura y enzimas: 20 gramos o 20 kilos?" in dichos[-1]), (True, True, True))
-caso("2c. ... sin el aviso de rango del '8' (aun no se sabe la unidad)", "Ojo" in "".join(dichos), False)
-seguir("1. kilos 2. gramos", doble, dichos)
+caso("2c. '4. 8 20': pregunta gramos o kilos SOLO de la levadura (D-010: el aditivo va tal cual)",
+     (dichos[-1].startswith("Levadura y enzimas: 20 gramos o 20 kilos?"), "Aditivo 1" in dichos[-1]), (True, False))
+caso("2c. ... sin aviso de rango (8 esta en la receta)", "Ojo" in "".join(dichos), False)
+seguir("gramos", doble, dichos)
 caso("2c. ... contesta: sigue con la segunda tanda", dichos[-1].startswith("Me falta:"), True)
 seguir("1. 18", doble, dichos)
-caso("2c. ... resumen: 8000 g (8 kg) de aditivo y 20 g de levadura",
-     ("Aditivo 1: 8000 g (8 kg)" in dichos[-1], "Levadura y enzimas: 20 g" in dichos[-1]), (True, True))
+caso("2c. ... resumen: 8 kg de aditivo (el numero dicho) y 20 g de levadura",
+     ("Aditivo 1: 8 kg" in dichos[-1], "Levadura y enzimas: 20 g" in dichos[-1]), (True, True))
 boton("ltok", doble, dichos)
 pet = (doble.lotes() or [{}])[-1]
-caso("2c. ... Confirmar: 8000 g y 20 g", (aditivo(pet), levadura(pet)), (8000, (20, "g")))
-dichos, doble, modelo = conversar(["empecemos", "1. hoy 2. 40 guajillo 3. 12 4. 8 20", "gramos"])
-caso("2c. 'gramos' para los dos: 8 g -> avisa el rango (8 g de aditivo es raro), no bloquea",
-     (any("Ojo: Aditivo 1 = 8 g" in d for d in dichos), "Me falta:" in dichos[-1]), (True, True))
+caso("2c. ... Confirmar: 8 (aditivo, sin unidad) y 20 g", (aditivo(pet), levadura(pet)), (8, (20, "g")))
+dichos, doble, modelo = conversar(["empecemos", "1. hoy 2. 40 guajillo 3. 12 4. 8 g 20", "gramos"])
+caso("2c. D-010 '8 g' de aditivo: sin aviso de rango (es la receta: 8 kg en el ERP), sigue",
+     (any("Ojo: Aditivo 1" in d for d in dichos), "Me falta:" in dichos[-1]), (False, True))
 dichos, doble, modelo = conversar(["empecemos", "1. hoy 2. 40 guajillo 3. 12 4. 8 kg 20", "gramos"])
 caso("2c. '4. 8 kg 20': solo pregunta la de la levadura",
      ("Levadura y enzimas: 20 gramos o 20 kilos?" in dichos[-2], "Aditivo 1" in dichos[-2], dichos[-1].startswith("Me falta:")),
@@ -435,7 +446,7 @@ caso("4. ... y NO bloquea: propone con 1500", kilos((doble.lotes() or [{}])[-1])
 dichos, doble, modelo = conversar(["empecemos", "40 kilos de chile, brix chile 12, 3 kilos de aditivo, 20 gramos de levadura, brix final 18"])
 boton("ltcor", doble, dichos)
 caso("5. Corregir: dice que hay y pide el numero (con la segunda tanda)",
-     ("Que corrijo?" in dichos[-1], "3. Brix chile: 12" in dichos[-1], "4. Aditivo 1" in dichos[-1] and "3000 g (3 kg)" in dichos[-1],
+     ("Que corrijo?" in dichos[-1], "3. Brix chile: 12" in dichos[-1], "4. Aditivo 1" in dichos[-1] and "3 kg" in dichos[-1],
       "5. Brix final: 18" in dichos[-1], "6. (opcional)" in dichos[-1]), (True,) * 5)
 seguir("3. 13", doble, dichos)
 caso("5. ... vuelve a ensenar el resumen corregido", ("Brix chile: 13" in dichos[-1], "Nada se guarda" in dichos[-1]), (True, True))

@@ -104,7 +104,11 @@ def convertir(valor, dicha, unidad):
 
 
 def a_unidad_del_campo(c, valor, tramo):
-    """**Pura.** `valor` dicho en `tramo` -> en la `unidad` del campo `c`."""
+    """**Pura.** `valor` dicho en `tramo` -> en la `unidad` del campo `c`.
+    D-010: un campo `numero_tal_cual` (aditivo 1) guarda el numero dicho sin
+    convertir, se haya dicho en g o en kg (8 g -> 8 kg en el ERP)."""
+    if (c or {}).get("numero_tal_cual"):
+        return valor
     if not isinstance(valor, (int, float)) or (c or {}).get("unidad") not in ("g", "kg"):
         return valor
     return convertir(valor, unidad_dicha(tramo), c["unidad"])
@@ -113,7 +117,7 @@ def a_unidad_del_campo(c, valor, tramo):
 def _sin_unidad(c, valor, tramo):
     """2026-11-10 (Norman: "Preguntar g o kg"): un campo con `pedir_unidad`
     dicho como numero pelon ("8") no se adivina: se pregunta."""
-    return bool((c or {}).get("pedir_unidad")) and isinstance(valor, (int, float)) and unidad_dicha(tramo) is None
+    return bool((c or {}).get("pedir_unidad")) and not (c or {}).get("numero_tal_cual") and isinstance(valor, (int, float)) and unidad_dicha(tramo) is None
 
 
 # 2026-11-10: las fechas del lote (inicio y fin de la fermentacion). La fecha
@@ -801,10 +805,9 @@ def campos_para_peticion(s, hoy=None):
         c.pop("kg_chile", None)  # va como renglon(es) con su SKU, no suelto
     ad1 = s["campos"].get("aditivo_1")
     if ad1 not in (None, "", 0):
-        # Va en la unidad del campo (YAML, la del catalogo: kg desde el
-        # 2026-11-10). El servidor la pasa a la del catalogo; si coinciden, igual.
-        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "mosto-1", "cantidad": ad1,
-                        "unidad": (_campo("aditivo_1") or {}).get("unidad") or "kg"})
+        # D-010 (2026-11-19): el numero dicho TAL CUAL y SIN unidad: sin unidad
+        # el servidor no convierte (8 g dichos -> 8 en el ERP, que lo lleva en kg).
+        insumos.append({"insumo": plantilla().get("aditivo_1_sku") or "mosto-1", "cantidad": ad1})
     lev = s["campos"].get("g_levadura")
     if lev not in (None, "", 0):
         # D-004 (2026-11-10): levadura y enzimas, en gramos (Norman), con su unidad.
@@ -959,7 +962,8 @@ async def atender(update, chat, texto, proponer_lote=None, peticion_de=None, des
             resueltos = {}
             for n, (numero, dicha) in unidades.items():
                 valor = numero if numero is not None else s["sin_unidad"][n]
-                resueltos[n] = convertir(valor, dicha, (_campo(n) or {}).get("unidad"))
+                resueltos[n] = (valor if (_campo(n) or {}).get("numero_tal_cual")
+                                else convertir(valor, dicha, (_campo(n) or {}).get("unidad")))
                 s["campos"][n] = resueltos[n]
                 s["sin_unidad"].pop(n, None)
             return await _seguir(update, s, avisos_de_rango(resueltos))

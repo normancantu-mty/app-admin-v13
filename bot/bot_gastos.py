@@ -3001,6 +3001,14 @@ async def _confirmar_venta(update, chat):
 
 
 
+_ADITIVO = re.compile(r"\b(aditivo|mosto-1)\b", re.I)
+
+
+def es_aditivo(nombre):
+    """D-010: aditivo 1 / aditivo 2 (por nombre o SKU: 'aditivo 2', 'aditivo-2', 'mosto-1')."""
+    return bool(_ADITIVO.search(str(nombre or "")))
+
+
 def _peticion_de_lote(campos):
     """Traduce los campos del enrutador a lo que espera `/api/bot/lote/proponer`.
 
@@ -3025,8 +3033,10 @@ def _peticion_de_lote(campos):
             if nombre:
                 linea = {"insumo": nombre, "cantidad": c.get("cantidad")}
                 # Fase 7A: la plantilla dice en que unidad se dicto (kg); el
-                # servidor lo pasa a la del catalogo (el aditivo va en GRAMOS).
-                if c.get("unidad") in ("kg", "g"):
+                # servidor lo pasa a la del catalogo.
+                # D-010 (Cris, 2026-11-19): los ADITIVOS 1 y 2 van SIN unidad:
+                # el numero dicho tal cual (8 g -> 8 kg en el ERP), sin x/÷1000.
+                if c.get("unidad") in ("kg", "g") and not es_aditivo(nombre):
                     linea["unidad"] = c.get("unidad")
                 insumos.append(linea)
 
