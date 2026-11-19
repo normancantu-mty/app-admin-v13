@@ -156,6 +156,40 @@ def _reintento(lote, tipo):
     return {"intentos": int(r.get("intentos") or 1)}
 
 
+# D-010 (Cris, 2026-11-19): un lote DESTILADO o TERMINADO, o que ya tiene
+# Aditivo 1, Aditivo 2 y Levadura y enzimas (cantidad > 0), no recibe alertas.
+# La condicion de los insumos basta sola: vale aunque `estado_proceso` aun no
+# exista en la base (llega None) o diga FERMENTACION.
+ESTADOS_SIN_ALERTAS = ("DESTILADO", "TERMINADO")
+
+
+def skus_completos():
+    """Los tres SKU que, juntos, dejan un lote sin alertas (del YAML)."""
+    c = cfg()
+    return (c.get("aditivo_1_sku") or "mosto-1", c.get("aditivo_2_sku") or "aditivo-2",
+            c.get("levadura_sku") or "levadura-enzimas")
+
+
+def tiene_lo_completo(lote):
+    """**Pura.** ¿Ya entraron los tres insumos con cantidad > 0?"""
+    ins = lote.get("insumos") or {}
+    if not isinstance(ins, dict):
+        return False
+    for sku in skus_completos():
+        try:
+            if float(ins.get(sku) or 0) <= 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def sin_alertas(lote):
+    """**Pura.** True si a este lote no se le manda ningun recordatorio."""
+    estado = str(lote.get("estado_proceso") or "").strip().upper()
+    return estado in ESTADOS_SIN_ALERTAS or tiene_lo_completo(lote)
+
+
 def recordatorios_debidos(lotes, ahora, ciclo=None):
     """Que recordatorios tocan YA. **Pura**: `ahora` se inyecta.
 
@@ -181,7 +215,7 @@ def recordatorios_debidos(lotes, ahora, ciclo=None):
     temprano = local.hour < int(c["hora_recordatorios"])
     salida = []
     for lote in lotes or []:
-        if not lote.get("fecha_inicio"):
+        if not lote.get("fecha_inicio") or sin_alertas(lote):
             continue
         inicio = _fecha(lote["fecha_inicio"])
         des, mue = _etapa(lote, "destilacion"), _etapa(lote, "muestra")

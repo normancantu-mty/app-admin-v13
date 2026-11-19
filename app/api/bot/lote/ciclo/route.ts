@@ -29,6 +29,14 @@
  *                     fuera, no el mosto.
  *   · `muestra`     — constancia "ya guarde la muestra": quien y cuando. Sin
  *                     VA (no mueve cifras); idempotente por (lote, 'muestra').
+ *   · `estado`      — (D-010, 2026-11-19) `lotes.estado_proceso` =
+ *                     FERMENTACION | DESTILADO | TERMINADO, por nombre o alias.
+ *                     Mismo permiso que `muestra` (solo `si`). Si la columna aun
+ *                     no existe, 409 con mensaje: no truena.
+ *
+ * D-010: `leer` trae por lote `estado_proceso` (null si la columna aun no
+ * existe: se lee con `*`) e `insumos` {sku: cantidad} de `lote_entradas`, para
+ * que el bot no recuerde nada a un lote DESTILADO/TERMINADO o ya completo.
  */
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -37,12 +45,19 @@ import { actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion, MENSAJE_NO_PERMITIDO } from '@/lib/bot-permisos'
 import { diaDeTemperatura, esTipoRecordatorio } from '@/lib/bot-lote-ciclo'
 import { fechaLocal } from '@/lib/fechas'
-import { nombresTomados, type FilaAlias } from '@/lib/lote-alias'
+import { aliasPorLote, nombreDelLote, nombresTomados, type FilaAlias } from '@/lib/lote-alias'
 
 export const dynamic = 'force-dynamic'
 
 const VENTANA_MAXIMA_DIAS = 120
 const TOPE_INTENTOS = 10
+const ESTADOS_PROCESO = ['FERMENTACION', 'DESTILADO', 'TERMINADO'] as const
+
+/** La columna `estado_proceso` todavia no existe (42703 / PGRST204). */
+function faltaColumna(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  return error.code === '42703' || error.code === 'PGRST204' || /estado_proceso/i.test(error.message ?? '')
+}
 
 export async function POST(request: Request) {
   if (!tokenValido(request)) {
@@ -61,7 +76,8 @@ export async function POST(request: Request) {
       const desdeFecha = fechaLocal(desde)
       const { data: lotes, error } = await supabase
         .from('lotes')
-        .select('id, codigo_lote, fecha_inicio, creado_en')
+        // `*` y no la lista: tolera que `estado_proceso` (D-010) aun no exista.
+        .select('*')
         .gte('fecha_inicio', desdeFecha)
         .order('fecha_inicio', { ascending: true })
       if (error) {
@@ -69,7 +85,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'No pude leer los lotes.' }, { status: 500 })
       }
       const ids = (lotes ?? []).map((l) => l.id as string)
-      const [etapas, recordatorios, borradores, identidades, temperaturas, codigos, alias, siguiente] = await Promise.all([
+      const [etapas, recordatorios, borradores, identidades, temperaturas, codigos, alias, siguiente, entradas] = await Promise.all([
         ids.length
           ? supabase.from('lote_etapas').select('id, id_lote, etapa, fecha, telegram_id, registrado_por, registrado_en').in('id_lote', ids)
           : Promise.resolve({ data: [], error: null }),
@@ -83,9 +99,12 @@ export async function POST(request: Request) {
         supabase.from('temperatura_diaria').select('fecha, fuente, t_min, t_max, t_prom').gte('fecha', desdeFecha),
         supabase.from('lotes').select('codigo_lote'),
         supabase.from('lote_alias').select('id_lote, alias'),
-        supabase.rpc('siguiente_codigo_lote')
+        supabase.rpc('siguiente_codigo_lote'),
+        ids.length
+          ? supabase.from('lote_entradas').select('id_lote, cantidad, catalogo_productos(sku)').in('id_lote', ids)
+          : Promise.resolve({ data: [], error: null })
       ])
-      for (const r of [etapas, recordatorios, borradores, identidades, temperaturas, codigos, alias, siguiente]) {
+      for (const r of [etapas, recordatorios, borradores, identidades, temperaturas, codigos, alias, siguiente, entradas]) {
         if (r.error) {
           console.error('[bot/ciclo] leer:', r.error)
           return NextResponse.json({ error: 'No pude leer el ciclo.' }, { status: 500 })
@@ -101,8 +120,24 @@ export async function POST(request: Request) {
       const admins = ((identidades.data ?? []) as { telegram_id: number; rol_bot?: string | null; entidades?: { rol?: string } }[])
         .filter((f) => f.entidades?.rol === 'ADMIN' && !f.rol_bot)
         .map((f) => Number(f.telegram_id))
+      // D-010: lo que ya entro a cada lote, por SKU (el bot decide si ya esta completo).
+      const insumosDe = new Map<string, Record<string, number>>()
+      for (const e of (entradas.data ?? []) as unknown as {
+        id_lote: string
+        cantidad: number | null
+        catalogo_productos: { sku?: string | null } | { sku?: string | null }[] | null
+      }[]) {
+        const cat = Array.isArray(e.catalogo_productos) ? e.catalogo_productos[0] : e.catalogo_productos
+        const sku = cat?.sku
+        if (!sku) continue
+        const m = insumosDe.get(e.id_lote) ?? {}
+        m[sku] = (m[sku] ?? 0) + Number(e.cantidad ?? 0)
+        insumosDe.set(e.id_lote, m)
+      }
       const filas = (lotes ?? []).map((l) => ({
         id: l.id,
+        estado_proceso: (l as { estado_proceso?: string | null }).estado_proceso ?? null,
+        insumos: insumosDe.get(l.id as string) ?? {},
         codigo_lote: l.codigo_lote,
         fecha_inicio: l.fecha_inicio,
         creado_en: l.creado_en,
@@ -244,6 +279,76 @@ export async function POST(request: Request) {
         mensaje: nueva
           ? `Anotado: ${quien.etiqueta} guardo la muestra del lote ${lote.codigo_lote}.`
           : `La muestra del lote ${lote.codigo_lote} ya estaba anotada.`
+      })
+    }
+
+    if (accion === 'estado') {
+      const telegramId = Number(cuerpo.telegram_id)
+      const dicho = String(cuerpo.lote ?? '').trim()
+      const estado = String(cuerpo.estado ?? '').trim().toUpperCase()
+      if (!Number.isSafeInteger(telegramId) || dicho === '' || !(ESTADOS_PROCESO as readonly string[]).includes(estado)) {
+        return NextResponse.json(
+          { error: 'telegram_id, lote y estado (FERMENTACION, DESTILADO o TERMINADO) validos.' },
+          { status: 400 }
+        )
+      }
+      const quien = await resolverIdentidad(tipada, telegramId)
+      if (!quien) return NextResponse.json({ error: 'No te tengo dado de alta.' }, { status: 403 })
+      const veredicto = permisoDeAccion(actorDe(quien), 'lote')
+      if (veredicto === 'no') {
+        return NextResponse.json({ error: MENSAJE_NO_PERMITIDO['lote'] }, { status: 403 })
+      }
+      if (veredicto !== 'si') {
+        return NextResponse.json(
+          { error: 'El estado del lote lo cambia Norman o un ADMIN. No cambie nada.' },
+          { status: 403 }
+        )
+      }
+      const [todos, alias] = await Promise.all([
+        supabase.from('lotes').select('id, codigo_lote'),
+        supabase.from('lote_alias').select('id_lote, alias')
+      ])
+      if (todos.error || alias.error) {
+        console.error('[bot/ciclo] estado leer:', todos.error ?? alias.error)
+        return NextResponse.json({ error: 'No pude leer los lotes.' }, { status: 500 })
+      }
+      const porLote = aliasPorLote((alias.data ?? []) as FilaAlias[])
+      const hallados = ((todos.data ?? []) as { id: string; codigo_lote: string }[]).filter((l) =>
+        nombreDelLote(dicho, { codigo_lote: l.codigo_lote, alias: porLote.get(l.id) ?? [] })
+      )
+      if (hallados.length === 0) {
+        return NextResponse.json({ error: `No encontre el lote ${dicho} (ni por nombre ni por alias).` }, { status: 404 })
+      }
+      if (hallados.length > 1) {
+        return NextResponse.json({ error: `Hay mas de un lote que se llama ${dicho}. Corrigelo en la web.` }, { status: 409 })
+      }
+      const lote = hallados[0]
+      const { data, error } = await supabase
+        .from('lotes')
+        .update({ estado_proceso: estado })
+        .eq('id', lote.id)
+        .select('codigo_lote, estado_proceso')
+      if (error) {
+        if (faltaColumna(error)) {
+          return NextResponse.json(
+            { error: 'La base todavia no tiene el estado del lote. No cambie nada; intentalo en un rato.' },
+            { status: 409 }
+          )
+        }
+        console.error('[bot/ciclo] estado:', error)
+        return NextResponse.json({ error: 'No pude cambiar el estado del lote.' }, { status: 500 })
+      }
+      const fila = ((data ?? []) as { codigo_lote: string; estado_proceso: string | null }[])[0]
+      const queda = fila?.estado_proceso ?? estado
+      return NextResponse.json({
+        ok: true,
+        id_lote: lote.id,
+        codigo_lote: lote.codigo_lote,
+        estado_proceso: queda,
+        mensaje:
+          queda === estado
+            ? `Listo: el lote ${lote.codigo_lote} quedo en ${queda}.`
+            : `Pedi ${estado}, pero la base dejo el lote ${lote.codigo_lote} en ${queda}.`
       })
     }
 

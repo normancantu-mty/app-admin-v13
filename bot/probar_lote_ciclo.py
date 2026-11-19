@@ -1084,6 +1084,44 @@ B.enrutar = enrutar_antes
 B._post_de_verdad = base
 
 
+# ─── 20. D-010 (2026-11-19): sin alertas a lotes DESTILADO/TERMINADO o completos ─
+def _lote20(estado=None, insumos=None, **k):
+    l = {"id": "l20", "codigo_lote": "241", "fecha_inicio": "2026-10-12", "etapas": [], "recordatorios": [],
+         "insumos": insumos if insumos is not None else {}}
+    if estado is not object:
+        l["estado_proceso"] = estado
+    l.update(k)
+    return l
+
+
+_COMPLETO = {"mosto-1": 8, "aditivo-2": 8, "levadura-enzimas": 20}
+_t20 = local(2026, 10, 19, 9)  # D+7 a las 9: ya toca destilar
+_deb = lambda l: [t for _l, t, _x in C.recordatorios_debidos([l], _t20)]  # noqa: E731
+caso("20. CONTROL FERMENTACION sin insumos: si toca destilar", _deb(_lote20("FERMENTACION")), ["destilar"])
+caso("20. CONTROL sin columna (llave ausente) y sin insumos: si toca", _deb(_lote20(object)), ["destilar"])
+caso("20. DESTILADO: ninguna alerta", _deb(_lote20("DESTILADO")), [])
+caso("20. TERMINADO: ninguna alerta", _deb(_lote20("TERMINADO")), [])
+caso("20. 'terminado' en minusculas tambien", _deb(_lote20("terminado")), [])
+caso("20. FERMENTACION con los 3 insumos: ninguna alerta (b basta)", _deb(_lote20("FERMENTACION", _COMPLETO)), [])
+caso("20. sin columna con los 3 insumos: ninguna alerta", _deb(_lote20(object, _COMPLETO)), [])
+caso("20. CONTROL falta la levadura: si toca",
+     _deb(_lote20(None, {"mosto-1": 8, "aditivo-2": 8})), ["destilar"])
+caso("20. CONTROL aditivo 2 en 0: si toca",
+     _deb(_lote20(None, {"mosto-1": 8, "aditivo-2": 0, "levadura-enzimas": 20})), ["destilar"])
+caso("20. CONTROL insumos basura (lista) no truena y si toca", _deb(_lote20(None, ["x"])), ["destilar"])
+caso("20. DESTILADO con destilacion y sin muestra: tampoco la muestra",
+     _deb(_lote20("DESTILADO", etapas=[{"etapa": "destilacion", "fecha": "2026-10-18"}])), [])
+# Por el latido completo: la ruta trae estado_proceso/insumos y el bot no manda nada.
+base20, bot20 = Ciclo(), BotTg()
+base20.nuevo_lote("lote-t", "241", "2026-10-12", abrio=555)
+base20.lotes["lote-t"]["insumos"] = dict(_COMPLETO)
+caso("20. latido: lote completo -> nada enviado", tipos(latir(base20, bot20, _t20)), [])
+base20.lotes["lote-t"]["insumos"] = {}
+base20.lotes["lote-t"]["estado_proceso"] = "DESTILADO"
+caso("20. latido: lote DESTILADO -> nada enviado", tipos(latir(base20, bot20, _t20)), [])
+base20.lotes["lote-t"]["estado_proceso"] = "FERMENTACION"
+caso("20. latido CONTROL: FERMENTACION incompleto -> destilar", tipos(latir(base20, bot20, _t20)), ["destilar"])
+
 fallos = [(n_, o, e) for n_, o, e in casos if o != e]
 for n_, o, e in casos:
     print(("ok   " if o == e else "FALLA") + "  " + n_ + ("" if o == e else "  -> obtuve %r, esperaba %r" % (o, e)))
