@@ -27,14 +27,14 @@ import { registrarAviso } from '@/lib/avisos-server'
 export async function leerInsumosDeCompra(supabase: ClienteServicio): Promise<InsumoDeCompra[]> {
   const { data, error } = await supabase
     .from('catalogo_productos')
-    .select('id, nombre, unidad_medida')
+    .select('id, nombre, unidad_medida, sku')
     .eq('tipo', 'INSUMO')
     .order('nombre', { ascending: true })
   if (error) {
     console.error('[bot] no pude leer los insumos para la compra:', error)
     return []
   }
-  return (data ?? []).map((f) => ({ id: f.id, nombre: String(f.nombre ?? ''), unidad_medida: f.unidad_medida ?? null }))
+  return (data ?? []).map((f) => ({ id: f.id, nombre: String(f.nombre ?? ''), unidad_medida: f.unidad_medida ?? null, sku: f.sku ?? null }))
 }
 
 export interface BorradorCompra {

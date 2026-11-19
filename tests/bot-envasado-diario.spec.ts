@@ -336,7 +336,8 @@ test.describe('Fase 7: el dia de produccion con el aditivo 1 en GRAMOS', () => {
     ])
   })
 
-  test('solo si lo DIJERON en kilos ("8 kg de aditivo", la plantilla lo pasa a 8000 g) el borrador lleva 8000', async () => {
+  // 2026-11-19 (Cris): Aditivo 1 y 2 van en KILOGRAMOS con el MISMO numero dicho: "8 kg" -> 8, igual que "8 g".
+  test('Aditivo 1 dicho en kilos ("8 kg") tambien lleva 8: el numero dicho es el del ERP', async () => {
     estadoInicial()
     tablas.lotes = []
     const r = await llamar('lote/proponer', {
@@ -344,7 +345,7 @@ test.describe('Fase 7: el dia de produccion con el aditivo 1 en GRAMOS', () => {
     })
     expect(r.status, JSON.stringify(r.j)).toBe(200)
     const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id) as Fila & { payload: { lote: { entradas: Fila[] } } }
-    expect(b.payload.lote.entradas).toEqual([{ id_insumo: 'ad1', cantidad: 8000 }])
+    expect(b.payload.lote.entradas).toEqual([{ id_insumo: 'ad1', cantidad: 8 }])
   })
 
   test('sin unidad (camino del modelo) la cantidad va tal cual en la unidad del catalogo', async () => {

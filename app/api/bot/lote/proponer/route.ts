@@ -239,7 +239,7 @@ export async function POST(request: Request) {
 
       const dicha = String(pedido.unidad ?? '').trim().toLowerCase()
       if (dicha === 'kg' || dicha === 'g') {
-        const conv = convertirMasa(Number(pedido.cantidad), dicha, insumo.unidad_medida)
+        const conv = convertirMasa(Number(pedido.cantidad), dicha, insumo.unidad_medida, insumo.sku)
         if (!conv.ok) {
           return NextResponse.json({ error: `No lo convierto: ${conv.motivo}.` }, { status: 422 })
         }

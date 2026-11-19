@@ -201,11 +201,12 @@ export function normalizarEtapa(pedido: PedidoEtapa, ctx: ContextoEtapa): Result
     if (dicha !== 'kg' && dicha !== 'g') {
       return { ok: false, error: 'Dime si el aditivo 2 fue en gramos o en kilos (por ejemplo "800 g" o "1.5 kg").' }
     }
-    const kgEquivalentes = dicha === 'g' ? valor / 1000 : valor
+    // 2026-11-19: el aditivo 2 dicho "en gramos" es el MISMO numero en kg (esAditivoMismoNumero).
+    const kgEquivalentes = valor
     if (kgEquivalentes > TOPE_KG_ADITIVO) return { ok: false, error: `${valor} ${dicha} de aditivo es demasiado. Revisalo.` }
     if (!ctx.idInsumoAditivo) return { ok: false, error: 'No encontre el insumo del aditivo 2 en el catalogo.' }
     const unidadCatalogo = ctx.unidadAditivo ?? 'KILOGRAMOS'
-    const conv = convertirMasa(valor, dicha, unidadCatalogo)
+    const conv = convertirMasa(valor, dicha, unidadCatalogo, 'aditivo-2')
     if (!conv.ok) return { ok: false, error: `No lo convierto: ${conv.motivo}.` }
     return {
       ok: true,

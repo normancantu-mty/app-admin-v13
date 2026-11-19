@@ -69,24 +69,34 @@ function ctx(extra: Partial<ContextoEtapa> = {}): ContextoEtapa {
     etiqueta: 'norman',
     ahora: AHORA,
     idInsumoAditivo: 'ins-ad2',
-    unidadAditivo: 'GRAMOS',
+    unidadAditivo: 'KILOGRAMOS',
     ...extra
   }
 }
 
 test.describe('aditivo 2 en la unidad del catalogo', () => {
-  test('800 g -> 800 en lote_entradas; el mensaje dice g', () => {
-    const r = normalizarEtapa({ etapa: 'aditivo_2', cantidad: 800, unidad: 'g' }, ctx())
+  // 2026-11-19 (Cris): el aditivo se dice "en gramos" y el ERP lo lleva en KILOGRAMOS
+  // con el MISMO numero: 8 g -> 8 kg. Sin x1000 ni /1000.
+  test('8 g dichos -> 8 en lote_entradas; el mensaje dice kg', () => {
+    const r = normalizarEtapa({ etapa: 'aditivo_2', cantidad: 8, unidad: 'g' }, ctx())
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.payload.entradas).toEqual([{ id_insumo: 'ins-ad2', cantidad: 800 }])
-    expect(r.payload.unidad_entrada).toBe('g')
-    expect(mensajeDeEtapa(r.payload)).toContain('Aditivo 2: 800 g')
+    expect(r.payload.entradas).toEqual([{ id_insumo: 'ins-ad2', cantidad: 8 }])
+    expect(r.payload.unidad_entrada).toBe('kg')
+    expect(mensajeDeEtapa(r.payload)).toContain('Aditivo 2: 8 kg')
   })
 
-  test('1.5 kg dicho -> 1500 g', () => {
+  test('1.5 kg dicho -> 1.5 (el mismo numero)', () => {
     const r = normalizarEtapa({ etapa: 'aditivo_2', cantidad: '1.5', unidad: 'kg' }, ctx())
-    expect(r.ok && r.payload.entradas[0].cantidad).toBe(1500)
+    expect(r.ok && r.payload.entradas[0].cantidad).toBe(1.5)
+  })
+
+  test('compra de Aditivo 1 o 2: el numero dicho es el del ERP, en g o en kg', () => {
+    expect(aUnidadDelInsumo(dicha('90 g'), 'KILOGRAMOS', 'mosto-1')).toEqual({ ok: true, cantidad: 90 })
+    expect(aUnidadDelInsumo(dicha('7 kg'), 'KILOGRAMOS', 'aditivo-2')).toEqual({ ok: true, cantidad: 7 })
+    expect(convertirMasa(8, 'g', 'KILOGRAMOS', 'aditivo-2')).toEqual({ ok: true, cantidad: 8 })
+    // Otro insumo en kilos sigue convirtiendo.
+    expect(convertirMasa(800, 'g', 'KILOGRAMOS', 'chile-guajillo')).toEqual({ ok: true, cantidad: 0.8 })
   })
 
   test('el campo viejo `kg` (bot sin actualizar) NO se multiplica en silencio: se pide la unidad', () => {

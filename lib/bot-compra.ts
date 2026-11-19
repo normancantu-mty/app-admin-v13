@@ -33,6 +33,20 @@ export interface InsumoDeCompra {
   id: string
   nombre: string
   unidad_medida: string | null
+  /** Para `esAditivoMismoNumero` (2026-11-19). */
+  sku?: string | null
+}
+
+/**
+ * 2026-11-19 (Cris): Aditivo 1 (`mosto-1`) y Aditivo 2 (`aditivo-2`) se capturan
+ * "en gramos" en la app y en Telegram, pero el ERP los lleva en KILOGRAMOS con el
+ * MISMO numero: 8 g dichos = 8 kg en el ERP. Sin x1000 ni /1000. El catalogo los
+ * tiene en KILOGRAMOS desde la migracion 20261119_aditivos_en_kg.
+ */
+export const SKUS_ADITIVO_MISMO_NUMERO: readonly string[] = ['mosto-1', 'aditivo-2']
+
+export function esAditivoMismoNumero(sku: string | null | undefined): boolean {
+  return !!sku && SKUS_ADITIVO_MISMO_NUMERO.includes(sku)
 }
 
 /** Las categorias cuyo gasto es, casi siempre, entrada de material al almacen. */
@@ -173,10 +187,13 @@ function redondear(n: number): number {
 export function convertirMasa(
   valor: number,
   dicha: 'kg' | 'g',
-  unidadMedida: string | null | undefined
+  unidadMedida: string | null | undefined,
+  sku?: string | null
 ): { ok: true; cantidad: number } | { ok: false; motivo: string } {
   const u = String(unidadMedida ?? '').toUpperCase()
   if (!Number.isFinite(valor) || valor <= 0) return { ok: false, motivo: 'la cantidad no es un numero mayor que cero' }
+  // Aditivo 1 y 2: el numero dicho es el numero del ERP (ver SKUS_ADITIVO_MISMO_NUMERO).
+  if (esAditivoMismoNumero(sku) && (u === 'KILOGRAMOS' || u === 'GRAMOS')) return { ok: true, cantidad: redondear(valor) }
   if (u === 'GRAMOS') return { ok: true, cantidad: redondear(dicha === 'kg' ? valor * 1000 : valor) }
   if (u === 'KILOGRAMOS') return { ok: true, cantidad: redondear(dicha === 'g' ? valor / 1000 : valor) }
   return { ok: false, motivo: `dijiste ${valor} ${dicha} y ese insumo se lleva en ${unidadCorta(unidadMedida)}` }
@@ -188,10 +205,14 @@ export function convertirMasa(
  */
 export function aUnidadDelInsumo(
   c: CantidadDicha,
-  unidadMedida: string | null | undefined
+  unidadMedida: string | null | undefined,
+  sku?: string | null
 ): { ok: true; cantidad: number } | { ok: false; motivo: string } {
   const u = String(unidadMedida ?? '').toUpperCase()
   const corta = unidadCorta(unidadMedida)
+  if (esAditivoMismoNumero(sku) && (c.unidad === null || c.unidad === 'g' || c.unidad === 'kg')) {
+    return convertirMasa(c.valor, c.unidad ?? 'kg', unidadMedida, sku)
+  }
   if (u === 'KILOGRAMOS') {
     if (c.unidad === null || c.unidad === 'kg') return { ok: true, cantidad: redondear(c.valor) }
     if (c.unidad === 'g') return { ok: true, cantidad: redondear(c.valor / 1000) }
@@ -346,7 +367,7 @@ export function derivarCompra(e: EntradaDerivacion): Derivacion {
       ? leerCantidad(contestada)
       : leerCantidadSinNombre(e.descripcion, e.monto, nombre) ?? leerCantidadSinNombre(e.textoDicho, e.monto, nombre)
   if (!dicho) return { modo: 'gasto', falta: 'cantidad', insumo, motivo: null }
-  const convertida = aUnidadDelInsumo(dicho, insumo.unidad_medida)
+  const convertida = aUnidadDelInsumo(dicho, insumo.unidad_medida, insumo.sku)
   if (!convertida.ok) return { modo: 'gasto', falta: 'cantidad', insumo, motivo: convertida.motivo }
   return { modo: 'compra', insumo, cantidad: convertida.cantidad, dicho }
 }
