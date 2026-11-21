@@ -1063,6 +1063,7 @@ export type Database = {
           id_entidad_destino: string | null
           id_entidad_origen: string | null
           id_producto: string
+          id_regalo: string | null
           notas: string | null
           status: string
           tipo_movimiento: string
@@ -1077,6 +1078,7 @@ export type Database = {
           id_entidad_destino?: string | null
           id_entidad_origen?: string | null
           id_producto: string
+          id_regalo?: string | null
           notas?: string | null
           status?: string
           tipo_movimiento: string
@@ -1091,6 +1093,7 @@ export type Database = {
           id_entidad_destino?: string | null
           id_entidad_origen?: string | null
           id_producto?: string
+          id_regalo?: string | null
           notas?: string | null
           status?: string
           tipo_movimiento?: string
@@ -1443,6 +1446,36 @@ export type Database = {
           id?: string
           notas?: string | null
           usuario_creador?: string
+        }
+        Relationships: []
+      }
+      regalos: {
+        Row: {
+          creado_en: string
+          fecha: string
+          id: string
+          id_entidad_origen: string
+          motivo: string
+          quien_regalo: string
+          usuario_creador: string | null
+        }
+        Insert: {
+          creado_en?: string
+          fecha?: string
+          id?: string
+          id_entidad_origen: string
+          motivo: string
+          quien_regalo: string
+          usuario_creador?: string | null
+        }
+        Update: {
+          creado_en?: string
+          fecha?: string
+          id?: string
+          id_entidad_origen?: string
+          motivo?: string
+          quien_regalo?: string
+          usuario_creador?: string | null
         }
         Relationships: []
       }
@@ -2083,6 +2116,24 @@ export type Database = {
         }
         Relationships: []
       }
+      v_regalo_lineas: {
+        Row: {
+          costo_cero_confirmado: boolean | null
+          costo_unitario: number | null
+          creado_en: string | null
+          fecha: string | null
+          id_entidad_origen: string | null
+          id_producto: string | null
+          id_regalo: string | null
+          ml_por_unidad: number | null
+          motivo: string | null
+          piezas: number | null
+          producto: string | null
+          quien_regalo: string | null
+          usuario_creador: string | null
+        }
+        Relationships: []
+      }
       v_resumen_del_dia: {
         Row: {
           abonos: number | null
@@ -2271,6 +2322,10 @@ export type Database = {
           p_usuario: string
         }
         Returns: Json
+      }
+      registrar_regalo: {
+        Args: { p_regalo: Json; p_inventario: Json }
+        Returns: string
       }
       registrar_venta_atomica: {
         Args: {

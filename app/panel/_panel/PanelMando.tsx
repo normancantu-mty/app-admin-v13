@@ -390,6 +390,7 @@ export async function PanelMando() {
           <AbrirModal className="btn p" href={`${RUTA_BASE}/m/envasado`} titulo="Registrar envasado" tam="md">+ Envasado</AbrirModal>
           <AbrirModal className="btn p" href={`${RUTA_BASE}/m/gasto`} titulo="Registrar gasto" tam="md">+ Gasto</AbrirModal>
           <AbrirModal className="btn p" href={`${RUTA_BASE}/m/compra`} titulo="Comprar insumos" tam="md">Comprar insumos</AbrirModal>
+          <VerTodo className="btn p" href={`${RUTA_BASE}/regalos`}>+ Regalo</VerTodo>
         </div>
       )}
       <div className="acciones">
@@ -413,6 +414,7 @@ export async function PanelMando() {
         {mando && <VerTodo href={`${RUTA_BASE}/catalogo`}>Catálogo →</VerTodo>}
         <VerTodo href={`${RUTA_BASE}/inventario`}>Inventario →</VerTodo>
         <VerTodo href={`${RUTA_BASE}/lotes`}>Lotes →</VerTodo>
+        <VerTodo href={`${RUTA_BASE}/regalos`}>Regalos →</VerTodo>
       </div>
 
       <div className="grid g336">

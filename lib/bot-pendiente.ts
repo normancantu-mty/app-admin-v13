@@ -31,6 +31,7 @@ export type TipoPendiente =
   | 'lote_etapa'
   | 'traspaso'
   | 'merma'
+  | 'regalo'
 
 /**
  * `payload.tipo` como lo escribe cada ruta `proponer`, al tipo del bot. El gasto
@@ -58,6 +59,8 @@ export function tipoDelPayload(payload: unknown): TipoPendiente | null {
     case 'traspaso':
     // 2026-11-07 (paridad con la web, Fase 3): la merma dictada al bot.
     case 'merma':
+    // 2026-11-20: el regalo dictado al bot (sale del inventario de la matriz).
+    case 'regalo':
       return p.tipo
     case 'alta_entidad':
       return 'alta'

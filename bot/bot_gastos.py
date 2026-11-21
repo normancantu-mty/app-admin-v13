@@ -666,6 +666,8 @@ RUTA_CONFIRMAR_DE = {
     "traspaso": "/api/bot/traspaso/confirmar",
     # 2026-11-07 (paridad con la web, Fase 3): merma, misma escritura que la web.
     "merma": "/api/bot/merma/confirmar",
+    # 2026-11-20: regalos (botellas para eventos), misma escritura que /panel/regalos.
+    "regalo": "/api/bot/regalo/confirmar",
     # 2026-11-03: alta de categoria/subcategoria.
     "alta_categoria": "/api/bot/categoria/confirmar",
 }
@@ -1682,6 +1684,7 @@ _COMO_SE_LLAMA = {
     "alta_categoria": "una categoria nueva",
     "traspaso": "un traspaso",
     "merma": "una merma",
+    "regalo": "un regalo",
     "compra_documento": "una compra de factura",
 }
 
@@ -3965,6 +3968,11 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # 2026-11-07 (paridad con la web, Fase 3): "se rompieron 2 de 750" se lee SIN
     # modelo. Si el servidor dice que no es merma (no nombra un producto), sigue
     # el camino de siempre con el mismo mensaje.
+    # 2026-11-20: "Kevin regalo 5 grandes, 5 chicas y 2 minis, motivo: evento X".
+    # Antes que la merma. Si el servidor dice que no es regalo (no dice piezas),
+    # sigue el camino de siempre con el mismo mensaje.
+    if not esperando and _habla_de_regalo(texto) and await _proponer_regalo(update, chat, texto):
+        return
     if not esperando and _habla_de_merma(texto) and await _proponer_merma(update, chat, texto):
         return
     if await _en_pausa(update):
@@ -5977,6 +5985,62 @@ async def _confirmar_merma(update, chat):
         await update.effective_message.reply_text(r.get("error", "No pude escribir la merma."))
 
 
+# 2026-11-20: el regalo. Mismo patron que `PATRON_REGALO` de `lib/regalos.ts`;
+# aqui solo ahorra una peticion: quien decide es el servidor.
+_PATRON_REGALO = re.compile(r"\b(regal\w*|obsequi\w*)\b")
+
+
+def _habla_de_regalo(texto):
+    """**Pura.** Sin acentos y en minusculas, como el servidor."""
+    t = unicodedata.normalize("NFD", str(texto or ""))
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
+    return bool(_PATRON_REGALO.search(t))
+
+
+async def _proponer_regalo(update, chat, texto):
+    """Devuelve True si el mensaje era un regalo (propuesta o pregunta)."""
+    estado, r = _post("/api/bot/regalo/proponer", {"telegram_id": chat, "texto": texto})
+    log.info("regalo propuesto -> %s ok=%s no_es=%s", estado, (r or {}).get("ok"), (r or {}).get("no_es_regalo"))
+    if estado == 404:
+        # El servidor aun no tiene la ruta (deploy pendiente): sigue lo de siempre.
+        return False
+    if estado == 200 and r.get("no_es_regalo"):
+        return False
+    if estado == 200 and r.get("pregunta"):
+        await update.effective_message.reply_text(r["pregunta"])
+        return True
+    if estado != 200 or not r.get("ok"):
+        await update.effective_message.reply_text(r.get("error", "No pude proponer el regalo."))
+        return True
+    _memoria[chat] = {"tipo": "regalo", "borrador_id": r["borrador_id"], "sello": r["sello"]}
+    await _ensenar_propuesta(update, chat, r["mensaje"], _teclado_confirmar_traspaso(r["borrador_id"]))
+    return True
+
+
+async def _confirmar_regalo(update, chat):
+    """El VA. Solo viajan `{telegram_id, borrador_id, sello}`."""
+    dato = _memoria.get(chat)
+    if not dato or dato.get("tipo") != "regalo":
+        await update.effective_message.reply_text("No tengo ningun regalo pendiente que escribir.")
+        return
+    estado, r = _post("/api/bot/regalo/confirmar", {
+        "telegram_id": chat,
+        "borrador_id": dato["borrador_id"],
+        "sello": dato["sello"],
+    })
+    log.info("regalo confirmado: borrador=%s -> %s filas=%s",
+             dato["borrador_id"], estado, r.get("filas_inventario"))
+    if estado == 200 and r.get("ok"):
+        _memoria.pop(chat, None)
+        texto = r.get("mensaje") or "Listo. Quedo el regalo."
+        if r.get("aviso_marca"):
+            texto += NL + str(r["aviso_marca"])
+        await update.effective_message.reply_text(texto)
+    else:
+        # `espera_aprobacion`: `_anotar_aprobacion` ya puso en `error` a quien se mando.
+        await update.effective_message.reply_text(r.get("error", "No pude escribir el regalo."))
+
+
 async def _ensenar_propuesta(update, chat, mensaje, teclado):
     """Ensena una propuesta sellada y la deja guardada JUNTO A SU BORRADOR.
 
@@ -6238,6 +6302,9 @@ async def _confirmar(update, chat, por_boton=False):
         return
     if dato.get("tipo") == "merma":
         await _confirmar_merma(update, chat)
+        return
+    if dato.get("tipo") == "regalo":
+        await _confirmar_regalo(update, chat)
         return
     # D112: sin esta rama un "va" escrito caia al camino de gasto.
     if dato.get("tipo") == "entrega_efectivo":

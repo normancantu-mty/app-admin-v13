@@ -53,6 +53,8 @@ interface MovimientoInventario {
   cantidad: number
   fecha_movimiento: string
   usuario_creador?: string | null
+  /** Regalos (2026-11-20): MERMA con regalo no es perdida; se etiqueta aparte. */
+  id_regalo?: string | null
   entidad_destino?: { nombre: string; rol: string } | { nombre: string; rol: string }[] | null
   entidad_origen?: { nombre: string; rol: string } | { nombre: string; rol: string }[] | null
 }
@@ -116,6 +118,7 @@ async function getInventarioLedger(
           cantidad,
           fecha_movimiento,
           usuario_creador,
+          id_regalo,
           entidad_destino:entidades!inventario_ledger_id_entidad_destino_fkey(nombre, rol),
           entidad_origen:entidades!inventario_ledger_id_entidad_origen_fkey(nombre, rol)
         `)
@@ -292,7 +295,7 @@ function calcularKPIs(
 ): KPIsInventario {
   const movimientosActivos = movimientos.filter((mov) => mov.status !== 'ANULADO')
   const totalMermas = movimientosActivos
-    .filter(mov => mov.tipo_movimiento === 'MERMA')
+    .filter(mov => mov.tipo_movimiento === 'MERMA' && !mov.id_regalo)
     .reduce((sum, mov) => sum + Math.abs(mov.cantidad), 0)
 
   const valorComercialInventario = productosConStock

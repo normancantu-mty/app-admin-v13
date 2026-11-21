@@ -63,6 +63,7 @@ interface Inventario {
   fecha_movimiento: string
   tipo_movimiento: string
   cantidad: number
+  id_regalo?: string | null
   producto: {
     nombre: string
   }[]
@@ -99,7 +100,7 @@ async function getFeedData() {
       
       supabase
         .from('inventario_ledger')
-        .select('id, fecha_movimiento, tipo_movimiento, cantidad, producto:catalogo_productos!id_producto(nombre)')
+        .select('id, fecha_movimiento, tipo_movimiento, cantidad, id_regalo, producto:catalogo_productos!id_producto(nombre)')
         .neq('tipo_movimiento', 'SALIDA_VENTA')
         .neq('status', 'ANULADO')
         .limit(20)
@@ -171,7 +172,7 @@ async function getFeedData() {
         id: `inventario-${inv.id}`,
         fecha: inv.fecha_movimiento,
         tipo: 'INVENTARIO',
-        mensaje: `Se registró un(a) ${inv.tipo_movimiento} de ${inv.cantidad} uds de ${inv.producto[0]?.nombre || 'Producto'}`,
+        mensaje: `Se registró un(a) ${inv.id_regalo ? 'REGALO' : inv.tipo_movimiento} de ${inv.cantidad} uds de ${inv.producto[0]?.nombre || 'Producto'}`,
         colorBadge: 'bg-purple-100 text-purple-800',
         icono: '📦'
       })

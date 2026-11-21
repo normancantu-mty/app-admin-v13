@@ -23,6 +23,8 @@ interface MovimientoInventario {
   cantidad: number
   fecha_movimiento: string
   usuario_creador?: string | null
+  /** Regalos (2026-11-20): la fila es MERMA con regalo; se muestra "Regalo". */
+  id_regalo?: string | null
 }
 
 function canDeleteMovement(
@@ -183,7 +185,7 @@ export default function MovimientosTable({
                     </td>
                     <td>
                       <span className={`chip ${CHIP[claseDe(mov.tipo_movimiento)]}`} title={mov.tipo_movimiento}>
-                        {tipoMovLegible(mov.tipo_movimiento)}
+                        {mov.id_regalo ? 'Regalo' : tipoMovLegible(mov.tipo_movimiento)}
                       </span>
                     </td>
                     <td className="r" style={{ fontWeight: 700 }}>

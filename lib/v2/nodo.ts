@@ -486,6 +486,8 @@ async function getTotalMermasEntidad(
           .select('cantidad, id_entidad_origen, id_entidad_destino')
           .in('status', ['ACTIVO', 'APPROVED'])
           .eq('tipo_movimiento', 'MERMA')
+          // Regalos (2026-11-20): un regalo baja stock pero no es merma.
+          .is('id_regalo', null)
           .or(`id_entidad_origen.eq.${idEntidad},id_entidad_destino.eq.${idEntidad}`),
       'getTotalMermasEntidad'
     )
