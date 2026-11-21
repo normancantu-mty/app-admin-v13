@@ -91,6 +91,9 @@ export async function leerStockParaCascada(
   return { pagado, consignado }
 }
 
+/** El nombre con que Regalos pide la misma lectura. Desde el W20 la de arriba ya trae el signo. */
+export const leerStockConSigno = leerStockParaCascada
+
 /** El W20 de una salida. No lanza y va con tope: la salida ya entro y esto solo avisa. */
 async function avisarFaltante(
   supabase: SupabaseClient<Database>,

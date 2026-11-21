@@ -7,7 +7,8 @@
  * formulario de `/panel/regalos`.
  *
  * Contesta, sin escribir nada:
- *  - `no_es_regalo: true` si el texto no habla de regalar o no dice piezas: el
+ *  - `no_es_regalo: true` si el texto no habla de regalar (o "regalo" es
+ *    sustantivo: "iba de regalo") o no dice piezas: el
  *    bot sigue su camino normal con ese mensaje.
  *  - `pregunta` si falta UNA cosa (quien, motivo, una presentacion que no existe).
  * Si no alcanza la existencia NO pregunta: la propuesta lo avisa y se guarda igual.
@@ -18,7 +19,7 @@ import type { Json } from '@/types/database'
 import { clienteDeServicio, conservaPendientes, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import { chatDelBorrador, permisoDeAccion } from '@/lib/bot-permisos'
 import { actorDe } from '@/lib/bot-aprobacion'
-import { hablaDeRegalo, leerRegalo } from '@/lib/regalos'
+import { fechaMenosDias, hablaDeRegalo, leerRegalo } from '@/lib/regalos'
 import { hoyMx, idMatriz, leerProductosRegalo, stocksDe } from '@/lib/regalos-servidor'
 import {
   MENSAJE_REGALO_NO_PERMITIDO,
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
     const productos = await leerProductosRegalo(supabase)
     const lectura = leerRegalo(texto, productos, identidad.etiqueta)
     // "me regalaron un dia libre": habla de regalar, pero no de piezas. No es un regalo de botellas.
-    if (!lectura.ok && lectura.falta === 'piezas') return NextResponse.json({ ok: false, no_es_regalo: true })
+    if (!lectura.ok && (lectura.falta === 'piezas' || lectura.falta === 'no_es_regalo')) return NextResponse.json({ ok: false, no_es_regalo: true })
 
     // El permiso, despues de saber que SI es un regalo: a quien no le toca se le dice.
     if (permisoDeAccion(actorDe(identidad), PERMISO_REGALO) === 'no') {
@@ -66,7 +67,8 @@ export async function POST(request: Request) {
     const stocks = await stocksDe(supabase, matriz.id, lineas.map((l) => l.id_producto))
     const payload: PayloadRegalo = {
       id_entidad: matriz.id,
-      fecha: hoyMx(),
+      // "ayer Kevin regalo..." -> ayer. Otra fecha: el formulario web.
+      fecha: fechaMenosDias(hoyMx(), lectura.diasAtras),
       quien_regalo: lectura.quien,
       motivo: lectura.motivo,
       usuario_creador: `telegram:${identidad.etiqueta}`,

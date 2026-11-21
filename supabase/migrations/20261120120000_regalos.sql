@@ -196,12 +196,23 @@ GRANT EXECUTE ON FUNCTION public.registrar_regalo(jsonb, jsonb) TO authenticated
 
 
 -- ─── 4. La lectura: una fila por regalo x producto, solo lo ACTIVO ──────────
--- El costo es el ACTUAL del catalogo (`catalogo_productos.costo_unitario`): si
--- Norman corrige un costo, la cartera se revalua. El costo del dia del regalo
--- queda guardado en `costo_unitario_movimiento` de cada fila, por si se quiere.
+-- El costo es el COSTO COMPLETO del ERP (`v_costo_completo.costo_total`:
+-- empaque + liquido + mano de obra, el mismo de los margenes), y si un producto
+-- no lo tiene, el del catalogo (`catalogo_productos.costo_unitario`). En prod
+-- (SELECT del 2026-11-20) el catalogo trae 120 / 0 / 0 para 750 / 250 / 50 ml y
+-- el costo completo 132.21 / 41.53 / 13.44: con el catalogo las chicas y minis
+-- saldrian "sin costo". Es el costo ACTUAL: si cambia, la cartera se revalua.
+-- (Ojo: esta vista depende de `v_costo_completo`; un DROP de esa vista sin
+-- CASCADE fallara mientras esta exista.)
 
 CREATE OR REPLACE VIEW public.v_regalo_lineas
   WITH (security_invoker = true) AS
+  WITH lineas AS (
+    SELECT il.id_regalo, il.id_producto, round(sum(il.cantidad), 4) AS piezas
+      FROM public.inventario_ledger il
+     WHERE il.id_regalo IS NOT NULL AND il.status = 'ACTIVO'
+     GROUP BY il.id_regalo, il.id_producto
+  )
   SELECT r.id                    AS id_regalo,
          r.fecha,
          r.quien_regalo,
@@ -209,17 +220,20 @@ CREATE OR REPLACE VIEW public.v_regalo_lineas
          r.usuario_creador,
          r.creado_en,
          r.id_entidad_origen,
-         il.id_producto,
+         l.id_producto,
          p.nombre                AS producto,
          p.ml_por_unidad,
-         p.costo_unitario,
+         COALESCE(NULLIF(cc.costo_total, 0), p.costo_unitario) AS costo_unitario,
          p.costo_cero_confirmado,
-         round(sum(il.cantidad), 4) AS piezas
+         l.piezas
     FROM public.regalos r
-    JOIN public.inventario_ledger il ON il.id_regalo = r.id AND il.status = 'ACTIVO'
-    JOIN public.catalogo_productos p ON p.id = il.id_producto
-   GROUP BY r.id, r.fecha, r.quien_regalo, r.motivo, r.usuario_creador, r.creado_en, r.id_entidad_origen,
-            il.id_producto, p.nombre, p.ml_por_unidad, p.costo_unitario, p.costo_cero_confirmado;
+    JOIN lineas l ON l.id_regalo = r.id
+    JOIN public.catalogo_productos p ON p.id = l.id_producto
+    LEFT JOIN LATERAL (
+      SELECT max(v.costo_total) AS costo_total
+        FROM public.v_costo_completo v
+       WHERE v.id_producto = l.id_producto
+    ) cc ON true;
 
 GRANT SELECT ON public.v_regalo_lineas TO authenticated, service_role;
 

@@ -41,6 +41,7 @@ export async function PanelOperador() {
         <span className="lbl">VER TODO</span>
         <VerTodo href={`${RUTA_BASE}/inventario`}>Inventario →</VerTodo>
         <VerTodo href={`${RUTA_BASE}/lotes`}>Lotes →</VerTodo>
+        <VerTodo href={`${RUTA_BASE}/regalos`}>Regalos →</VerTodo>
       </div>
     </>
   )

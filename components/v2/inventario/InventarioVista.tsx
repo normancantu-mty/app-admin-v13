@@ -1,4 +1,5 @@
 // Paridad v2: copia de app/dashboard/inventario/page.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
+import { faltaColumnaRegalo } from '@/lib/regalos'
 import { RUTA_BASE } from '@/lib/v2/rutas'
 import { createServerClient } from '@supabase/ssr'
 import { AbrirModal } from '@/components/v2/modal/AbrirModal'
@@ -93,6 +94,23 @@ async function getCatalogoProductos(): Promise<Producto[]> {
   }
 }
 
+const COLUMNAS_LEDGER = `
+  id,
+  id_producto,
+  status,
+  cubeta,
+  id_entidad_destino,
+  id_entidad_origen,
+  tipo_movimiento,
+  cantidad,
+  fecha_movimiento,
+  usuario_creador,
+  id_regalo,
+  entidad_destino:entidades!inventario_ledger_id_entidad_destino_fkey(nombre, rol),
+  entidad_origen:entidades!inventario_ledger_id_entidad_origen_fkey(nombre, rol)
+` as const
+const COLUMNAS_LEDGER_SIN_REGALO = COLUMNAS_LEDGER.replace('id_regalo,', '')
+
 async function getInventarioLedger(
   fechaInicio?: string,
   fechaFin?: string
@@ -104,24 +122,13 @@ async function getInventarioLedger(
     // stock truncado no da error, da un numero falso.
     const { desde, hastaExclusivo } = limitesRangoMX(fechaInicio, fechaFin)
 
-    return await fetchTodasLasFilas<MovimientoInventario>(() => {
+    // Regalos (2026-11-20): si el codigo sale antes que la migracion, la columna
+    // `id_regalo` no existe; se reintenta sin ella en vez de pintar stock 0.
+    const leer = (conRegalo: boolean) => fetchTodasLasFilas<MovimientoInventario>(() => {
       let query = supabase
         .from('inventario_ledger')
-        .select(`
-          id,
-          id_producto,
-          status,
-          cubeta,
-          id_entidad_destino,
-          id_entidad_origen,
-          tipo_movimiento,
-          cantidad,
-          fecha_movimiento,
-          usuario_creador,
-          id_regalo,
-          entidad_destino:entidades!inventario_ledger_id_entidad_destino_fkey(nombre, rol),
-          entidad_origen:entidades!inventario_ledger_id_entidad_origen_fkey(nombre, rol)
-        `)
+        // El tipo es el de la consulta CON id_regalo; sin la migracion se manda la otra.
+        .select((conRegalo ? COLUMNAS_LEDGER : COLUMNAS_LEDGER_SIN_REGALO) as typeof COLUMNAS_LEDGER)
         .order('fecha_movimiento', { ascending: false })
 
       if (desde && hastaExclusivo) {
@@ -130,6 +137,13 @@ async function getInventarioLedger(
 
       return query
     }, 'getInventarioLedger')
+    try {
+      return await leer(true)
+    } catch (e) {
+      if (!faltaColumnaRegalo(e)) throw e
+      console.error('getInventarioLedger: falta inventario_ledger.id_regalo (migracion de regalos sin aplicar); sigo sin ella')
+      return await leer(false)
+    }
   } catch (error) {
     console.error('Error in getInventarioLedger:', error)
     return []

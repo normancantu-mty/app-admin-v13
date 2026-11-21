@@ -17,6 +17,7 @@
  */
 
 import { candidatosPorTamano } from '@/lib/bot-tamanos'
+import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 
 // ─── Quien regalo ───────────────────────────────────────────────────────────
 
@@ -95,17 +96,21 @@ export interface StockCelda {
 }
 
 /**
- * PAGADO primero, lo que falte de CONSIGNADO, y si aun falta, de PAGADO otra
- * vez (queda negativo). Un stock negativo se trata como 0 para repartir.
- * Misma regla que la rama ERP-11b (`calcularDeduccionCascada` sin el alto). **Pura.**
+ * PAGADO primero, lo que falte de CONSIGNADO (la MISMA `calcularDeduccionCascada`
+ * de ventas y merma), y lo que no alcance, de PAGADO otra vez: queda negativo y
+ * se avisa. Un stock negativo se trata como 0 para repartir. **Pura.**
  */
 export function repartoRegalo(cantidad: number, stock: StockCelda) {
   const pagado = Math.max(0, Number(stock.pagado) || 0)
   const consignado = Math.max(0, Number(stock.consignado) || 0)
-  const deConsignado = Math.min(Math.max(0, cantidad - Math.min(cantidad, pagado)), consignado)
-  const dePagado = cantidad - deConsignado
-  const faltante = Math.max(0, cantidad - pagado - consignado)
-  return { dePagado, deConsignado, faltante }
+  const cubre = Math.min(cantidad, pagado + consignado)
+  const { deduccionPagado, deduccionConsignado } = calcularDeduccionCascada({
+    cantidadDeducir: cubre,
+    stockPagadoActual: pagado,
+    stockConsignadoActual: consignado
+  })
+  const faltante = cantidad - cubre
+  return { dePagado: deduccionPagado + faltante, deConsignado: deduccionConsignado, faltante }
 }
 
 export interface ProductoRegalo {
@@ -144,7 +149,8 @@ export function armarFilasRegalo(
     if (r.dePagado > 0) filas.push({ id_producto: l.id_producto, cubeta: 'PAGADO', cantidad: r.dePagado, costo_unitario_movimiento: costo, notas: nota })
     if (r.deConsignado > 0) filas.push({ id_producto: l.id_producto, cubeta: 'CONSIGNADO', cantidad: r.deConsignado, costo_unitario_movimiento: costo, notas: nota })
     if (r.faltante > 0) {
-      const hay = Math.max(0, stock.pagado) + Math.max(0, stock.consignado)
+      // El stock REAL (puede ser negativo ya), no el recortado a 0 del reparto.
+      const hay = (Number(stock.pagado) || 0) + (Number(stock.consignado) || 0)
       avisos.push(
         `${p?.nombre ?? 'Producto'}: hay ${hay} y salen ${l.cantidad}; la existencia queda en ${hay - l.cantidad}. ` +
           'Se guarda de todas formas (el ERP avisa, no bloquea).'
@@ -285,9 +291,70 @@ export function hablaDeRegalo(texto: unknown): boolean {
   return PATRON_REGALO.test(aplanar(texto))
 }
 
+const UNIDADES: Record<string, number> = {
+  un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9
+}
+const DECENAS: Record<string, number> = {
+  treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90
+}
 const PALABRAS_NUMERO: Record<string, number> = {
-  un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
-  once: 11, doce: 12, quince: 15, veinte: 20
+  ...UNIDADES,
+  ...DECENAS,
+  diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
+  dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20,
+  veintiun: 21, veintiuno: 21, veintiuna: 21, veintidos: 22, veintitres: 23, veinticuatro: 24,
+  veinticinco: 25, veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29, cien: 100
+}
+
+/** "treinta y dos" -> 32; "13" -> 13; "trece" -> 13. Lo que no conoce: NaN. **Pura.** */
+export function numeroDictado(dicho: string): number {
+  const t = dicho.trim()
+  if (/^\d+$/.test(t)) return Number(t)
+  const [a, b] = t.split(/\s+y\s+/)
+  const base = PALABRAS_NUMERO[a]
+  if (base === undefined) return NaN
+  if (b === undefined) return base
+  return DECENAS[a] !== undefined && UNIDADES[b] !== undefined ? base + UNIDADES[b] : NaN
+}
+
+const ALT_SUELTOS = Object.keys(PALABRAS_NUMERO).sort((x, y) => y.length - x.length).join('|')
+const ALT_DECENAS = Object.keys(DECENAS).join('|')
+const ALT_UNIDADES = Object.keys(UNIDADES).sort((x, y) => y.length - x.length).join('|')
+const NUMERO = `\\d{1,4}|(?:${ALT_DECENAS})\\s+y\\s+(?:${ALT_UNIDADES})|${ALT_SUELTOS}`
+
+/**
+ * "regalo" es verbo ("Kevin regalo") o sustantivo ("iba de regalo", "vendi 3
+ * de regalo"). Solo el VERBO hace un regalo: el sustantivo es otra cosa (una
+ * venta, una merma) y el mensaje sigue su camino. **Pura.**
+ */
+const ANTES_DE_SUSTANTIVO = new Set([
+  'de', 'del', 'para', 'como', 'un', 'el', 'al', 'mi', 'mis', 'su', 'sus', 'tu', 'tus',
+  'otro', 'este', 'ese', 'buen', 'gran', 'en', 'por'
+])
+function verbosDeRegalo(plano: string): RegExpExecArray[] {
+  const out: RegExpExecArray[] = []
+  for (const m of plano.matchAll(/\b(?:regal|obsequi)(\w*)/g)) {
+    const sufijo = m[1] ?? ''
+    if (/^(os|itos?|itas?)$/.test(sufijo)) continue // "regalos", "regalito": sustantivo
+    const previa = plano.slice(0, m.index).trim().split(/\s+/).pop() ?? ''
+    if (ANTES_DE_SUSTANTIVO.has(previa)) continue
+    out.push(m as RegExpExecArray)
+  }
+  return out
+}
+
+/** "ayer" = 1, "antier"/"anteayer" = 2, si no 0. **Pura.** */
+function diasAtrasDe(plano: string): number {
+  if (/\b(antier|anteayer|antes de ayer)\b/.test(plano)) return 2
+  if (/\bayer\b/.test(plano)) return 1
+  return 0
+}
+
+/** AAAA-MM-DD menos `dias` dias. **Pura.** */
+export function fechaMenosDias(fecha: string, dias: number): string {
+  const d = new Date(`${fecha}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - Math.max(0, Math.trunc(dias) || 0))
+  return d.toISOString().slice(0, 10)
 }
 
 export interface PiezaDictada {
@@ -296,22 +363,27 @@ export interface PiezaDictada {
 }
 
 export type LecturaRegalo =
-  | { ok: true; quien: string; piezas: PiezaDictada[]; motivo: string }
+  | { ok: true; quien: string; piezas: PiezaDictada[]; motivo: string; diasAtras: number }
+  | { ok: false; falta: 'no_es_regalo' }
+  | { ok: false; falta: 'uno_por_mensaje' }
   | { ok: false; falta: 'piezas' }
-  | { ok: false; falta: 'quien' | 'motivo'; piezas: PiezaDictada[]; quien: string; motivo: string }
+  | { ok: false; falta: 'quien' | 'motivo'; piezas: PiezaDictada[]; quien: string; motivo: string; diasAtras: number }
   | { ok: false; falta: 'tamano'; dicho: string }
 
 /**
  * "Kevin regalo 5 grandes, 5 chicas y 2 minis, motivo: evento X".
  *
- * - Piezas: cada "<numero> <tamano>" ("5 grandes", "dos de 750", "2 minis"),
- *   resuelto con el vocabulario de `lib/bot-tamanos.ts` (D53: chica = 250,
- *   mini = 50). Un tamano que no empata con el catalogo NO se adivina.
- * - Motivo: lo que sigue a "motivo"; si no lo hay, lo que sigue a la ultima
- *   pieza ("... 2 minis en la boda de Juan" -> "la boda de Juan").
- * - Quien: lo que va antes de "regalo"; "yo"/"regale"/"regalamos" = quien
- *   dicta (`quienDicta`); Norman/Kevin/Gilberto se normalizan, otro nombre va
- *   como texto libre.
+ * - Verbo: tiene que haber UN "regalo/regale/regalamos/obsequio" usado como
+ *   verbo. "de regalo" (sustantivo) no es regalo: `no_es_regalo`. Dos verbos
+ *   ("Kevin regalo 2 y Gilberto regalo 3") piden un regalo por mensaje, para
+ *   no cargarle todo al primero.
+ * - Piezas: cada "<numero> <tamano>" ("5 grandes", "trece de 750", "treinta y
+ *   dos minis"), resuelto con `lib/bot-tamanos.ts` (D53: chica = 250, mini =
+ *   50). Un tamano que no empata con el catalogo NO se adivina. "a una chica"
+ *   (persona) no cuenta: va despues de "a/para/con".
+ * - Motivo: lo que sigue a "motivo"; si no lo hay, lo que sigue a la ultima pieza.
+ * - Quien: lo que va antes del verbo; "yo"/"regale"/"regalamos" = quien dicta.
+ * - Fecha: "ayer"/"antier" en `diasAtras`; si no, hoy.
  * Si falta UNA cosa, se dice cual. **Pura.**
  */
 export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], quienDicta: string): LecturaRegalo {
@@ -321,22 +393,31 @@ export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], 
   const limpiarMotivo = (t: string) =>
     t.replace(/^[\s:,.;\-]+/, '').replace(/^(y|para|por|en|motivo)\b[\s:,-]*/i, '').trim().slice(0, 300)
 
+  // 0. Verbo.
+  const marcaMotivo = /\bmotivo\b\s*(?:es|fue)?\s*[:,-]?\s*/.exec(plano)
+  const fin = marcaMotivo ? marcaMotivo.index : plano.length
+  const verbos = verbosDeRegalo(plano.slice(0, fin))
+  if (verbos.length === 0) return { ok: false, falta: 'no_es_regalo' }
+  if (verbos.length > 1) return { ok: false, falta: 'uno_por_mensaje' }
+  const regalo = verbos[0]
+  const diasAtras = diasAtrasDe(plano.slice(0, fin))
+
   // 1. Motivo explicito: se corta para que sus numeros no cuenten como piezas.
-  let motivo = ''
-  let fin = plano.length
-  const marca = /\bmotivo\b\s*(?:es|fue)?\s*[:,-]?\s*/.exec(plano)
-  if (marca) {
-    motivo = limpiarMotivo(original.slice(marca.index + marca[0].length))
-    fin = marca.index
-  }
+  let motivo = marcaMotivo ? limpiarMotivo(original.slice(marcaMotivo.index + marcaMotivo[0].length)) : ''
 
   // 2. Piezas.
   const piezas: PiezaDictada[] = []
   let finUltimaPieza = -1
-  const patron =
-    /\b(\d{1,4}|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\s+(?:botellas?\s+|piezas?\s+)?(?:de\s+(?:la\s+|las\s+)?)?(\d{2,4}\s*ml\b|\d{2,4}\b|[a-z]+)/g
-  for (const p of plano.slice(0, fin).matchAll(patron)) {
-    const cantidad = /^\d+$/.test(p[1]) ? Number(p[1]) : PALABRAS_NUMERO[p[1]]
+  const patron = new RegExp(
+    `\\b(${NUMERO})\\s+(?:botellas?\\s+|piezas?\\s+)?(?:de\\s+(?:la\\s+|las\\s+)?)?(\\d{2,4}\\s*ml\\b|\\d{2,4}\\b|[a-z]+)`,
+    'g'
+  )
+  const tramo = plano.slice(0, fin)
+  for (const p of tramo.matchAll(patron)) {
+    const inicio = p.index ?? 0
+    // "regalo 2 grandes a una chica": "una chica" es una persona, no una pieza.
+    if (/\b(a|para|con)\s$/.test(tramo.slice(Math.max(0, inicio - 6), inicio))) continue
+    const cantidad = numeroDictado(p[1])
     const dicho = p[2]
     const candidatos = candidatosPorTamano(dicho, productos)
     if (candidatos.length !== 1) {
@@ -345,7 +426,7 @@ export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], 
       continue
     }
     if (!Number.isInteger(cantidad) || cantidad <= 0) continue
-    finUltimaPieza = (p.index ?? 0) + p[0].length
+    finUltimaPieza = inicio + p[0].length
     const ya = piezas.find((x) => x.producto.id === candidatos[0].id)
     if (ya) ya.cantidad += cantidad
     else piezas.push({ producto: candidatos[0], cantidad })
@@ -353,15 +434,17 @@ export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], 
   if (piezas.length === 0) return { ok: false, falta: 'piezas' }
 
   // 3. Motivo implicito: lo que queda despues de la ultima pieza.
-  if (!marca) motivo = limpiarMotivo(original.slice(finUltimaPieza))
+  if (!marcaMotivo) motivo = limpiarMotivo(original.slice(finUltimaPieza))
 
   // 4. Quien.
   let quien = ''
-  const regalo = /\bregal(\w*)|\bobsequi(\w*)/.exec(plano)
-  const verbo = regalo ? (regalo[1] ?? regalo[2] ?? '') : ''
-  const sujeto = regalo
-    ? plano.slice(0, regalo.index).replace(/\b(hoy|ayer|ya|se|le|les|nos|me|que|el|la)\b/g, ' ').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim()
-    : ''
+  const verbo = regalo[1] ?? ''
+  const sujeto = plano
+    .slice(0, regalo.index)
+    .replace(/\b(hoy|ayer|antier|anteayer|antes|de|ya|se|le|les|nos|me|que|el|la)\b/g, ' ')
+    .replace(/[^a-z ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (sujeto === 'yo' || (sujeto === '' && /^(e|amos)$/.test(verbo))) {
     quien = normalizarQuien(quienDicta)
   } else if (sujeto !== '') {
@@ -374,9 +457,23 @@ export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], 
     }
   }
 
-  if (quien === '') return { ok: false, falta: 'quien', piezas, quien, motivo }
-  if (motivo.length < 3) return { ok: false, falta: 'motivo', piezas, quien, motivo }
-  return { ok: true, quien, piezas, motivo }
+  if (quien === '') return { ok: false, falta: 'quien', piezas, quien, motivo, diasAtras }
+  if (motivo.length < 3) return { ok: false, falta: 'motivo', piezas, quien, motivo, diasAtras }
+  return { ok: true, quien, piezas, motivo, diasAtras }
+}
+
+/**
+ * Si el codigo sale ANTES que la migracion, PostgREST contesta "column
+ * inventario_ledger.id_regalo does not exist". Las pantallas que ya existian
+ * (Inventario, Feed, KPI de merma) reintentan sin la columna en vez de
+ * quedarse en 0 en silencio. **Pura.**
+ */
+export function faltaColumnaRegalo(error: unknown): boolean {
+  const m =
+    error && typeof error === 'object' && 'message' in error
+      ? String((error as { message: unknown }).message)
+      : String(error ?? '')
+  return /id_regalo/.test(m) && /does not exist|no existe|42703|schema cache/i.test(m)
 }
 
 export function piezasTexto(n: number): string {

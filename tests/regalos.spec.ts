@@ -21,15 +21,18 @@ import { tipoDelPayload } from '@/lib/bot-pendiente'
 import {
   armarCartera,
   armarFilasRegalo,
+  faltaColumnaRegalo,
+  fechaMenosDias,
   hablaDeRegalo,
   leerRegalo,
+  numeroDictado,
   normalizarQuien,
   repartoRegalo,
   validarSolicitudRegalo,
   type LineaCartera,
   type ProductoRegalo
 } from '@/lib/regalos'
-import { registrarRegalo } from '@/lib/regalos-servidor'
+import { hoyMx, registrarRegalo } from '@/lib/regalos-servidor'
 import * as regaloP from '@/app/api/bot/regalo/proponer/route'
 import * as regaloC from '@/app/api/bot/regalo/confirmar/route'
 
@@ -77,6 +80,14 @@ test.describe('regalos (pura): reparto', () => {
     ])
     expect(r.avisos).toHaveLength(1)
     expect(r.avisos[0]).toContain('Destilado Plata 750ml: hay 7 y salen 8; la existencia queda en -1')
+  })
+
+  test('si la existencia YA era negativa, el aviso dice la real (no la recortada a 0)', () => {
+    const { filas, avisos } = armarFilasRegalo(
+      [{ id_producto: 'p-750', cantidad: 5 }], PRODUCTOS, new Map([['p-750', { pagado: -4, consignado: 0 }]]), 'n'
+    )
+    expect(filas).toEqual([{ id_producto: 'p-750', cubeta: 'PAGADO', cantidad: 5, costo_unitario_movimiento: 120, notas: 'n' }])
+    expect(avisos[0]).toContain('hay -4 y salen 5; la existencia queda en -9')
   })
 
   test('validacion: lo que impide guardar (la existencia NO es una de esas cosas)', () => {
@@ -153,6 +164,7 @@ test.describe('regalos (pura): lo que se dicta', () => {
       ok: true,
       quien: 'Kevin',
       motivo: 'evento X',
+      diasAtras: 0,
       piezas: [
         { producto: PRODUCTOS[2], cantidad: 5 },
         { producto: PRODUCTOS[0], cantidad: 5 },
@@ -178,6 +190,46 @@ test.describe('regalos (pura): lo que se dicta', () => {
     expect(leerRegalo('se regalaron 5 grandes, motivo: evento', PRODUCTOS, 'norman')).toMatchObject({ ok: false, falta: 'quien' })
     expect(leerRegalo('Kevin regaló 3 de 500, motivo: evento', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'tamano', dicho: '500' })
     expect(leerRegalo('me regalaron un día libre', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'piezas' })
+  })
+
+  test('numeros en letra de 13 a 100, sin perder piezas en silencio (auditoria 2026-11-20)', () => {
+    expect([numeroDictado('trece'), numeroDictado('dieciseis'), numeroDictado('veinticuatro'), numeroDictado('treinta y dos'), numeroDictado('cien'), numeroDictado('13')]).toEqual([13, 16, 24, 32, 100, 13])
+    expect(numeroDictado('treinta y doce')).toBeNaN()
+    expect(leerRegalo('Kevin regaló trece grandes y 2 minis, motivo: expo', PRODUCTOS, 'norman')).toMatchObject({
+      ok: true, piezas: [{ producto: { id: 'p-750' }, cantidad: 13 }, { producto: { id: 'p-50' }, cantidad: 2 }]
+    })
+    expect(leerRegalo('Kevin regaló veinticuatro minis, motivo: expo', PRODUCTOS, 'norman')).toMatchObject({
+      ok: true, piezas: [{ producto: { id: 'p-50' }, cantidad: 24 }]
+    })
+    expect(leerRegalo('Kevin regaló treinta y dos minis, motivo: expo', PRODUCTOS, 'norman')).toMatchObject({
+      ok: true, piezas: [{ producto: { id: 'p-50' }, cantidad: 32 }]
+    })
+  })
+
+  test('"regalo" como sustantivo NO es un regalo: la venta y la merma siguen su camino', () => {
+    expect(leerRegalo('vendí 3 grandes de regalo de navidad a Juan', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'no_es_regalo' })
+    expect(leerRegalo('se me cayó una grande que iba de regalo', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'no_es_regalo' })
+    expect(leerRegalo('compré 2 grandes para los regalos', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'no_es_regalo' })
+    // y el verbo con pronombre femenino si es regalo
+    expect(leerRegalo('Kevin las regaló, 2 chicas, motivo: cata', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Kevin' })
+  })
+
+  test('dos personas en un mensaje: se pide uno por mensaje en vez de cargarle todo al primero', () => {
+    expect(leerRegalo('Kevin regaló 2 grandes y Gilberto regaló 3 chicas, motivo: expo', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'uno_por_mensaje' })
+    expect(leerRegalo('Kevin y Gilberto regalaron 3 chicas, motivo: expo', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Kevin y Gilberto' })
+  })
+
+  test('"a una chica" es una persona, no una pieza', () => {
+    expect(leerRegalo('Kevin regaló 2 grandes a una chica en la expo', PRODUCTOS, 'norman')).toMatchObject({
+      ok: true, piezas: [{ producto: { id: 'p-750' }, cantidad: 2 }]
+    })
+  })
+
+  test('"ayer"/"antier": la fecha se recorre; sin eso, hoy', () => {
+    expect(leerRegalo('ayer Kevin regaló 2 grandes, motivo: boda', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Kevin', diasAtras: 1 })
+    expect(leerRegalo('antier regalé 1 mini, motivo: cata', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Norman', diasAtras: 2 })
+    expect(fechaMenosDias('2026-03-01', 1)).toBe('2026-02-28')
+    expect(fechaMenosDias('2026-11-20', 0)).toBe('2026-11-20')
   })
 
   test('el patron de regalo', () => {
@@ -483,6 +535,19 @@ test.describe('regalo/proponer + regalo/confirmar', () => {
     expect(rpcs[0].p_regalo).toMatchObject({ quien_regalo: 'Kevin', usuario_creador: 'telegram:kevin', motivo: 'la cata de Fresnillo' })
   })
 
+  test('"ayer Kevin regalo..." guarda con la fecha de ayer; "iba de regalo" no es regalo', async () => {
+    estadoInicial()
+    const p = await llamar('proponer', { telegram_id: NORMAN, texto: 'ayer Kevin regaló 1 grande, motivo: boda' })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    const c = await llamar('confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(rpcs[0].p_regalo).toMatchObject({ fecha: fechaMenosDias(hoyMx(), 1) })
+    const n = await llamar('proponer', { telegram_id: NORMAN, texto: 'se me cayó una grande que iba de regalo' })
+    expect(n.j.no_es_regalo).toBe(true)
+    const d = await llamar('proponer', { telegram_id: NORMAN, texto: 'Kevin regaló 2 grandes y Gilberto regaló 3 chicas, motivo: expo' })
+    expect(String(d.j.pregunta)).toContain('un regalo por mensaje')
+  })
+
   test('un LOC no registra regalos por aqui: 403', async () => {
     estadoInicial()
     const p = await llamar('proponer', { telegram_id: LOCAL, texto: DICTADO })
@@ -538,6 +603,21 @@ test.describe('regalos: cableado', () => {
     expect(leer('components', 'v2', 'inventario', 'MovimientosInventario.tsx')).toContain("mov.id_regalo ? 'Regalo'")
   })
 
+  test('si el codigo sale ANTES que la migracion, las pantallas viejas reintentan sin id_regalo (no quedan en 0)', () => {
+    expect(faltaColumnaRegalo({ message: 'column inventario_ledger.id_regalo does not exist' })).toBe(true)
+    expect(faltaColumnaRegalo(new Error('getInventarioLedger: column inventario_ledger.id_regalo does not exist'))).toBe(true)
+    expect(faltaColumnaRegalo({ message: 'permission denied for table inventario_ledger' })).toBe(false)
+    expect(faltaColumnaRegalo(null)).toBe(false)
+    for (const ruta of [['components', 'v2', 'inventario', 'InventarioVista.tsx'], ['lib', 'v2', 'nodo.ts'], ['components', 'v2', 'actividad', 'Feed.tsx']]) {
+      expect(leer(...ruta), ruta.join('/')).toContain('faltaColumnaRegalo(')
+    }
+    expect(leer('components', 'v2', 'inventario', 'InventarioVista.tsx')).toContain("COLUMNAS_LEDGER.replace('id_regalo,', '')")
+  })
+
+  test('el panel del operador (EMPLEADO_ADMIN) tambien enlaza Regalos', () => {
+    expect(leer('app', 'panel', '_panel', 'PanelOperador.tsx')).toContain('`${RUTA_BASE}/regalos`')
+  })
+
   test('el bot de Python: patron igual al del servidor, ruta de confirmar y rama del VA', () => {
     const py = leer('bot', 'bot_gastos.py')
     expect(py).toContain('"regalo": "/api/bot/regalo/confirmar"')
@@ -556,5 +636,8 @@ test.describe('regalos: cableado', () => {
     expect(sql).toContain("'ADMIN', 'EMPLEADO_ADMIN'")
     expect(sql).toMatch(/CREATE OR REPLACE VIEW public\.v_regalo_lineas/i)
     expect(sql).toContain("status = 'ACTIVO'")
+    // la cartera se valua al costo completo del ERP (el de los margenes), con el catalogo de respaldo
+    expect(sql).toContain('COALESCE(NULLIF(cc.costo_total, 0), p.costo_unitario) AS costo_unitario')
+    expect(sql).toContain('FROM public.v_costo_completo v')
   })
 })

@@ -9,6 +9,7 @@
  * se borre /dashboard esto sigue funcionando solo.
  */
 
+import { faltaColumnaRegalo } from '@/lib/regalos'
 import { RUTA_BASE } from '@/lib/v2/rutas'
 import { createServerClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -479,18 +480,25 @@ async function getTotalMermasEntidad(
   // de abajo conserva el comportamiento anterior: el perfil no revienta, el
   // total sale 0 y el error queda en el log.
   try {
-    const filas = await fetchTodasLasFilas<{ cantidad: number | null }>(
-      () =>
-        serviceRoleClient
+    // Regalos (2026-11-20): un regalo baja stock pero no es merma. Si la
+    // migracion aun no esta, se cuenta como antes en vez de dar 0.
+    const leer = (conRegalo: boolean) =>
+      fetchTodasLasFilas<{ cantidad: number | null }>(() => {
+        let q = serviceRoleClient
           .from('inventario_ledger')
           .select('cantidad, id_entidad_origen, id_entidad_destino')
           .in('status', ['ACTIVO', 'APPROVED'])
           .eq('tipo_movimiento', 'MERMA')
-          // Regalos (2026-11-20): un regalo baja stock pero no es merma.
-          .is('id_regalo', null)
-          .or(`id_entidad_origen.eq.${idEntidad},id_entidad_destino.eq.${idEntidad}`),
-      'getTotalMermasEntidad'
-    )
+        if (conRegalo) q = q.is('id_regalo', null)
+        return q.or(`id_entidad_origen.eq.${idEntidad},id_entidad_destino.eq.${idEntidad}`)
+      }, 'getTotalMermasEntidad')
+    let filas: { cantidad: number | null }[]
+    try {
+      filas = await leer(true)
+    } catch (e) {
+      if (!faltaColumnaRegalo(e)) throw e
+      filas = await leer(false)
+    }
 
     return filas.reduce((acc, mov) => acc + Math.abs(Number(mov.cantidad) || 0), 0)
   } catch (error) {

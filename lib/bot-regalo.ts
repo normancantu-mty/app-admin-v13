@@ -70,7 +70,10 @@ export function preguntaDeRegalo(l: Exclude<LecturaRegalo, { ok: true }>, produc
   if (l.falta === 'tamano') {
     return `No tengo una presentacion "${l.dicho}". Dime grandes, chicas o minis (${productos.map((p) => p.nombre).join(', ')}).`
   }
-  if (l.falta === 'piezas') {
+  if (l.falta === 'uno_por_mensaje') {
+    return 'Escucho a mas de una persona regalando. Mandame un regalo por mensaje: "Kevin regalo 2 grandes, motivo: …" y luego "Gilberto regalo 3 chicas, motivo: …".'
+  }
+  if (l.falta === 'piezas' || l.falta === 'no_es_regalo') {
     return '¿Cuantas y de cual? P. ej. "Kevin regalo 5 grandes, 5 chicas y 2 minis, motivo: evento X".'
   }
   if (l.falta === 'quien') return '¿Quien regalo? Dilo al principio: "Kevin regalo 5 grandes…", "Gilberto regalo…" o "regale…".'

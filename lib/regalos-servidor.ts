@@ -2,7 +2,7 @@
  * REGALOS — el lado de servidor que comparten la web y el bot. Escrito el
  * 2026-11-20 por un ejecutor del Socio.
  *
- * `registrarRegalo` lee el stock (la MISMA `leerStockParaCascada` que usan la
+ * `registrarRegalo` lee el stock (`leerStockConSigno`: la MISMA lectura que `leerStockParaCascada` de la
  * merma y la venta), arma las filas con `armarFilasRegalo` (cascada que avisa
  * y no bloquea) y escribe TODO en una sola llamada a la RPC
  * `registrar_regalo` (encabezado + filas en una transaccion).
@@ -15,7 +15,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/types/database'
-import { leerStockParaCascada } from '@/lib/salida-cascada'
+import { leerStockConSigno } from '@/lib/salida-cascada'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
 import {
   armarCartera,
@@ -59,7 +59,7 @@ export async function idMatriz(supabase: Cliente): Promise<{ id: string; nombre:
 
 export async function stocksDe(supabase: Cliente, idEntidad: string, ids: readonly string[]): Promise<Map<string, StockCelda>> {
   const pares = await Promise.all(
-    [...new Set(ids)].map(async (id) => [id, await leerStockParaCascada(supabase, idEntidad, id)] as const)
+    [...new Set(ids)].map(async (id) => [id, await leerStockConSigno(supabase, idEntidad, id)] as const)
   )
   return new Map(pares)
 }

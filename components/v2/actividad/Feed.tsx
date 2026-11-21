@@ -1,4 +1,5 @@
 // Paridad v2: copia de app/dashboard/feed/page.tsx (2026-10-29, ejecutor del Socio). La v1 queda intacta.
+import { faltaColumnaRegalo } from '@/lib/regalos'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { ETIQUETA_ABONO_LOCAL, esAbonoPorSurtirLocal } from '@/lib/abono-local'
@@ -109,7 +110,18 @@ async function getFeedData() {
 
     const ticketsRaw: TicketRaw[] = (ticketsRes.data || []) as TicketRaw[]
     const finanzasRaw: FinanzaRaw[] = (finanzasRes.data || []) as FinanzaRaw[]
-    const inventario: Inventario[] = inventarioRes.data || []
+    let inventario: Inventario[] = inventarioRes.data || []
+    // Regalos (2026-11-20): sin la migracion, `id_regalo` no existe; se lee sin ella.
+    if (inventarioRes.error && faltaColumnaRegalo(inventarioRes.error)) {
+      const sinRegalo = await supabase
+        .from('inventario_ledger')
+        .select('id, fecha_movimiento, tipo_movimiento, cantidad, producto:catalogo_productos!id_producto(nombre)')
+        .neq('tipo_movimiento', 'SALIDA_VENTA')
+        .neq('status', 'ANULADO')
+        .limit(20)
+        .order('fecha_movimiento', { ascending: false })
+      inventario = (sinRegalo.data || []) as Inventario[]
+    }
 
     const feedItems: FeedItem[] = []
 

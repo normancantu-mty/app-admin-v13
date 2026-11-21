@@ -8,8 +8,9 @@
  * - Capturan: ADMIN y EMPLEADO_ADMIN (`puedeCapturarMatriz`); la RPC lo vuelve a exigir.
  * - La cartera se lee de `v_regalo_lineas`: solo filas ACTIVO del ledger. Si un
  *   movimiento del regalo se anula en "Movimientos de inventario", deja de contar.
- * - Valor a COSTO del catalogo de hoy, no a precio: un regalo no es venta. Los
- *   productos con costo 0 sin confirmar se cuentan aparte ("sin costo").
+ * - Valor a COSTO de hoy, no a precio: un regalo no es venta. El costo es el
+ *   costo completo del ERP (`v_costo_completo`, el de los margenes) y, si falta,
+ *   el del catalogo. Lo que no tenga ninguno se cuenta aparte ("sin costo").
  */
 
 import { getServerSupabaseClient } from '@/lib/server-session'
@@ -152,6 +153,7 @@ export default async function PaginaRegalos() {
                 <div className="kpi">
                   <span className="t">Valor a costo</span>
                   <span className="v">{mxn(cartera.total.costo)}</span>
+                  <small>costo completo del ERP (el de los márgenes)</small>
                 </div>
                 <div className="kpi">
                   <span className="t">Registros</span>
@@ -160,7 +162,7 @@ export default async function PaginaRegalos() {
               </div>
               {cartera.total.piezasSinCosto > 0 ? (
                 <div className="msg info">
-                  {num(cartera.total.piezasSinCosto)} piezas son de productos con costo 0 sin confirmar en el catálogo: no entran al valor a costo.
+                  {num(cartera.total.piezasSinCosto)} piezas son de productos sin costo en el ERP: no entran al valor a costo.
                 </div>
               ) : null}
               <TablaGrupos titulo="Por persona" grupos={cartera.porPersona} pres={cartera.presentaciones} total={cartera.total} etiqueta={(c) => c} />
