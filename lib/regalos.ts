@@ -12,8 +12,10 @@
  *   PERO sin bloquear: si no alcanza, el faltante sale de PAGADO, la
  *   existencia queda negativa y se AVISA. Regla de Norman: el ERP avisa y
  *   nunca bloquea (2026-11-11).
- * - La cartera: piezas por persona, por mes y por presentacion, y su valor a
- *   costo del catalogo (si el producto tiene costo capturado).
+ * - La cartera cuenta BOTELLAS y guarda la razon: por persona, por mes y por
+ *   presentacion. Sin costo ni precio en ninguna parte (Norman, voz 2026-11-23:
+ *   «me esta preguntando el costo… nomas deben de sumar las botellas y ya, y la
+ *   razon»).
  */
 
 import { candidatosPorTamano } from '@/lib/bot-tamanos'
@@ -21,8 +23,8 @@ import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 
 // ─── Quien regalo ───────────────────────────────────────────────────────────
 
-/** Los tres de siempre; cualquier otro nombre entra como texto libre. */
-export const QUIENES_CONOCIDOS = ['Norman', 'Kevin', 'Gilberto'] as const
+/** Los del equipo; cualquier otro nombre entra como texto libre. */
+export const QUIENES_CONOCIDOS = ['Norman', 'Kevin', 'Gilberto', 'Luis'] as const
 
 function aplanar(texto: unknown): string {
   return String(texto ?? '')
@@ -177,8 +179,6 @@ export interface LineaCartera {
   id_producto: string
   producto: string
   ml_por_unidad: number | null
-  costo_unitario: number | null
-  costo_cero_confirmado: boolean | null
   piezas: number
 }
 
@@ -192,10 +192,6 @@ export interface GrupoCartera {
   clave: string
   piezasPorProducto: Record<string, number>
   piezas: number
-  /** Valor a costo de lo que SI tiene costo. */
-  costo: number
-  /** Piezas de productos sin costo capturado (costo 0 no confirmado). */
-  piezasSinCosto: number
 }
 
 export interface RegistroCartera {
@@ -206,8 +202,6 @@ export interface RegistroCartera {
   usuario_creador: string | null
   piezasPorProducto: Record<string, number>
   piezas: number
-  costo: number
-  piezasSinCosto: number
 }
 
 export interface Cartera {
@@ -218,25 +212,19 @@ export interface Cartera {
   registros: RegistroCartera[]
 }
 
-function sinCosto(l: LineaCartera): boolean {
-  return !(Number(l.costo_unitario) > 0) && !l.costo_cero_confirmado
-}
-
 function vacio(clave: string): GrupoCartera {
-  return { clave, piezasPorProducto: {}, piezas: 0, costo: 0, piezasSinCosto: 0 }
+  return { clave, piezasPorProducto: {}, piezas: 0 }
 }
 
-function sumar(g: { piezasPorProducto: Record<string, number>; piezas: number; costo: number; piezasSinCosto: number }, l: LineaCartera) {
+function sumar(g: { piezasPorProducto: Record<string, number>; piezas: number }, l: LineaCartera) {
   const n = Number(l.piezas) || 0
   g.piezasPorProducto[l.id_producto] = (g.piezasPorProducto[l.id_producto] ?? 0) + n
   g.piezas += n
-  if (sinCosto(l)) g.piezasSinCosto += n
-  else g.costo = Math.round((g.costo + n * (Number(l.costo_unitario) || 0)) * 100) / 100
 }
 
 /**
  * Totales por persona y por mes (AAAA-MM de la fecha del regalo), en piezas por
- * presentacion y a costo; y la lista de registros, el mas reciente primero.
+ * presentacion; y la lista de registros, el mas reciente primero.
  * Las presentaciones van de mayor a menor (grande, chica, mini, luego sin ml). **Pura.**
  */
 export function armarCartera(lineas: readonly LineaCartera[]): Cartera {
@@ -260,9 +248,7 @@ export function armarCartera(lineas: readonly LineaCartera[]): Cartera {
         motivo: l.motivo,
         usuario_creador: l.usuario_creador,
         piezasPorProducto: {},
-        piezas: 0,
-        costo: 0,
-        piezasSinCosto: 0
+        piezas: 0
       })
     }
     sumar(personas.get(quien)!, l)
@@ -280,6 +266,54 @@ export function armarCartera(lineas: readonly LineaCartera[]): Cartera {
     total,
     registros: [...regs.values()].sort((a, b) => b.fecha.localeCompare(a.fecha) || a.id_regalo.localeCompare(b.id_regalo))
   }
+}
+
+// ─── El contador que contesta el bot ────────────────────────────────────────
+
+export function botellasTexto(n: number): string {
+  return `${n} ${n === 1 ? 'botella' : 'botellas'}`
+}
+
+/** "3 de 750ml, 2 de 50ml". **Pura.** */
+function detalleTexto(piezas: Record<string, number>, pres: readonly PresentacionCartera[]): string {
+  return pres
+    .filter((p) => (piezas[p.id_producto] ?? 0) > 0)
+    .map((p) => `${piezas[p.id_producto]} de ${p.ml_por_unidad ? `${p.ml_por_unidad}ml` : p.producto}`)
+    .join(', ')
+}
+
+function renglonContador(g: GrupoCartera, pres: readonly PresentacionCartera[]): string {
+  const detalle = detalleTexto(g.piezasPorProducto, pres)
+  return `${g.clave}: ${botellasTexto(g.piezas)}${detalle ? ` (${detalle})` : ''}`
+}
+
+const REGISTROS_EN_CHAT = 15
+
+/** El renglon de una persona: "Kevin: 12 botellas (5 de 750ml, …)". **Pura.** */
+export function renglonDePersona(c: Cartera, quien: string): string {
+  const g = c.porPersona.find((x) => aplanar(x.clave) === aplanar(quien)) ?? vacio(normalizarQuien(quien))
+  return renglonContador(g, c.presentaciones)
+}
+
+/**
+ * El contador: botellas por persona, por presentacion y total. Con `quien`, la
+ * cuenta de esa persona y cada regalo con su razon. Nunca dinero. **Pura.**
+ */
+export function textoContador(c: Cartera, quien: string): string {
+  if (quien !== '') {
+    const suyos = c.registros.filter((r) => aplanar(r.quien_regalo) === aplanar(quien))
+    const lista = suyos
+      .slice(0, REGISTROS_EN_CHAT)
+      .map((r) => `- ${r.fecha}: ${detalleTexto(r.piezasPorProducto, c.presentaciones)}. ${r.motivo}`)
+    const mas = suyos.length > REGISTROS_EN_CHAT ? [`… y ${suyos.length - REGISTROS_EN_CHAT} mas en el panel (Regalos).`] : []
+    return ['REGALOS de ' + renglonDePersona(c, quien), ...lista, ...mas].join('\n')
+  }
+  if (c.registros.length === 0) return 'Todavia no hay regalos registrados.'
+  return [
+    'REGALOS (botellas por persona)',
+    ...c.porPersona.map((g) => renglonContador(g, c.presentaciones)),
+    renglonContador({ ...c.total, clave: 'TOTAL' }, c.presentaciones)
+  ].join('\n')
 }
 
 // ─── Lo que se dicta al bot ─────────────────────────────────────────────────
@@ -331,11 +365,16 @@ const ANTES_DE_SUSTANTIVO = new Set([
   'de', 'del', 'para', 'como', 'un', 'el', 'al', 'mi', 'mis', 'su', 'sus', 'tu', 'tus',
   'otro', 'este', 'ese', 'buen', 'gran', 'en', 'por'
 ])
+/** "oye bot, registra un regalo…" -> "regalo…": la orden de anotar no es parte del regalo. */
+const ORDEN_DE_ANOTAR =
+  /^(?:oye\s+|bot[\s,]+|por\s+favor\s+)*(?:(?:registra|anota|apunta|agrega|captura|mete|pon)\w*)\s+(?:(?:un|el|los|unos|otro|este)\s+)?(?=regal|obsequi)/
+
 function verbosDeRegalo(plano: string): RegExpExecArray[] {
   const out: RegExpExecArray[] = []
   for (const m of plano.matchAll(/\b(?:regal|obsequi)(\w*)/g)) {
     const sufijo = m[1] ?? ''
-    if (/^(os|itos?|itas?)$/.test(sufijo)) continue // "regalos", "regalito": sustantivo
+    // "regalos", "regalito": sustantivo… salvo que ABRA el mensaje ("Regalos Kevin 2 grandes en la expo").
+    if (/^(os|itos?|itas?)$/.test(sufijo) && m.index !== 0) continue
     const previa = plano.slice(0, m.index).trim().split(/\s+/).pop() ?? ''
     if (ANTES_DE_SUSTANTIVO.has(previa)) continue
     out.push(m as RegExpExecArray)
@@ -382,13 +421,16 @@ export type LecturaRegalo =
  *   50). Un tamano que no empata con el catalogo NO se adivina. "a una chica"
  *   (persona) no cuenta: va despues de "a/para/con".
  * - Motivo: lo que sigue a "motivo"; si no lo hay, lo que sigue a la ultima pieza.
- * - Quien: lo que va antes del verbo; "yo"/"regale"/"regalamos" = quien dicta.
+ * - Quien: lo que va antes del verbo, o un nombre del equipo pegado al verbo o a
+ *   la ultima pieza; "yo"/"regale"/"regalamos"/"Regalo 2…" = quien dicta.
  * - Fecha: "ayer"/"antier" en `diasAtras`; si no, hoy.
  * Si falta UNA cosa, se dice cual. **Pura.**
  */
 export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], quienDicta: string): LecturaRegalo {
   // NFC: asi `aplanar` conserva las posiciones (una letra acentuada = una letra).
-  const original = String(texto ?? '').normalize('NFC').replace(/\s+/g, ' ').trim()
+  let original = String(texto ?? '').normalize('NFC').replace(/\s+/g, ' ').trim()
+  const orden = ORDEN_DE_ANOTAR.exec(aplanar(original))
+  if (orden) original = original.slice(orden[0].length)
   const plano = aplanar(original)
   const limpiarMotivo = (t: string) =>
     t.replace(/^[\s:,.;\-]+/, '').replace(/^(y|para|por|en|motivo)\b[\s:,-]*/i, '').trim().slice(0, 300)
@@ -433,19 +475,41 @@ export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], 
   }
   if (piezas.length === 0) return { ok: false, falta: 'piezas' }
 
-  // 3. Motivo implicito: lo que queda despues de la ultima pieza.
-  if (!marcaMotivo) motivo = limpiarMotivo(original.slice(finUltimaPieza))
-
-  // 4. Quien.
-  let quien = ''
+  // 3. Quien lo dice DESPUES del verbo: "regalo una grande de norman en…" (pegado
+  //    a la ultima pieza) o "regalo Kevin 2 grandes", "regalo de Luis: 3 minis"
+  //    (pegado al verbo). "en la boda de Kevin" NO: eso es la razon.
   const verbo = regalo[1] ?? ''
+  const primeraPersona = /^(e|amos)$/.test(verbo)
+  const nombres = QUIENES_CONOCIDOS.map((q) => aplanar(q)).join('|')
+  const trasPieza = new RegExp(`^[\\s,]*(?:de|por|lo\\s+dio)\\s+(?:parte\\s+de\\s+)?(${nombres})\\b`).exec(tramo.slice(finUltimaPieza))
+  const trasVerbo = new RegExp(`^\\s*(?:de\\s+)?(?:parte\\s+de\\s+)?(${nombres})\\b`).exec(tramo.slice(regalo.index + regalo[0].length))
+  const dichoDespues = primeraPersona ? null : (trasVerbo ?? trasPieza)
+
+  // 4. Motivo implicito: lo que queda despues de la ultima pieza (y de ese nombre).
+  if (!marcaMotivo) {
+    const desde = finUltimaPieza + (!primeraPersona && trasPieza ? trasPieza[0].length : 0)
+    motivo = limpiarMotivo(original.slice(desde))
+  }
+
+  // 5. Quien.
+  let quien = ''
   const sujeto = plano
     .slice(0, regalo.index)
     .replace(/\b(hoy|ayer|antier|anteayer|antes|de|ya|se|le|les|nos|me|que|el|la)\b/g, ' ')
     .replace(/[^a-z ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  if (sujeto === 'yo' || (sujeto === '' && /^(e|amos)$/.test(verbo))) {
+  const abreElMensaje = plano.slice(0, regalo.index).trim() === ''
+  const conAcento = /ó/i.test(original.slice(regalo.index, regalo.index + regalo[0].length))
+  if (sujeto === '' && dichoDespues) {
+    quien = normalizarQuien(dichoDespues[1])
+  } else if (
+    sujeto === 'yo' ||
+    (sujeto === '' && primeraPersona) ||
+    // "Regalo 2 minis en la expo" (sin acento y abriendo el mensaje): es de quien dicta.
+    // La propuesta ensena QUIEN antes del VA. "Regaló 2…" sin nombre si se pregunta.
+    (abreElMensaje && !conAcento && /^(o|os|itos?)$/.test(verbo))
+  ) {
     quien = normalizarQuien(quienDicta)
   } else if (sujeto !== '') {
     const conocidos = QUIENES_CONOCIDOS.filter((q) => sujeto.split(' ').includes(aplanar(q)))
@@ -460,6 +524,60 @@ export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], 
   if (quien === '') return { ok: false, falta: 'quien', piezas, quien, motivo, diasAtras }
   if (motivo.length < 3) return { ok: false, falta: 'motivo', piezas, quien, motivo, diasAtras }
   return { ok: true, quien, piezas, motivo, diasAtras }
+}
+
+/** "Regale una botella en la expo": es un regalo de producto al que le falta el tamano. **Pura.** */
+export function nombraBotella(texto: unknown): boolean {
+  return /\b(botellas?|botes?|piezas?)\b/.test(aplanar(texto))
+}
+
+const SIN_RAZON = /^(solo\s+|nomas\s+|ya\s+)*(registra\w*|guarda\w*|anota\w*|sin\s+(motivo|razon)|ningun[oa]?|nada|ninguna razon)\b/
+
+/**
+ * El dictado a medias + la respuesta a la UNICA pregunta = el dictado completo,
+ * que se vuelve a leer entero con `leerRegalo`. "Solo registralo" como respuesta
+ * a la razon no bloquea: queda "sin motivo dicho". **Pura.**
+ */
+export function completarRegalo(texto: string, falta: string, dicho: string): string {
+  const t = String(texto ?? '').replace(/\s+/g, ' ').trim()
+  const d = String(dicho ?? '').replace(/\s+/g, ' ').trim().replace(/[.]+$/, '')
+  if (d === '') return t
+  if (falta === 'motivo') {
+    const limpio = d.replace(/^(por|porque|para|en|fue|el motivo (es|fue)|motivo:?)\s+/i, '')
+    return `${t.replace(/[,.\s]+$/, '')}, motivo: ${SIN_RAZON.test(aplanar(d)) ? 'sin motivo dicho' : limpio}`
+  }
+  if (falta === 'quien') {
+    const quien = d.replace(/^(fue|lo dio|las dio|lo regalo|lo regaló|de)\s+/i, '')
+    if (/^yo$/i.test(quien)) return t.replace(/^(se|le|les|nos)?\s*(regal|obsequi)\w*/i, 'yo regalé')
+    return t.replace(/^(?:(?:se|le|les|nos)\s+)?((?:regal|obsequi)\S*)/i, `${quien} regaló`)
+  }
+  if (falta === 'piezas') {
+    const conNumero = new RegExp(`\\b(?:(?:${NUMERO})\\s+)?(?:botellas?|botes?|piezas?)\\b`, 'i')
+    const trae = new RegExp(`^(?:${NUMERO})\\s`, 'i').test(aplanar(d))
+    return trae ? t.replace(conNumero, d) : t.replace(/\b(?:botellas?|botes?|piezas?)\b/i, d)
+  }
+  return t
+}
+
+/**
+ * "regalos", "cuantos regalos lleva Kevin", "mis regalos": se CONSULTA el
+ * contador. `null` = no es consulta. `quien: ''` = todos. `otros`: personas que
+ * ya estan en la cartera ademas de las del equipo. **Pura.**
+ */
+export function leerConsultaRegalos(texto: string, quienDicta: string, otros: readonly string[]): { quien: string } | null {
+  const plano = aplanar(texto).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!PATRON_REGALO.test(plano)) return null
+  const abre =
+    /^(?:oye |bot )*(?:los |mis |de )*regalos\b/.test(plano) ||
+    /^(?:oye |bot )*(?:cuant|quien|quienes|cuales|que (?:ha|he|hemos|regal)|contador|cuenta de|lista de|total de|dame |pasame |muestra|ensena|ver )/.test(plano)
+  if (!abre) return null
+  // Con piezas ("regalos Kevin 2 grandes en la expo") es un registro.
+  if (new RegExp(`\\b(?:${NUMERO})\\s+(?:botellas?\\s+)?(?:de\\s+)?(?:grand|chic|mini|median|peque|\\d{2,4})`).test(plano)) return null
+  if (/^(?:mis regalos)|\b(?:llevo|regalado yo|he regalado)\b/.test(plano)) return { quien: normalizarQuien(quienDicta) }
+  for (const n of [...QUIENES_CONOCIDOS, ...otros]) {
+    if (new RegExp(`\\b${aplanar(n).replace(/[^a-z0-9 ]/g, ' ')}\\b`).test(plano)) return { quien: normalizarQuien(n) }
+  }
+  return { quien: '' }
 }
 
 /**

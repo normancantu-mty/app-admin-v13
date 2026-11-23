@@ -74,8 +74,8 @@ export function preguntaDeRegalo(l: Exclude<LecturaRegalo, { ok: true }>, produc
     return 'Escucho a mas de una persona regalando. Mandame un regalo por mensaje: "Kevin regalo 2 grandes, motivo: …" y luego "Gilberto regalo 3 chicas, motivo: …".'
   }
   if (l.falta === 'piezas' || l.falta === 'no_es_regalo') {
-    return '¿Cuantas y de cual? P. ej. "Kevin regalo 5 grandes, 5 chicas y 2 minis, motivo: evento X".'
+    return '¿Cuantas y de cual (grande, chica o mini)? Contesta asi: "1 grande".'
   }
-  if (l.falta === 'quien') return '¿Quien regalo? Dilo al principio: "Kevin regalo 5 grandes…", "Gilberto regalo…" o "regale…".'
-  return '¿Cual fue el motivo o evento? Agregalo al final: "…, motivo: boda de Juan".'
+  if (l.falta === 'quien') return '¿Quien lo regalo? Contesta solo el nombre.'
+  return '¿Cual fue la razon o el motivo? Contesta solo eso (o "sin motivo").'
 }

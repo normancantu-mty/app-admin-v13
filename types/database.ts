@@ -2118,8 +2118,6 @@ export type Database = {
       }
       v_regalo_lineas: {
         Row: {
-          costo_cero_confirmado: boolean | null
-          costo_unitario: number | null
           creado_en: string | null
           fecha: string | null
           id_entidad_origen: string | null

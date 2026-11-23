@@ -3970,7 +3970,10 @@ async def _enrutar_y_despachar_mensaje(update, chat, texto, esperando=""):
     # el camino de siempre con el mismo mensaje.
     # 2026-11-20: "Kevin regalo 5 grandes, 5 chicas y 2 minis, motivo: evento X".
     # Antes que la merma. Si el servidor dice que no es regalo (no dice piezas),
-    # sigue el camino de siempre con el mismo mensaje.
+    # sigue el camino de siempre con el mismo mensaje. La pregunta que quedo en el
+    # aire (quien / cuantas / razon) se contesta aqui, sin modelo (2026-11-23).
+    if not esperando and await _completar_regalo(update, chat, texto):
+        return
     if not esperando and _habla_de_regalo(texto) and await _proponer_regalo(update, chat, texto):
         return
     if not esperando and _habla_de_merma(texto) and await _proponer_merma(update, chat, texto):
@@ -5997,16 +6000,86 @@ def _habla_de_regalo(texto):
     return bool(_PATRON_REGALO.search(t))
 
 
-async def _proponer_regalo(update, chat, texto):
-    """Devuelve True si el mensaje era un regalo (propuesta o pregunta)."""
-    estado, r = _post("/api/bot/regalo/proponer", {"telegram_id": chat, "texto": texto})
-    log.info("regalo propuesto -> %s ok=%s no_es=%s", estado, (r or {}).get("ok"), (r or {}).get("no_es_regalo"))
-    if estado == 404:
-        # El servidor aun no tiene la ruta (deploy pendiente): sigue lo de siempre.
+# "Regalo una grande": nombra botellas. Distingue, cuando el servidor no contesta,
+# un regalo de producto de un gasto ("regalo para la esposa de Gilberto 500").
+_PATRON_BOTELLA = re.compile(
+    r"\b(botellas?|botes?|piezas?|grandes?|chicas?|chiquitas?|minis?|miniaturas?|medianas?|pequenas?|"
+    r"de\s+(?:750|250|50)(?!\s*pesos)|\d{2,3}\s*ml)\b")
+
+# La pregunta que quedo en el aire (solo en memoria; al reiniciar el bot se pierde
+# y nada se escribio). {chat: {"texto", "falta", "cuando"}}
+_regalo_a_medias = {}
+_REGALO_A_MEDIAS_SEG = 600
+_OTRA_COSA = re.compile(
+    r"^(vend|gast|pag|compr|cobr|abon|deposit|transf|lleg|lote|cuant|stock|quien|que |cual|como |donde|"
+    r"cancela|olvida|no\b|nada\b|ya no|borra|corrige|merma|se rompi|entreg|surt|factur|ticket|dime|pasame|/)")
+
+
+def _plano(texto):
+    t = unicodedata.normalize("NFD", str(texto or ""))
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
+    return " ".join(t.split())
+
+
+def _contesta_al_regalo(falta, texto):
+    """**Pura.** True si `texto` parece la respuesta a la pregunta `falta`.
+
+    En la duda, False: el mensaje sigue el camino de siempre. Comerse un gasto
+    como si fuera la razon de un regalo es peor que volver a dictar el regalo.
+    """
+    p = _plano(texto)
+    if not p or "?" in p:
         return False
+    if falta == "motivo" and re.match(r"^(solo |nomas |ya )*(registra|guarda|anota|sin (motivo|razon)|ningun)", p):
+        return True
+    if _OTRA_COSA.match(p) or _habla_de_regalo(p) or _habla_de_merma(p):
+        return False
+    if falta == "piezas":
+        return bool(_PATRON_BOTELLA.search(p)) and len(p.split()) <= 8
+    if re.search(r"\d{3,}|\$|\bpesos?\b", p):
+        return False
+    if falta == "quien":
+        return len(p.split()) <= 4
+    return len(p.split()) <= 14
+
+
+async def _completar_regalo(update, chat, texto):
+    """Si habia una pregunta de regalo en el aire y esto la contesta, sigue el regalo."""
+    medio = _regalo_a_medias.pop(chat, None)
+    if not medio or time.time() - medio["cuando"] > _REGALO_A_MEDIAS_SEG:
+        return False
+    if not _contesta_al_regalo(medio["falta"], texto):
+        return False
+    return await _proponer_regalo(update, chat, medio["texto"], {"falta": medio["falta"], "dicho": texto})
+
+
+async def _proponer_regalo(update, chat, texto, completa=None):
+    """Devuelve True si el mensaje era un regalo (contador, propuesta o pregunta).
+
+    2026-11-23 (Norman, voz): un regalo NUNCA pregunta costo. Solo quien, cuantas
+    botellas de cual y la razon. Por eso, si el servidor no tiene la ruta, un
+    regalo de botellas NO cae al modelo (que lo leia como gasto y pedia el monto).
+    """
+    cuerpo = {"telegram_id": chat, "texto": texto}
+    if completa:
+        cuerpo["completa"] = completa
+    estado, r = _post("/api/bot/regalo/proponer", cuerpo)
+    r = r or {}
+    log.info("regalo propuesto -> %s ok=%s no_es=%s", estado, r.get("ok"), r.get("no_es_regalo"))
+    if estado == 404:
+        if not _PATRON_BOTELLA.search(_plano(texto)):
+            return False
+        await update.effective_message.reply_text(
+            "Los regalos todavia no estan activos en el ERP. No registre nada.")
+        return True
     if estado == 200 and r.get("no_es_regalo"):
         return False
+    if estado == 200 and r.get("consulta"):
+        await _contestar_texto_de_consulta(update, chat, r)
+        return True
     if estado == 200 and r.get("pregunta"):
+        if r.get("falta") in ("quien", "piezas", "motivo"):
+            _regalo_a_medias[chat] = {"texto": r.get("texto") or texto, "falta": r["falta"], "cuando": time.time()}
         await update.effective_message.reply_text(r["pregunta"])
         return True
     if estado != 200 or not r.get("ok"):
@@ -7222,6 +7295,20 @@ async def comando_botellas(update, context):
 
 
 @_con_puerta
+async def comando_regalos(update, context):
+    """/regalos [nombre] (2026-11-23): botellas regaladas por persona, por
+    presentacion y total; con nombre, sus regalos con la razon. Sin dinero.
+    El texto entero lo arma el servidor (`textoContador`). Aqui no se calcula.
+    """
+    chat = _clave_de(update)
+    await update.effective_message.chat.send_action("typing")
+    nombre = " ".join(getattr(context, "args", None) or []).strip()
+    texto = ("regalos de " + nombre) if nombre else "regalos"
+    if not await _proponer_regalo(update, chat, texto):
+        await update.effective_message.reply_text("No pude consultar los regalos.")
+
+
+@_con_puerta
 async def comando_pulso(update, context):
     """/pulso (2026-11-08): que reponer (semanas que alcanza cada presentacion
     en la matriz) y a quien llamar (dias sin surtir de cada local y
@@ -7373,6 +7460,7 @@ async def comando_inicio(update, context):
         + "  /cartera          quien debe, cuanto, y desde cuando" + NL
         + "  /ventas           los ultimos 6 meses" + NL
         + "  /botellas         botellas por semana y mes de cada local y distribuidor" + NL
+        + "  /regalos          botellas regaladas por persona (o /regalos kevin)" + NL
         + "  /pulso            que reponer y a quien no le ha llegado botella" + NL
         + "  /suscripciones    lo que se cobra cada mes y si ya se pago" + NL + NL
         + "PARA REGISTRAR UN PAGO QUE TE HICIERON:" + NL
@@ -7544,6 +7632,7 @@ def main():
     app.add_handler(CommandHandler("registrar", comando_registrar))
     app.add_handler(CommandHandler("ventas", comando_ventas))
     app.add_handler(CommandHandler("botellas", comando_botellas))
+    app.add_handler(CommandHandler("regalos", comando_regalos))
     app.add_handler(CommandHandler("pulso", comando_pulso))
     app.add_handler(CommandHandler("abono", comando_abono))
     app.add_handler(CommandHandler("entrega", comando_entrega))

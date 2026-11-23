@@ -8,16 +8,15 @@
  * - Capturan: ADMIN y EMPLEADO_ADMIN (`puedeCapturarMatriz`); la RPC lo vuelve a exigir.
  * - La cartera se lee de `v_regalo_lineas`: solo filas ACTIVO del ledger. Si un
  *   movimiento del regalo se anula en "Movimientos de inventario", deja de contar.
- * - Valor a COSTO de hoy, no a precio: un regalo no es venta. El costo es el
- *   costo completo del ERP (`v_costo_completo`, el de los margenes) y, si falta,
- *   el del catalogo. Lo que no tenga ninguno se cuenta aparte ("sin costo").
+ * - Solo botellas y razon, sin dinero (Norman, voz 2026-11-23: «nomas deben de
+ *   sumar las botellas y ya, y la razon»).
  */
 
 import { getServerSupabaseClient } from '@/lib/server-session'
 import { EncabezadoPagina } from '@/components/v2/pagina/Encabezado'
 import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
-import { mxn, num } from '@/lib/v2/formato'
+import { num } from '@/lib/v2/formato'
 import { hoyMx, idMatriz, leerCartera, leerProductosRegalo, stocksDe } from '@/lib/regalos-servidor'
 import type { Cartera, GrupoCartera, PresentacionCartera } from '@/lib/regalos'
 import { FormRegalo, type ProductoForm } from '@/components/v2/regalos/FormRegalo'
@@ -52,8 +51,7 @@ function TablaGrupos({ titulo, grupos, pres, total, etiqueta }: {
                   {corto(p.producto)}
                 </th>
               ))}
-              <th className="r">Piezas</th>
-              <th className="r">A costo</th>
+              <th className="r">Botellas</th>
             </tr>
           </thead>
           <tbody>
@@ -66,10 +64,6 @@ function TablaGrupos({ titulo, grupos, pres, total, etiqueta }: {
                   </td>
                 ))}
                 <td className="r mono">{num(g.piezas)}</td>
-                <td className="r mono">
-                  {mxn(g.costo)}
-                  {g.piezasSinCosto > 0 ? <small> + {num(g.piezasSinCosto)} sin costo</small> : null}
-                </td>
               </tr>
             ))}
             <tr>
@@ -83,10 +77,6 @@ function TablaGrupos({ titulo, grupos, pres, total, etiqueta }: {
               ))}
               <td className="r mono">
                 <b>{num(total.piezas)}</b>
-              </td>
-              <td className="r mono">
-                <b>{mxn(total.costo)}</b>
-                {total.piezasSinCosto > 0 ? <small> + {num(total.piezasSinCosto)} sin costo</small> : null}
               </td>
             </tr>
           </tbody>
@@ -134,7 +124,7 @@ export default async function PaginaRegalos() {
     <>
       <EncabezadoPagina
         titulo="Regalos"
-        sub="Botellas regaladas en eventos y como propaganda: quién, cuántas, por qué. Bajan el inventario de la matriz y se valúan a costo."
+        sub="Botellas regaladas en eventos y como propaganda: quién, cuántas y por qué. Bajan el inventario de la matriz."
       />
       {error || !cartera ? (
         <div className="msg mal">No se pudieron leer los regalos: {error}</div>
@@ -145,26 +135,16 @@ export default async function PaginaRegalos() {
             <div className="msg info">Aún no hay regalos registrados.</div>
           ) : (
             <>
-              <div className="kpis k3" style={{ marginBottom: 12 }}>
+              <div className="kpis" style={{ marginBottom: 12 }}>
                 <div className="kpi fuerte">
-                  <span className="t">Piezas regaladas</span>
+                  <span className="t">Botellas regaladas</span>
                   <span className="v">{num(cartera.total.piezas)}</span>
-                </div>
-                <div className="kpi">
-                  <span className="t">Valor a costo</span>
-                  <span className="v">{mxn(cartera.total.costo)}</span>
-                  <small>costo completo del ERP (el de los márgenes)</small>
                 </div>
                 <div className="kpi">
                   <span className="t">Registros</span>
                   <span className="v">{num(cartera.registros.length)}</span>
                 </div>
               </div>
-              {cartera.total.piezasSinCosto > 0 ? (
-                <div className="msg info">
-                  {num(cartera.total.piezasSinCosto)} piezas son de productos sin costo en el ERP: no entran al valor a costo.
-                </div>
-              ) : null}
               <TablaGrupos titulo="Por persona" grupos={cartera.porPersona} pres={cartera.presentaciones} total={cartera.total} etiqueta={(c) => c} />
               <TablaGrupos titulo="Por mes" grupos={cartera.porMes} pres={cartera.presentaciones} total={cartera.total} etiqueta={etiquetaMes} />
               <section className="card" data-testid="lista-regalos">
@@ -182,7 +162,6 @@ export default async function PaginaRegalos() {
                         <th>Quién</th>
                         <th>Motivo</th>
                         <th>Piezas</th>
-                        <th className="r">A costo</th>
                         <th>Capturó</th>
                       </tr>
                     </thead>
@@ -197,10 +176,6 @@ export default async function PaginaRegalos() {
                               .filter((p) => (r.piezasPorProducto[p.id_producto] ?? 0) > 0)
                               .map((p) => `${num(r.piezasPorProducto[p.id_producto])} ${corto(p.producto)}`)
                               .join(' · ')}
-                          </td>
-                          <td className="r mono">
-                            {mxn(r.costo)}
-                            {r.piezasSinCosto > 0 ? <small> + {num(r.piezasSinCosto)} sin costo</small> : null}
                           </td>
                           <td>{r.usuario_creador ?? '—'}</td>
                         </tr>

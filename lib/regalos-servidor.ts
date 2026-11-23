@@ -115,7 +115,7 @@ export async function leerCartera(supabase: Cliente): Promise<Cartera> {
     () =>
       supabase
         .from('v_regalo_lineas')
-        .select('id_regalo, fecha, quien_regalo, motivo, usuario_creador, id_producto, producto, ml_por_unidad, costo_unitario, costo_cero_confirmado, piezas')
+        .select('id_regalo, fecha, quien_regalo, motivo, usuario_creador, id_producto, producto, ml_por_unidad, piezas')
         .order('fecha', { ascending: false })
         .order('id_regalo')
         .order('id_producto'),
@@ -130,8 +130,6 @@ export async function leerCartera(supabase: Cliente): Promise<Cartera> {
     id_producto: String(f.id_producto),
     producto: String(f.producto ?? ''),
     ml_por_unidad: f.ml_por_unidad === null ? null : Number(f.ml_por_unidad),
-    costo_unitario: f.costo_unitario === null ? null : Number(f.costo_unitario),
-    costo_cero_confirmado: f.costo_cero_confirmado,
     piezas: Number(f.piezas) || 0
   }))
   return armarCartera(lineas)

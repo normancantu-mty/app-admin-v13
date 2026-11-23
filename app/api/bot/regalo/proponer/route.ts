@@ -11,7 +11,10 @@
  *    sustantivo: "iba de regalo") o no dice piezas: el
  *    bot sigue su camino normal con ese mensaje.
  *  - `pregunta` si falta UNA cosa (quien, motivo, una presentacion que no existe).
- * Si no alcanza la existencia NO pregunta: la propuesta lo avisa y se guarda igual.
+ *  - `consulta: true` + `texto` si lo que pide es el contador ("regalos", "cuantos
+ *    regalos lleva Kevin"): botellas y razones, nunca dinero.
+ * `completa: {falta, dicho}` es la respuesta a esa pregunta: se junta con `texto`.
+ * Nunca pide costo ni precio. Si no alcanza la existencia NO pregunta: la propuesta lo avisa y se guarda igual.
  */
 
 import { NextResponse } from 'next/server'
@@ -19,8 +22,8 @@ import type { Json } from '@/types/database'
 import { clienteDeServicio, conservaPendientes, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import { chatDelBorrador, permisoDeAccion } from '@/lib/bot-permisos'
 import { actorDe } from '@/lib/bot-aprobacion'
-import { fechaMenosDias, hablaDeRegalo, leerRegalo } from '@/lib/regalos'
-import { hoyMx, idMatriz, leerProductosRegalo, stocksDe } from '@/lib/regalos-servidor'
+import { completarRegalo, fechaMenosDias, hablaDeRegalo, leerConsultaRegalos, leerRegalo, nombraBotella, textoContador } from '@/lib/regalos'
+import { hoyMx, idMatriz, leerCartera, leerProductosRegalo, stocksDe } from '@/lib/regalos-servidor'
 import {
   MENSAJE_REGALO_NO_PERMITIDO,
   PERMISO_REGALO,
@@ -37,12 +40,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'No autorizado.' }, { status: 401 })
   }
   try {
-    const cuerpo = (await request.json()) as { telegram_id?: unknown; chat_id?: unknown; texto?: unknown }
+    const cuerpo = (await request.json()) as { telegram_id?: unknown; chat_id?: unknown; texto?: unknown; completa?: { falta?: unknown; dicho?: unknown } }
     const telegramId = Number(cuerpo.telegram_id)
     if (!Number.isSafeInteger(telegramId)) {
       return NextResponse.json({ error: 'telegram_id invalido.' }, { status: 400 })
     }
-    const texto = String(cuerpo.texto ?? '').slice(0, 500)
+    let texto = String(cuerpo.texto ?? '').slice(0, 500)
+    if (cuerpo.completa) texto = completarRegalo(texto, String(cuerpo.completa.falta ?? ''), String(cuerpo.completa.dicho ?? '').slice(0, 300))
     if (!hablaDeRegalo(texto)) return NextResponse.json({ ok: false, no_es_regalo: true })
 
     const supabase = clienteDeServicio(request)
@@ -51,16 +55,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No te tengo dado de alta. Pideselo a Norman.' }, { status: 403 })
     }
 
+    if (!cuerpo.completa && leerConsultaRegalos(texto, identidad.etiqueta, []) !== null) {
+      if (permisoDeAccion(actorDe(identidad), PERMISO_REGALO) === 'no') {
+        return NextResponse.json({ error: MENSAJE_REGALO_NO_PERMITIDO }, { status: 403 })
+      }
+      const cartera = await leerCartera(supabase)
+      const pide = leerConsultaRegalos(texto, identidad.etiqueta, cartera.porPersona.map((g) => g.clave))
+      return NextResponse.json({ ok: true, consulta: true, texto: textoContador(cartera, pide?.quien ?? '') })
+    }
+
     const productos = await leerProductosRegalo(supabase)
     const lectura = leerRegalo(texto, productos, identidad.etiqueta)
     // "me regalaron un dia libre": habla de regalar, pero no de piezas. No es un regalo de botellas.
-    if (!lectura.ok && (lectura.falta === 'piezas' || lectura.falta === 'no_es_regalo')) return NextResponse.json({ ok: false, no_es_regalo: true })
+    // "regale una botella en la expo" SI es de botellas: se pregunta cual (antes caia a gasto y pedia el costo).
+    if (!lectura.ok && (lectura.falta === 'no_es_regalo' || (lectura.falta === 'piezas' && !nombraBotella(texto)))) return NextResponse.json({ ok: false, no_es_regalo: true })
 
     // El permiso, despues de saber que SI es un regalo: a quien no le toca se le dice.
     if (permisoDeAccion(actorDe(identidad), PERMISO_REGALO) === 'no') {
       return NextResponse.json({ error: MENSAJE_REGALO_NO_PERMITIDO }, { status: 403 })
     }
-    if (!lectura.ok) return NextResponse.json({ ok: false, pregunta: preguntaDeRegalo(lectura, productos) })
+    if (!lectura.ok) {
+      return NextResponse.json({ ok: false, falta: lectura.falta, texto, pregunta: preguntaDeRegalo(lectura, productos) })
+    }
 
     const matriz = await idMatriz(supabase)
     const lineas = lectura.piezas.map((x) => ({ id_producto: x.producto.id, cantidad: x.cantidad }))

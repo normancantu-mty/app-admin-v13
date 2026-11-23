@@ -15,8 +15,8 @@ import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import { abrirPuerta, pasarAEspera, reclamarAprobacion, liberarReclamo, marcarConfirmado, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion } from '@/lib/bot-permisos'
-import { piezasTexto } from '@/lib/regalos'
-import { idMatriz, registrarRegalo } from '@/lib/regalos-servidor'
+import { botellasTexto, renglonDePersona } from '@/lib/regalos'
+import { idMatriz, leerCartera, registrarRegalo } from '@/lib/regalos-servidor'
 import { MENSAJE_REGALO_NO_PERMITIDO, PERMISO_REGALO, selloRegaloCoincide, type PayloadRegalo } from '@/lib/bot-regalo'
 
 export const dynamic = 'force-dynamic'
@@ -97,6 +97,13 @@ export async function POST(request: Request) {
 
     const avisoMarca = await marcarConfirmado(supabase, borradorId, resultado.id)
     const total = regalo.lineas.reduce((a, l) => a + l.cantidad, 0)
+    // El contador ya con este regalo. Si la lectura falla, el regalo YA quedo: solo no se ensena.
+    let contador = ''
+    try {
+      contador = `\nVa: ${renglonDePersona(await leerCartera(supabase), regalo.quien_regalo)}.`
+    } catch (e) {
+      console.error('[bot] regalo escrito, pero no pude leer el contador:', e)
+    }
     return NextResponse.json({
       ok: true,
       ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
@@ -104,7 +111,8 @@ export async function POST(request: Request) {
       filas_inventario: resultado.filas,
       avisos: resultado.avisos,
       mensaje:
-        `Listo: regalo de ${regalo.quien_regalo}, ${piezasTexto(total)} (${regalo.motivo}). Bajo el inventario.` +
+        `Listo: regalo de ${regalo.quien_regalo}, ${botellasTexto(total)} (${regalo.motivo}). Bajo el inventario.` +
+        contador +
         (resultado.avisos.length ? `\nAVISO: ${resultado.avisos.join('\n')}` : '')
     })
   } catch (e) {

@@ -2,7 +2,7 @@
  * REGALOS (2026-11-20). Escrito el 2026-11-20 por un ejecutor del Socio.
  *
  * 1. Lo puro (`lib/regalos.ts`): reparto que AVISA y no bloquea, filas para la
- *    RPC, cartera (persona, mes, presentacion, costo) y lectura del dictado.
+ *    RPC, cartera (persona, mes, presentacion; sin dinero) y lectura del dictado.
  * 2. `registrarRegalo` (`lib/regalos-servidor.ts`) contra un PostgREST falso:
  *    lo que viaja a la RPC `registrar_regalo`, con y sin existencia.
  * 3. Las rutas del bot `regalo/proponer` + `regalo/confirmar`: VA, aprobacion,
@@ -21,13 +21,16 @@ import { tipoDelPayload } from '@/lib/bot-pendiente'
 import {
   armarCartera,
   armarFilasRegalo,
+  completarRegalo,
   faltaColumnaRegalo,
   fechaMenosDias,
   hablaDeRegalo,
+  leerConsultaRegalos,
   leerRegalo,
   numeroDictado,
   normalizarQuien,
   repartoRegalo,
+  textoContador,
   validarSolicitudRegalo,
   type LineaCartera,
   type ProductoRegalo
@@ -112,39 +115,37 @@ test.describe('regalos (pura): reparto', () => {
 test.describe('regalos (pura): cartera', () => {
   const l = (o: Partial<LineaCartera>): LineaCartera => ({
     id_regalo: 'r1', fecha: '2026-11-20', quien_regalo: 'Kevin', motivo: 'Evento X', usuario_creador: 'a@x',
-    id_producto: 'p-750', producto: 'Destilado Plata 750ml', ml_por_unidad: 750, costo_unitario: 120,
-    costo_cero_confirmado: false, piezas: 5, ...o
+    id_producto: 'p-750', producto: 'Destilado Plata 750ml', ml_por_unidad: 750,
+    piezas: 5, ...o
   })
   const lineas: LineaCartera[] = [
     l({}),
-    l({ id_producto: 'p-250', producto: 'Destilado Plata 250ml', ml_por_unidad: 250, costo_unitario: 0, piezas: 5 }),
-    l({ id_producto: 'p-50', producto: 'Destilado Plata 50ml', ml_por_unidad: 50, costo_unitario: 0, piezas: 2 }),
+    l({ id_producto: 'p-250', producto: 'Destilado Plata 250ml', ml_por_unidad: 250, piezas: 5 }),
+    l({ id_producto: 'p-50', producto: 'Destilado Plata 50ml', ml_por_unidad: 50, piezas: 2 }),
     l({ id_regalo: 'r2', fecha: '2026-10-03', quien_regalo: 'gilberto', motivo: 'Boda', piezas: 2 }),
-    l({ id_regalo: 'r3', fecha: '2026-11-02', quien_regalo: 'Norman', motivo: 'Cata', id_producto: 'p-pasta', producto: 'Pasta', ml_por_unidad: null, costo_unitario: 0, costo_cero_confirmado: true, piezas: 1 })
+    l({ id_regalo: 'r3', fecha: '2026-11-02', quien_regalo: 'Norman', motivo: 'Cata', id_producto: 'p-pasta', producto: 'Pasta', ml_por_unidad: null, piezas: 1 })
   ]
 
-  test('totales por persona, en piezas por presentacion y a costo (lo sin costo, aparte)', () => {
+  test('totales por persona, en piezas por presentacion (sin dinero)', () => {
     const c = armarCartera(lineas)
     expect(c.presentaciones.map((p) => p.id_producto)).toEqual(['p-750', 'p-250', 'p-50', 'p-pasta'])
     const kevin = c.porPersona.find((g) => g.clave === 'Kevin')!
     expect(kevin.piezasPorProducto).toEqual({ 'p-750': 5, 'p-250': 5, 'p-50': 2 })
     expect(kevin.piezas).toBe(12)
-    expect(kevin.costo).toBe(600) // 5 x 120; las 7 de 250/50 no tienen costo capturado
-    expect(kevin.piezasSinCosto).toBe(7)
+    expect(Object.keys(kevin).sort()).toEqual(['clave', 'piezas', 'piezasPorProducto'])
     // "gilberto" en minusculas se junta con Gilberto.
-    expect(c.porPersona.find((g) => g.clave === 'Gilberto')).toMatchObject({ piezas: 2, costo: 240 })
-    // Costo 0 CONFIRMADO no es "sin costo": vale 0.
-    expect(c.porPersona.find((g) => g.clave === 'Norman')).toMatchObject({ piezas: 1, costo: 0, piezasSinCosto: 0 })
+    expect(c.porPersona.find((g) => g.clave === 'Gilberto')).toMatchObject({ piezas: 2 })
+    expect(c.porPersona.find((g) => g.clave === 'Norman')).toMatchObject({ piezas: 1 })
     expect(c.porPersona.map((g) => g.clave)).toEqual(['Kevin', 'Gilberto', 'Norman'])
   })
 
   test('por mes (el mas reciente primero), total y registros con su motivo', () => {
     const c = armarCartera(lineas)
-    expect(c.porMes.map((g) => [g.clave, g.piezas, g.costo])).toEqual([
-      ['2026-11', 13, 600],
-      ['2026-10', 2, 240]
+    expect(c.porMes.map((g) => [g.clave, g.piezas])).toEqual([
+      ['2026-11', 13],
+      ['2026-10', 2]
     ])
-    expect(c.total).toMatchObject({ piezas: 15, costo: 840, piezasSinCosto: 7 })
+    expect(c.total).toMatchObject({ piezas: 15 })
     expect(c.registros.map((r) => [r.id_regalo, r.fecha, r.quien_regalo, r.motivo, r.piezas])).toEqual([
       ['r1', '2026-11-20', 'Kevin', 'Evento X', 12],
       ['r3', '2026-11-02', 'Norman', 'Cata', 1],
@@ -154,7 +155,7 @@ test.describe('regalos (pura): cartera', () => {
 
   test('sin regalos: cartera vacia, sin reventar', () => {
     const c = armarCartera([])
-    expect(c).toMatchObject({ porPersona: [], porMes: [], registros: [], total: { piezas: 0, costo: 0 } })
+    expect(c).toMatchObject({ porPersona: [], porMes: [], registros: [], total: { piezas: 0 } })
   })
 })
 
@@ -575,6 +576,121 @@ test.describe('regalo/proponer + regalo/confirmar', () => {
   })
 })
 
+// ─── 3b. Pedido de Norman del 2026-11-23: sin costo, contador por persona ───
+
+test.describe('regalos 2026-11-23: el mensaje real del grupo, sin costo y con contador', () => {
+  // bitacora de produccion, mensaje 803 del grupo, 2026-11-23 12:56 MX. El bot contesto
+  // "¿Cuánto costó la botella que regalaste?" (mensajes 804 y 806).
+  const REAL = 'Regalo una grande de norman en conferencia de IA'
+
+  test('se lee completo: quien, pieza y razon', () => {
+    expect(leerRegalo(REAL, PRODUCTOS, 'norman')).toMatchObject({
+      ok: true, quien: 'Norman', motivo: 'conferencia de IA', piezas: [{ producto: { id: 'p-750' }, cantidad: 1 }]
+    })
+    // Dictado por otra persona, sigue siendo de Norman.
+    expect(leerRegalo(REAL, PRODUCTOS, 'kevin')).toMatchObject({ ok: true, quien: 'Norman' })
+  })
+
+  test('formas cortas: "regalo Kevin 2 grandes en X", "regalo de Luis: 3 minis…", "registra un regalo…", sin nombre = quien dicta', () => {
+    expect(leerRegalo('regalo Kevin 2 grandes en la feria', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Kevin', motivo: 'la feria', piezas: [{ cantidad: 2 }] })
+    expect(leerRegalo('Regalo de Luis: 3 minis para una cata', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Luis', motivo: 'una cata' })
+    expect(leerRegalo('registra un regalo de Gilberto, 1 chica, motivo: cliente nuevo', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Gilberto', motivo: 'cliente nuevo' })
+    expect(leerRegalo('Regalos Kevin 2 grandes y 1 mini en la expo', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Kevin', motivo: 'la expo' })
+    expect(leerRegalo('Regalo 2 minis en la expo', PRODUCTOS, 'luis')).toMatchObject({ ok: true, quien: 'Luis', motivo: 'la expo' })
+    // "la boda de Kevin" es la razon, no quien regalo.
+    expect(leerRegalo('regalé 2 grandes en la boda de Kevin', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Norman', motivo: 'la boda de Kevin' })
+    // Con acento es tercera persona sin nombre: se pregunta quien.
+    expect(leerRegalo('Regaló 2 grandes en la expo', PRODUCTOS, 'norman')).toMatchObject({ ok: false, falta: 'quien' })
+  })
+
+  test('una botella sin tamano: pregunta cual; y con la respuesta se completa', () => {
+    expect(leerRegalo('Kevin regaló una botella en la expo', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'piezas' })
+    expect(completarRegalo('Kevin regaló una botella en la expo', 'piezas', 'grande')).toBe('Kevin regaló una grande en la expo')
+    expect(completarRegalo('Kevin regaló botellas en la expo', 'piezas', '2 minis')).toBe('Kevin regaló 2 minis en la expo')
+    expect(leerRegalo(completarRegalo('Kevin regaló 5 grandes', 'motivo', 'boda de Juan'), PRODUCTOS, 'norman')).toMatchObject({ ok: true, motivo: 'boda de Juan' })
+    expect(leerRegalo(completarRegalo('Kevin regaló 5 grandes', 'motivo', 'Solo registralo'), PRODUCTOS, 'norman')).toMatchObject({ ok: true, motivo: 'sin motivo dicho' })
+    expect(leerRegalo(completarRegalo('se regalaron 5 grandes, motivo: evento', 'quien', 'fue Kevin'), PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Kevin', motivo: 'evento' })
+    // sin botella de por medio sigue sin ser un regalo de producto (puede ser un gasto)
+    expect(leerRegalo('regalo para la esposa de Gilberto 500', PRODUCTOS, 'norman').ok).toBe(false)
+  })
+
+  test('que es consulta y que es registro', () => {
+    for (const [t, q] of [
+      ['regalos', ''], ['Regalos?', ''], ['contador de regalos', ''], ['cuántos regalos lleva Kevin', 'Kevin'], ['¿Cuántos regalos lleva Kevin?', 'Kevin'],
+      ['regalos de Norman', 'Norman'], ['cuantas botellas ha regalado Gilberto', 'Gilberto'], ['mis regalos', 'Luis'], ['cuantos regalos llevo', 'Luis'],
+      ['cuantas grandes hemos regalado', ''], ['pásame los regalos', '']
+    ] as const) expect(leerConsultaRegalos(t, 'luis', []), t).toEqual({ quien: q })
+    expect(leerConsultaRegalos('cuantos regalos lleva juan perez', 'luis', ['Juan Pérez'])).toEqual({ quien: 'Juan Pérez' })
+    for (const t of [REAL, 'Kevin regaló 5 grandes, motivo: x', 'regalos Kevin 2 grandes en la expo', 'vendí 3 grandes de regalo', 'cuanto vendimos', 'me regalaron un dia libre', 'regalo para la esposa de Gilberto 500'])
+      expect(leerConsultaRegalos(t, 'luis', []), t).toBeNull()
+  })
+
+  test('el contador: suma por persona, por presentacion y total, con cada razon; ni un peso', () => {
+    const l = (o: Partial<LineaCartera>): LineaCartera => ({
+      id_regalo: 'r1', fecha: '2026-11-23', quien_regalo: 'Kevin', motivo: 'Feria', usuario_creador: null,
+      id_producto: 'p-750', producto: 'Destilado Plata 750ml', ml_por_unidad: 750, piezas: 2, ...o
+    })
+    const c = armarCartera([
+      l({}), l({ id_producto: 'p-50', producto: 'Destilado Plata 50ml', ml_por_unidad: 50, piezas: 3 }),
+      l({ id_regalo: 'r2', fecha: '2026-11-22', motivo: 'Boda', piezas: 1 }),
+      l({ id_regalo: 'r3', quien_regalo: 'norman', motivo: 'conferencia de IA', piezas: 1 })
+    ])
+    const todo = textoContador(c, '')
+    expect(todo).toContain('Kevin: 6 botellas (3 de 750ml, 3 de 50ml)')
+    expect(todo).toContain('Norman: 1 botella (1 de 750ml)')
+    expect(todo).toContain('TOTAL: 7 botellas (4 de 750ml, 3 de 50ml)')
+    const k = textoContador(c, 'Kevin')
+    expect(k).toContain('Kevin: 6 botellas')
+    expect(k).toContain('2026-11-23: 2 de 750ml, 3 de 50ml. Feria')
+    expect(k).toContain('2026-11-22: 1 de 750ml. Boda')
+    expect(k).not.toContain('conferencia')
+    expect(textoContador(c, 'Luis')).toContain('Luis: 0 botellas')
+    expect(textoContador(armarCartera([]), '')).toContain('Todavia no hay regalos')
+    for (const t of [todo, k]) expect(t).not.toMatch(/\$|costo|precio|monto/i)
+  })
+
+  test('por la ruta: el mensaje real propone SIN preguntar costo, el VA baja una grande y contesta el contador', async () => {
+    estadoInicial()
+    tablas.v_regalo_lineas = [
+      { id_regalo: 'r0', fecha: '2026-11-20', quien_regalo: 'Norman', motivo: 'Feria', usuario_creador: null, id_producto: 'p-750', producto: 'Destilado Plata 750ml', ml_por_unidad: 750, piezas: 2 }
+    ]
+    const p = await llamar('proponer', { telegram_id: NORMAN, texto: REAL })
+    expect(p.status, JSON.stringify(p.j)).toBe(200)
+    expect(p.j.ok).toBe(true)
+    expect(p.j.pregunta).toBeUndefined()
+    expect(String(p.j.mensaje)).not.toMatch(/\$|cu[aá]nto|cost[oó]|precio|monto/i)
+    expect(String(p.j.mensaje)).toContain('QUIEN:      Norman')
+    const c = await llamar('confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(rpcs).toHaveLength(1)
+    expect(rpcs[0].p_regalo).toMatchObject({ quien_regalo: 'Norman', motivo: 'conferencia de IA' })
+    expect(rpcs[0].p_inventario).toMatchObject([{ id_producto: 'p-750', cantidad: 1 }])
+    expect(String(c.j.mensaje)).toContain('Norman: 2 botellas (2 de 750ml)') // lo que ya hay en la vista
+    const q = await llamar('proponer', { telegram_id: NORMAN, texto: 'cuántos regalos lleva Norman' })
+    expect(q.j).toMatchObject({ ok: true, consulta: true })
+    expect(String(q.j.texto)).toContain('2026-11-20: 2 de 750ml. Feria')
+    expect((await llamar('proponer', { telegram_id: LOCAL, texto: 'regalos' })).status).toBe(403)
+  })
+
+  test('por la ruta: falta la razon -> pregunta; la respuesta en `completa` propone', async () => {
+    estadoInicial()
+    const a = await llamar('proponer', { telegram_id: NORMAN, texto: 'Kevin regaló 5 grandes' })
+    expect(a.j).toMatchObject({ ok: false, falta: 'motivo' })
+    const b = await llamar('proponer', { telegram_id: NORMAN, texto: 'Kevin regaló 5 grandes', completa: { falta: 'motivo', dicho: 'boda de Juan' } })
+    expect(b.j.ok, JSON.stringify(b.j)).toBe(true)
+    expect(String(b.j.mensaje)).toContain('MOTIVO:     boda de Juan')
+    const bot = await llamar('proponer', { telegram_id: NORMAN, texto: 'Kevin regaló una botella en la expo' })
+    expect(bot.j).toMatchObject({ ok: false, falta: 'piezas' })
+  })
+
+  test('la pagina y la vista no valuan: sin costo en ninguna parte', () => {
+    expect(leer('app', 'panel', 'regalos', 'page.tsx')).not.toMatch(/mxn|A costo|a costo|g\.costo|piezasSinCosto/)
+    const sql = leer('supabase', 'migrations', '20261120120000_regalos.sql')
+    const vista = sql.slice(sql.indexOf('CREATE OR REPLACE VIEW public.v_regalo_lineas'))
+    expect(vista).not.toMatch(/costo/i)
+  })
+})
+
 // ─── 4. Cableado ────────────────────────────────────────────────────────────
 
 const leer = (...p: string[]) => readFileSync(join(process.cwd(), ...p), 'utf8')
@@ -636,8 +752,5 @@ test.describe('regalos: cableado', () => {
     expect(sql).toContain("'ADMIN', 'EMPLEADO_ADMIN'")
     expect(sql).toMatch(/CREATE OR REPLACE VIEW public\.v_regalo_lineas/i)
     expect(sql).toContain("status = 'ACTIVO'")
-    // la cartera se valua al costo completo del ERP (el de los margenes), con el catalogo de respaldo
-    expect(sql).toContain('COALESCE(NULLIF(cc.costo_total, 0), p.costo_unitario) AS costo_unitario')
-    expect(sql).toContain('FROM public.v_costo_completo v')
   })
 })

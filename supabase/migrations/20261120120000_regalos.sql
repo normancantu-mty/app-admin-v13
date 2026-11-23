@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS public.regalos (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   -- Fecha del regalo (dia de Mexico), no la de captura.
   fecha              date NOT NULL DEFAULT ((now() AT TIME ZONE 'America/Mexico_City')::date),
-  -- Quien regalo: 'Norman', 'Kevin', 'Gilberto' o texto libre.
+  -- Quien regalo: 'Norman', 'Kevin', 'Gilberto', 'Luis' o texto libre.
   quien_regalo       text NOT NULL CHECK (length(btrim(quien_regalo)) BETWEEN 1 AND 60),
   motivo             text NOT NULL CHECK (length(btrim(motivo)) BETWEEN 3 AND 300),
   -- De que inventario salio (hoy: la matriz).
@@ -196,14 +196,7 @@ GRANT EXECUTE ON FUNCTION public.registrar_regalo(jsonb, jsonb) TO authenticated
 
 
 -- ─── 4. La lectura: una fila por regalo x producto, solo lo ACTIVO ──────────
--- El costo es el COSTO COMPLETO del ERP (`v_costo_completo.costo_total`:
--- empaque + liquido + mano de obra, el mismo de los margenes), y si un producto
--- no lo tiene, el del catalogo (`catalogo_productos.costo_unitario`). En prod
--- (SELECT del 2026-11-20) el catalogo trae 120 / 0 / 0 para 750 / 250 / 50 ml y
--- el costo completo 132.21 / 41.53 / 13.44: con el catalogo las chicas y minis
--- saldrian "sin costo". Es el costo ACTUAL: si cambia, la cartera se revalua.
--- (Ojo: esta vista depende de `v_costo_completo`; un DROP de esa vista sin
--- CASCADE fallara mientras esta exista.)
+-- Solo botellas, quien y razon (Norman, voz 2026-11-23: nada de dinero en regalos).
 
 CREATE OR REPLACE VIEW public.v_regalo_lineas
   WITH (security_invoker = true) AS
@@ -223,17 +216,10 @@ CREATE OR REPLACE VIEW public.v_regalo_lineas
          l.id_producto,
          p.nombre                AS producto,
          p.ml_por_unidad,
-         COALESCE(NULLIF(cc.costo_total, 0), p.costo_unitario) AS costo_unitario,
-         p.costo_cero_confirmado,
          l.piezas
     FROM public.regalos r
     JOIN lineas l ON l.id_regalo = r.id
-    JOIN public.catalogo_productos p ON p.id = l.id_producto
-    LEFT JOIN LATERAL (
-      SELECT max(v.costo_total) AS costo_total
-        FROM public.v_costo_completo v
-       WHERE v.id_producto = l.id_producto
-    ) cc ON true;
+    JOIN public.catalogo_productos p ON p.id = l.id_producto;
 
 GRANT SELECT ON public.v_regalo_lineas TO authenticated, service_role;
 
