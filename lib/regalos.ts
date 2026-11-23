@@ -485,6 +485,15 @@ export function leerRegalo(texto: string, productos: readonly ProductoRegalo[], 
   const trasVerbo = new RegExp(`^\\s*(?:de\\s+)?(?:parte\\s+de\\s+)?(${nombres})\\b`).exec(tramo.slice(regalo.index + regalo[0].length))
   const dichoDespues = primeraPersona ? null : (trasVerbo ?? trasPieza)
 
+  // Dos personas (o una venta y un regalo) en el mismo mensaje: uno por mensaje,
+  // para no cargarle a una las botellas de la otra.
+  const despues = tramo.slice(regalo.index + regalo[0].length, finUltimaPieza + (trasPieza?.[0].length ?? 0))
+  const nombrados = new Set([...despues.matchAll(new RegExp(`\\b(${nombres})\\b`, 'g'))].map((m) => m[1]))
+  const otroPegado = new RegExp(`^[\\s,]*(?:y|e)\\s+(?:de\\s+)?(${nombres})\\b`).test(tramo.slice(finUltimaPieza + (trasPieza?.[0].length ?? 0)))
+  if (nombrados.size > 1 || (trasPieza && otroPegado) || /\b(vend|venta)\w*/.test(plano.slice(0, regalo.index))) {
+    return { ok: false, falta: 'uno_por_mensaje' }
+  }
+
   // 4. Motivo implicito: lo que queda despues de la ultima pieza (y de ese nombre).
   if (!marcaMotivo) {
     const desde = finUltimaPieza + (!primeraPersona && trasPieza ? trasPieza[0].length : 0)

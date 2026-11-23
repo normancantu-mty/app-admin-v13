@@ -603,6 +603,15 @@ test.describe('regalos 2026-11-23: el mensaje real del grupo, sin costo y con co
     expect(leerRegalo('Regaló 2 grandes en la expo', PRODUCTOS, 'norman')).toMatchObject({ ok: false, falta: 'quien' })
   })
 
+  test('dos personas (o venta y regalo) en un mensaje: uno por mensaje, no se le carga todo a una', () => {
+    for (const t of [
+      'Regalos: Norman 1 grande en conferencia de IA, Kevin 2 grandes en feria',
+      'Regalo una grande de norman y 2 chicas de kevin en la feria',
+      'Regalo 2 grandes de norman y kevin en la feria',
+      'Vendi 2 grandes y regale 1 chica en la feria'
+    ]) expect(leerRegalo(t, PRODUCTOS, 'norman'), t).toEqual({ ok: false, falta: 'uno_por_mensaje' })
+  })
+
   test('una botella sin tamano: pregunta cual; y con la respuesta se completa', () => {
     expect(leerRegalo('Kevin regaló una botella en la expo', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'piezas' })
     expect(completarRegalo('Kevin regaló una botella en la expo', 'piezas', 'grande')).toBe('Kevin regaló una grande en la expo')
