@@ -1,0 +1,120 @@
+{
+ "ok": true,
+ "reconocida": true,
+ "motivo": null,
+ "privado": false,
+ "texto": "Estado de cuenta de Aeropuerto, al 23 de noviembre de 2026. Saldo por pagar: $18,416.00 (igual a la cartera del ERP).",
+ "estado": {
+  "cliente": "Aeropuerto",
+  "corte": "23 de noviembre de 2026",
+  "saldo": 18416,
+  "movimientos": [
+   {
+    "tipo": "inicial",
+    "concepto": "Saldo inicial",
+    "detalle": "Registrado en el sistema a esa fecha",
+    "piezas": [
+     {
+      "presentacion": "750 ml",
+      "cantidad": 9,
+      "precio": 480,
+      "importe": 4320
+     },
+     {
+      "presentacion": "250 ml",
+      "cantidad": 12,
+      "precio": 144,
+      "importe": 1728
+     },
+     {
+      "presentacion": "50 ml",
+      "cantidad": 17,
+      "precio": 56,
+      "importe": 952
+     }
+    ],
+    "total_piezas": 38,
+    "fecha": "27 oct 2026",
+    "importe": 7000,
+    "saldo": 7000
+   },
+   {
+    "tipo": "entrega",
+    "concepto": "Entrega de mercancía",
+    "detalle": "Folio FCB165BF",
+    "piezas": [
+     {
+      "presentacion": "750 ml",
+      "cantidad": 8,
+      "precio": 480,
+      "importe": 3840
+     },
+     {
+      "presentacion": "250 ml",
+      "cantidad": 12,
+      "precio": 144,
+      "importe": 1728
+     },
+     {
+      "presentacion": "50 ml",
+      "cantidad": 48,
+      "precio": 56,
+      "importe": 2688
+     }
+    ],
+    "total_piezas": 68,
+    "fecha": "4 nov 2026",
+    "importe": 8256,
+    "saldo": 15256
+   },
+   {
+    "tipo": "abono",
+    "concepto": "Abono en efectivo",
+    "detalle": "",
+    "piezas": [],
+    "total_piezas": 0,
+    "fecha": "5 nov 2026",
+    "importe": -5000,
+    "saldo": 10256
+   },
+   {
+    "tipo": "entrega",
+    "concepto": "Entrega de mercancía",
+    "detalle": "Folio 07B702F5",
+    "piezas": [
+     {
+      "presentacion": "750 ml",
+      "cantidad": 12,
+      "precio": 480,
+      "importe": 5760
+     },
+     {
+      "presentacion": "250 ml",
+      "cantidad": 12,
+      "precio": 144,
+      "importe": 1728
+     },
+     {
+      "presentacion": "50 ml",
+      "cantidad": 12,
+      "precio": 56,
+      "importe": 672
+     }
+    ],
+    "total_piezas": 36,
+    "fecha": "23 nov 2026",
+    "importe": 8160,
+    "saldo": 18416
+   }
+  ],
+  "resumen": {
+   "inicial": 7000,
+   "entregas": 16416,
+   "otros_cargos": 0,
+   "abonos": 5000,
+   "piezas": 142,
+   "saldo": 18416
+  },
+  "notas": []
+ }
+}

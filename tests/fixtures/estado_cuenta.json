@@ -1,0 +1,322 @@
+{
+ "entidades": [
+  {
+   "id": "ae033b9a-4382-49c9-80be-3d8aa16189da",
+   "nombre": "Rey Tiburon",
+   "rol": "LOC"
+  },
+  {
+   "id": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "nombre": "Aeropuerto",
+   "rol": "LOC"
+  }
+ ],
+ "productos": [
+  {
+   "id": "c1000000-0000-0000-0000-000000000001",
+   "nombre": "Destilado Plata 750ml",
+   "tipo": "TERMINADO",
+   "unidad_medida": "PIEZAS",
+   "ml_por_unidad": 750.0
+  },
+  {
+   "id": "c1000000-0000-0000-0000-000000000003",
+   "nombre": "Destilado Plata 250ml",
+   "tipo": "TERMINADO",
+   "unidad_medida": "PIEZAS",
+   "ml_por_unidad": 250.0
+  },
+  {
+   "id": "c1000000-0000-0000-0000-000000000004",
+   "nombre": "Destilado Plata 50ml",
+   "tipo": "TERMINADO",
+   "unidad_medida": "PIEZAS",
+   "ml_por_unidad": 50.0
+  }
+ ],
+ "cartera": [
+  {
+   "id_entidad": "ae033b9a-4382-49c9-80be-3d8aa16189da",
+   "nombre": "Rey Tiburon",
+   "rol": "LOC",
+   "generado": 3568,
+   "abonado": 0,
+   "porcentaje_pagado": 0.0,
+   "deuda": 3568,
+   "recibidas": 1,
+   "salidas": 0,
+   "libro_dice": 1,
+   "estimado_en_piso": 1,
+   "ultimo_abono": null,
+   "dias_sin_abono": 0,
+   "referencia_dias": "ENTREGA",
+   "prioridad": 0,
+   "calculado_en": "2026-11-23T19:43:19Z",
+   "id_acreedor": null
+  },
+  {
+   "id_entidad": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "nombre": "Aeropuerto",
+   "rol": "LOC",
+   "generado": 23416,
+   "abonado": 5000,
+   "porcentaje_pagado": 0.2135292107960369,
+   "deuda": 18416,
+   "recibidas": 1,
+   "salidas": 0,
+   "libro_dice": 1,
+   "estimado_en_piso": 1,
+   "ultimo_abono": null,
+   "dias_sin_abono": 0,
+   "referencia_dias": "ENTREGA",
+   "prioridad": 0,
+   "calculado_en": "2026-11-23T19:43:19Z",
+   "id_acreedor": null
+  }
+ ],
+ "tickets": [
+  {
+   "id": "fcb165bf-d354-42c4-9308-596de215f8d9",
+   "id_comprador": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "fecha_transaccion": "2026-11-05T03:29:32.559+00:00",
+   "total_cobrado_real": 8256,
+   "monto_base_ingreso": 8256,
+   "condicion_pago": "CONCESION",
+   "status": "ACTIVO"
+  },
+  {
+   "id": "07b702f5-d88c-45c0-af24-e31efc8ad6dd",
+   "id_comprador": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "fecha_transaccion": "2026-11-23T18:17:57.98+00:00",
+   "total_cobrado_real": 8160,
+   "monto_base_ingreso": 8160,
+   "condicion_pago": "CONCESION",
+   "status": "ACTIVO"
+  }
+ ],
+ "detalles": [
+  {
+   "id_ticket": "fcb165bf-d354-42c4-9308-596de215f8d9",
+   "id_producto": "c1000000-0000-0000-0000-000000000001",
+   "cantidad": 8,
+   "precio_unitario": 480,
+   "subtotal_linea": 3840
+  },
+  {
+   "id_ticket": "fcb165bf-d354-42c4-9308-596de215f8d9",
+   "id_producto": "c1000000-0000-0000-0000-000000000003",
+   "cantidad": 12,
+   "precio_unitario": 144,
+   "subtotal_linea": 1728
+  },
+  {
+   "id_ticket": "fcb165bf-d354-42c4-9308-596de215f8d9",
+   "id_producto": "c1000000-0000-0000-0000-000000000004",
+   "cantidad": 48,
+   "precio_unitario": 56,
+   "subtotal_linea": 2688
+  },
+  {
+   "id_ticket": "07b702f5-d88c-45c0-af24-e31efc8ad6dd",
+   "id_producto": "c1000000-0000-0000-0000-000000000001",
+   "cantidad": 12,
+   "precio_unitario": 480,
+   "subtotal_linea": 5760
+  },
+  {
+   "id_ticket": "07b702f5-d88c-45c0-af24-e31efc8ad6dd",
+   "id_producto": "c1000000-0000-0000-0000-000000000003",
+   "cantidad": 12,
+   "precio_unitario": 144,
+   "subtotal_linea": 1728
+  },
+  {
+   "id_ticket": "07b702f5-d88c-45c0-af24-e31efc8ad6dd",
+   "id_producto": "c1000000-0000-0000-0000-000000000004",
+   "cantidad": 12,
+   "precio_unitario": 56,
+   "subtotal_linea": 672
+  }
+ ],
+ "dinero": [
+  {
+   "id": "c-ae033b9a",
+   "id_entidad_relacionada": "ae033b9a-4382-49c9-80be-3d8aa16189da",
+   "fecha_movimiento": "2026-10-28T05:59:00+00:00",
+   "tipo_movimiento": "CARGO_DEUDA",
+   "monto": 3568,
+   "categoria": "ARRANQUE",
+   "status": "ACTIVO",
+   "es_entrega_efectivo": false,
+   "metodo_pago": null
+  },
+  {
+   "id": "c-4cbad6ad",
+   "id_entidad_relacionada": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "fecha_movimiento": "2026-10-28T05:59:00+00:00",
+   "tipo_movimiento": "CARGO_DEUDA",
+   "monto": 7000,
+   "categoria": "ARRANQUE",
+   "status": "ACTIVO",
+   "es_entrega_efectivo": false,
+   "metodo_pago": null
+  },
+  {
+   "id": "a-aero",
+   "id_entidad_relacionada": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "fecha_movimiento": "2026-11-05T11:20:25.196+00:00",
+   "tipo_movimiento": "ABONO_DEUDA",
+   "monto": 5000,
+   "categoria": "ABONO_REAL",
+   "status": "ACTIVO",
+   "es_entrega_efectivo": false,
+   "metodo_pago": "EFECTIVO"
+  }
+ ],
+ "piezas": [
+  {
+   "id": "p-ae033b9a-750",
+   "fecha_movimiento": "2026-10-28T05:59:00+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 5,
+   "id_producto": "c1000000-0000-0000-0000-000000000001",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "ae033b9a-4382-49c9-80be-3d8aa16189da",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 480,
+   "notas": "ARRANQUE 2026-10-27: consignacion inicial (conciliado)"
+  },
+  {
+   "id": "p-ae033b9a-250",
+   "fecha_movimiento": "2026-10-28T05:59:00+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 5,
+   "id_producto": "c1000000-0000-0000-0000-000000000003",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "ae033b9a-4382-49c9-80be-3d8aa16189da",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 144,
+   "notas": "ARRANQUE 2026-10-27: consignacion inicial (conciliado)"
+  },
+  {
+   "id": "p-ae033b9a-50",
+   "fecha_movimiento": "2026-10-28T05:59:00+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 8,
+   "id_producto": "c1000000-0000-0000-0000-000000000004",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "ae033b9a-4382-49c9-80be-3d8aa16189da",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 56,
+   "notas": "ARRANQUE 2026-10-27: consignacion inicial (conciliado)"
+  },
+  {
+   "id": "p-4cbad6ad-750",
+   "fecha_movimiento": "2026-10-28T05:59:00+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 9,
+   "id_producto": "c1000000-0000-0000-0000-000000000001",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 480,
+   "notas": "ARRANQUE 2026-10-27: consignacion inicial (conciliado)"
+  },
+  {
+   "id": "p-4cbad6ad-250",
+   "fecha_movimiento": "2026-10-28T05:59:00+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 12,
+   "id_producto": "c1000000-0000-0000-0000-000000000003",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 144,
+   "notas": "ARRANQUE 2026-10-27: consignacion inicial (conciliado)"
+  },
+  {
+   "id": "p-4cbad6ad-50",
+   "fecha_movimiento": "2026-10-28T05:59:00+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 17,
+   "id_producto": "c1000000-0000-0000-0000-000000000004",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 56,
+   "notas": "ARRANQUE 2026-10-27: consignacion inicial (conciliado)"
+  },
+  {
+   "id": "t-fcb165bf-750",
+   "fecha_movimiento": "2026-11-05T03:29:32.559+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 8,
+   "id_producto": "c1000000-0000-0000-0000-000000000001",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 0,
+   "notas": "ticket:fcb165bf-d354-42c4-9308-596de215f8d9"
+  },
+  {
+   "id": "t-fcb165bf-250",
+   "fecha_movimiento": "2026-11-05T03:29:32.559+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 12,
+   "id_producto": "c1000000-0000-0000-0000-000000000003",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 0,
+   "notas": "ticket:fcb165bf-d354-42c4-9308-596de215f8d9"
+  },
+  {
+   "id": "t-fcb165bf-50",
+   "fecha_movimiento": "2026-11-05T03:29:32.559+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 48,
+   "id_producto": "c1000000-0000-0000-0000-000000000004",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 0,
+   "notas": "ticket:fcb165bf-d354-42c4-9308-596de215f8d9"
+  },
+  {
+   "id": "t-07b702f5-750",
+   "fecha_movimiento": "2026-11-23T18:17:57.98+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 12,
+   "id_producto": "c1000000-0000-0000-0000-000000000001",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 0,
+   "notas": "ticket:07b702f5-d88c-45c0-af24-e31efc8ad6dd"
+  },
+  {
+   "id": "t-07b702f5-250",
+   "fecha_movimiento": "2026-11-23T18:17:57.98+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 12,
+   "id_producto": "c1000000-0000-0000-0000-000000000003",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 0,
+   "notas": "ticket:07b702f5-d88c-45c0-af24-e31efc8ad6dd"
+  },
+  {
+   "id": "t-07b702f5-50",
+   "fecha_movimiento": "2026-11-23T18:17:57.98+00:00",
+   "tipo_movimiento": "ENTRADA_CONCESION",
+   "cantidad": 12,
+   "id_producto": "c1000000-0000-0000-0000-000000000004",
+   "id_entidad_origen": null,
+   "id_entidad_destino": "4cbad6ad-41f6-4397-86d3-0f5ec5be21dd",
+   "status": "ACTIVO",
+   "costo_unitario_movimiento": 0,
+   "notas": "ticket:07b702f5-d88c-45c0-af24-e31efc8ad6dd"
+  }
+ ]
+}

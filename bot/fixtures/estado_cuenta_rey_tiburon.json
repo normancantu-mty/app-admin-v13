@@ -1,0 +1,52 @@
+{
+ "ok": true,
+ "reconocida": true,
+ "motivo": null,
+ "privado": false,
+ "texto": "Estado de cuenta de Rey Tiburon, al 23 de noviembre de 2026. Saldo por pagar: $3,568.00 (igual a la cartera del ERP).",
+ "estado": {
+  "cliente": "Rey Tiburon",
+  "corte": "23 de noviembre de 2026",
+  "saldo": 3568,
+  "movimientos": [
+   {
+    "tipo": "inicial",
+    "concepto": "Saldo inicial",
+    "detalle": "Registrado en el sistema a esa fecha",
+    "piezas": [
+     {
+      "presentacion": "750 ml",
+      "cantidad": 5,
+      "precio": 480,
+      "importe": 2400
+     },
+     {
+      "presentacion": "250 ml",
+      "cantidad": 5,
+      "precio": 144,
+      "importe": 720
+     },
+     {
+      "presentacion": "50 ml",
+      "cantidad": 8,
+      "precio": 56,
+      "importe": 448
+     }
+    ],
+    "total_piezas": 18,
+    "fecha": "27 oct 2026",
+    "importe": 3568,
+    "saldo": 3568
+   }
+  ],
+  "resumen": {
+   "inicial": 3568,
+   "entregas": 0,
+   "otros_cargos": 0,
+   "abonos": 0,
+   "piezas": 18,
+   "saldo": 3568
+  },
+  "notas": []
+ }
+}
