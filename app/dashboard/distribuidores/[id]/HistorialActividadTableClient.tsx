@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { anularMovimientoFinanzas } from '@/app/actions/audit'
 import { annularTicketHistorialDistribuidorAction } from '@/app/actions/distribuidores'
 import { formatFechaHoraMX } from '@/lib/utils'
+import { TIPO_FILA_ABONO_LOCAL } from '@/lib/abono-local'
+
+/** La etiqueta, normalizada igual que `normalizeTipo`. */
+const FILA_ABONO_LOCAL = TIPO_FILA_ABONO_LOCAL.replaceAll(' ', '_')
 
 export interface ActividadHistorialRow {
   fecha: string
@@ -49,7 +53,7 @@ export default function HistorialActividadTableClient({
   const getTipoBadgeClasses = (tipo: string): string => {
     const tipoNormalizado = normalizeTipo(tipo)
     if (tipoNormalizado === 'VENTA') return 'bg-blue-100 text-blue-800'
-    if (tipoNormalizado === 'INGRESO_COMISION' || tipoNormalizado === 'ABONO_DEUDA' || tipoNormalizado === 'COMISION_PASIVA') return 'bg-green-100 text-green-800'
+    if (tipoNormalizado === 'INGRESO_COMISION' || tipoNormalizado === FILA_ABONO_LOCAL || tipoNormalizado === 'ABONO_DEUDA' || tipoNormalizado === 'COMISION_PASIVA') return 'bg-green-100 text-green-800'
     if (tipoNormalizado === 'DEUDA_A_MATRIZ') return 'bg-gray-100 text-gray-700'
     return 'bg-slate-100 text-slate-700'
   }
@@ -107,7 +111,7 @@ export default function HistorialActividadTableClient({
     const fechaDisplay = formatFechaHoraMX(actividad.policyTimestamp ?? actividad.fecha)
 
     const montoColor =
-      normalizeTipo(actividad.tipo) === 'ABONO_DEUDA'
+      normalizeTipo(actividad.tipo) === 'ABONO_DEUDA' || normalizeTipo(actividad.tipo) === FILA_ABONO_LOCAL
         ? 'text-green-600'
         : normalizeTipo(actividad.tipo) === 'INGRESO_COMISION' || normalizeTipo(actividad.tipo) === 'COMISION_PASIVA'
           ? 'text-green-600'

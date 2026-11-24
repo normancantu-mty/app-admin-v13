@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { ETIQUETA_ABONO_LOCAL, esAbonoPorSurtirLocal } from '@/lib/abono-local'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -50,6 +51,7 @@ interface Finanza {
   tipo_movimiento: string
   monto: number
   categoria_gasto: string
+  categoria: string | null
   entidad: {
     nombre: string
   } | null
@@ -89,7 +91,7 @@ async function getFeedData() {
       
       supabase
         .from('finanzas_ledger')
-        .select('id, fecha_movimiento, tipo_movimiento, monto, categoria_gasto, entidad:entidades!id_entidad_relacionada(nombre)')
+        .select('id, fecha_movimiento, tipo_movimiento, monto, categoria_gasto, categoria, entidad:entidades!id_entidad_relacionada(nombre)')
         .neq('status', 'ANULADO')
         .limit(20)
         .order('fecha_movimiento', { ascending: false }),
@@ -138,7 +140,7 @@ async function getFeedData() {
       const nombreEntidad = finanza.entidad?.nombre || 'El Administrador'
       const tipoFinanza = finanza.tipo_movimiento
       const colorBadge =
-        tipoFinanza === 'ABONO_DEUDA' || tipoFinanza === 'INGRESO_COMISION'
+        tipoFinanza === 'ABONO_DEUDA' || tipoFinanza === 'INGRESO_COMISION' || esAbonoPorSurtirLocal(finanza)
           ? 'bg-green-100 text-green-600'
           : tipoFinanza === 'DEUDA_A_MATRIZ'
             ? 'bg-gray-100 text-gray-500'
@@ -146,7 +148,9 @@ async function getFeedData() {
       const mensaje =
         tipoFinanza === 'ABONO_DEUDA'
           ? `${nombreEntidad}: Pago recibido / Deuda saldada ($${finanza.monto.toFixed(2)})`
-          : tipoFinanza === 'INGRESO_COMISION'
+          : esAbonoPorSurtirLocal(finanza)
+            ? `${nombreEntidad}: ${ETIQUETA_ABONO_LOCAL} ($${Math.abs(finanza.monto).toFixed(2)})`
+            : tipoFinanza === 'INGRESO_COMISION'
             ? `${nombreEntidad}: Comisión ganada por red ($${finanza.monto.toFixed(2)})`
             : tipoFinanza === 'DEUDA_A_MATRIZ'
               ? `${nombreEntidad}: Efectivo recolectado (Por entregar a Matriz) ($${finanza.monto.toFixed(2)})`

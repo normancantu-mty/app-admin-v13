@@ -9,6 +9,8 @@ import { diasDesde } from '@/lib/actividad'
 import { leerUltimaActividadRed } from '@/lib/actividad-servidor'
 import { getCurrentUser } from '@/lib/auth-utils'
 import { leerSaldosEntidad } from '@/lib/vistas'
+import { leerAbonosPorSurtirLocal } from '@/lib/abono-local-lectura'
+import { saldoPorPagarSinAbonoLocal } from '@/lib/abono-local'
 import DirectoryTableClient, { type DirectoryRow } from './DirectoryTableClient'
 
 /**
@@ -202,10 +204,12 @@ export default async function DistribuidoresPage() {
   const currentUserEntityId = currentUser?.id ?? null
   const entidades = await getEntidades(supabaseClient, sessionRole, currentUserEntityId)
 
-  const [saldos, actividadPorNodo] = await Promise.all([
+  const [saldos, abonosLocales, actividadPorNodo] = await Promise.all([
     // Con el cliente de la SESION: la vista es `security_invoker` y recorta
     // sola. Con service role devolveria la red entera.
     leerSaldosEntidad(supabaseClient),
+    // Mismo cliente que la vista: corrige el saldo por pagar, que es efectivo.
+    leerAbonosPorSurtirLocal(supabaseClient),
     // Service role a proposito, igual que antes: estas dos alimentan el
     // semaforo, no el dinero. Antes construian por su cuenta el cliente de
     // NAVEGADOR y respondian `permission denied` en silencio: los semaforos
@@ -227,7 +231,7 @@ export default async function DistribuidoresPage() {
     // alcanza a ver la fila del nodo, se muestra 0: nunca una cifra inventada.
     const saldo = saldoPorEntidad.get(entidad.id)
     const saldoPendiente = Number(saldo?.saldo_pendiente_consignacion ?? 0)
-    const saldoPorPagar = Number(saldo?.saldo_por_pagar_efectivo ?? 0)
+    const saldoPorPagar = saldoPorPagarSinAbonoLocal(Number(saldo?.saldo_por_pagar_efectivo ?? 0), entidad.id, abonosLocales)
 
     const diasSinSeguimiento = diasDesde(actividadPorNodo.get(entidad.id) ?? null)
     const semaforo = getSemaforoMovimiento(diasSinSeguimiento)

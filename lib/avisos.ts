@@ -40,6 +40,8 @@ export type TipoAviso =
   | 'W15'  // conteo fisico que no cuadra con el libro
   | 'W16'  // abono con sobrante que quedo a cuenta
   | 'W17'  // texto fiscal desactivado en la nota de un abono
+  | 'W18'  // un distribuidor corto un local suyo con consignacion a su nombre
+  | 'W19'  // venta a un local propio que quedo sin abono, entero o en parte
 
 export interface DefinicionAviso {
   severidad: SeveridadAviso
@@ -171,6 +173,23 @@ export const CATALOGO_AVISOS: Record<TipoAviso, DefinicionAviso> = {
       'El abono entro completo. La nota se guardo DESACTIVADA para no mover el ' +
       'pasivo fiscal con un pago que nadie hizo, y el texto original queda aqui ' +
       'para poder recuperarlo.'
+  },
+  // W18 y W19 (2026-11-24): codigos propios por la misma razon que W16 y W17.
+  W18: {
+    severidad: 'REVISAR',
+    titulo: 'Corte de un local propio con consignacion a cargo del distribuidor',
+    consecuencia:
+      'El corte se registro sin cambios: comision y deuda a la Matriz se anotaron ' +
+      'al distribuidor. Si esa mercancia venia de su consignacion, la misma botella ' +
+      'puede estar contada dos veces en su deuda.'
+  },
+  W19: {
+    severidad: 'REVISAR',
+    titulo: 'Venta a un local propio sin abono al distribuidor',
+    consecuencia:
+      'La venta entro completa. El abono por surtir al local NO se asento en las ' +
+      'lineas que se nombran: la deuda del distribuidor se lee mas alta de lo que ' +
+      'marca la regla hasta que se abone.'
   }
 }
 

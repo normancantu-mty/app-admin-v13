@@ -14,6 +14,7 @@ import BotonReportarMerma from '@/app/dashboard/inventario/BotonReportarMerma'
 import { leerSaldoEntidad, leerStockPorCubeta } from '@/lib/vistas'
 import HistorialActividadTableClient from './HistorialActividadTableClient'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
+import { TIPO_FILA_ABONO_LOCAL, esAbonoPorSurtirLocal, saldoPorPagarSinAbonoLocal } from '@/lib/abono-local'
 
 interface Entidad {
   id: string
@@ -735,7 +736,7 @@ function unificarActividades(
       const esAnulado = st === 'ANULADO'
       actividades.push({
         fecha: finanza.fecha_movimiento!,
-        tipo: getTipoFinanza(finanza.tipo_movimiento),
+        tipo: esAbonoPorSurtirLocal(finanza) ? TIPO_FILA_ABONO_LOCAL : getTipoFinanza(finanza.tipo_movimiento),
         monto: finanza.monto,
         referencia: getReferenciaFinanza(finanza),
         cuentaContexto: `${cuentaOrigenLabel} -> ${cuentaDestinoLabel}`,
@@ -833,7 +834,12 @@ export default async function EstadoCuentaPage({
   // ensena a un DST el saldo de un nodo que no es suyo.
   const saldoDelNodo = await leerSaldoEntidad(supabaseClient, entidad.id)
   const saldoPendiente = Number(saldoDelNodo?.saldo_pendiente_consignacion ?? 0)
-  const saldoPorPagar = Number(saldoDelNodo?.saldo_por_pagar_efectivo ?? 0)
+  // El abono por surtir a un local baja la deuda de consignacion, no es efectivo.
+  const saldoPorPagar = saldoPorPagarSinAbonoLocal(
+    Number(saldoDelNodo?.saldo_por_pagar_efectivo ?? 0),
+    entidad.id,
+    finanzasHistoricasSaldo
+  )
 
   // Historial de actividad sin recorte temporal para evitar vacíos por desajuste de zona horaria/rango.
   const actividades = unificarActividades(

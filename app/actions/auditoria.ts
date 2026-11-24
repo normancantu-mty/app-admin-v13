@@ -11,6 +11,8 @@ import type { Database, TablesInsert } from '@/types/database'
 import { registrarAviso } from '@/lib/avisos-server'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
 import { esCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
+import { avisoCorteLocalPropio } from '@/lib/abono-local'
+import { leerSaldoEntidad } from '@/lib/vistas'
 
 interface ConteoFisicoPayload {
   idProducto: string
@@ -436,6 +438,7 @@ export async function procesarCorteInventarioAction(
   ]
 
   const isDstAuditingLoc = entidadOperadora.rol === 'DST' && entidadObjetivo.rol === 'LOC'
+  let montosCorteLocal: { comision: number; deudaAMatriz: number } | null = null
   if (isDstAuditingLoc) {
     const comisionDecimal = comisionBaseLocalDecimal(entidadObjetivo.comision_base_local)
     const aplicaRedondeo = entidadObjetivo.aplica_redondeo_costo ?? true
@@ -450,6 +453,8 @@ export async function procesarCorteInventarioAction(
       montoAdmin = roundTo2(totalCobranza * (1 - comisionDecimal))
       montoDST = roundTo2(totalCobranza - montoAdmin)
     }
+
+    montosCorteLocal = { comision: montoDST, deudaAMatriz: montoAdmin }
 
     // aplica_redondeo_costo=true: montoDST is the exact complement, so sum === totalCobranza always.
     // aplica_redondeo_costo=false: roundTo2 may carry sub-cent drift; accepted as tolerable.
@@ -514,6 +519,36 @@ export async function procesarCorteInventarioAction(
       datosCapturados: avisoSobregiro.datos
     })
     revalidatePath('/dashboard/avisos')
+  }
+
+  // W18 (2026-11-24): un DST que corta un local SUYO y ya debe consignacion puede
+  // quedar con la misma botella contada dos veces. Aqui no se cambia el calculo ni
+  // se detiene nada: el corte ya se escribio y esto solo lo dice.
+  if (montosCorteLocal) {
+    let deudaConsignacion: number | null = null
+    try {
+      const saldo = await leerSaldoEntidad(supabase, entidadOperadora.id)
+      deudaConsignacion = saldo ? Number(saldo.saldo_pendiente_consignacion) : null
+    } catch (e) {
+      console.error('[corte] no se pudo leer la deuda del distribuidor:', e instanceof Error ? e.message : e)
+    }
+    const avisoCorte = avisoCorteLocalPropio({
+      esLocalPropio: targetParentId === entidadOperadora.id,
+      montoComision: montosCorteLocal.comision,
+      montoDeudaAMatriz: montosCorteLocal.deudaAMatriz,
+      deudaConsignacion
+    })
+    if (avisoCorte) {
+      await registrarAviso(supabase, {
+        tipo: 'W18',
+        idEntidad: entidadOperadora.id,
+        mensaje: avisoCorte.mensaje,
+        tabla: 'transacciones_tickets',
+        idRegistro: ticketData.id,
+        datosCapturados: avisoCorte.datos
+      })
+      revalidatePath('/dashboard/avisos')
+    }
   }
 
   revalidatePath('/dashboard/finanzas')

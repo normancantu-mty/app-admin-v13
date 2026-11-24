@@ -25,6 +25,7 @@ import type { Database } from '@/types/database'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
 import { fechaParaPersona } from '@/lib/fechas'
 import { rotuloDePrecio } from '@/lib/rotulo-precio'
+import { CATEGORIA_ABONO_LOCAL, TIPO_ABONO_LOCAL, conceptoAbonoLocal, esAbonoPorSurtirLocal } from '@/lib/abono-local'
 
 export interface LineaDocumento {
   id: string
@@ -81,6 +82,9 @@ export function folioDeTicket(id: string): string {
 }
 
 /**
+ * El abono por surtir a sus locales es un CARGO_DEUDA negativo: entra con su
+ * detalle por botella, porque tambien baja la deuda.
+ *
  * El estado de cuenta chico: los ultimos 5 movimientos de la entidad, sin
  * contar el ticket que se esta imprimiendo. Sale de dos fuentes -- tickets y
  * abonos -- porque en este ERP la deuda se genera vendiendo y se baja abonando.
@@ -99,9 +103,12 @@ async function ultimosCincoMovimientos(
       .limit(10),
     client
       .from('finanzas_ledger')
-      .select('id, fecha_movimiento, monto')
+      .select('id, fecha_movimiento, monto, tipo_movimiento, categoria, categoria_gasto')
       .in('status', ['ACTIVO', 'APPROVED'])
-      .eq('tipo_movimiento', 'ABONO_DEUDA')
+      .or(
+        'tipo_movimiento.eq.ABONO_DEUDA,' +
+          `and(tipo_movimiento.eq.${TIPO_ABONO_LOCAL},categoria.eq.${CATEGORIA_ABONO_LOCAL},monto.lt.0)`
+      )
       .eq('id_entidad_relacionada', idEntidad)
       .order('fecha_movimiento', { ascending: false })
       .limit(10)
@@ -131,7 +138,7 @@ async function ultimosCincoMovimientos(
       return {
         id: `abono-${row.id}`,
         fecha,
-        concepto: 'ABONO',
+        concepto: esAbonoPorSurtirLocal(row) ? conceptoAbonoLocal(row.categoria_gasto) : 'ABONO',
         monto: -Math.abs(row.monto || 0),
         orden: new Date(fecha).getTime()
       }

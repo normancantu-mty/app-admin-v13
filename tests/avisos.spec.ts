@@ -36,7 +36,7 @@ import {
 const TIPOS = Object.keys(CATALOGO_AVISOS) as TipoAviso[]
 
 test.describe('Catalogo de avisos', () => {
-  test('los trece tipos tienen severidad, titulo y consecuencia', () => {
+  test('los quince tipos tienen severidad, titulo y consecuencia', () => {
     // El numero SI se congela a proposito, al reves que las cifras de negocio
     // de ERP-78: el catalogo es cerrado y lo reviso Norman. Que crezca tiene que
     // costar editar esta linea; que la operacion diaria lo mueva, no.
@@ -47,7 +47,9 @@ test.describe('Catalogo de avisos', () => {
     // pone a un abono el encabezado "Gasto sin categoria". Esta linea es justo
     // la friccion que hace que agregar un aviso sea una decision y no un
     // descuido.
-    expect(TIPOS).toHaveLength(13)
+    // 13 -> 15 el 2026-11-24: entran W18 (corte de un local propio) y W19 (venta
+    // a un local propio sin abono). Ningun codigo anterior dice eso.
+    expect(TIPOS).toHaveLength(15)
 
     for (const tipo of TIPOS) {
       const definicion = CATALOGO_AVISOS[tipo]

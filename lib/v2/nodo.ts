@@ -20,6 +20,7 @@ import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
 import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
 import { leerSaldoEntidad, leerStockPorCubeta } from '@/lib/vistas'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
+import { TIPO_FILA_ABONO_LOCAL, esAbonoPorSurtirLocal, saldoPorPagarSinAbonoLocal } from '@/lib/abono-local'
 import type { ActividadHistorialRow } from '@/components/v2/nodo/Historial'
 
 interface Entidad {
@@ -750,7 +751,7 @@ function unificarActividades(
       const esAnulado = st === 'ANULADO'
       actividades.push({
         fecha: finanza.fecha_movimiento!,
-        tipo: getTipoFinanza(finanza.tipo_movimiento),
+        tipo: esAbonoPorSurtirLocal(finanza) ? TIPO_FILA_ABONO_LOCAL : getTipoFinanza(finanza.tipo_movimiento),
         monto: finanza.monto,
         referencia: getReferenciaFinanza(finanza),
         cuentaContexto: `${cuentaOrigenLabel} -> ${cuentaDestinoLabel}`,
@@ -846,7 +847,8 @@ export async function leerFichaNodo(id: string, usuario: CurrentUser): Promise<F
     totalGanado,
     mostrarTotalGanado: entidad.rol !== 'LOC',
     saldoPendiente: Number(saldoDelNodo?.saldo_pendiente_consignacion ?? 0),
-    saldoPorPagar: Number(saldoDelNodo?.saldo_por_pagar_efectivo ?? 0),
+    // El abono por surtir a un local baja la deuda de consignacion, no es efectivo.
+    saldoPorPagar: saldoPorPagarSinAbonoLocal(Number(saldoDelNodo?.saldo_por_pagar_efectivo ?? 0), entidad.id, finanzasHistoricasSaldo),
     totalMermas: Number(totalMermas),
     inventarioConsignado,
     inventarioPagado,

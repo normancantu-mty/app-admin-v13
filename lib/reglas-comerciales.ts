@@ -246,7 +246,8 @@ export interface AjusteTraspasoInput {
 }
 
 /**
- * Ajuste que se le carga al DST cuando la mercancia pasa a uno de sus locales.
+ * Ajuste que se le ABONA al DST cuando la mercancia pasa a uno de sus locales.
+ * SIN truncar: sirve para razonar; lo que se asienta es `abonoPorBotellaLocal`.
  *
  * REGLAS_COMERCIALES.md, "RESUELTO — la opcion elegida por Norman": la deuda
  * nace al 80% porque al entregar todavia no se sabe quien va a vender. Cuando
@@ -256,7 +257,9 @@ export interface AjusteTraspasoInput {
  *     Ajuste = (comision_local + comision_red - comision_base)  x  Base
  *
  * Con 15% + 15% - 20% da **10% x Base** ($59.90 por botella de 750 ml en
- * efectivo). Positivo = el DST debe MAS de lo registrado; negativo = debe menos.
+ * efectivo). Positivo = el DST debe MENOS de lo registrado (80% - 10% = 70%);
+ * negativo = debe mas. (Corregido el 2026-11-24: estaba al reves; manda
+ * REGLAS_COMERCIALES.md: $480 - $59 = $421.)
  *
  * Razon de Norman para elegir esta ruta: *"quiero que el distribuidor no se
  * asuste cuando vea la deuda."*
@@ -287,4 +290,27 @@ export function ajusteTraspasoDstALocal(input: AjusteTraspasoInput): number {
   const unitario = Math.round(baseCentavos(ppCentavos, esCuentaFiscal) * porcentajeNeto)
 
   return aPesos(unitario * cantidad)
+}
+
+/**
+ * Lo que de verdad se le abona al DST por UNA botella que surte a su local:
+ * `floor((local + red - base) x Base)` a PESO entero.
+ *
+ * REGLAS_COMERCIALES.md, "Resuelta 3": "el ajuste que favorece al nodo se
+ * trunca", siempre a favor de la Matriz -> 59 / 17 / 6 (750 / 250 / 50 ml a
+ * 10%). No depende de `aplica_redondeo_costo`. Un neto <= 0 no abona nada.
+ *
+ * El neto va en millonesimas enteras: 0.15 + 0.15 - 0.20 en float es
+ * 0.09999999999999998 y un Base de $100 daria $9 en vez de $10.
+ */
+export function abonoPorBotellaLocal(input: Omit<AjusteTraspasoInput, 'cantidad'>): number {
+  const { pp, comisionLocal, comisionRed, comisionBase, esCuentaFiscal } = input
+  exigirPorcentaje(comisionLocal, 'comisionLocal')
+  exigirPorcentaje(comisionRed, 'comisionRed')
+  exigirPorcentaje(comisionBase, 'comisionBase')
+
+  const netoMillonesimas = Math.round((comisionLocal + comisionRed - comisionBase) * 1e6)
+  if (netoMillonesimas <= 0) return 0
+  // centavos x millonesimas / 1e8 = pesos; el numerador es un entero exacto.
+  return Math.floor((baseCentavos(aCentavos(pp), esCuentaFiscal) * netoMillonesimas) / 1e8)
 }

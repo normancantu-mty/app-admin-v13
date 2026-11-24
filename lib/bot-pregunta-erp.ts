@@ -24,6 +24,7 @@
 import { buscarPorNombre, normalizarNombre, PALABRAS_VACIAS } from '@/lib/bot-nombres'
 import { pesos, piezas, sinDatos } from '@/lib/bot-consultas'
 import { fechaHoraParaPersona, fechaParaPersona } from '@/lib/fechas'
+import { ETIQUETA_ABONO_LOCAL, esAbonoPorSurtirLocal } from '@/lib/abono-local'
 import { folioDeTicket } from '@/lib/documento'
 import type { FilaCarteraVista, FilaStockPorCubeta } from '@/lib/vistas'
 
@@ -366,6 +367,11 @@ export function eventosDelCliente(
           d.categoria === 'ABONO_PENDIENTE'
             ? `Abono pendiente de confirmar: ${pesos(Number(d.monto ?? 0))} (todavia no resta)`
             : `Abono: resta ${pesos(Number(d.monto ?? 0))}`
+      })
+    } else if (esAbonoPorSurtirLocal(d)) {
+      eventos.push({
+        fecha: d.fecha_movimiento,
+        texto: `${ETIQUETA_ABONO_LOCAL}: resta ${pesos(Math.abs(Number(d.monto ?? 0)))}`
       })
     } else if (d.tipo_movimiento === 'CARGO_DEUDA') {
       eventos.push({

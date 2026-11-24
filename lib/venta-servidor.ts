@@ -59,6 +59,7 @@ import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { esCuentaFiscal, validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
+import { correspondeAbonoLocal, preciosPublicos, resolverAbonoLocal, type AvisoAbonoLocal } from '@/lib/abono-local'
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
 // ERP-11: `lib/pos-rollback.ts` ya no se importa aqui, y el modulo NO se borro.
@@ -134,6 +135,7 @@ interface CompradorEntidad {
   id_nodo_padre: string | null
   comision_base_local: number | null
   nombre?: string | null
+  zona?: string | null
 }
 
 type TicketInsert = TablesInsert<'transacciones_tickets'>
@@ -412,8 +414,8 @@ export async function registrarVenta(
 
     const referenciasProducto = Array.from(new Set(payload.items.map((item) => item.id_producto)))
     const [productosPorIdResult, productosPorSkuResult] = await Promise.all([
-      supabase.from('catalogo_productos').select('id, sku').in('id', referenciasProducto),
-      supabase.from('catalogo_productos').select('id, sku').in('sku', referenciasProducto)
+      supabase.from('catalogo_productos').select('id, sku, nombre').in('id', referenciasProducto),
+      supabase.from('catalogo_productos').select('id, sku, nombre').in('sku', referenciasProducto)
     ])
 
     const productoCanonicoPorReferencia = new Map<string, string>()
@@ -436,7 +438,7 @@ export async function registrarVenta(
     if (idCompradorResuelto) {
       const { data: compradorInventario, error: compradorInventarioError } = await supabase
         .from('entidades')
-        .select('id, rol, id_padre, id_nodo_padre, comision_base_local')
+        .select('id, rol, id_padre, id_nodo_padre, comision_base_local, nombre, zona')
         .eq('id', idCompradorResuelto)
         .single()
 
@@ -686,6 +688,66 @@ export async function registrarVenta(
       }
     }
 
+    // Block 3 (2026-11-24): el DST surte a SU local en concesion. Su deuda nacio al
+    // 80% y baja (local + red - base) x Base por botella. REGLAS_COMERCIALES, (i).
+    // El PP sale de `listas_precios` por la zona del LOCAL, nunca del payload. Un
+    // precio que falta, o un error al leerlos, NO detiene la venta: lo que no se
+    // abona sale como aviso W19 despues de escribir, con la venta y los productos.
+    let avisoAbonoLocal: AvisoAbonoLocal | null = null
+    if (
+      compradorEntidad &&
+      correspondeAbonoLocal({
+        esConcesion,
+        rolVendedor: vendedor.rol,
+        vendedorId: vendedor.id,
+        origenInventarioId,
+        comprador: compradorEntidad
+      })
+    ) {
+      const zonaLocal = (compradorEntidad.zona ?? '').trim()
+      let precioPublico = new Map<string, number>()
+      let errorPrecios: string | null = null
+      try {
+        const { data: precios, error: preciosError } = await supabase
+          .from('listas_precios')
+          .select('id_producto, precio_final')
+          .eq('zona', zonaLocal)
+          .in('id_producto', Array.from(cantidadPorProducto.keys()))
+        if (preciosError) errorPrecios = preciosError.message
+        precioPublico = preciosPublicos(precios ?? [])
+      } catch (e) {
+        errorPrecios = e instanceof Error ? e.message : String(e)
+      }
+      const nombres = new Map<string, string>()
+      for (const p of [...(productosPorIdResult.data || []), ...(productosPorSkuResult.data || [])]) {
+        nombres.set(p.id, p.nombre || p.sku || p.id)
+      }
+      const abonoLocal = resolverAbonoLocal(
+        {
+          idTicket,
+          idDistribuidor: vendedor.id,
+          nombreLocal: compradorEntidad.nombre ?? 'local',
+          porcentajes: {
+            local: compradorEntidad.comision_base_local,
+            red: vendedor.comision_hijo_local,
+            base: vendedor.comision_base
+          },
+          esCuentaFiscal: esCuentaFiscal(cuentaData.tipo_fiscalidad),
+          piezas: Array.from(cantidadPorProducto, ([idProducto, cantidad]) => ({
+            idProducto,
+            etiqueta: nombres.get(idProducto) ?? idProducto,
+            cantidad
+          })),
+          precioPublico,
+          fecha: timestampTransaccion,
+          usuario: operador.email
+        },
+        { zona: zonaLocal, error: errorPrecios }
+      )
+      if (abonoLocal.fila) movimientosComisionTriangulacionYAdmin.push(abonoLocal.fila)
+      avisoAbonoLocal = abonoLocal.aviso
+    }
+
     if (payload.condicion_pago === 'CONTADO') {
       const totalLiquidezEsperado = roundTo2(payload.totalCobradoReal)
       if (!Number.isFinite(totalLiquidezEsperado) || totalLiquidezEsperado <= 0) {
@@ -845,6 +907,17 @@ export async function registrarVenta(
           origen_inventario: origenInventarioId,
           piezas: itemsNormalizados.reduce((suma, item) => suma + Number(item.cantidad || 0), 0)
         }
+      })
+    }
+
+    if (avisoAbonoLocal) {
+      await registrarAviso(supabase, {
+        tipo: 'W19',
+        idEntidad: vendedorId,
+        mensaje: avisoAbonoLocal.mensaje,
+        tabla: 'transacciones_tickets',
+        idRegistro: idTicket,
+        datosCapturados: avisoAbonoLocal.datos
       })
     }
 

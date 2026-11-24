@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { ETIQUETA_ABONO_LOCAL, esAbonoPorSurtirLocal } from './abono-local'
 
 // ============================================================================
 // INTERFACES - Natural Language Audit Feed
@@ -32,6 +33,7 @@ interface FinanzaRaw {
   tipo_movimiento: string | null
   monto: number
   categoria_gasto: string | null
+  categoria: string | null
   id_ticket: string | null
   entidad?: { nombre: string } | { nombre: string }[]
 }
@@ -111,6 +113,7 @@ export async function fetchAuditFeed(limit: number = 10, offset: number = 0): Pr
         tipo_movimiento,
         monto,
         categoria_gasto,
+        categoria,
         id_ticket,
         entidad:entidades!id_entidad_relacionada(nombre)
       `)
@@ -237,6 +240,10 @@ function translateFinanzaToNaturalLanguage(finanza: FinanzaRaw): AuditEvent {
 
   if (tipoMovimiento === 'ABONO_DEUDA') {
     descripcion = `Pago recibido / Deuda saldada: ${entidad} abonó $${finanza.monto.toLocaleString('es-MX')}`
+    tipo = 'ABONO'
+    color = 'green'
+  } else if (esAbonoPorSurtirLocal(finanza)) {
+    descripcion = `${ETIQUETA_ABONO_LOCAL}: la deuda de ${entidad} baj\u00f3 $${Math.abs(finanza.monto).toLocaleString('es-MX')}`
     tipo = 'ABONO'
     color = 'green'
   } else if (tipoMovimiento === 'INGRESO_COMISION') {

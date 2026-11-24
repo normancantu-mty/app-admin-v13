@@ -15,6 +15,8 @@ import { getSemaforoMovimiento } from '@/lib/risk-utils'
 import { diasDesde, ultimaActividadPorNodo } from '@/lib/actividad'
 import { leerFuentesActividad } from '@/lib/actividad-servidor'
 import { leerSaldosEntidad } from '@/lib/vistas'
+import { leerAbonosPorSurtirLocal } from '@/lib/abono-local-lectura'
+import { saldoPorPagarSinAbonoLocal } from '@/lib/abono-local'
 
 type Cliente = SupabaseClient<Database>
 
@@ -43,9 +45,10 @@ export async function leerRed(client: Cliente, usuario: CurrentUser): Promise<Fi
   // Ni los saldos ni las fuentes de actividad dependen de la lista de entidades:
   // salen las tres a la vez (perf 2026-10-30; antes eran dos tandas en serie). La
   // regla es la misma de `leerUltimaActividadRed`: fuentes + seguimiento de cada nodo.
-  const [entidades, saldos, fuentes] = await Promise.all([
+  const [entidades, saldos, abonosLocales, fuentes] = await Promise.all([
     leerEntidadesVisibles(client, usuario),
     leerSaldosEntidad(client),
+    leerAbonosPorSurtirLocal(client),
     leerFuentesActividad(clienteServicioV2())
   ])
   const actividad = ultimaActividadPorNodo(
@@ -72,7 +75,7 @@ export async function leerRed(client: Cliente, usuario: CurrentUser): Promise<Fi
       ubicacionMaps: e.ubicacion_maps ?? null,
       patrocinador: padre ? padre.nombre : directa ? 'Línea directa' : 'Padre no encontrado',
       saldoPendiente: Number(s?.saldo_pendiente_consignacion ?? 0),
-      saldoPorPagar: Number(s?.saldo_por_pagar_efectivo ?? 0),
+      saldoPorPagar: saldoPorPagarSinAbonoLocal(Number(s?.saldo_por_pagar_efectivo ?? 0), e.id, abonosLocales),
       semaforo: getSemaforoMovimiento(dias),
       diasSeguimiento: dias,
       seguimientoTexto: dias === null ? 'Sin contacto' : `${dias} días`
