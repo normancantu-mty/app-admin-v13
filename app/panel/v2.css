@@ -170,6 +170,11 @@ html[data-privado='1'] .v2 svg.graf { filter: blur(6px); }
 
 /* Rejilla */
 .v2 .grid { display: grid; gap: 16px; grid-template-columns: 1fr; margin-bottom: 16px; }
+/* `.v2 .grid` va sin capa y le gana a `md:hidden` de Tailwind, que va en capa: las
+   tarjetas de celular salian en computadora debajo de la tabla. Mismo corte que md. */
+@media (min-width: 48rem) {
+  .v2 .grid.md\:hidden { display: none; }
+}
 @media (min-width: 900px) {
   .v2 .grid.g2 { grid-template-columns: 1fr 1fr; }
   .v2 .grid.g3 { grid-template-columns: 1fr 1fr 1fr; }

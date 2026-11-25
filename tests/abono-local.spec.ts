@@ -23,7 +23,11 @@ const RUTAS = {
   directorioV1: 'app/dashboard/distribuidores/page.tsx',
   directorioV2: 'lib/v2/red.ts',
   historialV1: 'app/dashboard/distribuidores/[id]/HistorialActividadTableClient.tsx',
-  historialV2: 'components/v2/nodo/Historial.tsx'
+  historialV2: 'components/v2/nodo/Historial.tsx',
+  estilosV2: 'app/panel/v2.css',
+  directorioTabla: 'components/v2/red/Directorio.tsx',
+  cobranzaTabla: 'components/v2/nodo/Cobranza.tsx',
+  aprobacionesTabla: 'components/v2/finanzas/Aprobaciones.tsx'
 }
 
 test.describe('cableado del abono, leido del codigo', () => {

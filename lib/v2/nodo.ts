@@ -20,7 +20,7 @@ import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
 import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
 import { leerSaldoEntidad, leerStockPorCubeta } from '@/lib/vistas'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
-import { TIPO_FILA_ABONO_LOCAL, esAbonoPorSurtirLocal, saldoPorPagarSinAbonoLocal } from '@/lib/abono-local'
+import { TIPO_FILA_ABONO_LOCAL, esAbonoPorSurtirLocal, renglonAbonoLocal, saldoPorPagarSinAbonoLocal } from '@/lib/abono-local'
 import type { ActividadHistorialRow } from '@/components/v2/nodo/Historial'
 
 interface Entidad {
@@ -528,7 +528,8 @@ function enrichActividadesAnulacionUi(
       }
     }
 
-    if (!row.annulTarget) return row
+    // Apagado desde la fila (el abono por surtir): ningun rol lo vuelve a prender.
+    if (!row.annulTarget || row.annulDisabled) return row
 
     if (sessionRole === 'ADMIN') {
       return { ...row, annulDisabled: false }
@@ -758,7 +759,8 @@ function unificarActividades(
         usuario_creador: finanza.usuario_creador ?? null,
         movementStatus: st,
         policyTimestamp: finanza.fecha_movimiento ?? null,
-        ...(esAnulado ? {} : { annulTarget: { kind: 'LEDGER' as const, id: finanza.id } })
+        ...(esAnulado ? {} : { annulTarget: { kind: 'LEDGER' as const, id: finanza.id } }),
+        ...renglonAbonoLocal(finanza)
       })
     })
 

@@ -59,7 +59,20 @@ import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { esCuentaFiscal, validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
-import { correspondeAbonoLocal, preciosPublicos, resolverAbonoLocal, type AvisoAbonoLocal } from '@/lib/abono-local'
+import {
+  CATEGORIA_ABONO_LOCAL,
+  TIPO_ABONO_LOCAL,
+  avisoAbonoDeMas,
+  avisoArranqueSinCosto,
+  correspondeAbonoLocal,
+  piezasSinCargo,
+  preciosPublicos,
+  resolverAbonoLocal,
+  type AvisoAbonoLocal,
+  type CargoAbono,
+  type LibroAbono,
+  type MovimientoAbono
+} from '@/lib/abono-local'
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
 // ERP-11: `lib/pos-rollback.ts` ya no se importa aqui, y el modulo NO se borro.
@@ -240,6 +253,59 @@ function resolveTipoFiscalidadCuenta(tipoFiscalidadRaw: string | null | undefine
     `La cuenta destino tiene un tipo_fiscalidad invalido (${tipoFiscalidadRaw || '(vacio)'}). ` +
       'No se captura la venta: adivinar el regimen aqui inventa impuestos.'
   )
+}
+
+/** Tope de lo que se hace despues de escribir: no detiene la respuesta de la venta. */
+const TOPE_REVISION_MS = 1000
+
+function conTope<T>(tarea: Promise<T>): Promise<T> {
+  let reloj: ReturnType<typeof setTimeout> | undefined
+  const tope = new Promise<never>((_, falla) => {
+    reloj = setTimeout(() => falla(new Error(`tardo mas de ${TOPE_REVISION_MS} ms`)), TOPE_REVISION_MS)
+  })
+  return Promise.race([tarea, tope]).finally(() => clearTimeout(reloj))
+}
+
+/**
+ * El libro con el que se decide cuantas piezas de un DST se abonan. Lee TODOS sus
+ * productos (el cargo de arranque se juzga completo) y tambien lo anulado. Lanza si
+ * algo no se pudo leer: quien llama no abona y avisa.
+ */
+async function leerLibroAbono(supabase: ClienteDeVenta, idDst: string): Promise<LibroAbono> {
+  const [movimientos, cargos, tickets] = await Promise.all([
+    fetchTodasLasFilas<MovimientoAbono>(
+      () =>
+        supabase
+          .from('inventario_ledger')
+          .select('id_producto, tipo_movimiento, cantidad, id_entidad_origen, id_entidad_destino, fecha_movimiento, costo_unitario_movimiento, notas, status')
+          .or(`id_entidad_destino.eq.${idDst},id_entidad_origen.eq.${idDst}`)
+          .order('id'),
+      'abono local: movimientos del distribuidor'
+    ),
+    fetchTodasLasFilas<CargoAbono>(
+      () =>
+        supabase
+          .from('finanzas_ledger')
+          .select('id_ticket, tipo_movimiento, categoria, monto, subcategoria')
+          .eq('id_entidad_relacionada', idDst)
+          .eq('tipo_movimiento', TIPO_ABONO_LOCAL)
+          .in('categoria', [CATEGORIA_ABONO_LOCAL, 'ARRANQUE'])
+          .in('status', ['ACTIVO', 'APPROVED'])
+          .order('id'),
+      'abono local: abonos y cargo de arranque'
+    ),
+    fetchTodasLasFilas<{ id: string; condicion_pago: string | null }>(
+      () => supabase.from('transacciones_tickets').select('id, condicion_pago').eq('id_comprador', idDst).eq('status', 'ACTIVO').order('id'),
+      'abono local: tickets del distribuidor'
+    )
+  ])
+  return {
+    idDistribuidor: idDst,
+    movimientos,
+    cargos,
+    ticketsVivos: new Set(tickets.map((t) => t.id.toLowerCase())),
+    ticketsContado: new Set(tickets.filter((t) => t.condicion_pago === 'CONTADO').map((t) => t.id.toLowerCase()))
+  }
 }
 
 export async function registrarVenta(
@@ -694,6 +760,8 @@ export async function registrarVenta(
     // precio que falta, o un error al leerlos, NO detiene la venta: lo que no se
     // abona sale como aviso W19 despues de escribir, con la venta y los productos.
     let avisoAbonoLocal: AvisoAbonoLocal | null = null
+    let avisoArranque: AvisoAbonoLocal | null = null
+    let abonoEscrito: Parameters<typeof avisoAbonoDeMas>[1] | null = null
     if (
       compradorEntidad &&
       correspondeAbonoLocal({
@@ -718,6 +786,18 @@ export async function registrarVenta(
       } catch (e) {
         errorPrecios = e instanceof Error ? e.message : String(e)
       }
+      // Solo se abona lo que trae cargo. Si esto no se puede leer, la venta entra
+      // igual, no se abona nada y sale W19 con el motivo.
+      const piezasVendidas = Array.from(cantidadPorProducto, ([idProducto, cantidad]) => ({ idProducto, cantidad }))
+      let libro: LibroAbono | null = null
+      let sinCargo = new Map<string, number>()
+      let errorCargo: string | null = null
+      try {
+        libro = await leerLibroAbono(supabase, vendedor.id)
+        sinCargo = piezasSinCargo(libro, piezasVendidas)
+      } catch (e) {
+        errorCargo = `no se pudo saber que piezas traen cargo: ${e instanceof Error ? e.message : String(e)}`
+      }
       const nombres = new Map<string, string>()
       for (const p of [...(productosPorIdResult.data || []), ...(productosPorSkuResult.data || [])]) {
         nombres.set(p.id, p.nombre || p.sku || p.id)
@@ -733,18 +813,26 @@ export async function registrarVenta(
             base: vendedor.comision_base
           },
           esCuentaFiscal: esCuentaFiscal(cuentaData.tipo_fiscalidad),
-          piezas: Array.from(cantidadPorProducto, ([idProducto, cantidad]) => ({
-            idProducto,
-            etiqueta: nombres.get(idProducto) ?? idProducto,
-            cantidad
-          })),
+          piezas: piezasVendidas.map((p) => ({ ...p, etiqueta: nombres.get(p.idProducto) ?? p.idProducto })),
           precioPublico,
+          piezasSinCargo: sinCargo,
           fecha: timestampTransaccion,
           usuario: operador.email
         },
-        { zona: zonaLocal, error: errorPrecios }
+        { zona: zonaLocal, error: errorPrecios ?? errorCargo }
       )
       if (abonoLocal.fila) movimientosComisionTriangulacionYAdmin.push(abonoLocal.fila)
+      if (abonoLocal.fila) {
+        abonoEscrito = {
+          idTicket,
+          nombreLocal: compradorEntidad.nombre ?? 'local',
+          subcategoria: abonoLocal.fila.subcategoria,
+          etiquetas: nombres
+        }
+      }
+      if (libro && !errorCargo) {
+        avisoArranque = avisoArranqueSinCosto(libro, sinCargo, { idTicket, nombreLocal: compradorEntidad.nombre ?? 'local', etiquetas: nombres })
+      }
       avisoAbonoLocal = abonoLocal.aviso
     }
 
@@ -919,6 +1007,39 @@ export async function registrarVenta(
         idRegistro: idTicket,
         datosCapturados: avisoAbonoLocal.datos
       })
+    }
+
+    // Todo lo de aqui abajo va con tope y sin lanzar: la venta ya entro.
+    const avisaAbono = (aviso: AvisoAbonoLocal) =>
+      conTope(
+        registrarAviso(supabase, {
+          tipo: 'W19',
+          idEntidad: vendedorId,
+          mensaje: aviso.mensaje,
+          tabla: 'transacciones_tickets',
+          idRegistro: idTicket,
+          datosCapturados: aviso.datos
+        })
+      ).catch((e) => console.error('abono local: no se pudo avisar', aviso.mensaje, e))
+
+    if (avisoArranque) await avisaAbono(avisoArranque)
+
+    // Si otro movimiento del DST entro al mismo tiempo, los dos abonaron lo mismo.
+    // No se revierte nada.
+    if (abonoEscrito) {
+      let deMas: AvisoAbonoLocal | null = null
+      try {
+        deMas = avisoAbonoDeMas(await conTope(leerLibroAbono(supabase, vendedor.id)), abonoEscrito)
+      } catch (e) {
+        console.error('abono local: no se pudo comprobar despues de escribir', e)
+        deMas = {
+          mensaje:
+            `Ticket #${idTicket.slice(0, 8).toUpperCase()} a ${abonoEscrito.nombreLocal}: revisa el abono. ` +
+            'No se pudo comprobar si otro movimiento del distribuidor entro al mismo tiempo.',
+          datos: { id_ticket: idTicket, id_distribuidor: vendedor.id, motivo: 'sin comprobar' }
+        }
+      }
+      if (deMas) await avisaAbono(deMas)
     }
 
     return {
