@@ -11,6 +11,7 @@ import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { registrarRegaloAction } from '@/app/actions/regalos'
 import { QUIENES_CONOCIDOS, validarSolicitudRegalo, type SolicitudRegalo } from '@/lib/regalos'
+import type { DestinoRegalo, QuienPermitido } from '@/lib/regalos-quien'
 
 export interface ProductoForm {
   id: string
@@ -19,14 +20,19 @@ export interface ProductoForm {
   hay: number
 }
 
-const OTRO = '__otro__'
+/** Quien regalo se ESCOGE (Norman, 2026-11-25): equipo, distribuidores y locales. Sin texto libre. */
+const GRUPOS = [
+  { tipo: 'equipo', titulo: 'Equipo' },
+  { tipo: 'distribuidor', titulo: 'Distribuidores' },
+  { tipo: 'local', titulo: 'Locales' }
+] as const
 
-export function FormRegalo({ productos, hoy }: { productos: ProductoForm[]; hoy: string }) {
+export function FormRegalo({ productos, quienes, destinos, hoy }: { productos: ProductoForm[]; quienes: QuienPermitido[]; destinos: DestinoRegalo[]; hoy: string }) {
   const router = useRouter()
   const [pendiente, startTransition] = useTransition()
   const [fecha, setFecha] = useState(hoy)
   const [quienSel, setQuienSel] = useState<string>(QUIENES_CONOCIDOS[0])
-  const [quienOtro, setQuienOtro] = useState('')
+  const [destinoSel, setDestinoSel] = useState('')
   const [motivo, setMotivo] = useState('')
   const [cantidades, setCantidades] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
@@ -35,15 +41,17 @@ export function FormRegalo({ productos, hoy }: { productos: ProductoForm[]; hoy:
   const solicitud: SolicitudRegalo = useMemo(
     () => ({
       fecha,
-      quien_regalo: quienSel === OTRO ? quienOtro : quienSel,
+      quien_regalo: quienSel,
       motivo,
       lineas: productos
         .map((p) => ({ id_producto: p.id, cantidad: Number(cantidades[p.id] || 0) }))
-        .filter((l) => l.cantidad !== 0)
+        .filter((l) => l.cantidad !== 0),
+      id_entidad_destino: destinoSel || null
     }),
-    [fecha, quienSel, quienOtro, motivo, cantidades, productos]
+    [fecha, quienSel, destinoSel, motivo, cantidades, productos]
   )
   const invalida = validarSolicitudRegalo(solicitud)
+  const deLaRed = quienes.some((q) => q.nombre === quienSel && q.tipo !== 'equipo')
   const faltan = productos.filter((p) => Number(cantidades[p.id] || 0) > Math.max(0, p.hay))
 
   const guardar = () => {
@@ -66,6 +74,7 @@ export function FormRegalo({ productos, hoy }: { productos: ProductoForm[]; hoy:
       )
       setCantidades({})
       setMotivo('')
+      setDestinoSel('')
       router.refresh()
     })
   }
@@ -85,16 +94,39 @@ export function FormRegalo({ productos, hoy }: { productos: ProductoForm[]; hoy:
       <div className="campo">
         <label htmlFor="rg-quien">Quién regaló</label>
         <select id="rg-quien" value={quienSel} onChange={(e) => setQuienSel(e.target.value)}>
-          {QUIENES_CONOCIDOS.map((q) => (
-            <option key={q} value={q}>
-              {q}
-            </option>
-          ))}
-          <option value={OTRO}>Otra persona…</option>
+          {GRUPOS.map((g) => {
+            const suyos = quienes.filter((q) => q.tipo === g.tipo)
+            return suyos.length === 0 ? null : (
+              <optgroup key={g.tipo} label={g.titulo}>
+                {suyos.map((q) => (
+                  <option key={q.nombre} value={q.nombre}>
+                    {q.nombre}
+                  </option>
+                ))}
+              </optgroup>
+            )
+          })}
         </select>
-        {quienSel === OTRO ? (
-          <input aria-label="Nombre de quien regaló" placeholder="Nombre" value={quienOtro} onChange={(e) => setQuienOtro(e.target.value)} />
-        ) : null}
+        {deLaRed ? <div className="sub">Sale de la matriz, no de lo que tiene {quienSel}.</div> : null}
+      </div>
+      <div className="campo">
+        <label htmlFor="rg-destino">Para (distribuidor o local)</label>
+        <select id="rg-destino" value={destinoSel} onChange={(e) => setDestinoSel(e.target.value)}>
+          <option value="">Ninguno: evento, cliente u otra persona</option>
+          {GRUPOS.filter((g) => g.tipo !== 'equipo').map((g) => {
+            const suyos = destinos.filter((d) => d.tipo === g.tipo)
+            return suyos.length === 0 ? null : (
+              <optgroup key={g.tipo} label={g.titulo}>
+                {suyos.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.nombre}
+                  </option>
+                ))}
+              </optgroup>
+            )
+          })}
+        </select>
+        {destinoSel ? <div className="sub">Se suma a sus regalos. No cambia lo que tiene a concesión ni lo que debe.</div> : null}
       </div>
       <div className="campo">
         <span className="lbl">Piezas</span>

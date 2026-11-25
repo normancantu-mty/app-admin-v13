@@ -31,7 +31,9 @@ export async function registrarRegaloAction(solicitud: SolicitudRegalo): Promise
       motivo: String(solicitud?.motivo ?? ''),
       lineas: Array.isArray(solicitud?.lineas)
         ? solicitud.lineas.map((l) => ({ id_producto: String(l?.id_producto ?? ''), cantidad: Number(l?.cantidad) }))
-        : []
+        : [],
+      // Lo valida `registrarRegalo` contra los DST y LOC de la base.
+      id_entidad_destino: solicitud?.id_entidad_destino ? String(solicitud.id_entidad_destino) : null
     }
     const supabase = await getServerSupabaseClient()
     const matriz = await idMatriz(supabase)
@@ -40,6 +42,7 @@ export async function registrarRegaloAction(solicitud: SolicitudRegalo): Promise
       revalidatePath(`${RUTA_BASE}/regalos`)
       revalidatePath(`${RUTA_BASE}/inventario`)
       revalidatePath(RUTA_BASE)
+      if (s.id_entidad_destino) revalidatePath(`${RUTA_BASE}/red/${s.id_entidad_destino}`)
     }
     return r
   } catch (e) {

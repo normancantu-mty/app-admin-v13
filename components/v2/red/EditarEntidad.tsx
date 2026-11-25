@@ -67,7 +67,11 @@ export default function EditEntidadModal({ row, isOpen, onClose, canDeleteEntity
     setError(null)
     startTransition(async () => {
       try {
-        await eliminarEntidadAction(row.id)
+        const { error: noSeBorro } = await eliminarEntidadAction(row.id)
+        if (noSeBorro) {
+          setError(noSeBorro)
+          return
+        }
         setDeleteOpen(false)
         onClose()
         refrescar()

@@ -16,7 +16,8 @@ import { AbrirModal } from '@/components/v2/modal/AbrirModal'
 import BotonReportarMerma from '@/components/v2/inventario/BotonReportarMerma'
 import Historial from './Historial'
 import { ResumenCobranzaNodo } from '@/components/v2/cobranza/ResumenCobranzaNodo'
-import { esRolDeMandoV2 } from '@/lib/v2/roles'
+import { RegalosNodo } from '@/components/v2/regalos/RegalosNodo'
+import { esRolDeMandoV2, veLaMatriz } from '@/lib/v2/roles'
 
 export function FichaVista({ ficha, usuario, propia = false }: { ficha: FichaNodo; usuario: CurrentUser; propia?: boolean }) {
   const { entidad: e } = ficha
@@ -118,6 +119,9 @@ export function FichaVista({ ficha, usuario, propia = false }: { ficha: FichaNod
           </div>
         )}
       </section>
+
+      {/* Regalos (2026-11-25): lo que se le ha dado. Solo la matriz: la RLS no deja leer `regalos` a un DST o LOC. */}
+      {veLaMatriz(usuario.rol) && !propia && <RegalosNodo id={id} nombre={e.nombre} />}
 
       <section className="card v1">
         <div className="hd">

@@ -181,8 +181,9 @@ test.describe('regalos (pura): lo que se dicta', () => {
     expect(leerRegalo('Gilberto le regaló 3 botellas grandes para la expo de Zacatecas', PRODUCTOS, 'kevin')).toMatchObject({
       ok: true, quien: 'Gilberto', motivo: 'la expo de Zacatecas', piezas: [{ producto: { id: 'p-750' }, cantidad: 3 }]
     })
+    // 2026-11-25: lista cerrada. Juan Pérez no está: no se guarda, se pregunta.
     expect(leerRegalo('Juan Pérez regaló 4 minis, motivo: degustación 2 de dic', PRODUCTOS, 'norman')).toMatchObject({
-      ok: true, quien: 'Juan Pérez', motivo: 'degustación 2 de dic', piezas: [{ producto: { id: 'p-50' }, cantidad: 4 }]
+      ok: false, falta: 'quien', quien: '', duda: { dicho: 'Juan Pérez', motivo: 'desconocido' }, motivo: 'degustación 2 de dic', piezas: [{ producto: { id: 'p-50' }, cantidad: 4 }]
     })
   })
 
@@ -217,7 +218,7 @@ test.describe('regalos (pura): lo que se dicta', () => {
 
   test('dos personas en un mensaje: se pide uno por mensaje en vez de cargarle todo al primero', () => {
     expect(leerRegalo('Kevin regaló 2 grandes y Gilberto regaló 3 chicas, motivo: expo', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'uno_por_mensaje' })
-    expect(leerRegalo('Kevin y Gilberto regalaron 3 chicas, motivo: expo', PRODUCTOS, 'norman')).toMatchObject({ ok: true, quien: 'Kevin y Gilberto' })
+    expect(leerRegalo('Kevin y Gilberto regalaron 3 chicas, motivo: expo', PRODUCTOS, 'norman')).toEqual({ ok: false, falta: 'uno_por_mensaje' }) // 2026-11-25: uno de la lista por regalo
   })
 
   test('"a una chica" es una persona, no una pieza', () => {

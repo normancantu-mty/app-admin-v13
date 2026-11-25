@@ -8,6 +8,7 @@ import type { TablesInsert } from '@/types/database'
 import { annulComercialCascadePorTicketId, assertPermiteAnularTicketEnPerfil } from '@/lib/ticket-annul-cascade'
 import { comisionValidada, type PayloadAlta } from '@/lib/bot-entidad'
 import { crearEntidad, type PuertaDeAuth } from '@/lib/entidad-servidor'
+import { mensajeAlBorrarConRegalos } from '@/lib/regalos'
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
@@ -383,7 +384,8 @@ export async function annularTicketHistorialDistribuidorAction(ticketId: string,
   revalidatePath('/dashboard/inventario')
 }
 
-export async function eliminarEntidadAction(entidadId: string) {
+/** `error`: lo que debe leer quien borra. Va de regreso y no con `throw`: en produccion Next le tapa el texto a un Error. */
+export async function eliminarEntidadAction(entidadId: string): Promise<{ error?: string }> {
   const id = entidadId?.trim()
   if (!id || !UUID_REGEX.test(id)) throw new Error('Entidad inválida.')
 
@@ -411,8 +413,11 @@ export async function eliminarEntidadAction(entidadId: string) {
 
   const { error: deleteError } = await supabase.from('entidades').delete().eq('id', id)
 
+  const conRegalos = mensajeAlBorrarConRegalos(deleteError)
+  if (conRegalos) return { error: conRegalos }
   if (deleteError) throw new Error(deleteError.message)
 
   revalidatePath('/dashboard/distribuidores')
+  return {}
 }
 

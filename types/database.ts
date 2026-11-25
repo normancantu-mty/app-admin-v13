@@ -1454,6 +1454,7 @@ export type Database = {
           creado_en: string
           fecha: string
           id: string
+          id_entidad_destino: string | null
           id_entidad_origen: string
           motivo: string
           quien_regalo: string
@@ -1463,6 +1464,7 @@ export type Database = {
           creado_en?: string
           fecha?: string
           id?: string
+          id_entidad_destino?: string | null
           id_entidad_origen: string
           motivo: string
           quien_regalo: string
@@ -1472,6 +1474,7 @@ export type Database = {
           creado_en?: string
           fecha?: string
           id?: string
+          id_entidad_destino?: string | null
           id_entidad_origen?: string
           motivo?: string
           quien_regalo?: string
@@ -2120,6 +2123,7 @@ export type Database = {
         Row: {
           creado_en: string | null
           fecha: string | null
+          id_entidad_destino: string | null
           id_entidad_origen: string | null
           id_producto: string | null
           id_regalo: string | null

@@ -17,8 +17,9 @@ import { EncabezadoPagina } from '@/components/v2/pagina/Encabezado'
 import { exigirMatrizV2 } from '@/lib/v2/puerta'
 import { puedeCapturarMatriz } from '@/lib/v2/roles'
 import { num } from '@/lib/v2/formato'
-import { hoyMx, idMatriz, leerCartera, leerProductosRegalo, stocksDe } from '@/lib/regalos-servidor'
-import type { Cartera, GrupoCartera, PresentacionCartera } from '@/lib/regalos'
+import { hoyMx, idMatriz, leerCartera, leerListas, leerProductosRegalo, stocksDe } from '@/lib/regalos-servidor'
+import { capturoTexto, horaCapturaMx, type Cartera, type GrupoCartera, type PresentacionCartera } from '@/lib/regalos'
+import type { DestinoRegalo, QuienPermitido } from '@/lib/regalos-quien'
 import { FormRegalo, type ProductoForm } from '@/components/v2/regalos/FormRegalo'
 
 export const dynamic = 'force-dynamic'
@@ -31,7 +32,7 @@ function TablaGrupos({ titulo, grupos, pres, total, etiqueta }: {
   titulo: string
   grupos: GrupoCartera[]
   pres: PresentacionCartera[]
-  total: GrupoCartera
+  total: GrupoCartera | null
   etiqueta: (clave: string) => string
 }) {
   return (
@@ -56,7 +57,7 @@ function TablaGrupos({ titulo, grupos, pres, total, etiqueta }: {
           </thead>
           <tbody>
             {grupos.map((g) => (
-              <tr key={g.clave}>
+              <tr key={g.id ?? g.clave}>
                 <td>{etiqueta(g.clave)}</td>
                 {pres.map((p) => (
                   <td key={p.id_producto} className="r mono">
@@ -66,19 +67,21 @@ function TablaGrupos({ titulo, grupos, pres, total, etiqueta }: {
                 <td className="r mono">{num(g.piezas)}</td>
               </tr>
             ))}
-            <tr>
-              <td>
-                <b>Total</b>
-              </td>
-              {pres.map((p) => (
-                <td key={p.id_producto} className="r mono">
-                  <b>{num(total.piezasPorProducto[p.id_producto] ?? 0)}</b>
+            {total ? (
+              <tr>
+                <td>
+                  <b>Total</b>
                 </td>
-              ))}
-              <td className="r mono">
-                <b>{num(total.piezas)}</b>
-              </td>
-            </tr>
+                {pres.map((p) => (
+                  <td key={p.id_producto} className="r mono">
+                    <b>{num(total.piezasPorProducto[p.id_producto] ?? 0)}</b>
+                  </td>
+                ))}
+                <td className="r mono">
+                  <b>{num(total.piezas)}</b>
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
@@ -102,11 +105,14 @@ export default async function PaginaRegalos() {
 
   let cartera: Cartera | null = null
   let productos: ProductoForm[] = []
+  let quienes: QuienPermitido[] = []
+  let destinos: DestinoRegalo[] = []
   let error: string | null = null
   try {
     const [c, prods, matriz] = await Promise.all([leerCartera(supabase), leerProductosRegalo(supabase), idMatriz(supabase)])
     cartera = c
     if (captura) {
+      ;({ quienes, destinos } = await leerListas(supabase))
       const stocks = await stocksDe(supabase, matriz.id, prods.map((p) => p.id))
       productos = prods
         .slice()
@@ -130,7 +136,7 @@ export default async function PaginaRegalos() {
         <div className="msg mal">No se pudieron leer los regalos: {error}</div>
       ) : (
         <>
-          {captura ? <FormRegalo productos={productos} hoy={hoyMx()} /> : null}
+          {captura ? <FormRegalo productos={productos} quienes={quienes} destinos={destinos} hoy={hoyMx()} /> : null}
           {cartera.registros.length === 0 ? (
             <div className="msg info">Aún no hay regalos registrados.</div>
           ) : (
@@ -145,12 +151,17 @@ export default async function PaginaRegalos() {
                   <span className="v">{num(cartera.registros.length)}</span>
                 </div>
               </div>
-              <TablaGrupos titulo="Por persona" grupos={cartera.porPersona} pres={cartera.presentaciones} total={cartera.total} etiqueta={(c) => c} />
+              <TablaGrupos titulo="Quién los regaló" grupos={cartera.porPersona} pres={cartera.presentaciones} total={cartera.total} etiqueta={(c) => c} />
+              {!cartera.hayDestinos ? (
+                <div className="msg info">Falta correr el SQL del destino en la base: todavía no se puede ver a quién se le han dado.</div>
+              ) : cartera.porDestino.length > 0 ? (
+                <TablaGrupos titulo="A qué distribuidor o local se le dio" grupos={cartera.porDestino} pres={cartera.presentaciones} total={null} etiqueta={(c) => c} />
+              ) : null}
               <TablaGrupos titulo="Por mes" grupos={cartera.porMes} pres={cartera.presentaciones} total={cartera.total} etiqueta={etiquetaMes} />
               <section className="card" data-testid="lista-regalos">
                 <div className="hd">
                   <div>
-                    <h2>Registros</h2>
+                    <h2>Historial</h2>
                     <div className="sub">El más reciente primero. Para corregir uno, anula sus movimientos en Inventario.</div>
                   </div>
                 </div>
@@ -158,11 +169,13 @@ export default async function PaginaRegalos() {
                   <table className="t">
                     <thead>
                       <tr>
-                        <th>Fecha</th>
-                        <th>Quién</th>
+                        <th>Fecha del regalo</th>
+                        <th>De quién</th>
+                        <th>Para</th>
                         <th>Motivo</th>
                         <th>Piezas</th>
-                        <th>Capturó</th>
+                        <th>Lo capturó</th>
+                        <th>Capturado el (hora de México)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -170,6 +183,7 @@ export default async function PaginaRegalos() {
                         <tr key={r.id_regalo}>
                           <td className="mono">{r.fecha}</td>
                           <td>{r.quien_regalo}</td>
+                          <td>{r.destino || '—'}</td>
                           <td>{r.motivo}</td>
                           <td>
                             {cartera!.presentaciones
@@ -177,7 +191,8 @@ export default async function PaginaRegalos() {
                               .map((p) => `${num(r.piezasPorProducto[p.id_producto])} ${corto(p.producto)}`)
                               .join(' · ')}
                           </td>
-                          <td>{r.usuario_creador ?? '—'}</td>
+                          <td>{capturoTexto(r.usuario_creador) || '—'}</td>
+                          <td className="mono">{horaCapturaMx(r.creado_en) || '—'}</td>
                         </tr>
                       ))}
                     </tbody>

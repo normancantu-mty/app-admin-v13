@@ -15,7 +15,7 @@ import { NextResponse } from 'next/server'
 import { clienteDeServicio, resolverIdentidad, tokenValido } from '@/lib/bot-servidor'
 import { abrirPuerta, pasarAEspera, reclamarAprobacion, liberarReclamo, marcarConfirmado, actorDe } from '@/lib/bot-aprobacion'
 import { permisoDeAccion } from '@/lib/bot-permisos'
-import { botellasTexto, renglonDePersona } from '@/lib/regalos'
+import { botellasTexto, renglonDeGrupo, renglonDePersona } from '@/lib/regalos'
 import { idMatriz, leerCartera, registrarRegalo } from '@/lib/regalos-servidor'
 import { MENSAJE_REGALO_NO_PERMITIDO, PERMISO_REGALO, selloRegaloCoincide, type PayloadRegalo } from '@/lib/bot-regalo'
 
@@ -85,7 +85,7 @@ export async function POST(request: Request) {
     // ── LA ESCRITURA: la MISMA que el formulario de /panel/regalos ───────────
     const resultado = await registrarRegalo(
       supabase,
-      { fecha: regalo.fecha, quien_regalo: regalo.quien_regalo, motivo: regalo.motivo, lineas: regalo.lineas },
+      { fecha: regalo.fecha, quien_regalo: regalo.quien_regalo, motivo: regalo.motivo, lineas: regalo.lineas, id_entidad_destino: regalo.id_entidad_destino ?? null },
       regalo.id_entidad,
       regalo.usuario_creador
     )
@@ -100,7 +100,10 @@ export async function POST(request: Request) {
     // El contador ya con este regalo. Si la lectura falla, el regalo YA quedo: solo no se ensena.
     let contador = ''
     try {
-      contador = `\nVa: ${renglonDePersona(await leerCartera(supabase), regalo.quien_regalo)}.`
+      const cartera = await leerCartera(supabase)
+      contador = `\nVa: ${renglonDePersona(cartera, regalo.quien_regalo)}.`
+      const recibido = regalo.id_entidad_destino ? cartera.porDestino.find((g) => g.id === regalo.id_entidad_destino) : undefined
+      if (recibido) contador += `\nLe hemos dado a ${renglonDeGrupo(cartera, recibido)}.`
     } catch (e) {
       console.error('[bot] regalo escrito, pero no pude leer el contador:', e)
     }
