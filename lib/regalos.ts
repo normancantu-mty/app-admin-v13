@@ -24,7 +24,7 @@ import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
 // ─── Quien regalo ───────────────────────────────────────────────────────────
 
 /** Los del equipo; cualquier otro nombre entra como texto libre. */
-export const QUIENES_CONOCIDOS = ['Norman', 'Kevin', 'Gilberto', 'Luis'] as const
+export const QUIENES_CONOCIDOS = ['Norman', 'Kevin', 'Cristian', 'Gilberto', 'Luis'] as const
 
 function aplanar(texto: unknown): string {
   return String(texto ?? '')
