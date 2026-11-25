@@ -16,6 +16,7 @@
 
 import { sellar, selloEmpata } from '@/lib/bot-sello'
 import type { AccionBot } from '@/lib/bot-permisos'
+import { faltanteDeStock, repartirCascada, textoFaltantes } from '@/lib/aviso-stock'
 
 /**
  * La merma sale del inventario de quien la dice (la matriz): mismo permiso que
@@ -149,11 +150,14 @@ export function piezasTexto(n: number): string {
   return `${n} ${n === 1 ? 'pieza' : 'piezas'}`
 }
 
-/** De que cubeta sale (misma regla que `calcularDeduccionCascada`), sin lanzar. **Pura.** */
+/** De que cubeta sale: la MISMA regla que escribe (`repartirCascada`). **Pura.** */
 export function planDeCascada(cantidad: number, pagado: number, consignado: number) {
-  const dePagado = Math.min(cantidad, pagado)
-  const deConsignado = Math.min(cantidad - dePagado, consignado)
-  return { dePagado, deConsignado, alcanza: dePagado + deConsignado === cantidad }
+  const { deduccionPagado, deduccionConsignado } = repartirCascada(cantidad, pagado, consignado)
+  return {
+    dePagado: deduccionPagado,
+    deConsignado: deduccionConsignado,
+    alcanza: faltanteDeStock(pagado + consignado, cantidad) === null
+  }
 }
 
 export function mensajeDeMerma(
@@ -163,6 +167,12 @@ export function mensajeDeMerma(
   stock: { pagado: number; consignado: number }
 ): string {
   const plan = planDeCascada(p.cantidad, stock.pagado, stock.consignado)
+  const faltante = faltanteDeStock(stock.pagado + stock.consignado, p.cantidad)
+  const aviso = faltante
+    ? `AVISO: pides más de lo que marca el sistema. ` +
+      `${textoFaltantes([{ idProducto: p.id_producto, pieza: producto, ...faltante }])}. ` +
+      'Con tu VA entra igual y queda un aviso para contar.\n\n'
+    : ''
   const salen = [
     plan.dePagado > 0 ? `${piezasTexto(plan.dePagado)} de lo PAGADO` : '',
     plan.deConsignado > 0 ? `${piezasTexto(plan.deConsignado)} de lo CONSIGNADO` : ''
@@ -175,6 +185,7 @@ export function mensajeDeMerma(
     `SALE DE:    ${salen.join(' y ')}\n` +
     `HAY HOY:    ${piezasTexto(stock.pagado)} pagadas, ${piezasTexto(stock.consignado)} consignadas\n` +
     `NOTA:       ${p.notas}\n\n` +
+    aviso +
     'Es la misma escritura que "Reportar merma" de la web.\n' +
     'Contesta VA para escribirlo, o dime que cambio.'
   )

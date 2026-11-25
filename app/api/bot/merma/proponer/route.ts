@@ -10,7 +10,8 @@
  * Contesta, sin escribir nada:
  *  - `no_es_merma: true` si el texto no habla de merma o no nombra un producto:
  *    el bot sigue su camino normal con ese mensaje.
- *  - `pregunta` si falta UNA cosa (que producto, cuantas) o no alcanza el stock.
+ *  - `pregunta` si falta UNA cosa (que producto, cuantas). Si no alcanza el
+ *    stock hay propuesta igual, con el aviso dentro: avisa, no bloquea.
  */
 
 import { NextResponse } from 'next/server'
@@ -26,8 +27,6 @@ import {
   leerMerma,
   mensajeDeMerma,
   payloadDeMerma,
-  piezasTexto,
-  planDeCascada,
   preguntaDeMerma,
   sellarMerma
 } from '@/lib/bot-merma'
@@ -75,14 +74,6 @@ export async function POST(request: Request) {
     if (!lectura.ok) return NextResponse.json({ ok: false, pregunta: preguntaDeMerma(lectura) })
 
     const stock = await leerStockParaCascada(supabase, identidad.idEntidad, lectura.producto.id)
-    if (!planDeCascada(lectura.cantidad, stock.pagado, stock.consignado).alcanza) {
-      return NextResponse.json({
-        ok: false,
-        pregunta:
-          `En ${identidad.nombreEntidad} el libro solo tiene ${piezasTexto(stock.pagado + stock.consignado)} de ` +
-          `${lectura.producto.nombre}; no puedo sacar ${piezasTexto(lectura.cantidad)}. No escribi nada.`
-      })
-    }
 
     const payload = payloadDeMerma(lectura, identidad.idEntidad, `telegram:${identidad.etiqueta}`, texto)
 

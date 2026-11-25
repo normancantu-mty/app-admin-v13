@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
+import { repartirCascada } from '@/lib/aviso-stock'
 
 /** Las seis columnas del ledger de las que sale el stock. Nada mas se lee. */
 interface MovimientoStockRow {
@@ -38,7 +39,8 @@ export interface CalcularDeduccionCascadaInput {
 /**
  * Zero-Trust waterfall rule:
  * always burns from bucket PAGADO first, and only overflows into CONSIGNADO.
- * Throws when requested deduction exceeds total physical stock available.
+ * 2026-11-24, regla de Norman: la falta de existencia NO lanza. El faltante
+ * queda en PAGADO (negativo) y quien llama avisa con `faltanteDeStock`.
  */
 export function calcularDeduccionCascada(
   params: CalcularDeduccionCascadaInput
@@ -53,19 +55,11 @@ export function calcularDeduccionCascada(
     throw new Error('Parámetros inválidos: se requieren números finitos.')
   }
 
-  if (cantidadDeducir < 0 || stockPagadoActual < 0 || stockConsignadoActual < 0) {
+  if (cantidadDeducir < 0) {
     throw new Error('Parámetros inválidos: no se permiten cantidades negativas.')
   }
 
-  const deduccionPagado = Math.min(cantidadDeducir, stockPagadoActual)
-  const restante = cantidadDeducir - deduccionPagado
-  const deduccionConsignado = Math.min(restante, stockConsignadoActual)
-
-  if (restante > stockConsignadoActual) {
-    throw new Error('Stock insuficiente: la deducción excede el total físico disponible.')
-  }
-
-  return { deduccionPagado, deduccionConsignado }
+  return repartirCascada(cantidadDeducir, stockPagadoActual, stockConsignadoActual)
 }
 
 function getServiceRoleSupabaseClient() {
@@ -82,7 +76,9 @@ function getServiceRoleSupabaseClient() {
 }
 
 export async function getStockEsperadoPorEntidad(idEntidad: string): Promise<StockEsperadoItem[]> {
-  const { stockPagado, stockConsignado } = await getStockPorCubetaPorEntidad(idEntidad)
+  // 2026-11-24: con los negativos. Un -2 en PAGADO ya se vendio y se cobro en la
+  // venta: si se tirara aqui, el corte lo cobraria otra vez contra lo consignado.
+  const { stockPagado, stockConsignado } = await getStockPorCubetaPorEntidad(idEntidad, { conNegativos: true })
   const stockMap = new Map<string, StockEsperadoItem>()
 
   for (const row of [...stockPagado, ...stockConsignado]) {
@@ -94,10 +90,18 @@ export async function getStockEsperadoPorEntidad(idEntidad: string): Promise<Sto
     current.stockEsperado = Math.round(((current.stockEsperado + row.stockEsperado) + Number.EPSILON) * 10000) / 10000
   }
 
-  return Array.from(stockMap.values())
+  return Array.from(stockMap.values()).filter((row) => row.stockEsperado > 0)
 }
 
-export async function getStockPorCubetaPorEntidad(idEntidad: string): Promise<StockPorCubeta> {
+/**
+ * `conNegativos`: el conteo fisico lo pide, porque un saldo negativo es justo lo
+ * que hay que contar. Sin el, la regla de siempre (solo stock > 0, la de
+ * `v_stock_por_cubeta`).
+ */
+export async function getStockPorCubetaPorEntidad(
+  idEntidad: string,
+  opciones: { conNegativos?: boolean } = {}
+): Promise<StockPorCubeta> {
   const entidadId = idEntidad?.trim()
   if (!entidadId) {
     throw new Error('Entidad inválida para auditoría.')
@@ -170,7 +174,7 @@ export async function getStockPorCubetaPorEntidad(idEntidad: string): Promise<St
         producto: nombrePorId.get(idProducto) || 'Producto sin nombre',
         stockEsperado: Math.round(((stockMap.get(idProducto) || 0) + Number.EPSILON) * 10000) / 10000
       }))
-      .filter((row) => row.stockEsperado > 0)
+      .filter((row) => row.stockEsperado > 0 || (opciones.conNegativos === true && row.stockEsperado < 0))
 
   return {
     stockPagado: mapToRows(stockMapPagado),

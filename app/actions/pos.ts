@@ -39,6 +39,8 @@ interface ProcesarVentaPOSResult {
   ok: boolean
   ticketId?: string
   error?: string
+  /** La venta entro con mas piezas de las que marca el sistema. Es aviso, no error. */
+  avisoStock?: string | null
 }
 
 export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promise<ProcesarVentaPOSResult> {
@@ -101,7 +103,7 @@ export async function procesarVentaPOS(payload: ProcesarVentaPOSPayload): Promis
     // otra lectura para ahorrar un `revalidatePath` que es gratis.
     revalidatePath('/dashboard/avisos')
 
-    return { ok: true, ticketId: resultado.ticketId }
+    return { ok: true, ticketId: resultado.ticketId, avisoStock: resultado.avisoStock ?? null }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno POS.'
     return { ok: false, error: message }

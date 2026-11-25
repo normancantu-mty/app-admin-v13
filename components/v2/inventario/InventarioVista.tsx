@@ -6,6 +6,7 @@ import { getCurrentUser } from '@/lib/auth-utils'
 import { cookies } from 'next/headers'
 import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
+import { concesionPorProducto } from '@/lib/en-concesion'
 import LogisticaInversaModal from './LogisticaInversa'
 import MovimientosTable from './MovimientosInventario'
 import { PestanasInv, type Pestana } from './Pestanas'
@@ -354,29 +355,18 @@ export default async function InventarioVista({
 
   const movimientos = movimientosStock
   // --- INICIO LÓGICA DE CONCESIÓN (Mejorada) ---
+  const concesion = concesionPorProducto(movimientos)
   const inventarioConcesion = productos
     .filter(p => p.tipo === 'TERMINADO')
     .map(producto => {
       try {
-        const movsConsignado = movimientos.filter(m => 
-          m.id_producto === producto.id && 
-          m.cubeta === 'CONSIGNADO' && 
-          m.status === 'ACTIVO'
-        );
-        
-        const stockFisicoConsignado = movsConsignado.reduce((acc, mov) => {
-          if (mov.status !== 'ACTIVO') return acc;
-          // AJUSTE_INVENTARIO (2026-11-03): correccion del ADMIN sobre la cubeta, cantidad CON SIGNO.
-          if (mov.tipo_movimiento.startsWith('ENTRADA') || mov.tipo_movimiento === 'AJUSTE_INVENTARIO') return acc + mov.cantidad;
-          if (mov.tipo_movimiento.startsWith('SALIDA') || mov.tipo_movimiento === 'MERMA') return acc - mov.cantidad;
-          return acc;
-        }, 0);
+        const stockFisicoConsignado = concesion.get(producto.id) ?? 0
 
         const precioFinal = precioReferencia(producto, preciosRetailPorProducto);
         
         return { 
           ...producto, 
-          stock_consignado: Math.max(0, stockFisicoConsignado),
+          stock_consignado: stockFisicoConsignado,
           valor_consignado: roundTo2(stockFisicoConsignado * precioFinal)
         };
       } catch (error) {
@@ -384,7 +374,7 @@ export default async function InventarioVista({
         return { ...producto, stock_consignado: 0, valor_consignado: 0 };
       }
     })
-    .filter(p => p.stock_consignado > 0);
+    .filter(p => p.stock_consignado !== 0);
 
   const valorTotalConcesion = roundTo2(
     inventarioConcesion.reduce((sum, p) => sum + p.valor_consignado, 0)
@@ -408,7 +398,7 @@ export default async function InventarioVista({
 
   const piezasConcesion = inventarioConcesion.reduce((s, p) => s + Number(p.stock_consignado), 0)
   const terminados = productosConStock.filter((p) => p.tipo === 'TERMINADO')
-  const piezasTerminadas = terminados.reduce((s, p) => s + Math.max(0, p.stock_actual), 0)
+  const piezasTerminadas = terminados.reduce((s, p) => s + p.stock_actual, 0)
   const stockBajo = productosConStock.filter((p) => p.stock_actual <= 10).length
   const filasStock = productosConStockOrdenados.map((p) => ({
     id: p.id,

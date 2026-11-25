@@ -733,7 +733,8 @@ async def _boton_de_aprobacion(update, clave, q, accion, bid):
     pie = await asyncio.to_thread(_ligar_comprobante, bid, r2.get("id"))
     # D107: si la marca final fallo, quien aprobo lo sabe (no se repite).
     await decir("Aprobado. Quedo escrito." + pie
-                + ((NL + str(r2["aviso_marca"])) if r2.get("aviso_marca") else ""))
+                + ((NL + str(r2["aviso_marca"])) if r2.get("aviso_marca") else "")
+                + ((NL + str(r2["aviso_stock"])) if r2.get("aviso_stock") else ""))
     await _avisar_en(update, r.get("chat_id"),
                      "Aprobado por " + str(r.get("aprobador") or _nombre_de(_persona(clave)))
                      + ": lo que propuso " + str(r.get("autor") or "")
@@ -2977,6 +2978,9 @@ async def _confirmar_venta(update, chat):
         aviso = _aviso_de_concesion(r)
     else:
         aviso = "Listo. Quedo escrita."
+    # Falta de existencia: avisa, no bloquea. La venta ya entro.
+    if r.get("aviso_stock"):
+        aviso += NL + str(r["aviso_stock"])
     await update.effective_message.reply_text(aviso)
 
     # ── FASE 1b: el comprobante llega solo ──────────────────────────────────
@@ -3683,7 +3687,10 @@ async def _confirmar_conversion(update, chat):
     log.info("conversion confirmada: borrador=%s -> %s", dato["borrador_id"], estado)
     if estado == 200 and r.get("ok"):
         _memoria.pop(chat, None)
-        await update.effective_message.reply_text(r.get("mensaje", "Listo, quedo vendida."))
+        texto = r.get("mensaje", "Listo, quedo vendida.")
+        if r.get("aviso_stock"):
+            texto += NL + str(r["aviso_stock"])
+        await update.effective_message.reply_text(texto)
     else:
         await update.effective_message.reply_text(r.get("error", "No pude convertirla."))
 
@@ -5962,6 +5969,8 @@ async def _confirmar_merma(update, chat):
         texto = r.get("mensaje") or "Listo. Quedo la merma."
         if r.get("aviso_marca"):
             texto += NL + str(r["aviso_marca"])
+        if r.get("aviso_stock"):
+            texto += NL + str(r["aviso_stock"])
         await update.effective_message.reply_text(texto)
     else:
         # `espera_aprobacion`: `_anotar_aprobacion` ya puso en `error` a quien se mando.

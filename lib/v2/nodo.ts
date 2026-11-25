@@ -19,6 +19,7 @@ import type { CurrentUser } from '@/lib/auth-utils'
 import { VENTANA_EDICION_ERROR, VENTANA_EDICION_MS } from '@/lib/constants'
 import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
 import { leerSaldoEntidad, leerStockPorCubeta } from '@/lib/vistas'
+import { leerFaltante, restarFaltante } from '@/lib/en-concesion'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
 import { TIPO_FILA_ABONO_LOCAL, esAbonoPorSurtirLocal, renglonAbonoLocal, saldoPorPagarSinAbonoLocal } from '@/lib/abono-local'
 import type { ActividadHistorialRow } from '@/components/v2/nodo/Historial'
@@ -817,7 +818,7 @@ export async function leerFichaNodo(id: string, usuario: CurrentUser): Promise<F
     getFinanzasLedger(serviceRoleClient, scope.entityIds, scope.accountIds, entidad.id, adminLegacyAccountId)
   )
 
-  const [consolidationScope, ticketsHistoricosSaldo, desglosePorTicketId, finanzasHistoricasSaldo, totalMermas, saldoDelNodo, filasStock, dstAnnulScopeOk] =
+  const [consolidationScope, ticketsHistoricosSaldo, desglosePorTicketId, finanzasHistoricasSaldo, totalMermas, saldoDelNodo, filasStock, faltante, dstAnnulScopeOk] =
     await Promise.all([
       scopeP,
       ticketsP,
@@ -826,6 +827,7 @@ export async function leerFichaNodo(id: string, usuario: CurrentUser): Promise<F
       getTotalMermasEntidad(serviceRoleClient, sessionRole, currentUserEntityId, entidad, id),
       leerSaldoEntidad(supabaseClient, entidad.id),
       leerStockPorCubeta(supabaseClient, id).catch(() => []),
+      leerFaltante(supabaseClient, id),
       sessionRole === 'DST' ? dstPuedeOperarPerfilDetallePage(supabaseClient, currentUserEntityId, id) : Promise.resolve(false)
     ])
   const totalGanado = calcularTotalGanadoPeriodo(finanzasHistoricasSaldo, entidad, consolidationScope, { fechaInicio, fechaFin })
@@ -840,9 +842,11 @@ export async function leerFichaNodo(id: string, usuario: CurrentUser): Promise<F
       .filter((f) => f.cubeta === cubeta)
       .map((f) => ({ idProducto: f.id_producto, producto: f.producto, stockEsperado: Number(f.stock) }))
   const inventarioPagado = aFila('PAGADO')
-  const inventarioConsignado = aFila('CONSIGNADO')
+  const consignadoDelLibro = aFila('CONSIGNADO')
+  // La vista solo trae lo mayor que cero: el faltante (PAGADO negativo) se resta aqui.
+  const inventarioConsignado = restarFaltante(consignadoDelLibro, faltante)
   const prod = new Map<string, { id: string; idProducto: string; nombre: string }>()
-  for (const r of [...inventarioPagado, ...inventarioConsignado]) prod.set(r.idProducto, { id: r.idProducto, idProducto: r.idProducto, nombre: r.producto })
+  for (const r of [...inventarioPagado, ...consignadoDelLibro]) prod.set(r.idProducto, { id: r.idProducto, idProducto: r.idProducto, nombre: r.producto })
 
   return {
     entidad,

@@ -55,6 +55,7 @@ import { resolverCompradorDeVenta } from '@/lib/avisos'
 import { registrarAviso } from '@/lib/avisos-server'
 import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
+import { faltanteDeStock, mensajeFaltaStock, notaAbonoSinCarga, notaCorteLocal, type FaltanteStock } from '@/lib/aviso-stock'
 import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { esCuentaFiscal, validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
@@ -117,6 +118,8 @@ export interface ResultadoVenta {
   idComprador?: string | null
   origenInventarioId?: string
   vendedorId?: string
+  /** La venta entro con mas piezas de las que marca el sistema. Es aviso, no error. */
+  avisoStock?: string | null
 }
 
 interface POSItemPayload {
@@ -258,7 +261,7 @@ function resolveTipoFiscalidadCuenta(tipoFiscalidadRaw: string | null | undefine
 /** Tope de lo que se hace despues de escribir: no detiene la respuesta de la venta. */
 const TOPE_REVISION_MS = 1000
 
-function conTope<T>(tarea: Promise<T>): Promise<T> {
+export function conTope<T>(tarea: Promise<T>): Promise<T> {
   let reloj: ReturnType<typeof setTimeout> | undefined
   const tope = new Promise<never>((_, falla) => {
     reloj = setTimeout(() => falla(new Error(`tardo mas de ${TOPE_REVISION_MS} ms`)), TOPE_REVISION_MS)
@@ -546,12 +549,12 @@ export async function registrarVenta(
       cantidadPorProducto.set(item.id_producto, cantidadActual + item.cantidad)
     }
 
+    const faltantesStock: FaltanteStock[] = []
     const inventarioMovimientos: InventarioInsert[] = []
     for (const [idProducto, cantidadVendida] of cantidadPorProducto.entries()) {
-      // ERP-25: paginado. De estas filas sale el stock con el que el POS decide
-      // si puede vender y de que cubeta descuenta. Truncada, la venta se
-      // rechaza por mercancia que si existe, o se carga a la cubeta
-      // equivocada — y ninguna de las dos cosas da error.
+      // ERP-25: paginado. De estas filas sale el stock con el que el POS avisa
+      // que falta y de que cubeta descuenta. Truncada, el aviso miente o la
+      // venta se carga a la cubeta equivocada — y ninguna de las dos da error.
       const sellerMovs = await fetchTodasLasFilas<MovimientoStockPos>(
         () =>
           supabase
@@ -583,18 +586,20 @@ export async function registrarVenta(
         }
       })
 
-      stockPagadoActual = Math.max(0, stockPagadoActual)
-      stockConsignadoActual = Math.max(0, stockConsignadoActual)
-      const stockTotal = Math.max(0, stockNeto)
-
-      if (stockTotal < cantidadVendida) {
-        throw new Error(`Stock insuficiente para producto ${idProducto}. Disponible: ${stockTotal}, requerido: ${cantidadVendida}.`)
+      // 2026-11-24, regla de Norman: "el ERP avisa, nunca bloquea". Sin existencia
+      // la venta entra igual, el saldo queda negativo y sale W20 despues de
+      // escribir. No se inventa ninguna entrada. La triangulacion sale de lo
+      // consignado, asi que ahi "hay" es lo consignado (o el total, si es menos).
+      const hay = usaTriangulacionInventario ? Math.min(stockConsignadoActual, stockNeto) : stockNeto
+      const faltante = faltanteDeStock(hay, cantidadVendida)
+      if (faltante) {
+        const producto = [...(productosPorIdResult.data || []), ...(productosPorSkuResult.data || [])].find((p) => p.id === idProducto)
+        faltantesStock.push({ idProducto, pieza: producto?.nombre || producto?.sku || idProducto, ...faltante })
       }
 
       let deduccionPagado = 0
       let deduccionConsignado = 0
       if (usaTriangulacionInventario) {
-        if (stockConsignadoActual < cantidadVendida) return { ok: false, error: `Stock consignado insuficiente.` }
         deduccionConsignado = cantidadVendida
       } else {
         const deduccion = calcularDeduccionCascada({ cantidadDeducir: cantidadVendida, stockPagadoActual, stockConsignadoActual })
@@ -761,6 +766,7 @@ export async function registrarVenta(
     // abona sale como aviso W19 despues de escribir, con la venta y los productos.
     let avisoAbonoLocal: AvisoAbonoLocal | null = null
     let avisoArranque: AvisoAbonoLocal | null = null
+    let notaAbono: string | null = null
     let abonoEscrito: Parameters<typeof avisoAbonoDeMas>[1] | null = null
     if (
       compradorEntidad &&
@@ -821,6 +827,11 @@ export async function registrarVenta(
         },
         { zona: zonaLocal, error: errorPrecios ?? errorCargo }
       )
+      // Faltaba carga: el W20 lo dice y el historial lo lleva. La regla del abono no cambia.
+      if (abonoLocal.fila) {
+        notaAbono = notaAbonoSinCarga(faltantesStock, sinCargo)
+        if (notaAbono) abonoLocal.fila.categoria_gasto += `\n${notaAbono}`
+      }
       if (abonoLocal.fila) movimientosComisionTriangulacionYAdmin.push(abonoLocal.fila)
       if (abonoLocal.fila) {
         abonoEscrito = {
@@ -998,6 +1009,27 @@ export async function registrarVenta(
       })
     }
 
+    // Aviso de falta de existencia: para quien captura y para quien cuenta.
+    const avisoStock = faltantesStock.length > 0
+      ? mensajeFaltaStock('La venta', entidadOrigenInventario.nombre ?? origenInventarioId, faltantesStock, [
+          notaCorteLocal(entidadOrigenInventario.rol),
+          notaAbono
+        ])
+      : null
+    if (avisoStock) {
+      // Con tope: la venta ya entro. Una cola colgada no la detiene (y no la duplica).
+      await conTope(
+        registrarAviso(supabase, {
+          tipo: 'W20',
+          idEntidad: origenInventarioId,
+          mensaje: avisoStock,
+          tabla: 'transacciones_tickets',
+          idRegistro: idTicket,
+          datosCapturados: { id_vendedor: vendedorId, id_origen_inventario: origenInventarioId, faltantes: faltantesStock }
+        })
+      ).catch((e) => console.error('W20: no se pudo avisar', avisoStock, e))
+    }
+
     if (avisoAbonoLocal) {
       await registrarAviso(supabase, {
         tipo: 'W19',
@@ -1047,7 +1079,8 @@ export async function registrarVenta(
       ticketId: idTicket,
       idComprador: idCompradorResuelto,
       origenInventarioId,
-      vendedorId
+      vendedorId,
+      avisoStock
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error interno POS.'

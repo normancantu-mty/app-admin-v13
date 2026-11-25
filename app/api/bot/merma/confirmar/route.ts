@@ -8,7 +8,7 @@
  *
  * La escritura es `escribirSalidaCascada` (`lib/salida-cascada.ts`): la MISMA
  * funcion que llama "Reportar merma" de la web. El stock se vuelve a leer al
- * escribir: si entre la propuesta y el VA ya no alcanza, no se escribe nada.
+ * escribir: si entre la propuesta y el VA ya no alcanza, se escribe y se avisa.
  */
 
 import { NextResponse } from 'next/server'
@@ -97,6 +97,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
+      ...(resultado.avisoStock ? { aviso_stock: resultado.avisoStock } : {}),
       filas_inventario: resultado.ids.length,
       mensaje: `Salieron ${piezasTexto(merma.cantidad)} de ${guardado.meta?.producto ?? 'ese producto'} como merma.`
     })

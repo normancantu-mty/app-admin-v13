@@ -42,6 +42,7 @@ export type TipoAviso =
   | 'W17'  // texto fiscal desactivado en la nota de un abono
   | 'W18'  // un distribuidor corto un local suyo con consignacion a su nombre
   | 'W19'  // venta a un local propio que quedo sin abono, entero o en parte
+  | 'W20'  // venta o salida con mas piezas de las que marca el sistema
 
 export interface DefinicionAviso {
   severidad: SeveridadAviso
@@ -190,6 +191,14 @@ export const CATALOGO_AVISOS: Record<TipoAviso, DefinicionAviso> = {
       'La venta entro completa. El abono por surtir al local NO se asento en las ' +
       'lineas que se nombran: la deuda del distribuidor se lee mas alta de lo que ' +
       'marca la regla hasta que se abone.'
+  },
+  W20: {
+    severidad: 'REVISAR',
+    titulo: 'Salieron mas piezas de las que marca el sistema',
+    consecuencia:
+      'El movimiento entro completo y el saldo quedo negativo. Nadie ajusto el ' +
+      'inventario para taparlo: falta contar y capturar lo que falte (una entrada ' +
+      'sin registrar, o una salida de mas).'
   }
 }
 

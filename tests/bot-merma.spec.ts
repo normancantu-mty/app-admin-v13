@@ -65,7 +65,8 @@ test.describe('bot-merma (pura)', () => {
 
   test('el plan de la cascada: PAGADO primero, CONSIGNADO despues', () => {
     expect(planDeCascada(5, 3, 10)).toEqual({ dePagado: 3, deConsignado: 2, alcanza: true })
-    expect(planDeCascada(5, 1, 1)).toMatchObject({ alcanza: false })
+    // No alcanza = aviso; el faltante queda en PAGADO.
+    expect(planDeCascada(5, 1, 1)).toEqual({ dePagado: 4, deConsignado: 1, alcanza: false })
   })
 
   test('el borrador merma se rehidrata con su tipo', () => {
@@ -230,11 +231,19 @@ test.describe('escribirSalidaCascada: lo mismo para la web y el bot', () => {
     ])
   })
 
-  test('si no alcanza (8 de 7), no escribe nada', async () => {
+  // 2026-11-24, regla de Norman: la falta de existencia avisa, no bloquea.
+  test('si no alcanza (8 de 7), SI escribe: el faltante queda en PAGADO, y avisa W20', async () => {
     estadoInicial()
     const r = await escribirSalidaCascada(cliente(), { ...salida, cantidad_a_deducir: 8 })
-    expect(r).toMatchObject({ success: false, error: expect.stringContaining('Stock insuficiente') })
-    expect(escrituras).toEqual([])
+    expect(r.success, JSON.stringify(r)).toBe(true)
+    expect(r).toMatchObject({ avisoStock: expect.stringContaining('Destilado Plata 750ml: hay 7, pides 8, quedará -1') })
+    const base = { id_producto: 'p-750', id_entidad_origen: 'ent-matriz', tipo_movimiento: 'MERMA', usuario_creador: 'web@x' }
+    expect(insertados.inventario_ledger).toEqual([
+      { ...base, cubeta: 'PAGADO', cantidad: 4 },
+      { ...base, cubeta: 'CONSIGNADO', cantidad: 4 }
+    ])
+    expect(escrituras).toEqual(['POST inventario_ledger', 'POST avisos_captura'])
+    expect(insertados.avisos_captura).toMatchObject([{ tipo: 'W20', severidad: 'REVISAR', id_entidad: 'ent-matriz' }])
   })
 
   test('validaciones de siempre: cantidad <= 0 y tipo raro no escriben', async () => {
@@ -309,22 +318,24 @@ test.describe('merma/proponer + merma/confirmar', () => {
     expect(escrituras).toEqual([])
   })
 
-  test('mas de lo que hay (8 de 7): lo dice al proponer y no guarda borrador', async () => {
+  test('mas de lo que hay (8 de 7): propone con el aviso dentro y guarda borrador', async () => {
     estadoInicial()
     const p = await llamar('proponer', { telegram_id: NORMAN, texto: 'merma de 8 de 750' })
-    expect(String(p.j.pregunta)).toContain('solo tiene 7 piezas')
-    expect(tablas.bot_borradores).toEqual([])
+    expect(p.j.pregunta).toBeUndefined()
+    expect(String(p.j.mensaje)).toContain('Destilado Plata 750ml: hay 7, pides 8, quedará -1')
+    expect(tablas.bot_borradores).toHaveLength(1)
   })
 
-  test('si entre la propuesta y el VA ya no alcanza, no escribe y el borrador no queda confirmado', async () => {
+  test('si entre la propuesta y el VA ya no alcanza, escribe, confirma el borrador y avisa', async () => {
     estadoInicial()
     const p = await llamar('proponer', { telegram_id: NORMAN, texto: 'merma de 6 de 750' })
     tablas.inventario_ledger.push({ id: 'inv-x', id_producto: 'p-750', tipo_movimiento: 'SALIDA_VENTA', cantidad: 3, cubeta: 'PAGADO', id_entidad_destino: null, id_entidad_origen: 'ent-matriz', status: 'ACTIVO' })
     const c = await llamar('confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
-    expect(c.status).toBe(409)
-    expect(mermas()).toEqual([])
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(String(c.j.aviso_stock)).toContain('hay 4, pides 6, quedará -2')
+    expect(mermas().reduce((s, f) => s + Number(f.cantidad), 0)).toBe(6)
     const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
-    expect(b.estado).not.toBe('CONFIRMADO')
+    expect(b.estado).toBe('CONFIRMADO')
   })
 
   test('el VA de Kevin espera; el Aprobar de Norman escribe con la etiqueta de Kevin', async () => {

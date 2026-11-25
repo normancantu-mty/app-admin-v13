@@ -22,7 +22,7 @@
  * dia que uno cambiara, el otro seguiria cobrando con las reglas viejas.
  *
  * Por eso tampoco se relee el stock aqui: la cascada PAGADO -> CONSIGNADO y su
- * freno ante inventario insuficiente viven dentro de `registrarVenta` y corren
+ * aviso ante inventario insuficiente (avisa, no frena) viven dentro de `registrarVenta` y corren
  * en el momento de escribir, que es el unico momento en que el dato sirve. Una
  * comprobacion adelantada en este archivo seria una segunda verdad sobre el
  * mismo numero.
@@ -237,8 +237,8 @@ export async function POST(request: Request) {
       await liberarReclamo(supabase, borradorId, puerta.modo)
       // El borrador se queda PENDIENTE a proposito: el motor no dejo nada a
       // medias (el RPC es atomico), asi que la propuesta sigue siendo valida y
-      // la persona puede volver a decir "va" cuando se arregle lo que fallo
-      // —tipicamente inventario insuficiente, que se resuelve produciendo—.
+      // la persona puede volver a decir "va" cuando se arregle lo que fallo. La
+      // falta de inventario ya no es una de esas causas: avisa y entra.
       return NextResponse.json(
         { error: resultado.error ?? 'No pude escribir la venta.' },
         { status: 422 }
@@ -263,6 +263,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
+      ...(resultado.avisoStock ? { aviso_stock: resultado.avisoStock } : {}),
       ticket_id: resultado.ticketId,
       total: venta.total_cobrado_real,
       deuda_total: deudaTotal,

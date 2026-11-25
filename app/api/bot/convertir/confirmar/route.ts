@@ -269,8 +269,8 @@ export async function POST(request: Request) {
       // ERP-11: la venta es UNA transaccion; si no entro, no entro nada.
       await liberarReclamo(supabase, borradorId, puerta.modo)
       // El borrador se queda PENDIENTE: el RPC es atomico, no dejo nada a
-      // medias, y la propuesta sigue siendo valida. Tipicamente es inventario
-      // insuficiente, que se resuelve produciendo y volviendo a decir "va".
+      // medias, y la propuesta sigue siendo valida. La falta de inventario ya no
+      // es causa: avisa y entra.
       return NextResponse.json(
         { error: resultado.error ?? 'No pude escribir la venta.' },
         { status: 422 }
@@ -309,6 +309,7 @@ export async function POST(request: Request) {
       console.error('[bot][conversion] la venta se escribio pero la cotizacion no se marco:', errMarca)
       return NextResponse.json({
         ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
+        ...(resultado.avisoStock ? { aviso_stock: resultado.avisoStock } : {}),
         ok: true,
         ticket_id: resultado.ticketId,
         cotizacion_marcada: false,
@@ -321,6 +322,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
+      ...(resultado.avisoStock ? { aviso_stock: resultado.avisoStock } : {}),
       ok: true,
       ticket_id: resultado.ticketId,
       cotizacion_marcada: true,

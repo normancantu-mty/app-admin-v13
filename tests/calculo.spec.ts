@@ -56,14 +56,17 @@ test.describe('calcularDeduccionCascada: la cubeta PAGADO se quema primero', () 
     expect(resultado).toEqual({ deduccionPagado: 50, deduccionConsignado: 20 })
   })
 
-  test('lanza error cuando la deduccion excede el stock fisico total', () => {
-    expect(() =>
-      calcularDeduccionCascada({
-        cantidadDeducir: 100,
-        stockPagadoActual: 10,
-        stockConsignadoActual: 20
-      })
-    ).toThrow(/Stock insuficiente/)
+  // 2026-11-24, regla de Norman: la falta de existencia avisa, no bloquea.
+  test('si la deduccion excede el stock fisico total NO lanza: el faltante queda en PAGADO', () => {
+    expect(calcularDeduccionCascada({ cantidadDeducir: 100, stockPagadoActual: 10, stockConsignadoActual: 20 }))
+      .toEqual({ deduccionPagado: 80, deduccionConsignado: 20 })
+    expect(calcularDeduccionCascada({ cantidadDeducir: 3, stockPagadoActual: -2, stockConsignadoActual: 1 }))
+      .toEqual({ deduccionPagado: 2, deduccionConsignado: 1 })
+  })
+
+  test('una cantidad negativa o que no es numero sigue siendo error de captura', () => {
+    expect(() => calcularDeduccionCascada({ cantidadDeducir: -1, stockPagadoActual: 5, stockConsignadoActual: 0 })).toThrow(/negativas/)
+    expect(() => calcularDeduccionCascada({ cantidadDeducir: NaN, stockPagadoActual: 5, stockConsignadoActual: 0 })).toThrow(/finitos/)
   })
 })
 

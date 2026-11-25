@@ -10,7 +10,8 @@
  * corrige un caso de borde y la otra no.
  *
  * La regla: primero sale de lo PAGADO y lo que falte de lo CONSIGNADO
- * (`calcularDeduccionCascada`); si no alcanza, no se escribe nada.
+ * (`calcularDeduccionCascada`). Si no alcanza, SE ESCRIBE IGUAL (2026-11-24,
+ * regla de Norman): el faltante queda en PAGADO, negativo, y sale el aviso W20.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -18,6 +19,9 @@ import type { Database, TablesInsert } from '@/types/database'
 import type { Cubeta } from '@/lib/inventario-types'
 import { isTipoMovimientoEntrada, isTipoMovimientoSalida } from '@/lib/inventario-types'
 import { calcularDeduccionCascada } from '@/lib/inventario-auditoria'
+import { faltanteDeStock, mensajeFaltaStock, notaCorteLocal } from '@/lib/aviso-stock'
+import { conTope } from '@/lib/venta-servidor'
+import { registrarAviso } from '@/lib/avisos-server'
 import { fetchTodasLasFilas } from '@/lib/paginacion'
 import { exigirEntidadDelMovimiento } from '@/lib/inventario-invariante'
 
@@ -48,12 +52,12 @@ export interface SalidaCascada {
 }
 
 export type ResultadoSalidaCascada =
-  | { success: true; data: InventarioInsert[]; ids: string[] }
+  | { success: true; data: InventarioInsert[]; ids: string[]; avisoStock?: string | null }
   | { success: false; error: string }
 
 /**
- * El stock de UN producto en UNA entidad, por cubeta, con la regla de la
- * cascada (minimo 0). ERP-25: paginado — aqui el truncamiento decide CUANTO se
+ * El stock de UN producto en UNA entidad, por cubeta, CON SU SIGNO: un saldo
+ * negativo se dice negativo (quien reparte lo trata como 0). ERP-25: paginado — aqui el truncamiento decide CUANTO se
  * resta y DE QUE cubeta.
  */
 export async function leerStockParaCascada(
@@ -84,7 +88,44 @@ export async function leerStockParaCascada(
     if (cubeta === 'PAGADO') pagado += delta
     else consignado += delta
   }
-  return { pagado: Math.max(0, pagado), consignado: Math.max(0, consignado) }
+  return { pagado, consignado }
+}
+
+/** El W20 de una salida. No lanza y va con tope: la salida ya entro y esto solo avisa. */
+async function avisarFaltante(
+  supabase: SupabaseClient<Database>,
+  salida: SalidaCascada,
+  stock: { pagado: number; consignado: number }
+): Promise<string | null> {
+  const faltante = faltanteDeStock(stock.pagado + stock.consignado, salida.cantidad_a_deducir)
+  if (!faltante) return null
+  let pieza = salida.id_producto
+  let lugar = salida.id_entidad
+  let rol: string | null | undefined
+  try {
+    const [producto, entidad] = await conTope(
+      Promise.all([
+        supabase.from('catalogo_productos').select('nombre').eq('id', salida.id_producto).maybeSingle(),
+        supabase.from('entidades').select('nombre, rol').eq('id', salida.id_entidad).maybeSingle()
+      ])
+    )
+    pieza = producto.data?.nombre || pieza
+    lugar = entidad.data?.nombre || lugar
+    rol = entidad.data?.rol
+  } catch {
+    // Sin nombre se avisa con el id: peor seria callar.
+  }
+  const faltantes = [{ idProducto: salida.id_producto, pieza, ...faltante }]
+  const mensaje = mensajeFaltaStock('La salida', lugar, faltantes, [notaCorteLocal(rol)])
+  await conTope(
+    registrarAviso(supabase, {
+      tipo: 'W20',
+      idEntidad: salida.id_entidad,
+      mensaje,
+      datosCapturados: { tipo_movimiento: salida.tipo_movimiento, usuario: salida.usuario_creador, faltantes }
+    })
+  ).catch((e) => console.error('W20: no se pudo avisar', mensaje, e))
+  return mensaje
 }
 
 export async function escribirSalidaCascada(
@@ -135,13 +176,18 @@ export async function escribirSalidaCascada(
     if (!salida.devolverIds) {
       const { error: insertError } = await insercion
       if (insertError) return { success: false, error: insertError.message }
-      return { success: true, data: payloadArray, ids: [] }
+      return { success: true, data: payloadArray, ids: [], avisoStock: await avisarFaltante(supabase, salida, stock) }
     }
     const { data, error } = await insercion.select('id')
     if (error || !data || data.length !== payloadArray.length) {
       return { success: false, error: error?.message ?? 'No se escribieron todas las filas.' }
     }
-    return { success: true, data: payloadArray, ids: data.map((f) => f.id) }
+    return {
+      success: true,
+      data: payloadArray,
+      ids: data.map((f) => f.id),
+      avisoStock: await avisarFaltante(supabase, salida, stock)
+    }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error inesperado al registrar salida en cascada.'
     return { success: false, error: message }

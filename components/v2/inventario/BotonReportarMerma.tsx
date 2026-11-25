@@ -99,7 +99,8 @@ export default function BotonReportarMerma({
           throw new Error(result.error || 'No se pudo registrar la merma.')
         }
 
-        alert('Merma registrada con deducción en cascada.')
+        // Falta de existencia: avisa, no bloquea. La merma ya entro.
+        alert(result.avisoStock ?? 'Merma registrada con deducción en cascada.')
         setOpen(false)
         refrescar()
       } catch (error) {

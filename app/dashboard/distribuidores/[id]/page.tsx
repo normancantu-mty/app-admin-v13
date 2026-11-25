@@ -12,6 +12,7 @@ import { cookies } from 'next/headers'
 import { calcularFechasPorRango, fetchTodasLasFilas, limitesRangoMX } from '@/lib/dashboard-utils'
 import BotonReportarMerma from '@/app/dashboard/inventario/BotonReportarMerma'
 import { leerSaldoEntidad, leerStockPorCubeta } from '@/lib/vistas'
+import { leerFaltante, restarFaltante } from '@/lib/en-concesion'
 import HistorialActividadTableClient from './HistorialActividadTableClient'
 import { fetchDesgloseTextoPorTicketId } from '@/lib/ticket-desglose'
 import { TIPO_FILA_ABONO_LOCAL, esAbonoPorSurtirLocal, renglonAbonoLocal, saldoPorPagarSinAbonoLocal } from '@/lib/abono-local'
@@ -879,9 +880,11 @@ export default async function EstadoCuentaPage({
         stockEsperado: Number(fila.stock)
       }))
   const inventarioPagado = aFilaInventario('PAGADO')
-  const inventarioConsignado = aFilaInventario('CONSIGNADO')
+  const consignadoDelLibro = aFilaInventario('CONSIGNADO')
+  // La vista solo trae lo mayor que cero: el faltante (PAGADO negativo) se resta aqui.
+  const inventarioConsignado = restarFaltante(consignadoDelLibro, await leerFaltante(supabaseClient, resolvedParams.id))
   const productosReportablesMap = new Map<string, { id: string; idProducto: string; nombre: string }>()
-  for (const row of [...inventarioPagado, ...inventarioConsignado]) {
+  for (const row of [...inventarioPagado, ...consignadoDelLibro]) {
     productosReportablesMap.set(row.idProducto, { id: row.idProducto, idProducto: row.idProducto, nombre: row.producto })
   }
   const productosReportables = Array.from(productosReportablesMap.values())

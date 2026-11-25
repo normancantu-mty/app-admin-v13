@@ -45,7 +45,7 @@ function hoyEnMexico(): string {
 }
 
 async function leerLibro(idEntidad: string): Promise<LibroPorSku> {
-  const { stockPagado, stockConsignado } = await getStockPorCubetaPorEntidad(idEntidad)
+  const { stockPagado, stockConsignado } = await getStockPorCubetaPorEntidad(idEntidad, { conNegativos: true })
   const libro: LibroPorSku = new Map()
 
   for (const fila of stockPagado) {
@@ -246,7 +246,7 @@ export async function leerLibroDeEntidadAction(idEntidad: string): Promise<Libro
       }
     }
 
-    const { stockPagado, stockConsignado } = await getStockPorCubetaPorEntidad(idEntidad)
+    const { stockPagado, stockConsignado } = await getStockPorCubetaPorEntidad(idEntidad, { conNegativos: true })
 
     const renglones: RenglonDeLibro[] = [
       ...stockConsignado.map((fila) => ({

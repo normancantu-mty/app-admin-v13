@@ -507,6 +507,9 @@ export default function Venta({ vendedor }: { vendedor?: string | null }) {
         return
       }
 
+      // Falta de existencia: avisa, no bloquea. La venta ya entro.
+      if (result.avisoStock) alert(result.avisoStock)
+
       // v2 (2026-10-29, Socio ejecutor): sin refrescar() junto al push. El refresh del
       // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
       // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con

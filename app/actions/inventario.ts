@@ -27,6 +27,8 @@ interface RegistrarSalidaCascadaResult {
   success: boolean
   data?: InventarioInsert[]
   error?: string
+  /** La salida entro con mas piezas de las que marca el sistema. Es aviso, no error. */
+  avisoStock?: string | null
 }
 
 export interface RegistrarLogisticaInversaState {
@@ -300,7 +302,7 @@ export async function registrarSalidaCascada(
     }
 
     revalidatePath('/dashboard/inventario')
-    return { success: true, data: resultado.data }
+    return { success: true, data: resultado.data, avisoStock: resultado.avisoStock ?? null }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error inesperado al registrar salida en cascada.'
     return { success: false, error: message }
