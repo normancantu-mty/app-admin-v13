@@ -75,6 +75,22 @@ jobs:
       - name: Dependencias de Python del bot
         run: python -m pip install -r bot/requirements.txt
 
+      # `probar_fotos.py` y `probar_minimo_privilegio.py` ARMAN la linea de
+      # `claude -p` y revisan sus banderas (--tools "", MCP vacio, dontAsk); no la
+      # ejecutan. Pero para armarla buscan el ejecutable con `shutil.which("claude")`
+      # y sin el en el PATH truenan con "no encuentro el ejecutable `claude`"
+      # (medido en la corrida de esta rama, 2026-11-27). Aqui va un `claude` de
+      # mentiras que NUNCA contesta: si alguna prueba llegara a llamar al modelo,
+      # sale con 97 y se pone roja en vez de pasar en silencio.
+      - name: Un `claude` de mentiras (las pruebas leen la linea, no la corren)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          echo '#!/bin/sh' > "$RUNNER_TEMP/bin/claude"
+          echo 'echo "CI: aqui no se llama al modelo (claude de mentiras)" >&2' >> "$RUNNER_TEMP/bin/claude"
+          echo 'exit 97' >> "$RUNNER_TEMP/bin/claude"
+          chmod +x "$RUNNER_TEMP/bin/claude"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
       - name: Instalar dependencias
         run: npm ci
 
