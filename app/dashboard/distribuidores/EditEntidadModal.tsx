@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { updateEntidadAction, eliminarEntidadAction } from '@/app/actions/distribuidores'
+import { porcentajeDeCampo } from '@/lib/comision-porcentaje'
 import type { DirectoryRow } from './DirectoryTableClient'
 
 interface EditEntidadModalProps {
@@ -41,18 +42,30 @@ export default function EditEntidadModal({ row, isOpen, onClose, canDeleteEntity
     event.preventDefault()
     setError(null)
 
+    // 2026-11-27: coma o punto ("17,5" = "17.5"). Antes `parseFloat(x) || 0`
+    // volvia 0 en silencio lo que no entendia.
+    const cb = porcentajeDeCampo(comisionBase)
+    const cbl = porcentajeDeCampo(comisionBaseLocal)
+    const chl = porcentajeDeCampo(comisionHijoLocal)
+    if (cb === null || cbl === null || chl === null) {
+      setError('Comisión: escribe solo el número, por ejemplo 17.5 o 17,5.')
+      return
+    }
+
     startTransition(async () => {
       try {
-        await updateEntidadAction(row.id, {
+        const r = await updateEntidadAction(row.id, {
           nombre,
           telefono,
           ubicacion_maps: ubicacionMaps,
           zona,
-          comision_base: row.rol === 'DST' ? parseFloat(comisionBase) || 0 : 0,
-          comision_base_local: row.rol === 'LOC' ? parseFloat(comisionBaseLocal) || 0 : 0,
-          comision_hijo_local: row.rol === 'DST' ? parseFloat(comisionHijoLocal) || 0 : 0,
+          comision_base: row.rol === 'DST' ? cb : 0,
+          comision_base_local: row.rol === 'LOC' ? cbl : 0,
+          comision_hijo_local: row.rol === 'DST' ? chl : 0,
           aplica_redondeo_costo: aplicaRedondeo
         })
+        // El ERP avisa, nunca bloquea: ya se guardo; los avisos se ensenan.
+        if (r?.avisos?.length) alert('Guardado. Ojo:\n' + r.avisos.join('\n'))
         onClose()
         router.refresh()
       } catch (submitError: unknown) {
@@ -148,8 +161,8 @@ export default function EditEntidadModal({ row, isOpen, onClose, canDeleteEntity
                       Comisión Base (%)
                     </label>
                     <input
-                      type="number"
-                      min="0" max="100" step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={comisionBase}
                       onChange={(e) => setComisionBase(e.target.value)}
                       placeholder="Ej. 20"
@@ -162,8 +175,8 @@ export default function EditEntidadModal({ row, isOpen, onClose, canDeleteEntity
                       Comisión de Red / Hijo (%)
                     </label>
                     <input
-                      type="number"
-                      min="0" max="100" step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={comisionHijoLocal}
                       onChange={(e) => setComisionHijoLocal(e.target.value)}
                       placeholder="Ej. 10"
@@ -180,10 +193,8 @@ export default function EditEntidadModal({ row, isOpen, onClose, canDeleteEntity
                     Comisión Base Local (%)
                   </label>
                   <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={comisionBaseLocal}
                     onChange={(e) => setComisionBaseLocal(e.target.value)}
                     placeholder="Ej. 15"

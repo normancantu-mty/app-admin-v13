@@ -60,6 +60,7 @@ import { type Cubeta } from '@/lib/inventario-types'
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { esCuentaFiscal, validarCompradorContraCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
+import { pisoPeso, techoPeso } from '@/lib/redondeo-dinero'
 import {
   CATEGORIA_ABONO_LOCAL,
   TIPO_ABONO_LOCAL,
@@ -204,7 +205,9 @@ function calcularComisionConRedondeo(
       ? item.precio_unitario / 1.7748
       : item.precio_unitario
     const costoCrudo = precioBaseCalculo * (1 - comisionBase)
-    const costoFinal = aplicaRedondeo ? Math.ceil(costoCrudo) : costoCrudo
+    // techoPeso/pisoPeso = Math.ceil/Math.floor sin el ruido del float que
+    // aparece con comisiones de medio punto (17.5%). lib/redondeo-dinero.ts.
+    const costoFinal = aplicaRedondeo ? techoPeso(costoCrudo) : costoCrudo
     const comisionUnitaria = Math.max(0, precioBaseCalculo - costoFinal)
     total += comisionUnitaria * item.cantidad
   }
@@ -223,7 +226,7 @@ function calcularComisionPasiva(
       ? item.precio_unitario / 1.7748
       : item.precio_unitario
     const comisionCruda = precioBaseCalculo * comisionHijoLocal
-    const comisionFinal = aplicaRedondeo ? Math.floor(comisionCruda) : comisionCruda
+    const comisionFinal = aplicaRedondeo ? pisoPeso(comisionCruda) : comisionCruda
     total += comisionFinal * item.cantidad
   }
   return roundTo2(total)
@@ -869,7 +872,8 @@ export async function registrarVenta(
         let montoComision: number
         let montoDeuda: number
         if (aplicaRedondeo) {
-          montoComision = Math.floor(totalLiquidezEsperado * comisionDecimal)
+          // pisoPeso: 40 minis de $69 al 17.5% son $483 exactos; Math.floor daba 482.
+          montoComision = pisoPeso(totalLiquidezEsperado * comisionDecimal)
           montoDeuda = totalLiquidezEsperado - montoComision
         } else {
           montoComision = roundTo2(totalLiquidezEsperado * comisionDecimal)

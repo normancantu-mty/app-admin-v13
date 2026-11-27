@@ -1,5 +1,6 @@
 import { calculateReverseTaxes, type TipoFiscalidad } from '@/lib/finance-utils'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
+import { aCentavo, techoPeso } from '@/lib/redondeo-dinero'
 
 export interface WaterfallResult {
   precioPublico: number;
@@ -39,7 +40,8 @@ export function calculateWaterfall(
         ? (localEntidad.comision_base || 0)
         : comisionBaseLocalDecimal(localEntidad.comision_base_local)
       const costoCrudoEntidad = baseIngreso * (1 - comisionAsignada)
-      precioLocal = aplicaRedondeoCosto ? Math.ceil(costoCrudoEntidad) : costoCrudoEntidad
+      // techoPeso = Math.ceil sin el ruido del float (17.5%: ver lib/redondeo-dinero.ts).
+      precioLocal = aplicaRedondeoCosto ? techoPeso(costoCrudoEntidad) : aCentavo(costoCrudoEntidad)
       gananciaNeta = precioLocal - tuCostoNeto
     }
 
@@ -60,7 +62,7 @@ export function calculateWaterfall(
 
   // 2. Costo Operativo NETO (Solo el liquido, sin impuestos)
   const costoCrudo = baseIngreso - gananciaNeta
-  const tuCostoNeto = aplicaRedondeoCosto ? Math.ceil(costoCrudo) : costoCrudo
+  const tuCostoNeto = aplicaRedondeoCosto ? techoPeso(costoCrudo) : aCentavo(costoCrudo)
 
   // 3. Logica de Red para Locales
   let precioLocal = 0

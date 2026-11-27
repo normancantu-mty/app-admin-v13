@@ -10,6 +10,7 @@ import { notasConIdTicket } from '@/lib/ticket-annul-cascade'
 import type { Database, TablesInsert } from '@/types/database'
 import { registrarAviso } from '@/lib/avisos-server'
 import { comisionBaseLocalDecimal } from '@/lib/comision-base-local'
+import { techoPeso } from '@/lib/redondeo-dinero'
 import { esCuentaFiscal } from '@/lib/venta-cuenta-fiscal'
 import { avisoCorteLocalPropio } from '@/lib/abono-local'
 import { leerSaldoEntidad } from '@/lib/vistas'
@@ -307,7 +308,7 @@ export async function procesarCorteInventarioAction(
     const precioDescontado = basePrecio * (1 - comisionDecimal)
     const aplicaRedondeoPrecioUnitario = entidadObjetivo.aplica_redondeo_costo ?? true
     const precioUnitario = aplicaRedondeoPrecioUnitario
-      ? Math.ceil(precioDescontado)
+      ? techoPeso(precioDescontado)
       : roundTo2(precioDescontado)
     const subtotalLinea = roundTo2(precioUnitario * diff.diferencia)
     totalCobranza = roundTo2(totalCobranza + subtotalLinea)
@@ -447,7 +448,7 @@ export async function procesarCorteInventarioAction(
     let montoDST: number
     if (aplicaRedondeo) {
       // Math.ceil for Admin's share; exact complement guarantees sum === totalCobranza
-      montoAdmin = Math.ceil(totalCobranza * (1 - comisionDecimal))
+      montoAdmin = techoPeso(totalCobranza * (1 - comisionDecimal))
       montoDST = totalCobranza - montoAdmin
     } else {
       montoAdmin = roundTo2(totalCobranza * (1 - comisionDecimal))

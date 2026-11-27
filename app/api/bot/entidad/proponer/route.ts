@@ -40,7 +40,7 @@ import {
   type ActorDeAlta
 } from '@/lib/entidad-servidor'
 import {
-  avisoDeRedondeo,
+  avisosDeComision,
   comisionesQueSePreguntan,
   esRolDeAlta,
   esZonaValida,
@@ -223,15 +223,23 @@ export async function POST(request: Request) {
         })
       }
       if (!juicio.ok) {
-        return NextResponse.json({ error: juicio.error }, { status: 422 })
+        // 2026-11-27: ya NO es un 422. Un 422 dejaba la alta muerta en el
+        // chat (el bot decia el error y olvidaba que estaba esperando la
+        // comision). Ahora se dice por que y se vuelve a preguntar el mismo
+        // numero: el ERP avisa, no corta la operacion.
+        return NextResponse.json({
+          ok: true,
+          hay_que_elegir: false,
+          campo: pedida.columna,
+          mensaje: `${juicio.error} ${pedida.pregunta}`
+        })
       }
 
       valores[pedida.columna] = juicio.fraccion
-      // LA TRAMPA DEL `numeric(5,2)`. Si el numero dictado no sobrevive la
-      // columna, se dice ANTES del "va" — no despues, cuando Postgres ya
-      // redondeo en silencio.
-      const aviso = avisoDeRedondeo(juicio)
-      if (aviso) avisos.push(aviso)
+      // Los avisos (mas de dos decimales, mas de 50%) se dicen ANTES del "va"
+      // y no detienen nada. 17.5 y 12.5 caben exactos desde la migracion
+      // 20261127120000 y no levantan aviso.
+      avisos.push(...avisosDeComision(juicio))
     }
 
     // ── 6. EL PADRE ───────────────────────────────────────────────────────

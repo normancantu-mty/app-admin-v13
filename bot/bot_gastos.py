@@ -3560,6 +3560,23 @@ async def _proponer_correccion_de_campo(update, chat, campo, nuevo):
     await _proponer_anulacion(update, chat, cuerpo, accion="corregir")
 
 
+def _comision_de_texto(texto):
+    """La comision tal como la escribio Norman, lista para el servidor.
+
+    2026-11-27 (comisiones con decimales, Gilberto 17.5 / 12.5): acepta coma o
+    punto -- "17,5 %" y "17.5" son lo mismo -- y quita el "%" y el "por ciento".
+    **No redondea ni divide entre 100**: eso lo decide UNA sola vez el servidor
+    (`normalizarComision` en `lib/bot-entidad.ts`), que es tambien quien avisa
+    si trae mas de dos decimales o pasa de 50%. Si no parece numero se manda tal
+    cual y el servidor vuelve a preguntar diciendo por que.
+    """
+    limpio = (texto or "").lower().replace("por ciento", "").replace("porciento", "")
+    limpio = limpio.replace("%", "").replace(" ", "").strip()
+    if re.fullmatch(r"-?\d+,\d+", limpio):
+        limpio = limpio.replace(",", ".")
+    return limpio
+
+
 async def _proponer_alta(update, chat, cuerpo):
     """Paso 5. El alta de un distribuidor o un local, una pregunta a la vez.
 
@@ -4804,7 +4821,7 @@ async def _manejar_texto(update, chat, texto):
         peticion["telegram_id"] = chat
         if campo_alta.startswith("comision"):
             comisiones = dict(peticion.get("comisiones") or {})
-            comisiones[campo_alta] = texto.replace("%", "").strip()
+            comisiones[campo_alta] = _comision_de_texto(texto)
             peticion["comisiones"] = comisiones
         else:
             peticion[campo_alta] = texto.strip()

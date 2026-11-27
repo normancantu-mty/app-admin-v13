@@ -64,21 +64,12 @@ test.describe('el boton que cierra la pregunta no puede reabrirla (D10/D11)', ()
 })
 
 test.describe('la pantalla usa el criterio del chat (D17/D18/D20)', () => {
-  // EL CASO DEL ENCARGO: 12.5% por pantalla no puede guardarse 0.13 callado.
-  test('12.5% NO se guarda: falla diciendo el numero que quedaria', () => {
-    let mensaje = ''
-    try {
-      comisionValidada(12.5, 'Comision base')
-    } catch (e) {
-      mensaje = (e as Error).message
-    }
-    expect(mensaje).not.toBe('')
-    // El numero real tiene que estar EN el mensaje: sin eso, quien lo escribio
-    // no puede decidir si le sirve 13% o prefiere otra cosa.
-    expect(mensaje).toContain('13')
-    expect(mensaje).toContain('Comision base')
-    // Y no puede salir un simbolo de adorno en la cara del usuario.
-    expect(mensaje).not.toContain('⚠')
+  // EL CASO DEL ENCARGO (D20, 2026-09-19): 12.5% por pantalla no podia
+  // guardarse 0.13 callado, y por eso se detenia. Desde 2026-11-27 la columna
+  // es numeric(7,4) y 12.5% se guarda EXACTO: ni callado ni detenido.
+  test('12.5% se guarda 0.125 exacto (antes: fallaba diciendo que quedaria 13%)', () => {
+    expect(comisionValidada(12.5, 'Comision base')).toBe(0.125)
+    expect(comisionValidada(17.5, 'Comision base')).toBe(0.175)
   })
 
   test('el "1" ambiguo se detiene en vez de leerse como 100%', () => {

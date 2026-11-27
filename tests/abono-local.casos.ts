@@ -424,7 +424,8 @@ export function cableado(f: Record<string, string>): Array<[string, boolean]> {
       (codigo(f[k]).match(/hidden w-full overflow-x-auto md:block/g) ?? []).length === 1 && (codigo(f[k]).match(/className="grid [^"]*md:hidden"/g) ?? []).length === 1
     ]),
     ['P1 el corte avisa despues de escribir, y no lanza', iDetalles > 0 && iW18 > iDetalles && /if \(avisoCorte\) \{\s*await registrarAviso\(supabase, \{\s*tipo: 'W18',/.test(corteF) && !/throw/.test(corteF.slice(corteF.indexOf('const avisoCorte'), iW18 + 200))],
-    ['P1 el calculo del corte sigue igual', corteF.includes('montoAdmin = Math.ceil(totalCobranza * (1 - comisionDecimal))') && corteF.includes('montoDST = totalCobranza - montoAdmin')],
+    // 2026-11-27: `techoPeso` es el mismo Math.ceil sin el ruido del float que sale con 17.5% (lib/redondeo-dinero.ts).
+    ['P1 el calculo del corte sigue igual', corteF.includes('montoAdmin = techoPeso(totalCobranza * (1 - comisionDecimal))') && corteF.includes('montoDST = totalCobranza - montoAdmin')],
     ...saldos,
     ...feeds,
     ['P4 historial v1 en verde (etiqueta y monto)', (codigo(f.historialV1).match(/FILA_ABONO_LOCAL/g) ?? []).length >= 5],

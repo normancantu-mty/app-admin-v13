@@ -39,7 +39,7 @@ export default function AgregarUsuario({ onCerrar }: { onCerrar: () => void }) {
   const [comisionHijoLocal, setComisionHijoLocal] = useState('')
   const [comisionBaseLocal, setComisionBaseLocal] = useState('')
   const [permisoFinanzas, setPermisoFinanzas] = useState(false)
-  const [creado, setCreado] = useState<{ nombre: string; email: string; rol: string } | null>(null)
+  const [creado, setCreado] = useState<{ nombre: string; email: string; rol: string; avisos?: string[] } | null>(null)
 
   const cerrar = () => {
     setAdminPassword('')
@@ -87,7 +87,7 @@ export default function AgregarUsuario({ onCerrar }: { onCerrar: () => void }) {
         setError(r.error)
         return
       }
-      setCreado({ nombre: r.nombre, email: r.email, rol: r.rol })
+      setCreado({ nombre: r.nombre, email: r.email, rol: r.rol, avisos: r.avisos })
       setAdminPassword('')
       setPassword('')
       setPaso('hecho')
@@ -112,6 +112,13 @@ export default function AgregarUsuario({ onCerrar }: { onCerrar: () => void }) {
           <b>{creado.nombre}</b> ({creado.rol}) ya puede entrar con <b>{creado.email}</b> y la contraseña que le
           pusiste.
         </p>
+        {creado.avisos?.length ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-md p-3" role="status">
+            {creado.avisos.map((a) => (
+              <p key={a} className="text-sm text-amber-800">{a}</p>
+            ))}
+          </div>
+        ) : null}
         <button type="button" onClick={cerrar} className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 font-medium">
           Volver a iniciar sesión
         </button>

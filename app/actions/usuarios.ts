@@ -40,7 +40,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
-import { comisionValidada, esZonaValida, type PayloadAlta } from '@/lib/bot-entidad'
+import { comisionConAvisos, esZonaValida, leerNumeroEscrito, type PayloadAlta } from '@/lib/bot-entidad'
 import { crearEntidad, type PuertaDeAuth } from '@/lib/entidad-servidor'
 import {
   LARGO_MINIMO_PASSWORD_USUARIO,
@@ -60,7 +60,7 @@ export type ResultadoValidacion =
   | { ok: false; error: string }
 
 export type ResultadoAlta =
-  | { ok: true; nombre: string; email: string; rol: string }
+  | { ok: true; nombre: string; email: string; rol: string; avisos?: string[] }
   | { ok: false; error: string }
 
 function mensaje(e: unknown, respaldo: string): string {
@@ -198,12 +198,15 @@ export async function validarAdminParaAltaAction(email: string, password: string
 }
 
 /** Una comision escrita por una persona: obligatoria (nada de 0 en silencio) y con el criterio del bot. */
-function comisionObligatoria(crudo: string | undefined, etiqueta: string): number {
+function comisionObligatoria(crudo: string | undefined, etiqueta: string, avisos: string[]): number {
   const texto = String(crudo ?? '').trim().replace('%', '')
   if (!texto) throw new Error(etiqueta + ': escribe el porcentaje (0 si no lleva).')
-  const n = Number(texto)
+  // Coma o punto (2026-11-27): "17,5" antes daba NaN y no dejaba seguir.
+  const n = leerNumeroEscrito(texto)
   if (!Number.isFinite(n)) throw new Error(etiqueta + ': no lo leí como un porcentaje.')
-  return comisionValidada(n, etiqueta)
+  const r = comisionConAvisos(n, etiqueta)
+  avisos.push(...r.avisos)
+  return r.fraccion
 }
 
 /** Paso 2: guardar. Re-valida la credencial del ADMIN en esta misma llamada. */
@@ -296,6 +299,7 @@ export async function agregarUsuarioAction(
     if (!esZonaValida(zona)) return { ok: false, error: 'Zona inválida.' }
 
     // ── DST: el camino unico de alta (D16) ───────────────────────────────────
+    const avisos: string[] = []
     if (rol === 'DST') {
       const fila: PayloadAlta = {
         nombre,
@@ -304,12 +308,12 @@ export async function agregarUsuarioAction(
         email,
         telefono: null,
         id_nodo_padre: null,
-        comision_base: comisionObligatoria(datos.comisionBase, 'Comisión cuando vende él'),
+        comision_base: comisionObligatoria(datos.comisionBase, 'Comisión cuando vende él', avisos),
         comision_base_local: 0,
-        comision_hijo_local: comisionObligatoria(datos.comisionHijoLocal, 'Comisión cuando vende su local')
+        comision_hijo_local: comisionObligatoria(datos.comisionHijoLocal, 'Comisión cuando vende su local', avisos)
       }
       const creada = await crearEntidad(cliente, actor, fila, password, puerta)
-      return { ok: true, nombre: creada.nombre, email, rol }
+      return { ok: true, nombre: creada.nombre, email, rol, avisos }
     }
 
     // ── SOCIO y LOC: misma RPC, mismo payload que `crearEntidad` ─────────────
@@ -325,7 +329,7 @@ export async function agregarUsuarioAction(
         .maybeSingle()
       if (errPadre) return { ok: false, error: 'No pude leer el distribuidor: ' + errPadre.message }
       if (!padre || padre.rol !== 'DST') return { ok: false, error: 'El local tiene que colgar de un distribuidor.' }
-      comisionBaseLocal = comisionObligatoria(datos.comisionBaseLocal, 'Comisión del local')
+      comisionBaseLocal = comisionObligatoria(datos.comisionBaseLocal, 'Comisión del local', avisos)
     }
 
     const authId = await puerta.crear(email, password)
@@ -366,7 +370,7 @@ export async function agregarUsuarioAction(
       throw e
     }
 
-    return { ok: true, nombre, email, rol }
+    return { ok: true, nombre, email, rol, avisos }
   } catch (e) {
     return { ok: false, error: mensaje(e, 'No se pudo agregar el usuario.') }
   } finally {

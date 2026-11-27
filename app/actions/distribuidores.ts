@@ -6,7 +6,7 @@ import { createServerClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 import type { TablesInsert } from '@/types/database'
 import { annulComercialCascadePorTicketId, assertPermiteAnularTicketEnPerfil } from '@/lib/ticket-annul-cascade'
-import { comisionValidada, type PayloadAlta } from '@/lib/bot-entidad'
+import { comisionConAvisos, type PayloadAlta } from '@/lib/bot-entidad'
 import { crearEntidad, type PuertaDeAuth } from '@/lib/entidad-servidor'
 import { mensajeAlBorrarConRegalos } from '@/lib/regalos'
 
@@ -199,10 +199,16 @@ export async function registrarEntidadAction(payload: RegistrarEntidadInput) {
   }
 
   // -- LAS COMISIONES, CON EL MISMO CRITERIO QUE EL CHAT (D18/D20) ----------
-  // El aviso de redondeo vuelve como ERROR DE VALIDACION en vez de redondear en
-  // silencio: un 12.5% por pantalla **falla diciendo que quedaria 13%**. Y el
-  // `1` ambiguo se detiene en vez de leerse como 100%.
-  const comision = comisionValidada
+  // 2026-11-27: 17.5 y 12.5 se guardan exactos (columna `numeric(7,4)`). Lo
+  // que trae mas de dos decimales o pasa de 50% se guarda Y SE AVISA: vuelve en
+  // `avisos` para que la pantalla lo ensene. El `1` ambiguo y lo que no es una
+  // comision (negativo, > 100%) siguen deteniendose.
+  const avisos: string[] = []
+  const comision = (crudo: number | undefined, etiqueta: string): number => {
+    const r = comisionConAvisos(crudo, etiqueta)
+    avisos.push(...r.avisos)
+    return r.fraccion
+  }
 
   const datos: PayloadAlta = {
     nombre,
@@ -278,7 +284,7 @@ export async function registrarEntidadAction(payload: RegistrarEntidadInput) {
   )
 
   revalidatePath('/dashboard/distribuidores')
-  return { success: true }
+  return { success: true, avisos }
 }
 
 export async function updateEntidadAction(id: string, formData: UpdateEntidadInput) {
@@ -324,6 +330,12 @@ export async function updateEntidadAction(id: string, formData: UpdateEntidadInp
   const rawComisionBase = entidadObjetivo.rol === 'DST' ? formData.comision_base : 0
   const rawComisionBaseLocal = entidadObjetivo.rol === 'LOC' ? formData.comision_base_local : 0
   const rawComisionHijoLocal = entidadObjetivo.rol === 'DST' ? formData.comision_hijo_local : 0
+  // 2026-11-27: editar 17.5 ya no revienta. Avisos (mas de dos decimales, mas
+  // de 50%) vuelven al formulario; no detienen el guardado.
+  const base = comisionConAvisos(rawComisionBase, 'Comision base')
+  const baseLocal = comisionConAvisos(rawComisionBaseLocal, 'Comision base local')
+  const hijoLocal = comisionConAvisos(rawComisionHijoLocal, 'Comision hijo local')
+  const avisos = [...base.avisos, ...baseLocal.avisos, ...hijoLocal.avisos]
 
   const { error: updateError } = await supabase
     .from('entidades')
@@ -336,9 +348,9 @@ export async function updateEntidadAction(id: string, formData: UpdateEntidadInp
       // EXACTAMENTE las mismas tres trampas que crearla -- un 12.5% editado
       // desde la pantalla se guardaba 0.13 sin decirlo -- y arreglar solo el
       // alta habria dejado la deuda de las dos verdades a medio cerrar.
-      comision_base: comisionValidada(rawComisionBase, 'Comision base'),
-      comision_base_local: comisionValidada(rawComisionBaseLocal, 'Comision base local'),
-      comision_hijo_local: comisionValidada(rawComisionHijoLocal, 'Comision hijo local'),
+      comision_base: base.fraccion,
+      comision_base_local: baseLocal.fraccion,
+      comision_hijo_local: hijoLocal.fraccion,
       aplica_redondeo_costo: formData.aplica_redondeo_costo ?? true
     })
     .eq('id', entidadId)
@@ -346,7 +358,7 @@ export async function updateEntidadAction(id: string, formData: UpdateEntidadInp
   if (updateError) throw new Error(updateError.message)
 
   revalidatePath('/dashboard/distribuidores')
-  return { success: true }
+  return { success: true, avisos }
 }
 
 export async function annularTicketHistorialDistribuidorAction(ticketId: string, perfilEntidadId: string) {

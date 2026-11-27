@@ -37,15 +37,26 @@
  *     y quien llama pregunta con dos botones. Un default silencioso en este
  *     numero es de los que se descubren cuadrando un mes.
  *
- *  3. **La columna es `numeric(5,2)`: solo caben porcentajes ENTEROS.** Un
- *     12.5% se guarda como `0.13`, o sea 13%. **En este ERP no existe la
- *     comision de medio punto.** El normalizador viejo redondeaba a CUATRO
- *     decimales y por eso nunca se enteraba: quien redondea de verdad es
- *     Postgres, despues, y sin decir nada. Aqui se redondea a los dos que la
- *     columna guarda y se reporta si el numero dictado sobrevivio.
+ *  3. **Los decimales que guarda la columna.** Hasta el 2026-11-27 era
+ *     `numeric(5,2)` y solo cabian porcentajes ENTEROS (12.5% se volvia 13%).
+ *     Desde la migracion `20261127120000_comision_con_decimales.sql` es
+ *     `numeric(7,4)`: **porcentaje con dos decimales** (17.5% = `0.1750`).
+ *     Norman lo pidio para Gilberto (17.5% / 12.5%, «que sea la excepcion»).
+ *     Aqui se redondea a los cuatro decimales de fraccion que la columna
+ *     guarda y, si el numero dictado traia mas (17.555), **se avisa y se
+ *     sigue** — el ERP avisa, nunca bloquea. Ver `lib/comision-porcentaje.ts`.
  */
 
 import { sellar, selloEmpata } from '@/lib/bot-sello'
+import {
+  DECIMALES_EN_LA_BASE,
+  UMBRAL_DE_AVISO,
+  leerNumeroEscrito,
+  porcentajeParaMostrar,
+  redondearFraccion
+} from '@/lib/comision-porcentaje'
+
+export { DECIMALES_EN_LA_BASE, UMBRAL_DE_AVISO, leerNumeroEscrito }
 
 // ============================================================================
 // 1. LAS LISTAS CERRADAS (D9)
@@ -99,17 +110,16 @@ export const COLUMNA_MUERTA = 'comision_logistica'
 /** La caja con la que se le ensena una comision a una persona. */
 export const CAJA_DE_MUESTRA = 600
 
-/** Los decimales que `numeric(5,2)` guarda de verdad. Dos, no cuatro. */
-export const DECIMALES_EN_LA_BASE = 2
-
 export interface ComisionNormalizada {
   ok: true
   /** La fraccion que se va a escribir, ya redondeada como la guarda Postgres. */
   fraccion: number
   /** Lo que se entendio ANTES de redondear, para poder decir si cambio. */
   fraccionDicha: number
-  /** `false` si el redondeo de `numeric(5,2)` movio el numero. */
+  /** `false` si el redondeo a 4 decimales de fraccion (`numeric(7,4)`) movio el numero. */
   sobreviveElRedondeo: boolean
+  /** `true` si pasa de `UMBRAL_DE_AVISO` (50%): se avisa, no se bloquea. */
+  fueraDeRango: boolean
 }
 
 export interface ComisionAmbigua {
@@ -135,7 +145,9 @@ export type JuicioDeComision = ComisionNormalizada | ComisionAmbigua | ComisionI
  * esas dos lecturas es que el producto se regale.
  */
 export function normalizarComision(valor: unknown): JuicioDeComision {
-  const crudo = typeof valor === 'number' ? valor : Number(String(valor ?? '').trim().replace('%', ''))
+  // Coma o punto: "17,5" y "17.5" son lo mismo (2026-11-27). Antes "17,5"
+  // daba NaN y la alta reventaba con "No lo lei como un porcentaje".
+  const crudo = leerNumeroEscrito(valor)
   if (!Number.isFinite(crudo) || crudo < 0) {
     return { ok: false, motivo: 'invalida', error: 'No lo lei como un porcentaje.' }
   }
@@ -153,22 +165,28 @@ export function normalizarComision(valor: unknown): JuicioDeComision {
   // TRAMPA 1. La convencion de la base es fraccion; "20" se salva dividiendo.
   const dicha = crudo > 1 ? crudo / 100 : crudo
 
-  // TRAMPA 3. `numeric(5,2)` redondea a dos decimales, y quien lo hace es
-  // Postgres — despues, y sin avisar. Se hace aqui para que lo que se ensena
+  // TRAMPA 3. La columna (`numeric(7,4)` desde 2026-11-27) guarda cuatro
+  // decimales de fraccion = dos de porcentaje. Si se dicto mas, Postgres
+  // redondearia despues y sin avisar; se hace aqui para que lo que se ensena
   // antes del "va" sea lo que de verdad se va a guardar.
-  const fraccion = Math.min(1, Math.max(0, Math.round(dicha * 100) / 100))
+  const fraccion = Math.min(1, Math.max(0, redondearFraccion(dicha)))
 
   return {
     ok: true,
     fraccion,
     fraccionDicha: dicha,
-    sobreviveElRedondeo: Math.abs(fraccion - dicha) < 1e-9
+    sobreviveElRedondeo: Math.abs(fraccion - dicha) < 1e-9,
+    fueraDeRango: fraccion > UMBRAL_DE_AVISO
   }
 }
 
-/** `0.2` → `"20%"`. **Nunca se le ensena una fraccion a nadie.** */
+/**
+ * `0.2` → `"20%"`, `0.175` → `"17.5%"`. **Nunca se le ensena una fraccion a
+ * nadie.** Hasta el 2026-11-27 redondeaba a entero porque la columna no
+ * guardaba otra cosa; hoy ensena los dos decimales que la columna guarda.
+ */
 export function enPorcentaje(fraccion: number): string {
-  return `${Math.round(fraccion * 100)}%`
+  return porcentajeParaMostrar(fraccion)
 }
 
 /** `0.2` → `"$120.00"` sobre la caja de muestra. */
@@ -203,26 +221,36 @@ export function explicarComision(
 }
 
 /**
- * El porcentaje TAL COMO SE DIJO, sin redondear: `0.125` → `"12.5%"`.
- *
- * `enPorcentaje` redondea a entero, que es lo correcto para ensenar lo que se
- * va a GUARDAR —la columna es `numeric(5,2)` y no admite otra cosa—, pero por
- * eso mismo no sirve para el aviso de la trampa 3: con el, el aviso decia
- * *"13% no cabe, asi que quedaria 13%"*, que es un aviso que se contradice
- * solo y que en una lectura rapida parece un error del bot, no de la columna.
+ * El porcentaje TAL COMO SE DIJO, sin redondear a lo que guarda la columna:
+ * `0.17555` → `"17.555%"`. Lo usa el aviso de la trampa 3 para decir el numero
+ * dicho y el que queda, no dos veces el mismo.
  */
 export function enPorcentajeDicho(fraccion: number): string {
-  const porciento = Math.round(fraccion * 10000) / 100
-  return `${porciento.toLocaleString('es-MX', { maximumFractionDigits: 2 })}%`
+  const porciento = Math.round(fraccion * 1000000) / 10000
+  return `${porciento.toLocaleString('es-MX', { maximumFractionDigits: 4, useGrouping: false })}%`
 }
 
-/** El aviso de la trampa 3, cuando el numero dictado no sobrevive la columna. */
+/** El aviso de la trampa 3, cuando el numero dictado trae mas de dos decimales. */
 export function avisoDeRedondeo(juicio: ComisionNormalizada): string | null {
   if (juicio.sobreviveElRedondeo) return null
   return (
-    `⚠ ${enPorcentajeDicho(juicio.fraccionDicha)} no cabe: la columna solo guarda ` +
-    `porcentajes enteros, asi que quedaria ${enPorcentaje(juicio.fraccion)}.`
+    `⚠ ${enPorcentajeDicho(juicio.fraccionDicha)} trae mas de dos decimales: ` +
+    `se guarda ${enPorcentaje(juicio.fraccion)}.`
   )
+}
+
+/** Aviso (no bloqueo) cuando la comision pasa de la mitad del precio. */
+export function avisoDeRango(juicio: ComisionNormalizada): string | null {
+  if (!juicio.fueraDeRango) return null
+  return (
+    `⚠ ${enPorcentaje(juicio.fraccion)} es mas de la mitad del precio. ` +
+    `Revisa que sea correcto; si lo es, sigue.`
+  )
+}
+
+/** Todos los avisos de una comision ya leida. Vacio = nada que decir. */
+export function avisosDeComision(juicio: ComisionNormalizada): string[] {
+  return [avisoDeRedondeo(juicio), avisoDeRango(juicio)].filter((a): a is string => a !== null)
 }
 
 /** La pregunta con la que se desambigua un `1` (trampa 2). */
@@ -258,8 +286,25 @@ export function preguntaDeAmbiguedad(etiqueta: string): string {
  * Next -- o sea, no se ejercitaba nunca. Es la misma enfermedad del defecto 1:
  * codigo correcto que ninguna prueba toca. Aqui la corre `bot-entidad-100.spec.ts`.
  */
-export function comisionValidada(crudo: number | undefined | null, etiqueta: string): number {
-  if (crudo === undefined || crudo === null) return 0
+export function comisionValidada(crudo: number | string | undefined | null, etiqueta: string): number {
+  return comisionConAvisos(crudo, etiqueta).fraccion
+}
+
+/**
+ * Igual que `comisionValidada`, pero devuelve tambien los AVISOS para que la
+ * pantalla los ensene despues de guardar (2026-11-27).
+ *
+ * **Que detiene y que no.** Ya NO detiene un numero con decimales (17.5 cabe;
+ * 17.555 se guarda 17.56 con aviso) ni uno alto (60% se guarda con aviso): el
+ * ERP avisa, nunca bloquea. SI detiene lo que no es una comision \u2014texto,
+ * negativo, mas de 100%\u2014 y el `1` ambiguo, porque guardarlos seria adivinar un
+ * numero que mueve todo el precio del distribuidor.
+ */
+export function comisionConAvisos(
+  crudo: number | string | undefined | null,
+  etiqueta: string
+): { fraccion: number; avisos: string[] } {
+  if (crudo === undefined || crudo === null) return { fraccion: 0, avisos: [] }
   const juicio = normalizarComision(crudo)
   if (!juicio.ok) {
     if (juicio.motivo === 'ambigua') {
@@ -271,9 +316,10 @@ export function comisionValidada(crudo: number | undefined | null, etiqueta: str
     }
     throw new Error(etiqueta + ': ' + juicio.error)
   }
-  const aviso = avisoDeRedondeo(juicio)
-  if (aviso) throw new Error(etiqueta + ': ' + aviso.replace('\u26a0 ', ''))
-  return juicio.fraccion
+  return {
+    fraccion: juicio.fraccion,
+    avisos: avisosDeComision(juicio).map((a) => etiqueta + ': ' + a.replace('\u26a0 ', ''))
+  }
 }
 
 /**

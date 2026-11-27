@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { registrarEntidadAction } from '@/app/actions/distribuidores'
+import { porcentajeDeCampo } from '@/lib/comision-porcentaje'
 
 interface PosiblePatrocinador {
   id: string
@@ -100,10 +101,19 @@ export default function NuevoMiembroPage() {
       return
     }
 
+    // 2026-11-27: coma o punto ("17,5" = "17.5"); lo que no es numero se dice.
+    const cb = porcentajeDeCampo(comisionBase)
+    const cbl = porcentajeDeCampo(comisionBaseLocal)
+    const chl = porcentajeDeCampo(comisionHijoLocal)
+    if (cb === null || cbl === null || chl === null) {
+      alert('Comisión: escribe solo el número, por ejemplo 17.5 o 17,5.')
+      return
+    }
+
     setIsLoading(true)
 
     try {
-      await registrarEntidadAction({
+      const r = await registrarEntidadAction({
         nombre: nombreForm,
         email: rolForm === 'DST' ? emailForm : null,
         password: rolForm === 'DST' ? passwordForm : null,
@@ -112,13 +122,16 @@ export default function NuevoMiembroPage() {
         telefono: telefonoForm || null,
         ubicacion_maps: ubicacionMapsForm || null,
         id_nodo_padre: rolForm === 'LOC' ? (idNodoPadreForm || null) : null,
-        comision_base:       rolForm === 'DST' ? parseFloat(comisionBase)      || 0 : 0,
-        comision_base_local: rolForm === 'LOC' ? parseFloat(comisionBaseLocal) || 0 : 0,
-        comision_hijo_local: rolForm === 'DST' ? parseFloat(comisionHijoLocal) || 0 : 0,
+        comision_base:       rolForm === 'DST' ? cb  : 0,
+        comision_base_local: rolForm === 'LOC' ? cbl : 0,
+        comision_hijo_local: rolForm === 'DST' ? chl : 0,
         aplica_redondeo_costo: aplicaRedondeo
       })
 
-      alert('Miembro registrado exitosamente en la red.')
+      alert(
+        'Miembro registrado exitosamente en la red.' +
+          (r?.avisos?.length ? '\n\nOjo:\n' + r.avisos.join('\n') : '')
+      )
       // v2 (2026-10-29, Socio ejecutor): sin router.refresh() junto al push. El refresh del
       // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
       // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
@@ -311,9 +324,9 @@ export default function NuevoMiembroPage() {
                       Comisión Base (%)
                     </label>
                     <input
-                      type="number"
+                      type="text"
                       id="comision_base"
-                      min="0" max="100" step="0.01"
+                      inputMode="decimal"
                       value={comisionBase}
                       onChange={(e) => setComisionBase(e.target.value)}
                       placeholder="Ej. 20"
@@ -326,9 +339,9 @@ export default function NuevoMiembroPage() {
                       Comisión de Red / Hijo (%)
                     </label>
                     <input
-                      type="number"
+                      type="text"
                       id="comision_hijo_local"
-                      min="0" max="100" step="0.01"
+                      inputMode="decimal"
                       value={comisionHijoLocal}
                       onChange={(e) => setComisionHijoLocal(e.target.value)}
                       placeholder="Ej. 10"
@@ -345,11 +358,9 @@ export default function NuevoMiembroPage() {
                     Comisión Base Local (%)
                   </label>
                   <input
-                    type="number"
+                    type="text"
                     id="comision_base_local"
-                    min="0"
-                    max="100"
-                    step="0.01"
+                    inputMode="decimal"
                     value={comisionBaseLocal}
                     onChange={(e) => setComisionBaseLocal(e.target.value)}
                     placeholder="Ej. 15"

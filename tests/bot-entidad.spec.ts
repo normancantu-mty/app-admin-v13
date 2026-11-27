@@ -177,20 +177,28 @@ test.describe('Paso 5 · trampa 2: el "1" no se adivina', () => {
   })
 })
 
-test.describe('Paso 5 · trampa 3: numeric(5,2) solo guarda porcentajes enteros', () => {
+test.describe('Paso 5 · trampa 3: la columna guarda dos decimales de porcentaje (numeric(7,4) desde 2026-11-27)', () => {
   test('el viejo redondeaba a CUATRO decimales y nunca se enteraba', () => {
     // Guarda 0.125, Postgres lo vuelve 0.13, y el TypeScript sigue creyendo
     // que guardo 12.5%. Quien redondea de verdad es la columna.
     expect(normalizadorViejo(12.5)).toBe(0.125)
   })
 
-  test('el nuevo redondea a los dos decimales que la columna guarda', () => {
+  test('12.5 cabe exacto; lo que trae mas de dos decimales se redondea con aviso', () => {
+    // Hasta 2026-11-27 (numeric(5,2)) 12.5 se volvia 0.13 con aviso.
     const j = normalizarComision(12.5)
     expect(j.ok).toBe(true)
     if (j.ok) {
-      expect(j.fraccion).toBe(0.13)
-      expect(j.sobreviveElRedondeo).toBe(false)
-      expect(avisoDeRedondeo(j)).toMatch(/13%/)
+      expect(j.fraccion).toBe(0.125)
+      expect(j.sobreviveElRedondeo).toBe(true)
+      expect(avisoDeRedondeo(j)).toBeNull()
+    }
+    const k = normalizarComision(12.555)
+    expect(k.ok).toBe(true)
+    if (k.ok) {
+      expect(k.fraccion).toBe(0.1256)
+      expect(k.sobreviveElRedondeo).toBe(false)
+      expect(avisoDeRedondeo(k)).toMatch(/12\.56%/)
     }
   })
 
@@ -199,14 +207,14 @@ test.describe('Paso 5 · trampa 3: numeric(5,2) solo guarda porcentajes enteros'
     // para los dos numeros, y `enPorcentaje` redondea a entero. El resultado
     // era "13% no cabe ... asi que quedaria 13%", un aviso que se contradice
     // solo y que parece un error del bot en vez de un limite de la columna.
-    const j = normalizarComision(12.5)
+    const j = normalizarComision(12.555)
     expect(j.ok).toBe(true)
     if (j.ok) {
       const aviso = avisoDeRedondeo(j) ?? ''
-      expect(aviso).toContain('12.5%')
-      expect(aviso).toContain('13%')
-      // CONTROL NEGATIVO del control: que no diga "13% no cabe".
-      expect(aviso).not.toMatch(/^⚠ 13% no cabe/)
+      expect(aviso).toContain('12.555%')
+      expect(aviso).toContain('12.56%')
+      // CONTROL NEGATIVO del control: que no diga dos veces el mismo numero.
+      expect(aviso).not.toMatch(/^⚠ 12\.56% trae/)
     }
   })
 
@@ -214,8 +222,11 @@ test.describe('Paso 5 · trampa 3: numeric(5,2) solo guarda porcentajes enteros'
     expect(enPorcentajeDicho(0.125)).toBe('12.5%')
     expect(enPorcentajeDicho(0.2)).toBe('20%')
     expect(enPorcentajeDicho(0.0125)).toBe('1.25%')
-    // Y el que SI redondea, que es el que dice lo que se va a guardar.
-    expect(enPorcentaje(0.125)).toBe('13%')
+    expect(enPorcentajeDicho(0.12555)).toBe('12.555%')
+    // Y el que dice lo que se va a guardar: dos decimales de porcentaje
+    // (hasta 2026-11-27 redondeaba a entero: 0.125 -> "13%").
+    expect(enPorcentaje(0.125)).toBe('12.5%')
+    expect(enPorcentaje(0.12555)).toBe('12.56%')
   })
 
   test('CONTROL NEGATIVO: un porcentaje entero NO levanta aviso', () => {
