@@ -26,10 +26,11 @@
  * ─── 2026-11-26 (MAPA n7): A QUE CUENTA ENTRA, CON LA REGLA DE LA WEB ────────
  *   · DST que abona por SU local: entra a la cuenta PROPIA del DST, como en la
  *     web (D8), y no a la de la matriz. Sin aprobacion de la matriz (ABONO_REAL).
- *   · ADMIN que dicta el abono de un local de un DST: se AVISA en la propuesta
- *     ("es local de X; el dinero lo recibiste tu o el?") y se ofrece tambien la
- *     cuenta del DST para escogerla. **No se bloquea** (el ERP avisa, nunca
- *     bloquea).
+ *   · ADMIN que dicta el abono de un local de un DST: Norman (26-nov): "los
+ *     distribuidores siempre cobran en sus locales". La cuenta del DST sale
+ *     PRESELECCIONADA y se AVISA ("normalmente cobra el distribuidor... ¿Lo
+ *     recibiste tu? cambia la cuenta"). Sus cuentas siguen en la lista. **No se
+ *     bloquea** (el ERP avisa, nunca bloquea).
  *   La decision es `reglaDeCuentasDelAbono` (`lib/abono-cuentas.ts`), la misma
  *   funcion que llama `app/actions/abonos.ts`.
  */
@@ -196,6 +197,8 @@ export async function POST(request: Request) {
     /** Solo para un ADMIN: el DST del que cuelga el local que paga, si lo hay. */
     let dstDelDeudor: { id: string; nombre: string } | null = null
     let cuentasDelDst: { id: string; nombre: string }[] = []
+    /** ADMIN sin cuenta dicha y deudor local de un DST: va a la del DST por defecto. */
+    let preseleccionDst = false
     let idCuentaDestino: string
     let nombreCuentaDestino: string
     if (esDeLaMatriz) {
@@ -207,7 +210,9 @@ export async function POST(request: Request) {
       if (pedida !== '' && !cuentasOfrecidas.some((c) => c.id === pedida)) {
         return NextResponse.json({ error: 'Esa cuenta no es tuya o esta vetada.' }, { status: 422 })
       }
-      idCuentaDestino = pedida !== '' ? pedida : identidad.idCuenta
+      // Norman, 2026-11-26: "los distribuidores siempre cobran en sus locales".
+      preseleccionDst = pedida === '' && cuentasDelDst.length > 0
+      idCuentaDestino = pedida !== '' ? pedida : preseleccionDst ? cuentasDelDst[0].id : identidad.idCuenta
       nombreCuentaDestino =
         cuentasOfrecidas.find((c) => c.id === idCuentaDestino)?.nombre ?? identidad.nombreCuenta
     } else if (dstPorSuLocal) {
@@ -306,25 +311,33 @@ export async function POST(request: Request) {
     }
 
     // ── AVISA, no bloquea: el local que paga es de un distribuidor ───────────
-    // MAPA n7 (2026-11-26): un LOC hijo de un DST le debe a su DST. Si el dinero
-    // lo recibio el DST y entra a la matriz, baja una deuda que no es de la matriz.
-    // Lo sabe Norman, no el sistema: se pregunta y se deja escoger la cuenta.
+    // MAPA n7 (2026-11-26): un LOC hijo de un DST le debe a su DST, y "los
+    // distribuidores siempre cobran en sus locales" (Norman): por defecto va a la
+    // cuenta del DST. Si lo cobro Norman, cambia la cuenta; nada se bloquea.
     if (esDeLaMatriz && dstDelDeudor) {
       const dst = dstDelDeudor.nombre
-      if (regla.esLocalASuDst) {
+      if (regla.esLocalASuDst && preseleccionDst) {
+        normalizada.avisos.push(
+          `Este local es de ${dst}; normalmente cobra el distribuidor, asi que va a su cuenta ` +
+            `("${nombreCuentaDestino}") y baja la deuda del local con su distribuidor. ` +
+            '¿Lo recibiste tu? Cambia la cuenta.'
+        )
+      } else if (regla.esLocalASuDst) {
         normalizada.avisos.push(
           `Este local es de ${dst}. El dinero entra a la cuenta de ${dst} ("${nombreCuentaDestino}"), ` +
             'no a la matriz, y baja la deuda del local con su distribuidor.'
         )
-      } else {
-        const suCuenta =
-          cuentasDelDst.length > 0
-            ? `Si lo recibio ${dst}, escoge su cuenta ("${cuentasDelDst[0].nombre}") con Cambiar cuenta.`
-            : `${dst} no tiene una cuenta que yo pueda usar; si lo recibio el, no lo escribas aqui.`
+      } else if (cuentasDelDst.length > 0) {
         normalizada.avisos.push(
-          `Este local es de ${dst}; el dinero lo recibiste tu o el? Asi como esta entra a ` +
-            `"${nombreCuentaDestino}" (la matriz) y baja la deuda que el local tiene con su distribuidor. ` +
-            suCuenta
+          `Este local es de ${dst}; normalmente cobra el distribuidor. Escogiste "${nombreCuentaDestino}" ` +
+            '(la matriz): baja la deuda que el local tiene con su distribuidor. ' +
+            `¿Lo cobro ${dst}? Escoge su cuenta ("${cuentasDelDst[0].nombre}") con Cambiar cuenta.`
+        )
+      } else {
+        normalizada.avisos.push(
+          `Este local es de ${dst}; normalmente cobra el distribuidor, pero no tiene una cuenta que yo ` +
+            `pueda usar. ¿Lo recibiste tu? Asi como esta entra a "${nombreCuentaDestino}" (la matriz); ` +
+            'si lo cobro el, no lo escribas aqui.'
         )
       }
     }
@@ -400,6 +413,9 @@ export async function POST(request: Request) {
       id_deudor: deudor.id_entidad,
       nombre_deudor: deudor.nombre,
       id_cuenta: idCuentaDestino,
+      // 2026-11-26: la cuenta la escogio el servidor (la del DST del local que
+      // paga). El bot no pregunta cual: ensena el VA y deja "Cambiar cuenta".
+      cuenta_preseleccionada: preseleccionDst,
       // Un DST no cambia la cuenta de la matriz; la suya si (abono de su local).
       // Un ADMIN ve tambien la del DST cuando el local que paga es de uno.
       cuentas: cuentasOfrecidas,

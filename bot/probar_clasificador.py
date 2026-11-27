@@ -703,6 +703,15 @@ caso("9. el pie de abono tambien", "(las cuentas no las elige el modelo: salen d
 caso('9. y "entra a"', 'y entra a "${contexto.nombreCuentaDestino}".' in abonos, True)
 caso("9. y el cierre", (B._CIERRE in gastos, B._CIERRE in abonos), (True, True))
 
+# 2026-11-26 (MAPA n7): la cuenta del DST preseleccionada no se vuelve a preguntar.
+DOS = [{"id": "c1", "nombre": "Efectivo"}, {"id": "c-dst", "nombre": "Caja Gil (de Gil)"}]
+caso("10. preseleccionada por el servidor: sin pregunta de cuenta",
+     B._estado_de_abono({}, DOS, {"cuenta_preseleccionada": True, "id_cuenta": "c-dst"})["cuenta_pendiente"], False)
+caso("10. CONTROL: sin preseleccion, con dos cuentas, se pregunta",
+     B._estado_de_abono({}, DOS, {"id_cuenta": "c1"})["cuenta_pendiente"], True)
+caso("10. CONTROL: preseleccion de una cuenta que no se ofrece -> se pregunta",
+     B._estado_de_abono({}, DOS, {"cuenta_preseleccionada": True, "id_cuenta": "otra"})["cuenta_pendiente"], True)
+
 fallos = [(n, o, e) for n, o, e in casos if o != e]
 for n, o, e in casos:
     print(("ok   " if o == e else "FALLA") + "  " + n + ("" if o == e else "  -> obtuve %r, esperaba %r" % (o, e)))

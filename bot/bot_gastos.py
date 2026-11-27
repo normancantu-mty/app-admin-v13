@@ -1100,6 +1100,19 @@ def _estado_de_cuenta(cuenta, cuentas):
             "cuenta_oida": cuenta.get("oida"), "cuenta_solo_paga": cuenta.get("solo_paga")}
 
 
+def _estado_de_abono(cuenta, cuentas, respuesta):
+    """`_estado_de_cuenta` del abono. **Pura.** 2026-11-26 (MAPA n7): cuando el
+    local que paga es de un DST, el servidor ya escogio la cuenta del DST
+    (`cuenta_preseleccionada`; Norman: "los distribuidores siempre cobran en sus
+    locales"). Entonces no se pregunta cual: sale el VA y "Cambiar cuenta"."""
+    estado = _estado_de_cuenta(cuenta, cuentas)
+    respuesta = respuesta or {}
+    if (respuesta.get("cuenta_preseleccionada")
+            and any(c.get("id") == respuesta.get("id_cuenta") for c in cuentas or [])):
+        estado["cuenta_pendiente"] = False
+    return estado
+
+
 def _teclado_categorias(categorias, borrador_id=None):
     """Las categorias van POR INDICE, por la misma razon que cuentas y deudores.
 
@@ -1489,8 +1502,9 @@ async def _proponer_abono(update, chat, propuesta, id_deudor=None, nombre=None, 
         cuerpo["id_deudor"] = id_deudor
     else:
         cuerpo["deudor"] = nombre_dicho
-    # 2026-11-04: la cuenta dicha. Un DST no la escoge (el servidor da 422): ahi se
-    # propone sin ella, que es lo de siempre, y se dice.
+    # 2026-11-04: la cuenta dicha. Un DST no escoge la de la matriz (el servidor da
+    # 422): ahi se propone sin ella, que es lo de siempre, y se dice. 2026-11-26: el
+    # abono de SU local si lleva cuenta, una de las suyas (MAPA n7).
     cuenta = dict(cuenta or {})
     if cuenta.get("id_cuenta"):
         cuerpo["id_cuenta"] = cuenta["id_cuenta"]
@@ -1558,7 +1572,7 @@ async def _proponer_abono(update, chat, propuesta, id_deudor=None, nombre=None, 
         "opciones": r.get("opciones", list(_deudores)),
         "cuentas": cuentas,
         "cuenta": cuenta,
-    }, **_estado_de_cuenta(cuenta, cuentas))
+    }, **_estado_de_abono(cuenta, cuentas, r))
     dato = _memoria.get(chat)
     await _ensenar_propuesta(update, chat, _mensaje_con_cuenta(dato, r["mensaje"]),
                              _teclado_confirmar_abono(r["borrador_id"], dato))

@@ -1645,24 +1645,55 @@ test.describe('2026-11-26 - abono de un local de DST por el bot (MAPA n7)', () =
     expect(postsLedger()).toBe(0)
   })
 
-  test('Norman dicta el abono de un local de un DST: AVISA, ofrece la cuenta del DST y NO bloquea', async () => {
+  test('Norman dicta el abono de un local de un DST: la cuenta del DST sale PRESELECCIONADA, con aviso', async () => {
     conCartera()
     const r = await proponer(NORMAN, { id_deudor: 'loc-a1' })
     expect(r.status, JSON.stringify(r.j)).toBe(200)
     const b = delBorrador(r.j.borrador_id)
-    expect(b.payload.abono.id_cuenta_destino).toBe('c-norman')
-    expect(b.payload.abono.referencia).toBe(CONCEPTO_ABONO_DIST_A_ADMIN)
-    expect(b.payload.meta.avisos.join(' ')).toContain('Este local es de Gil; el dinero lo recibiste tu o el?')
-    expect(String(r.j.mensaje)).toContain('Este local es de Gil; el dinero lo recibiste tu o el?')
+    expect(b.payload.abono).toMatchObject({ id_cuenta_destino: 'c-gil', referencia: CONCEPTO_ABONO_LOCAL_A_DST })
+    expect(r.j.id_cuenta).toBe('c-gil')
+    expect(r.j.cuenta_preseleccionada).toBe(true)
+    const aviso = 'Este local es de Gil; normalmente cobra el distribuidor'
+    expect(b.payload.meta.avisos.join(' ')).toContain(aviso)
+    expect(String(r.j.mensaje)).toContain(aviso)
+    expect(String(r.j.mensaje)).toContain('¿Lo recibiste tu? Cambia la cuenta.')
+    // Sus cuentas siguen en la lista: puede escoger la suya.
     expect(r.j.cuentas).toEqual([
       { id: 'c-norman', nombre: 'Efectivo' },
       { id: 'c-gil', nombre: 'Caja Gil (de Gil)' }
     ])
-    // No bloquea: su VA escribe a la matriz, como dicto.
+    const ok = await llamar('abono/confirmar', { telegram_id: NORMAN, borrador_id: r.j.borrador_id, sello: r.j.sello })
+    expect(ok.status, JSON.stringify(ok.j)).toBe(200)
+    expect(postsLedger()).toBe(1)
+    expect(tablas.finanzas_ledger.at(-1)).toMatchObject({
+      categoria: 'ABONO_REAL', id_cuenta_origen: 'c-loc', id_cuenta_destino: 'c-gil',
+      id_entidad_relacionada: 'loc-a1', categoria_gasto: CONCEPTO_ABONO_LOCAL_A_DST
+    })
+  })
+
+  test('Norman escoge SU cuenta para un local de un DST: avisa y NO bloquea, entra a la matriz', async () => {
+    conCartera()
+    const r = await proponer(NORMAN, { id_deudor: 'loc-a1', id_cuenta: 'c-norman' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = delBorrador(r.j.borrador_id)
+    expect(b.payload.abono).toMatchObject({ id_cuenta_destino: 'c-norman', referencia: CONCEPTO_ABONO_DIST_A_ADMIN })
+    expect(r.j.cuenta_preseleccionada).toBe(false)
+    expect(b.payload.meta.avisos.join(' ')).toContain('Escogiste "Efectivo" (la matriz)')
+    expect(b.payload.meta.avisos.join(' ')).toContain('¿Lo cobro Gil?')
     const ok = await llamar('abono/confirmar', { telegram_id: NORMAN, borrador_id: r.j.borrador_id, sello: r.j.sello })
     expect(ok.status, JSON.stringify(ok.j)).toBe(200)
     expect(postsLedger()).toBe(1)
     expect(tablas.finanzas_ledger.at(-1)).toMatchObject({ categoria: 'ABONO_REAL', id_cuenta_destino: 'c-norman', id_entidad_relacionada: 'loc-a1' })
+  })
+
+  test('CONTROL: si el DST no tiene cuenta usable, nada se preselecciona y va a la matriz con aviso', async () => {
+    conCartera()
+    tablas.cuentas_financieras = tablas.cuentas_financieras.filter((c) => c.id !== 'c-gil')
+    const r = await proponer(NORMAN, { id_deudor: 'loc-a1' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    expect(r.j.cuenta_preseleccionada).toBe(false)
+    expect(delBorrador(r.j.borrador_id).payload.abono.id_cuenta_destino).toBe('c-norman')
+    expect(String(r.j.mensaje)).toContain('no tiene una cuenta que yo pueda usar. ¿Lo recibiste tu?')
   })
 
   test('Norman escoge la cuenta del DST: entra a la cuenta del DST como Local -> Distribuidor', async () => {
@@ -1686,6 +1717,16 @@ test.describe('2026-11-26 - abono de un local de DST por el bot (MAPA n7)', () =
     expect(r.status, JSON.stringify(r.j)).toBe(200)
     expect(delBorrador(r.j.borrador_id).payload.meta.avisos.join(' ')).not.toContain('Este local es de')
     expect(r.j.cuentas).toEqual([{ id: 'c-norman', nombre: 'Efectivo' }])
+    expect(r.j.cuenta_preseleccionada).toBe(false)
+    expect(delBorrador(r.j.borrador_id).payload.abono.id_cuenta_destino).toBe('c-norman')
+  })
+
+  test('CONTROL (auditor): un borrador sellado de un DST hacia la cuenta de OTRO DST no se escribe -> 409, 0 filas', async () => {
+    conCartera()
+    const { b, sello } = sellado(GIL, { id_cuenta_destino: 'c-otro', referencia: CONCEPTO_ABONO_LOCAL_A_DST })
+    const va = await llamar('abono/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    expect(va.status, JSON.stringify(va.j)).toBe(409)
+    expect(postsLedger()).toBe(0)
   })
 
   test('CONTROL: Norman no puede mandar el abono de un local de Gil a la cuenta de OTRO DST -> 422, 0 borradores', async () => {
