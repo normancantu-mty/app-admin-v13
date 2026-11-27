@@ -14,9 +14,15 @@ import { ARCHIVO_SESION, correnLasDeHumo, motivoDeSalto } from './humo-entorno'
  * El archivo de sesion contiene un token real: esta en `.gitignore` y no debe
  * salir de la maquina.
  */
-setup('iniciar sesion como ADMIN y guardar la sesion', async ({ page }) => {
-  setup.skip(!correnLasDeHumo(), motivoDeSalto())
+// El salto va AQUI, a nivel de archivo, y no dentro de la prueba. Dentro llegaba
+// tarde: Playwright arma el fixture `page` (lanza Chromium) ANTES de correr el
+// cuerpo. En una maquina sin navegador instalado —el CI publico, que no hace
+// `playwright install`— la prueba moria en `browserType.launch` sin llegar al
+// `skip`, y eso tuvo el CI en rojo desde el 2026-09-02 (corrida #2, 296ae63).
+// A nivel de archivo se salta sin pedir ningun fixture.
+setup.skip(!correnLasDeHumo(), motivoDeSalto())
 
+setup('iniciar sesion como ADMIN y guardar la sesion', async ({ page }) => {
   await page.goto('/login')
   await page.locator('#email').fill(process.env.E2E_ADMIN_EMAIL as string)
   await page.locator('#password').fill(process.env.E2E_ADMIN_PASSWORD as string)
