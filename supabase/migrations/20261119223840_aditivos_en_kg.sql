@@ -1,5 +1,5 @@
 -- Aditivo 1 y Aditivo 2 en KILOGRAMOS (2026-11-19). Escrito el 2026-11-19 por el agente (Cuartel).
--- SIN APLICAR en prod a proposito (2026-11-19): va JUNTO con el deploy del codigo (esAditivoMismoNumero); al aplicarla, renombrar el archivo a la version que registre Supabase.
+-- APLICADA en prod con la version 20261119223840 (supabase_migrations.schema_migrations). El archivo se llamaba 20261119230000_...; renombrado el 2026-11-27 (ERP-73). El cuerpo entre '-- 1. catalogo' y 'end $$;' tiene el mismo md5 que statements[1] en la base (bff53b6b5167d884a240cbdf6102c38e).
 -- Reversa: supabase/ROLLBACK_aditivos_en_kg_2026-11-19.sql
 --
 -- Cris (2026-11-19): en la app y en Telegram el aditivo 1 y 2 se capturan "en
