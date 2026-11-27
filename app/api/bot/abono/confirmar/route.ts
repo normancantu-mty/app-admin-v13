@@ -53,6 +53,8 @@ import {
   type RenglonDesglose
 } from '@/lib/bot-abonos'
 import { aCentavos } from '@/lib/abonos'
+import { esAbonoDeDstPorSuLocal, reglaDeCuentasDelAbono } from '@/lib/abono-cuentas'
+import { leerCuentasConDueno, leerCuentasUsablesDe, leerDstDelLocal } from '@/lib/bot-abono-destino'
 import { registrarAviso } from '@/lib/avisos-server'
 
 export const dynamic = 'force-dynamic'
@@ -153,11 +155,24 @@ export async function POST(request: Request) {
     // abono viejo ya no se escribe.
     // FASE 9 (D97): la cuenta destino de un DST es la de la matriz (la del
     // aprobador), releida aqui; la de un ADMIN, de su lista cerrada.
+    // 2026-11-26 (MAPA n7): el abono del LOCAL de un DST entra a la cuenta propia
+    // del DST (D8, como la web); y un ADMIN puede mandar el de un local de un DST
+    // a la cuenta de ese DST (lo escogio despues del aviso de la propuesta).
     const esDeLaMatriz = identidad.rolEntidad === 'ADMIN'
-    const cuentaMatriz = esDeLaMatriz ? null : await cuentaDeLaMatrizParaAbono(supabase)
-    const cuentaValida = esDeLaMatriz
-      ? identidad.cuentas.some((c) => c.id === abono.id_cuenta_destino)
-      : cuentaMatriz?.id === abono.id_cuenta_destino
+    const dstPorSuLocal = esAbonoDeDstPorSuLocal(identidad.rolEntidad, identidad.idEntidad, abono.id_entidad)
+    const dstDelDeudor = esDeLaMatriz ? await leerDstDelLocal(supabase, abono.id_entidad) : null
+    let cuentaValida: boolean
+    if (esDeLaMatriz) {
+      cuentaValida =
+        identidad.cuentas.some((c) => c.id === abono.id_cuenta_destino) ||
+        (dstDelDeudor !== null &&
+          (await leerCuentasUsablesDe(supabase, dstDelDeudor.id)).some((c) => c.id === abono.id_cuenta_destino))
+    } else if (dstPorSuLocal) {
+      cuentaValida = identidad.cuentas.some((c) => c.id === abono.id_cuenta_destino)
+    } else {
+      const cuentaMatriz = await cuentaDeLaMatrizParaAbono(supabase)
+      cuentaValida = cuentaMatriz?.id === abono.id_cuenta_destino
+    }
     const red = await redDe(supabase, identidad, alcanceDeCaptura(identidad))
     if (
       !cuentaValida ||
@@ -184,6 +199,35 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'La referencia de ese abono no esta en la lista cerrada. No escribo nada.' },
         { status: 422 }
+      )
+    }
+
+    // ── La regla de cuentas de la WEB, releida (`lib/abono-cuentas.ts`) ──────
+    // La misma funcion que `registrarAbonoAction`. Decide si entra PENDIENTE, y el
+    // concepto sellado tiene que ser el que ella da: un abono Local -> DST no se
+    // escribe con la etiqueta "Distribuidor -> Admin" ni al reves.
+    const duenos = await leerCuentasConDueno(supabase, [abono.id_cuenta_origen, abono.id_cuenta_destino])
+    const origenConDueno = duenos.get(abono.id_cuenta_origen)
+    const destinoConDueno = duenos.get(abono.id_cuenta_destino)
+    const regla =
+      origenConDueno && destinoConDueno
+        ? reglaDeCuentasDelAbono({
+            rolCaptura: identidad.rolEntidad,
+            idEntidadCaptura: identidad.idEntidad,
+            idEntidadDeudor: abono.id_entidad,
+            idDstDelDeudor: dstDelDeudor?.id ?? null,
+            origen: origenConDueno,
+            destino: destinoConDueno
+          })
+        : ({ ok: false, error: 'No se pudo resolver origen/destino.' } as const)
+    if (!regla.ok || regla.tipoMovimiento !== 'ABONO_DEUDA' || regla.concepto !== abono.referencia) {
+      return NextResponse.json(
+        {
+          error:
+            (regla.ok ? 'Las cuentas de ese abono ya no cuadran con su concepto.' : regla.error) +
+            ' No escribo nada: vuelve a dictarlo.'
+        },
+        { status: 409 }
       )
     }
 
@@ -225,7 +269,9 @@ export async function POST(request: Request) {
     // ── EL INSERT. Un solo INSERT multi-fila: una sentencia, atomica. ────────
     // Es la unica atomicidad disponible en este sistema, y la razon esta en la
     // cabecera de `app/actions/abonos.ts`.
-    const filas = filasDeAbono(abono, esDeLaMatriz) as unknown as TablesInsert<'finanzas_ledger'>[]
+    // PENDIENTE solo si la regla lo dice: un no-ADMIN que abona a la matriz. El
+    // abono del local a su DST entra REAL, como en la web (D8).
+    const filas = filasDeAbono(abono, !regla.requiereAprobacionAdmin) as unknown as TablesInsert<'finanzas_ledger'>[]
     const { data: creadas, error } = await supabase
       .from('finanzas_ledger')
       .insert(filas)
@@ -289,7 +335,7 @@ export async function POST(request: Request) {
     // `v_cartera` ni en `v_saldo_entidad` hasta que se aprueban. Los ids se
     // guardan en `meta` (no esta sellado) para que el boton Aprobar del bot los
     // encuentre despues de un reinicio.
-    if (!esDeLaMatriz) {
+    if (regla.requiereAprobacionAdmin) {
       await supabase
         .from('bot_borradores')
         .update({

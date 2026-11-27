@@ -68,6 +68,8 @@ import * as consultaR from '@/app/api/bot/consulta/route'
 import * as botellasR from '@/app/api/bot/botellas/route'
 import * as pulsoR from '@/app/api/bot/pulso/route'
 import { validarAltaCategoria } from '@/lib/categorias-movimiento'
+import { sellarAbono, type PayloadAbono } from '@/lib/bot-abonos'
+import { CONCEPTO_ABONO_DIST_A_ADMIN, CONCEPTO_ABONO_LOCAL_A_DST } from '@/lib/abono-cuentas'
 
 type Ruta = { POST: (r: Request) => Promise<Response> }
 const RUTAS: Record<string, Ruta> = {
@@ -1538,5 +1540,174 @@ test.describe('2026-11-08 - /pulso desde la ruta', () => {
       expect(r.status).toBe(401)
     }
     expect(escrituras).toEqual([])
+  })
+})
+
+// ─── 2026-11-26 (MAPA n7): EL ABONO DE UN LOCAL DE DST, DESDE LA RUTA ───────
+// Antes: el DST que capturaba el abono de SU local lo mandaba a la cuenta de la
+// matriz, y Norman, al dictar el de un local de un DST, no se enteraba de que
+// ese local le debe a su distribuidor. Ahora las rutas llaman a la misma regla
+// que la web (`lib/abono-cuentas.ts`). Mutaciones corridas (ver el informe):
+// cada una pone roja al menos una prueba de aqui.
+test.describe('2026-11-26 - abono de un local de DST por el bot (MAPA n7)', () => {
+  function conCartera(opts: { gilConMarca?: boolean } = {}) {
+    estadoInicial(opts)
+    tablas.entidades.push({ id: 'loc-solo', nombre: 'Tienda Sola', rol: 'LOC', id_padre: null, id_nodo_padre: null })
+    tablas.cuentas_financieras.push(
+      { id: 'c-solo', id_entidad: 'loc-solo', nombre: 'Caja Tienda Sola', tipo_fiscalidad: 'NO_FISCAL' },
+      { id: 'c-otro', id_entidad: 'dst-b', nombre: 'Caja Otro', tipo_fiscalidad: 'NO_FISCAL' }
+    )
+    tablas.v_cartera = [
+      { id_entidad: 'dst-a', nombre: 'Gil', rol: 'DST', deuda: 5000, dias_sin_abono: 2, prioridad: 1 },
+      { id_entidad: 'loc-a1', nombre: 'Casa Verde', rol: 'LOC', deuda: 2000, dias_sin_abono: 3, prioridad: 1 },
+      { id_entidad: 'loc-solo', nombre: 'Tienda Sola', rol: 'LOC', deuda: 1000, dias_sin_abono: 4, prioridad: 1 }
+    ]
+    tablas.transacciones_tickets = []
+  }
+  const postsLedger = () => escrituras.filter((e) => e === 'POST finanzas_ledger').length
+  const delBorrador = (id: unknown) =>
+    tablas.bot_borradores.find((x) => x.id === id) as Fila & {
+      id: string
+      payload: { abono: PayloadAbono; meta: { avisos: string[] } }
+    }
+  async function proponer(quien: number, extra: Record<string, unknown>) {
+    const r = await llamar('abono/proponer', { telegram_id: quien, propuesta: { monto: 500, nota: 'abono' }, ...extra })
+    // El doble no pone defaults de columna: `bot_borradores.estado` nace PENDIENTE en la base.
+    const b = tablas.bot_borradores.find((x) => x.id === r.j.borrador_id)
+    if (b && b.estado === undefined) b.estado = 'PENDIENTE'
+    return r
+  }
+  function sellado(quien: number, cambios: Partial<PayloadAbono>) {
+    const abono: PayloadAbono = {
+      id_entidad: 'loc-a1', id_cuenta_origen: 'c-loc', id_cuenta_destino: 'c-norman', monto: 500,
+      fecha_movimiento: new Date().toISOString(), metodo_pago: null, referencia: CONCEPTO_ABONO_DIST_A_ADMIN,
+      nota: 'abono', usuario_creador: `telegram:${quien === GIL ? 'gil' : 'norman'}`, aplicaciones: [], sobrante: 500,
+      ...cambios
+    }
+    const sello = sellarAbono(abono)
+    const b = borrador({
+      telegram_id: quien, sello,
+      payload: { tipo: 'abono', abono, meta: { nombre_deudor: 'Casa Verde', rol_deudor: 'LOC', deuda_antes: 2000, nota_original: 'abono', nombre_cuenta_origen: 'Caja Local', nombre_cuenta_destino: '-', desglose: [], avisos: [] } }
+    })
+    return { b, sello }
+  }
+
+  test('DST: el abono de SU local entra a la cuenta del DST (no a la matriz), con el concepto de la web', async () => {
+    conCartera()
+    const r = await proponer(GIL, { id_deudor: 'loc-a1' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = delBorrador(r.j.borrador_id)
+    expect(b.payload.abono).toMatchObject({
+      id_entidad: 'loc-a1', id_cuenta_origen: 'c-loc', id_cuenta_destino: 'c-gil', referencia: CONCEPTO_ABONO_LOCAL_A_DST
+    })
+    expect(r.j.id_cuenta).toBe('c-gil')
+    expect((r.j.cuentas as { id: string }[]).map((c) => c.id)).toEqual(['c-gil'])
+    expect(String(r.j.mensaje)).not.toContain('PENDIENTE')
+    expect(deDinero()).toEqual([])
+  })
+
+  test('DST: su VA espera; el Aprobar de Norman escribe UNA fila REAL a la cuenta del DST, sin abono pendiente', async () => {
+    conCartera()
+    const r = await proponer(GIL, { id_deudor: 'loc-a1' })
+    const va = await llamar('abono/confirmar', { telegram_id: GIL, borrador_id: r.j.borrador_id, sello: r.j.sello })
+    expect(va.status, JSON.stringify(va.j)).toBe(200)
+    expect(postsLedger()).toBe(0)
+    const ok = await llamar('abono/confirmar', { telegram_id: NORMAN, borrador_id: r.j.borrador_id, sello: r.j.sello })
+    expect(ok.status, JSON.stringify(ok.j)).toBe(200)
+    expect(ok.j.pendiente_de_aprobacion).toBeUndefined()
+    expect(postsLedger()).toBe(1)
+    expect(tablas.finanzas_ledger.at(-1)).toMatchObject({
+      tipo_movimiento: 'ABONO_DEUDA', categoria: 'ABONO_REAL', id_entidad_relacionada: 'loc-a1',
+      id_cuenta_origen: 'c-loc', id_cuenta_destino: 'c-gil', categoria_gasto: CONCEPTO_ABONO_LOCAL_A_DST,
+      usuario_creador: 'telegram:gil', monto: 500
+    })
+  })
+
+  test('CONTROL: el abono de la deuda PROPIA del DST sigue entrando a la matriz y PENDIENTE (D97)', async () => {
+    conCartera()
+    const r = await proponer(GIL, { id_deudor: 'dst-a' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    expect(delBorrador(r.j.borrador_id).payload.abono).toMatchObject({
+      id_cuenta_origen: 'c-gil', id_cuenta_destino: 'c-norman', referencia: CONCEPTO_ABONO_DIST_A_ADMIN
+    })
+    expect(String(r.j.mensaje)).toContain('Queda PENDIENTE')
+    await llamar('abono/confirmar', { telegram_id: GIL, borrador_id: r.j.borrador_id, sello: r.j.sello })
+    const ok = await llamar('abono/confirmar', { telegram_id: NORMAN, borrador_id: r.j.borrador_id, sello: r.j.sello })
+    expect(ok.j.pendiente_de_aprobacion).toBe(true)
+    expect(tablas.finanzas_ledger.at(-1)).toMatchObject({ categoria: CATEGORIA_ABONO_PENDIENTE, id_cuenta_destino: 'c-norman' })
+  })
+
+  test('CONTROL: un borrador viejo de un DST que mandaba el abono de su local a la matriz ya no se escribe -> 409, 0 filas', async () => {
+    conCartera()
+    const { b, sello } = sellado(GIL, {})
+    const r = await llamar('abono/confirmar', { telegram_id: GIL, borrador_id: b.id, sello })
+    expect(r.status, JSON.stringify(r.j)).toBe(409)
+    expect(postsLedger()).toBe(0)
+  })
+
+  test('Norman dicta el abono de un local de un DST: AVISA, ofrece la cuenta del DST y NO bloquea', async () => {
+    conCartera()
+    const r = await proponer(NORMAN, { id_deudor: 'loc-a1' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = delBorrador(r.j.borrador_id)
+    expect(b.payload.abono.id_cuenta_destino).toBe('c-norman')
+    expect(b.payload.abono.referencia).toBe(CONCEPTO_ABONO_DIST_A_ADMIN)
+    expect(b.payload.meta.avisos.join(' ')).toContain('Este local es de Gil; el dinero lo recibiste tu o el?')
+    expect(String(r.j.mensaje)).toContain('Este local es de Gil; el dinero lo recibiste tu o el?')
+    expect(r.j.cuentas).toEqual([
+      { id: 'c-norman', nombre: 'Efectivo' },
+      { id: 'c-gil', nombre: 'Caja Gil (de Gil)' }
+    ])
+    // No bloquea: su VA escribe a la matriz, como dicto.
+    const ok = await llamar('abono/confirmar', { telegram_id: NORMAN, borrador_id: r.j.borrador_id, sello: r.j.sello })
+    expect(ok.status, JSON.stringify(ok.j)).toBe(200)
+    expect(postsLedger()).toBe(1)
+    expect(tablas.finanzas_ledger.at(-1)).toMatchObject({ categoria: 'ABONO_REAL', id_cuenta_destino: 'c-norman', id_entidad_relacionada: 'loc-a1' })
+  })
+
+  test('Norman escoge la cuenta del DST: entra a la cuenta del DST como Local -> Distribuidor', async () => {
+    conCartera()
+    const r = await proponer(NORMAN, { id_deudor: 'loc-a1', id_cuenta: 'c-gil' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    const b = delBorrador(r.j.borrador_id)
+    expect(b.payload.abono).toMatchObject({ id_cuenta_destino: 'c-gil', referencia: CONCEPTO_ABONO_LOCAL_A_DST })
+    expect(b.payload.meta.avisos.join(' ')).toContain('El dinero entra a la cuenta de Gil')
+    const ok = await llamar('abono/confirmar', { telegram_id: NORMAN, borrador_id: r.j.borrador_id, sello: r.j.sello })
+    expect(ok.status, JSON.stringify(ok.j)).toBe(200)
+    expect(tablas.finanzas_ledger.at(-1)).toMatchObject({
+      categoria: 'ABONO_REAL', id_cuenta_origen: 'c-loc', id_cuenta_destino: 'c-gil',
+      categoria_gasto: CONCEPTO_ABONO_LOCAL_A_DST, usuario_creador: 'telegram:norman'
+    })
+  })
+
+  test('CONTROL: un local SIN distribuidor no trae aviso ni la cuenta de nadie mas', async () => {
+    conCartera()
+    const r = await proponer(NORMAN, { id_deudor: 'loc-solo' })
+    expect(r.status, JSON.stringify(r.j)).toBe(200)
+    expect(delBorrador(r.j.borrador_id).payload.meta.avisos.join(' ')).not.toContain('Este local es de')
+    expect(r.j.cuentas).toEqual([{ id: 'c-norman', nombre: 'Efectivo' }])
+  })
+
+  test('CONTROL: Norman no puede mandar el abono de un local de Gil a la cuenta de OTRO DST -> 422, 0 borradores', async () => {
+    conCartera()
+    const r = await proponer(NORMAN, { id_deudor: 'loc-a1', id_cuenta: 'c-otro' })
+    expect(r.status, JSON.stringify(r.j)).toBe(422)
+    expect(r.j.error).toBe('Esa cuenta no es tuya o esta vetada.')
+    expect(escrituras.filter((e) => e === 'POST bot_borradores')).toHaveLength(0)
+  })
+
+  test('CONTROL: sellados a mano que no cuadran con la regla no se escriben -> 409, 0 filas', async () => {
+    conCartera()
+    // A la cuenta de Gil con la etiqueta de la matriz.
+    const uno = sellado(NORMAN, { id_cuenta_destino: 'c-gil' })
+    // A la matriz con la etiqueta Local -> Distribuidor.
+    const dos = sellado(NORMAN, { referencia: CONCEPTO_ABONO_LOCAL_A_DST })
+    // Un local SIN distribuidor, a la cuenta de Gil.
+    const tres = sellado(NORMAN, { id_entidad: 'loc-solo', id_cuenta_origen: 'c-solo', id_cuenta_destino: 'c-gil', referencia: CONCEPTO_ABONO_LOCAL_A_DST })
+    for (const { b, sello } of [uno, dos, tres]) {
+      const r = await llamar('abono/confirmar', { telegram_id: NORMAN, borrador_id: b.id, sello })
+      expect(r.status, JSON.stringify(r.j)).toBe(409)
+    }
+    expect(postsLedger()).toBe(0)
   })
 })

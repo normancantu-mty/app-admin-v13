@@ -47,6 +47,7 @@ import { desactivarTextoFiscal, disparadoresFiscalesEn, TOPE_DESCRIPCION } from 
 import { buscarPorNombre, normalizarNombre, type FalloNombre } from '@/lib/bot-nombres'
 import { canonizar, sellar, selloEmpata } from '@/lib/bot-sello'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
+import { CONCEPTO_ABONO_DIST_A_ADMIN, CONCEPTO_ABONO_LOCAL_A_DST } from '@/lib/abono-cuentas'
 
 // ============================================================================
 // 1. LA LISTA CERRADA DE `referencia`
@@ -71,7 +72,9 @@ import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-u
  * codigo de hoy — la fuente es lo que la app escribe ahora, no lo que escribio
  * en mayo.
  */
-export const REFERENCIAS_ABONO = ['Abono de Deuda (Distribuidor -> Admin)'] as const
+// 2026-11-26 (MAPA n7): se agrega la del abono Local -> su DST, la misma que
+// escribe la web (D8). Las dos salen de `lib/abono-cuentas.ts`, la regla comun.
+export const REFERENCIAS_ABONO = [CONCEPTO_ABONO_DIST_A_ADMIN, CONCEPTO_ABONO_LOCAL_A_DST] as const
 
 export type ReferenciaAbono = (typeof REFERENCIAS_ABONO)[number]
 
@@ -342,6 +345,11 @@ export interface ContextoAbono {
   etiqueta: string
   /** Del mas antiguo al mas nuevo: el FIFO consume en el orden en que llegan. */
   tickets: readonly TicketAbierto[]
+  /**
+   * 2026-11-26: la referencia la decide la regla de cuentas (`reglaDeCuentasDelAbono`),
+   * nunca el modelo. Sin ella, la de siempre (Distribuidor -> Admin).
+   */
+  referencia?: ReferenciaAbono
 }
 
 export interface PropuestaAbonoLLM {
@@ -475,7 +483,7 @@ export function normalizarAbono(
       fecha_movimiento: fecha.toISOString(),
       metodo_pago: metodo,
       // NUNCA de la propuesta. Ver la cabecera del archivo.
-      referencia: REFERENCIA_POR_DEFECTO,
+      referencia: contexto.referencia ?? REFERENCIA_POR_DEFECTO,
       nota,
       usuario_creador: `telegram:${contexto.etiqueta}`,
       aplicaciones: aplicaciones.map((a) => ({

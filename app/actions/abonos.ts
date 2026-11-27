@@ -37,6 +37,7 @@ import { registrarAviso } from '@/lib/avisos-server'
 import { resolverCuentaOrigenPorDefecto, type CuentaCandidata } from '@/lib/avisos'
 import { CATEGORIA_ABONO_PENDIENTE, CATEGORIA_ABONO_REAL } from '@/lib/finance-utils'
 import { REFERENCIA_ENTREGA, reglaDeEntregaWeb } from '@/lib/bot-entrega'
+import { esAbonoDeDstPorSuLocal, reglaDeCuentasDelAbono } from '@/lib/abono-cuentas'
 import {
   aCentavos,
   aPesos,
@@ -597,7 +598,7 @@ export async function registrarAbonoAction(
     // Cualquier otra cuenta ADMIN sigue sin resolverse y se rechaza abajo.
     // D8 (2026-10-29): solo cuando el DST abona SU deuda. El abono de su LOC va a la
     // cuenta propia del DST (ver `esDstPorSuLocal`), nunca a la matriz.
-    const esDstPorSuLocal = sesion.rol === 'DST' && idEntidad !== sesion.entidadId
+    const esDstPorSuLocal = esAbonoDeDstPorSuLocal(sesion.rol, sesion.entidadId, idEntidad)
     if (sesion.rol === 'DST' && !esDstPorSuLocal && !cuentas.has(idCuentaDestino)) {
       const matriz = await cuentaMatrizParaAbonoWeb()
       if (matriz && matriz.id === idCuentaDestino) {
@@ -611,69 +612,30 @@ export async function registrarAbonoAction(
       return { success: false, error: 'No se pudo resolver origen/destino.' }
     }
 
-    const origenEsAdmin = cuentaOrigen.rol === 'ADMIN'
-    const destinoEsAdmin = cuentaDestino.rol === 'ADMIN'
-
-    let cuentaNoAdmin: CuentaResuelta
-    if (esDstPorSuLocal) {
-      // D8: el DST registra el abono de SU local. Origen = cuenta del local,
-      // destino = cuenta propia del DST. Nada de ADMIN en ninguno de los dos lados.
-      // Mismo patron que la cobranza del DST sobre su LOC (auditoria.ts: destino
-      // en la cuenta del DST, id_entidad_relacionada = el LOC, sin aprobacion).
-      if (cuentaDestino.id_entidad !== sesion.entidadId) {
-        return {
-          success: false,
-          error: 'El abono de tu local entra a tu propia cuenta, no a la de la matriz ni a otra.'
-        }
-      }
-      if (cuentaOrigen.id_entidad !== idEntidad) {
-        return { success: false, error: 'La cuenta de origen tiene que ser del local.' }
-      }
-      cuentaNoAdmin = cuentaOrigen
-    } else {
-      // Regla original (`abono/page.tsx:148-154`): solo transferencias cruzadas
-      // ADMIN <-> no-ADMIN. No se toca.
-      const transferenciaValida =
-        (origenEsAdmin && !destinoEsAdmin) || (!origenEsAdmin && destinoEsAdmin)
-      if (!transferenciaValida) {
-        return {
-          success: false,
-          error: 'Solo se permiten transferencias cruzadas entre ADMIN y Distribuidor/Local.'
-        }
-      }
-
-      // La cuenta que no es de ADMIN tiene que ser de la entidad del expediente:
-      // es exactamente lo que ofrecia el formulario, ahora verificado en servidor.
-      cuentaNoAdmin = origenEsAdmin ? cuentaDestino : cuentaOrigen
-      if (cuentaNoAdmin.id_entidad !== idEntidad) {
-        return {
-          success: false,
-          error: 'La cuenta del distribuidor no pertenece a la entidad del movimiento.'
-        }
-      }
-    }
-
-    // Admin -> Dist: CARGO_DEUDA. Dist -> Admin: ABONO_DEUDA. Regla original.
-    // D8: Local -> su DST tambien es ABONO_DEUDA (baja la deuda del LOC en v_cartera).
-    const tipoMovimiento: 'CARGO_DEUDA' | 'ABONO_DEUDA' =
-      !esDstPorSuLocal && origenEsAdmin && !destinoEsAdmin ? 'CARGO_DEUDA' : 'ABONO_DEUDA'
+    // 2026-11-26 (MAPA n7): la regla de cuentas vive en `lib/abono-cuentas.ts` y la
+    // llama tambien el bot (`app/api/bot/abono/*`). Mismos textos, misma decision.
+    // `idDstDelDeudor: null`: la web sigue como estaba (el ADMIN solo cruza con ADMIN).
+    const regla = reglaDeCuentasDelAbono({
+      rolCaptura: sesion.rol,
+      idEntidadCaptura: sesion.entidadId,
+      idEntidadDeudor: idEntidad,
+      idDstDelDeudor: null,
+      origen: cuentaOrigen,
+      destino: cuentaDestino
+    })
+    if (!regla.ok) return { success: false, error: regla.error }
+    const { tipoMovimiento, requiereAprobacionAdmin, cuentaNoAdmin } = regla
 
     // FASE 11 (D112): la entrega de efectivo. Misma regla que el bot.
     const esEntrega = payload?.esEntregaEfectivo === true
     if (esEntrega) {
-      const regla = reglaDeEntregaWeb(
+      const reglaEntrega = reglaDeEntregaWeb(
         { rol: sesion.rol, entidadId: sesion.entidadId },
         { id: idEntidad, rol: cuentaNoAdmin.rol },
         tipoMovimiento
       )
-      if (!regla.ok) return { success: false, error: regla.error }
+      if (!reglaEntrega.ok) return { success: false, error: reglaEntrega.error }
     }
-
-    const requiereAprobacionAdmin =
-      sesion.rol !== 'ADMIN' &&
-      tipoMovimiento === 'ABONO_DEUDA' &&
-      !origenEsAdmin &&
-      destinoEsAdmin
 
     const categoria = requiereAprobacionAdmin
       ? CATEGORIA_ABONO_PENDIENTE
@@ -681,12 +643,7 @@ export async function registrarAbonoAction(
         ? CATEGORIA_ABONO_REAL
         : null
 
-    const conceptoAutomatico =
-      tipoMovimiento === 'CARGO_DEUDA'
-        ? 'Cargo de Deuda (Admin -> Distribuidor)'
-        : esDstPorSuLocal
-          ? 'Abono de Deuda (Local -> Distribuidor)'
-          : 'Abono de Deuda (Distribuidor -> Admin)'
+    const conceptoAutomatico = regla.concepto
     const referencia =
       String(payload?.referencia || '').trim() || (esEntrega ? REFERENCIA_ENTREGA : conceptoAutomatico)
     const nota = String(payload?.nota || '').trim() || null
