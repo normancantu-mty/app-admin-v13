@@ -27,6 +27,7 @@ import {
   derivarCompra,
   diceCompra,
   esCategoriaDeInsumo,
+  insumoPendienteDe,
   mensajeDeCompra,
   ojoDeGastoDeInsumo,
   payloadDeCompra,
@@ -211,7 +212,9 @@ export async function POST(request: Request) {
                 categoria_nueva: normalizada.categoriaNueva,
                 avisos: normalizada.avisos,
                 duplicado_de: duplicado?.id ?? null,
-                contexto_bot: contextoBot
+                contexto_bot: contextoBot,
+                // 2026-11-27: si el OJO se enseno, al confirmar queda el aviso W21.
+                insumo_pendiente: insumoPendienteDe(derivacion)
               }
             }) as unknown as Json
       })

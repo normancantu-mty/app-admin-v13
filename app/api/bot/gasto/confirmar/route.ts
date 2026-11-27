@@ -33,6 +33,7 @@ import {
 } from '@/lib/bot-gastos'
 import { registrarAviso } from '@/lib/avisos-server'
 import { confirmarCompraDeBorrador, type BorradorCompra } from '@/lib/bot-compra-servidor'
+import { mensajeGastoSinInventario, type InsumoPendiente } from '@/lib/bot-compra'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,6 +51,8 @@ interface BorradorGuardado {
     descripcion_original: string
     avisos: string[]
     duplicado_de: string | null
+    /** 2026-11-27: el OJO de insumo que se enseno al proponer (null o ausente: no hubo). */
+    insumo_pendiente?: InsumoPendiente | null
   }
 }
 
@@ -298,11 +301,34 @@ export async function POST(request: Request) {
       })
     }
 
+    // 2026-11-27 (corchos): el gasto de insumo sin cantidad escribia solo el
+    // dinero y el pendiente se perdia. Ahora queda W21 en la cola y se dice.
+    // Avisa, no bloquea: la fila ya entro.
+    const pendiente = guardado.meta.insumo_pendiente ?? null
+    const avisoInventario = pendiente ? mensajeGastoSinInventario(pendiente, fila.monto) : null
+    if (pendiente && avisoInventario) {
+      await registrarAviso(supabase, {
+        tipo: 'W21',
+        idEntidad: guardado.meta.id_entidad,
+        mensaje: avisoInventario,
+        tabla: 'finanzas_ledger',
+        idRegistro: creada.id,
+        datosCapturados: {
+          origen: fila.usuario_creador,
+          monto: fila.monto,
+          insumo: pendiente.insumo,
+          falta: pendiente.falta,
+          descripcion_original: guardado.meta.descripcion_original
+        }
+      })
+    }
+
     return NextResponse.json({
       ok: true,
       id: creada.id,
       categoria_creada: esNueva ? fila.categoria : null,
-      ...(avisoMarca ? { aviso_marca: avisoMarca } : {})
+      ...(avisoMarca ? { aviso_marca: avisoMarca } : {}),
+      ...(avisoInventario ? { aviso_inventario: avisoInventario } : {})
     })
   } catch (e) {
     console.error('[bot] confirmar reviento:', e)

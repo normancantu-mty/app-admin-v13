@@ -18,7 +18,7 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { escribirCompraInsumos } from '@/lib/compra-insumos'
+import { escribirCompraInsumos, mensajeCompraSinCosto } from '@/lib/compra-insumos'
 import {
   getServerSupabaseClient,
   resolverSesionOperador
@@ -54,6 +54,8 @@ export interface RegistrarCompraPayload {
 export interface RegistrarCompraResult {
   success: boolean
   error?: string
+  /** 2026-11-27: la compra entro, pero con algo que revisar (costo 0 -> W22). */
+  aviso?: string
 }
 
 /**
@@ -189,6 +191,23 @@ export async function registrarCompraInsumosAction(
     const filaFinanzas = { id: resultado.idFinanzas }
     const insumo = { nombre: resultado.insumo }
     const costoTotal = Number(payload?.costoTotal)
+
+    // 2026-11-27: costo 0 -> entro solo el insumo. El aviso apunta a la fila de
+    // inventario (no hay fila de dinero) y la cuenta no importa: no salio nada.
+    if (resultado.sinCosto) {
+      const cantidad = Number(payload?.cantidad)
+      await registrarAviso(supabase, {
+        tipo: 'W22',
+        idEntidad: sesion.entidadId,
+        mensaje: mensajeCompraSinCosto(insumo.nombre, cantidad),
+        tabla: 'inventario_ledger',
+        idRegistro: resultado.idInventario,
+        datosCapturados: { insumo: insumo.nombre, cantidad, costo_total: 0, origen: 'web compra' }
+      })
+      revalidatePath('/dashboard/avisos')
+      revalidatePath('/dashboard/inventario')
+      return { success: true, aviso: mensajeCompraSinCosto(insumo.nombre, cantidad) }
+    }
 
     if (avisoCuentaOrigen) {
       await registrarAviso(supabase, {

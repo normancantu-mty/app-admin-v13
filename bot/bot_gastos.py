@@ -6499,9 +6499,16 @@ async def _confirmar(update, chat, por_boton=False):
                 "Listo. Quedo escrito, y la categoria " + str(creada) +
                 " quedo creada: desde ahora la uso sola." + pie)
         else:
-            await update.effective_message.reply_text("Listo. Quedo escrito." + pie)
+            await update.effective_message.reply_text("Listo. Quedo escrito." + _pie_inventario(r) + pie)
     else:
         await update.effective_message.reply_text(r.get("error", "No pude escribirlo."))
+
+
+def _pie_inventario(r):
+    """2026-11-27 (corchos): el OJO de insumo que se ignoro con VA. El servidor
+    deja el aviso W21 y manda el texto; aqui solo se ensena. **Pura.**"""
+    texto = str((r or {}).get("aviso_inventario") or "").strip()
+    return ("\n\nOJO: " + texto) if texto else ""
 
 
 async def _reproponer(update, chat, cambios):

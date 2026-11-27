@@ -43,6 +43,9 @@ export type TipoAviso =
   | 'W18'  // un distribuidor corto un local suyo con consignacion a su nombre
   | 'W19'  // venta a un local propio que quedo sin abono, entero o en parte
   | 'W20'  // venta o salida con mas piezas de las que marca el sistema
+  | 'W21'  // gasto de insumo que no subio el inventario (2026-11-27)
+  | 'W22'  // entrada de insumo sin costo (2026-11-27)
+  | 'W23'  // insumo a consignacion por pagar al proveedor (2026-11-27)
 
 export interface DefinicionAviso {
   severidad: SeveridadAviso
@@ -199,6 +202,32 @@ export const CATALOGO_AVISOS: Record<TipoAviso, DefinicionAviso> = {
       'El movimiento entro completo y el saldo quedo negativo. Nadie ajusto el ' +
       'inventario para taparlo: falta contar y capturar lo que falte (una entrada ' +
       'sin registrar, o una salida de mas).'
+  },
+  // 2026-11-27 (corchos y guajillo a 0.01): lo que antes se perdia en silencio
+  // ahora queda en la cola. Ninguno detiene la escritura.
+  W21: {
+    severidad: 'REVISAR',
+    titulo: 'Gasto de insumo que no subio el inventario',
+    consecuencia:
+      'El dinero entro como gasto y el insumo NO entro al almacen. Cuando llegue, ' +
+      'capturalo en Inventario > Compra con costo 0 (ya esta pagado) y cierra este ' +
+      'aviso; si nunca va a llegar, cierralo diciendo por que.'
+  },
+  W22: {
+    severidad: 'REVISAR',
+    titulo: 'Entrada de insumo sin costo',
+    consecuencia:
+      'El insumo entro al almacen y no salio dinero. Falta una de tres: ligarlo al ' +
+      'gasto donde ya se pago, registrar cuanto costo, o dejar la deuda con el ' +
+      'proveedor si es a consignacion.'
+  },
+  W23: {
+    severidad: 'REVISAR',
+    titulo: 'Insumo a consignacion: por pagar al proveedor',
+    consecuencia:
+      'El insumo ya esta en el almacen y no ha salido dinero. Al pagarle, registralo ' +
+      'como GASTO (solo dinero), no como compra, para no meter otra vez los kilos; ' +
+      'luego cierra este aviso.'
   }
 }
 

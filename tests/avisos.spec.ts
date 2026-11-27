@@ -51,7 +51,7 @@ test.describe('Catalogo de avisos', () => {
     // a un local propio sin abono). Ningun codigo anterior dice eso.
     // 15 -> 16 el 2026-11-24: entra W20 (venta o salida con mas piezas de las que
     // marca el sistema). W1 es de un corte y W15 de un conteo: ninguno dice eso.
-    expect(TIPOS).toHaveLength(16)
+    expect(TIPOS).toHaveLength(19)
 
     for (const tipo of TIPOS) {
       const definicion = CATALOGO_AVISOS[tipo]

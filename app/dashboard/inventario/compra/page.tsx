@@ -59,8 +59,11 @@ export default function CompraInsumosPage() {
     const cantidadNum = parseFloat(cantidad)
     const costoNum = parseFloat(costoTotal)
 
-    if (isNaN(cantidadNum) || cantidadNum <= 0 || isNaN(costoNum) || costoNum <= 0) {
-      alert('La cantidad y el costo deben ser valores numéricos positivos.')
+    // 2026-11-27: costo 0 se acepta (ya se pago en un gasto, o es a consignacion):
+    // entra el insumo, no sale dinero y queda el aviso W22. Antes se bloqueaba y
+    // la gente capturaba 0.01, que esconde lo que falta.
+    if (isNaN(cantidadNum) || cantidadNum <= 0 || isNaN(costoNum) || costoNum < 0) {
+      alert('La cantidad debe ser mayor a cero y el costo no puede ser negativo.')
       return
     }
 
@@ -79,7 +82,11 @@ export default function CompraInsumosPage() {
         return
       }
 
-      alert('✅ Compra registrada exitosamente. Inventario y finanzas actualizados.')
+      alert(
+        resultado.aviso
+          ? `✅ ${resultado.aviso}`
+          : '✅ Compra registrada exitosamente. Inventario y finanzas actualizados.'
+      )
       // v2 (2026-10-29, Socio ejecutor): sin router.refresh() junto al push. El refresh del
       // route ACTUAL le puede ganar al push y deja al usuario en el formulario ya guardado
       // (medido 2 veces en 4 baterias: abono y POS) -> riesgo de capturar dos veces. Con
@@ -156,7 +163,7 @@ export default function CompraInsumosPage() {
                 id="costo"
                 value={costoTotal}
                 onChange={(e) => setCostoTotal(e.target.value)}
-                min="0.01"
+                min="0"
                 step="0.01"
                 placeholder="Ej: 1500.00"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"

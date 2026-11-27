@@ -24,14 +24,16 @@ import {
   derivarCompra,
   diceCompra,
   escogerInsumo,
+  insumoPendienteDe,
   leerCantidad,
   mensajeDeCompra,
+  mensajeGastoSinInventario,
   sellarCompra,
   selloCompraCoincide,
   type InsumoDeCompra,
   type PayloadCompra
 } from '@/lib/bot-compra'
-import { escribirCompraInsumos } from '@/lib/compra-insumos'
+import { escribirCompraInsumos, esCompraSinCosto, NOTA_COMPRA_SIN_COSTO } from '@/lib/compra-insumos'
 import { tipoDelPayload } from '@/lib/bot-pendiente'
 import * as gastoP from '@/app/api/bot/gasto/proponer/route'
 import * as gastoC from '@/app/api/bot/gasto/confirmar/route'
@@ -559,5 +561,88 @@ test.describe('bug en vivo 2026-11-07: compra de aditivo en GRAMOS', () => {
     expect(p.j.tipo).toBe('compra_insumo')
     const b = tablas.bot_borradores.find((x) => x.id === p.j.borrador_id) as Fila
     expect(((b.payload as Fila).compra as Fila)).toMatchObject({ id_insumo: 'i-ad1', cantidad: 90 })
+  })
+})
+
+// ─── 2026-11-27: COSTOS CERO (corchos y guajillo a 0.01) ────────────────────
+// El ERP avisa, nunca bloquea: costo 0 entra sin dinero y con W22; el gasto de
+// insumo que se confirma sin cantidad deja W21 en vez de perderse.
+
+test.describe('2026-11-27: costo 0 y gasto de insumo sin cantidad', () => {
+  const cliente = () => createClient('http://127.0.0.1:9', 'fake-key', { auth: { persistSession: false } }) as never
+  const corchos = { idInsumo: 'i-guaj', cantidad: 100, costoTotal: 0, idCuentaOrigen: 'c-spin', idEntidad: 'ent-matriz', usuarioCreador: 'web@x' }
+
+  test('esCompraSinCosto: solo el numero 0; vacio, null, NaN y negativo no', () => {
+    expect(esCompraSinCosto(0)).toBe(true)
+    for (const v of [0.01, -1, NaN, null, undefined, '', '0']) expect(esCompraSinCosto(v)).toBe(false)
+  })
+
+  test('costo 0: entra SOLO el insumo, con su nota, y no se escribe ninguna fila de dinero', async () => {
+    estadoInicial()
+    const r = await escribirCompraInsumos(cliente(), corchos)
+    expect(r.ok, JSON.stringify(r)).toBe(true)
+    expect(r.ok && r.sinCosto).toBe(true)
+    expect(r.ok && r.idFinanzas).toBeNull()
+    expect(insertados.inventario_ledger).toEqual([
+      { id_producto: 'i-guaj', tipo_movimiento: 'ENTRADA_COMPRA', cantidad: 100, id_entidad_destino: 'ent-matriz', usuario_creador: 'web@x', status: 'ACTIVO', notas: NOTA_COMPRA_SIN_COSTO }
+    ])
+    expect(insertados.finanzas_ledger ?? []).toEqual([])
+  })
+
+  test('costo negativo sigue siendo error y no escribe nada', async () => {
+    estadoInicial()
+    const r = await escribirCompraInsumos(cliente(), { ...corchos, costoTotal: -5 })
+    expect(r.ok).toBe(false)
+    expect(deLibros()).toEqual([])
+  })
+
+  test('con costo > 0 nada cambia: siguen las dos filas (control)', async () => {
+    estadoInicial()
+    const r = await escribirCompraInsumos(cliente(), { ...corchos, costoTotal: 1044 })
+    expect(r.ok && r.sinCosto).toBeFalsy()
+    expect(insertados.finanzas_ledger).toHaveLength(1)
+  })
+
+  test('la pantalla web acepta costo 0 y deja W22 (lectura de la fuente)', () => {
+    const accion = readFileSync(join(process.cwd(), 'app/actions/compras.ts'), 'utf8')
+    expect(accion).toContain("tipo: 'W22'")
+    for (const archivo of ['app/dashboard/inventario/compra/page.tsx', 'components/v2/inventario/Compra.tsx']) {
+      const fuente = readFileSync(join(process.cwd(), archivo), 'utf8')
+      expect(fuente, archivo).toContain('costoNum < 0')
+      expect(fuente, archivo).not.toContain('costoNum <= 0')
+      expect(fuente, archivo).not.toContain('min="0.01"')
+    }
+  })
+
+  test('insumoPendienteDe: solo cuando el OJO se ensena', () => {
+    expect(insumoPendienteDe({ modo: 'gasto', falta: null })).toBeNull()
+    const ins = INSUMOS.find((i) => i.id === 'i-guaj') as InsumoDeCompra
+    expect(insumoPendienteDe({ modo: 'gasto', falta: 'cantidad', insumo: ins, motivo: null })).toEqual({ falta: 'cantidad', insumo: 'Chile Guajillo' })
+    expect(insumoPendienteDe({ modo: 'gasto', falta: 'insumo', opciones: [] })).toEqual({ falta: 'insumo', insumo: null })
+    expect(insumoPendienteDe({ modo: 'compra', insumo: ins, cantidad: 5, dicho: { cantidad: 5, unidad: 'kg' } as never })).toBeNull()
+    expect(mensajeGastoSinInventario({ falta: 'cantidad', insumo: 'Corcho' }, 2088)).toContain('Corcho NO subio en el inventario')
+  })
+
+  test('gasto de insumo SIN cantidad + VA: GASTO_OPERATIVO, sin almacen, W21 ligado a la fila y el texto en la respuesta', async () => {
+    estadoInicial()
+    const p = await llamar('gasto/proponer', { telegram_id: NORMAN, propuesta: { ...CHILE, descripcion: 'chile guajillo' } })
+    expect(p.j.compra_falta).toBe('cantidad')
+    const c = await llamar('gasto/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect(tablas.inventario_ledger).toEqual([])
+    expect(tablas.finanzas_ledger[0]).toMatchObject({ tipo_movimiento: 'GASTO_OPERATIVO' })
+    const avisos = (tablas.avisos_captura ?? []).filter((a) => a.tipo === 'W21')
+    expect(avisos).toHaveLength(1)
+    expect(avisos[0]).toMatchObject({ tabla: 'finanzas_ledger', id_registro: c.j.id, severidad: 'REVISAR' })
+    expect(String(c.j.aviso_inventario)).toContain('Chile Guajillo NO subio en el inventario')
+  })
+
+  test('un gasto que no es de insumo NO deja W21 ni texto (control)', async () => {
+    estadoInicial()
+    const p = await llamar('gasto/proponer', { telegram_id: NORMAN, propuesta: { monto: 300, descripcion: 'gasolina', categoria: 'Logística y envíos / Gasolina' } })
+    const c = await llamar('gasto/confirmar', { telegram_id: NORMAN, borrador_id: p.j.borrador_id, sello: p.j.sello })
+    expect(c.status, JSON.stringify(c.j)).toBe(200)
+    expect((tablas.avisos_captura ?? []).filter((a) => a.tipo === 'W21')).toEqual([])
+    expect(c.j.aviso_inventario ?? null).toBeNull()
   })
 })

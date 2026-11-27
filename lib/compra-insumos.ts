@@ -50,8 +50,41 @@ export interface CompraInsumos {
 }
 
 export type ResultadoCompra =
-  | { ok: true; idInventario: string; idFinanzas: string | null; insumo: string }
+  | {
+      ok: true
+      idInventario: string
+      idFinanzas: string | null
+      insumo: string
+      /**
+       * 2026-11-27: costo 0. Entro SOLO el insumo (sin fila de dinero) y quien
+       * llama deja el aviso W22. Antes se bloqueaba y la gente ponia 0.01.
+       */
+      sinCosto?: true
+    }
   | { ok: false; error: string }
+
+/**
+ * 2026-11-27 — "EL ERP AVISA, NUNCA BLOQUEA" en la compra de insumos.
+ * Costo 0 es un dato que FALTA (ya se pago en un gasto, o es a consignacion y
+ * no ha salido dinero), no un dato invalido: la entrada se escribe y el dinero
+ * no. Negativo, NaN o vacio siguen siendo error: eso si es un dato malo.
+ * **Pura.**
+ */
+export function esCompraSinCosto(costoTotal: unknown): boolean {
+  return typeof costoTotal === 'number' && costoTotal === 0
+}
+
+/** Lo que se le dice a quien capturo una entrada sin costo (web). **Pura.** */
+export function mensajeCompraSinCosto(insumo: string, cantidad: number): string {
+  return (
+    `Entraron ${cantidad} de ${insumo} al inventario SIN dinero. ` +
+    'Quedo un aviso (W22) para ligarlo al gasto donde ya se pago, poner cuanto costo, ' +
+    'o dejar la deuda con el proveedor si es a consignacion.'
+  )
+}
+
+/** La nota de la fila de inventario de una entrada sin costo. */
+export const NOTA_COMPRA_SIN_COSTO = 'SIN COSTO al capturar (aviso W22)'
 
 /** Lo que escribe la pantalla cuando no le dicen otra categoria. */
 export const CATEGORIA_COMPRA_WEB = 'Insumos'
@@ -152,8 +185,10 @@ export async function escribirCompraInsumos(
   if (!Number.isFinite(cantidad) || cantidad <= 0) {
     return { ok: false, error: 'La cantidad debe ser mayor a cero.' }
   }
-  if (!Number.isFinite(costoTotal) || costoTotal <= 0) {
-    return { ok: false, error: 'El costo total debe ser mayor a cero.' }
+  // 2026-11-27: costo 0 entra (solo el insumo) y avisa; negativo o vacio no.
+  const sinCosto = esCompraSinCosto(compra?.costoTotal)
+  if (!Number.isFinite(costoTotal) || costoTotal < 0) {
+    return { ok: false, error: 'El costo total no puede ser negativo.' }
   }
 
   const { data: insumo, error: insumoError } = await supabase
@@ -167,9 +202,12 @@ export async function escribirCompraInsumos(
   }
   if (!insumo) return { ok: false, error: 'El producto no existe o no es un insumo.' }
 
-  // La cuenta de origen tiene que ser de la entidad que compra.
-  const errorCuenta = await validarCuentaDeLaEntidad(supabase, idCuentaOrigen, idEntidad)
-  if (errorCuenta) return { ok: false, error: errorCuenta }
+  // La cuenta de origen tiene que ser de la entidad que compra. Sin costo no
+  // sale dinero de ninguna cuenta: no hay nada que validar.
+  if (!sinCosto) {
+    const errorCuenta = await validarCuentaDeLaEntidad(supabase, idCuentaOrigen, idEntidad)
+    if (errorCuenta) return { ok: false, error: errorCuenta }
+  }
 
   // --- PASO A: entra el insumo, al almacen de la entidad que compro (ERP-16).
   const inventarioPayload: InventarioInsert = filaEntradaCompra({
@@ -177,7 +215,7 @@ export async function escribirCompraInsumos(
     cantidad,
     idEntidad,
     usuarioCreador: compra.usuarioCreador,
-    notas: compra.notas,
+    notas: sinCosto ? [compra.notas, NOTA_COMPRA_SIN_COSTO].filter(Boolean).join(' | ') : compra.notas,
     fechaMovimiento: compra.fechaMovimiento
   })
   exigirEntidadDelMovimiento(inventarioPayload, 'compra-insumos.escribirCompraInsumos')
@@ -192,6 +230,12 @@ export async function escribirCompraInsumos(
       ok: false,
       error: `Error al registrar la entrada de inventario: ${inventarioError?.message ?? 'sin detalle'}`
     }
+  }
+
+  // Sin costo no hay PASO B: no salio dinero, y una fila de 0.01 es un asiento
+  // falso que esconde lo que falta. Quien llama deja el aviso W22.
+  if (sinCosto) {
+    return { ok: true, idInventario: filaInventario.id, idFinanzas: null, insumo: String(insumo.nombre ?? ''), sinCosto: true }
   }
 
   // --- PASO B: sale el dinero. Si falla, el PASO A se anula.

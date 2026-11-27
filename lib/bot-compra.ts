@@ -502,6 +502,32 @@ export function ojoDeGastoDeInsumo(d: Derivacion): string | null {
   )
 }
 
+/**
+ * 2026-11-27 (corchos): el OJO se ensenaba, el VA escribia solo el dinero y el
+ * pendiente se perdia: nadie volvia a preguntar y el inventario nunca subio.
+ * Esto es lo que se GUARDA en el borrador para que, al confirmar, quede un
+ * aviso W21 en la cola. `null` si no habia insumo pendiente. **Pura.**
+ */
+export interface InsumoPendiente {
+  falta: 'cantidad' | 'insumo'
+  insumo: string | null
+}
+
+export function insumoPendienteDe(d: Derivacion): InsumoPendiente | null {
+  if (d.modo !== 'gasto' || d.falta === null) return null
+  return { falta: d.falta, insumo: d.falta === 'cantidad' ? d.insumo.nombre : null }
+}
+
+/** El texto del aviso W21 y de la respuesta al confirmar. **Pura.** */
+export function mensajeGastoSinInventario(p: InsumoPendiente, monto: number): string {
+  const que = p.insumo ?? 'el insumo'
+  return (
+    `Quedo solo el DINERO ($${Number(monto).toFixed(2)}); ${que} NO subio en el inventario. ` +
+    'Deje un aviso (W21). Cuando llegue, capturalo en Inventario > Compra con costo 0 ' +
+    '(ya esta pagado) y cierra el aviso.'
+  )
+}
+
 /** Mete el OJO justo antes del cierre del mensaje del gasto. **Pura.** */
 export function conOjo(mensaje: string, ojo: string | null): string {
   if (!ojo) return mensaje
