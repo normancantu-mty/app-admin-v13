@@ -615,7 +615,7 @@ export async function registrarAbonoAction(
     // 2026-11-26 (MAPA n7): la regla de cuentas vive en `lib/abono-cuentas.ts` y la
     // llama tambien el bot (`app/api/bot/abono/*`). Mismos textos, misma decision.
     // `idDstDelDeudor: null`: la web sigue como estaba (el ADMIN solo cruza con ADMIN).
-    const regla = reglaDeCuentasDelAbono({
+    const reglaCuentas = reglaDeCuentasDelAbono({
       rolCaptura: sesion.rol,
       idEntidadCaptura: sesion.entidadId,
       idEntidadDeudor: idEntidad,
@@ -623,18 +623,18 @@ export async function registrarAbonoAction(
       origen: cuentaOrigen,
       destino: cuentaDestino
     })
-    if (!regla.ok) return { success: false, error: regla.error }
-    const { tipoMovimiento, requiereAprobacionAdmin, cuentaNoAdmin } = regla
+    if (!reglaCuentas.ok) return { success: false, error: reglaCuentas.error }
+    const { tipoMovimiento, requiereAprobacionAdmin, cuentaNoAdmin } = reglaCuentas
 
     // FASE 11 (D112): la entrega de efectivo. Misma regla que el bot.
     const esEntrega = payload?.esEntregaEfectivo === true
     if (esEntrega) {
-      const reglaEntrega = reglaDeEntregaWeb(
+      const regla = reglaDeEntregaWeb(
         { rol: sesion.rol, entidadId: sesion.entidadId },
         { id: idEntidad, rol: cuentaNoAdmin.rol },
         tipoMovimiento
       )
-      if (!reglaEntrega.ok) return { success: false, error: reglaEntrega.error }
+      if (!regla.ok) return { success: false, error: regla.error }
     }
 
     const categoria = requiereAprobacionAdmin
@@ -643,7 +643,7 @@ export async function registrarAbonoAction(
         ? CATEGORIA_ABONO_REAL
         : null
 
-    const conceptoAutomatico = regla.concepto
+    const conceptoAutomatico = reglaCuentas.concepto
     const referencia =
       String(payload?.referencia || '').trim() || (esEntrega ? REFERENCIA_ENTREGA : conceptoAutomatico)
     const nota = String(payload?.nota || '').trim() || null
